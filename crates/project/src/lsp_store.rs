@@ -4718,6 +4718,7 @@ pub struct LanguageServerStatus {
     pub configuration: Option<Value>,
     pub workspace_folders: BTreeSet<Uri>,
     pub process_id: Option<u32>,
+    pub memory_usage: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -5870,6 +5871,7 @@ impl LspStore {
                     .iter()
                     .map(|uri| uri.to_string())
                     .collect(),
+                server_version: server.readable_version().map(|version| version.to_string()),
             });
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
@@ -5882,6 +5884,75 @@ impl LspStore {
                 .context("sending server metadata downstream")
                 .log_err();
         }
+        cx.emit(LspStoreEvent::LanguageServerUpdate {
+            language_server_id: server.server_id(),
+            name: Some(server.name()),
+            message,
+        });
+    }
+
+    fn notify_server_memory_usage(&self, server: &LanguageServer, cx: &mut Context<Self>) {
+        let Some(process_id) = server.process_id() else {
+            return;
+        };
+
+        let mut system = sysinfo::System::new();
+        let refresh_kind = sysinfo::RefreshKind::nothing().with_processes(
+            sysinfo::ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_memory(),
+        );
+        system.refresh_specifics(refresh_kind);
+
+        let root_pid = sysinfo::Pid::from_u32(process_id);
+
+        let parent_map: HashMap<sysinfo::Pid, sysinfo::Pid> = system
+            .processes()
+            .iter()
+            .filter_map(|(&pid, process)| Some((pid, process.parent()?)))
+            .collect();
+
+        let total_memory = system
+            .processes()
+            .iter()
+            .filter(|(pid, _)| {
+                let mut current = **pid;
+                let mut visited = HashSet::default();
+
+                while current != root_pid {
+                    if !visited.insert(current) {
+                        return false;
+                    }
+
+                    match parent_map.get(&current) {
+                        Some(&parent) => current = parent,
+                        None => return false,
+                    }
+                }
+
+                true
+            })
+            .map(|(_, process)| process.memory())
+            .sum();
+
+        let message = proto::update_language_server::Variant::MemoryUsageUpdated(
+            proto::ServerMemoryUsageUpdated {
+                memory_usage: total_memory,
+            },
+        );
+
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::UpdateLanguageServer {
+                    project_id: *project_id,
+                    server_name: Some(server.name().to_string()),
+                    language_server_id: server.server_id().to_proto(),
+                    variant: Some(message.clone()),
+                })
+                .context("sending server memory usage downstream")
+                .log_err();
+        }
+
         cx.emit(LspStoreEvent::LanguageServerUpdate {
             language_server_id: server.server_id(),
             name: Some(server.name()),
@@ -10062,6 +10133,7 @@ impl LspStore {
                         configuration: None,
                         workspace_folders: BTreeSet::new(),
                         process_id: None,
+                        memory_usage: None,
                     },
                 )
             })
@@ -11419,6 +11491,7 @@ impl LspStore {
                     configuration: None,
                     workspace_folders: BTreeSet::new(),
                     process_id: None,
+                    memory_usage: None,
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -11500,8 +11573,7 @@ impl LspStore {
                 }
 
                 non_lsp @ proto::update_language_server::Variant::StatusUpdate(_)
-                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_)
-                | non_lsp @ proto::update_language_server::Variant::MetadataUpdated(_) => {
+                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_) => {
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
                         name: envelope
@@ -11511,6 +11583,49 @@ impl LspStore {
                             .map(LanguageServerName),
                         message: non_lsp,
                     });
+                }
+
+                proto::update_language_server::Variant::MetadataUpdated(metadata) => {
+                    if let Some(status) = lsp_store
+                        .language_server_statuses
+                        .get_mut(&language_server_id)
+                    {
+                        status.server_readable_version =
+                            metadata.server_version.map(SharedString::new);
+                    }
+
+                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                        language_server_id,
+                        name: envelope
+                            .payload
+                            .server_name
+                            .map(SharedString::new)
+                            .map(LanguageServerName),
+                        message: proto::update_language_server::Variant::MetadataUpdated(metadata),
+                    });
+
+                    cx.notify();
+                }
+
+                proto::update_language_server::Variant::MemoryUsageUpdated(memory) => {
+                    if let Some(status) = lsp_store
+                        .language_server_statuses
+                        .get_mut(&language_server_id)
+                    {
+                        status.memory_usage = Some(memory.memory_usage);
+                    }
+
+                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                        language_server_id,
+                        name: envelope
+                            .payload
+                            .server_name
+                            .map(SharedString::new)
+                            .map(LanguageServerName),
+                        message: proto::update_language_server::Variant::MemoryUsageUpdated(memory),
+                    });
+
+                    cx.notify();
                 }
             }
 
@@ -13478,6 +13593,20 @@ impl LspStore {
             })
             .into_iter()
             .collect();
+
+        let memory_usage_task = cx.spawn({
+            let language_server = language_server.clone();
+            async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(5)).await;
+
+                    this.update(cx, |this, cx| {
+                        this.notify_server_memory_usage(&language_server, cx);
+                    })
+                    .ok();
+                }
+            }
+        });
         local.language_servers.insert(
             server_id,
             LanguageServerState::Running {
@@ -13485,6 +13614,7 @@ impl LspStore {
                 adapter: adapter.clone(),
                 server: language_server.clone(),
                 simulate_disk_based_diagnostics_completion: None,
+                memory_usage_task,
             },
         );
         local.update_binary_status(adapter.name(), BinaryStatus::None);
@@ -13521,6 +13651,7 @@ impl LspStore {
                 configuration: Some(language_server.configuration().clone()),
                 workspace_folders: language_server.workspace_folders(),
                 process_id: language_server.process_id(),
+                memory_usage: None,
             },
         );
 
@@ -16143,6 +16274,7 @@ pub enum LanguageServerState {
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
+        memory_usage_task: Option<Task<()>>,
         workspace_diagnostics_refresh_tasks: HashMap<Option<String>, WorkspaceRefreshTask>,
     },
 }

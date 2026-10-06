@@ -194,6 +194,7 @@ struct ServerMetadata {
     server_version: Option<SharedString>,
     binary_display_path: Option<SharedString>,
     process_id: Option<u32>,
+    memory_usage: Option<u64>,
 }
 
 impl ServerInfo {
@@ -288,6 +289,7 @@ impl LanguageServerState {
                                         tooltip_for_server_binary(binary, path_style)
                                     }),
                                     process_id: status.process_id,
+                                    memory_usage: status.memory_usage,
                                 },
                             )
                         })
@@ -607,8 +609,10 @@ impl LanguageServerState {
                             let server_message = server_message.clone();
                             let process_memory_cache = process_memory_cache.clone();
                             move |_, cx| {
-                                let memory_usage = process_id.map(|pid| {
-                                    process_memory_cache.borrow_mut().get_memory_usage(pid)
+                                let memory_usage = server_info.memory_usage.or_else(|| {
+                                    process_id.map(|pid| {
+                                        process_memory_cache.borrow_mut().get_memory_usage(pid)
+                                    })
                                 });
 
                                 let memory_label = memory_usage.map(|bytes| {
