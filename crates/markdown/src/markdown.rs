@@ -5202,153 +5202,6 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    struct TestWindow;
-
-    impl Render for TestWindow {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div()
-        }
-    }
-
-    struct MarkdownTestView {
-        markdown: Entity<Markdown>,
-        style: MarkdownStyle,
-        code_span_link: Option<CodeSpanLinkCallback>,
-        rendered_text: Rc<RefCell<Option<RenderedText>>>,
-    }
-
-    impl Render for MarkdownTestView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let mut markdown_element =
-                MarkdownElement::new(self.markdown.clone(), self.style.clone());
-            if let Some(code_span_link) = self.code_span_link.clone() {
-                markdown_element =
-                    markdown_element.on_code_span_link(move |text, cx| code_span_link(text, cx));
-            }
-            CapturingMarkdownElement {
-                markdown_element: markdown_element.code_block_renderer(
-                    CodeBlockRenderer::Default {
-                        copy_button_visibility: CopyButtonVisibility::Hidden,
-                        wrap_button_visibility: WrapButtonVisibility::Hidden,
-                        border: false,
-                    },
-                ),
-                rendered_text: self.rendered_text.clone(),
-            }
-        }
-    }
-
-    struct CapturingMarkdownElement {
-        markdown_element: MarkdownElement,
-        rendered_text: Rc<RefCell<Option<RenderedText>>>,
-    }
-
-    impl IntoElement for CapturingMarkdownElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
-    }
-
-    impl Element for CapturingMarkdownElement {
-        type RequestLayoutState = RenderedMarkdown;
-        type PrepaintState = Hitbox;
-
-        fn id(&self) -> Option<ElementId> {
-            self.markdown_element.id()
-        }
-
-        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-            self.markdown_element.source_location()
-        }
-
-        fn request_layout(
-            &mut self,
-            id: Option<&GlobalElementId>,
-            inspector_id: Option<&gpui::InspectorElementId>,
-            window: &mut Window,
-            cx: &mut App,
-        ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-            self.markdown_element
-                .request_layout(id, inspector_id, window, cx)
-        }
-
-        fn prepaint(
-            &mut self,
-            id: Option<&GlobalElementId>,
-            inspector_id: Option<&gpui::InspectorElementId>,
-            bounds: Bounds<Pixels>,
-            rendered_markdown: &mut Self::RequestLayoutState,
-            window: &mut Window,
-            cx: &mut App,
-        ) -> Self::PrepaintState {
-            self.markdown_element
-                .prepaint(id, inspector_id, bounds, rendered_markdown, window, cx)
-        }
-
-        fn paint(
-            &mut self,
-            id: Option<&GlobalElementId>,
-            inspector_id: Option<&gpui::InspectorElementId>,
-            bounds: Bounds<Pixels>,
-            rendered_markdown: &mut Self::RequestLayoutState,
-            hitbox: &mut Self::PrepaintState,
-            window: &mut Window,
-            cx: &mut App,
-        ) {
-            self.markdown_element.paint(
-                id,
-                inspector_id,
-                bounds,
-                rendered_markdown,
-                hitbox,
-                window,
-                cx,
-            );
-            *self.rendered_text.borrow_mut() = Some(rendered_markdown.text.clone());
-        }
-    }
-
-    fn ensure_theme_initialized(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            if !cx.has_global::<settings::SettingsStore>() {
-                settings::init(cx);
-            }
-            if !cx.has_global::<theme::GlobalTheme>() {
-                theme_settings::init(theme::LoadThemes::JustBase, cx);
-            }
-        });
-    }
-
-    fn render_markdown_entity_in_view(
-        markdown: Entity<Markdown>,
-        style: MarkdownStyle,
-        code_span_link: Option<CodeSpanLinkCallback>,
-        width: Option<Pixels>,
-        cx: &mut TestAppContext,
-    ) -> RenderedText {
-        let rendered_text = Rc::new(RefCell::new(None));
-        let (_, cx) = cx.add_window_view({
-            let rendered_text = rendered_text.clone();
-            move |_, _| MarkdownTestView {
-                markdown,
-                style,
-                code_span_link,
-                rendered_text,
-            }
-        });
-        if let Some(width) = width {
-            cx.simulate_resize(size(width, px(600.)));
-        }
-        cx.run_until_parked();
-
-        rendered_text
-            .borrow()
-            .clone()
-            .expect("markdown should be rendered in the test view")
-    }
-
     #[gpui::test]
     fn test_code_block_controls_are_unique_across_markdown_entities(cx: &mut TestAppContext) {
         struct TestWindow;
@@ -5620,10 +5473,6 @@ mod tests {
             "😄"
         );
         assert_eq!(adjusted_range, Some(3..5));
-    }
-
-    fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
-        render_markdown_with_language_registry(markdown, None, cx)
     }
 
     #[gpui::test]
@@ -5992,90 +5841,6 @@ mod tests {
         assert_eq!(rendered.text_for_range(0..26), "tags:\n  - zed\nBody");
     }
 
-    fn render_markdown_with_code_span_link(
-        markdown: &str,
-        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
-        cx: &mut TestAppContext,
-    ) -> RenderedText {
-        render_markdown_with_code_span_link_style(markdown, MarkdownStyle::default(), callback, cx)
-    }
-
-    fn render_markdown_with_code_span_link_style(
-        markdown: &str,
-        style: MarkdownStyle,
-        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
-        cx: &mut TestAppContext,
-    ) -> RenderedText {
-        ensure_theme_initialized(cx);
-
-        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
-        cx.run_until_parked();
-        render_markdown_entity_in_view(markdown, style, Some(Arc::new(callback)), None, cx)
-    }
-
-    fn render_markdown_with_language_registry(
-        markdown: &str,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &mut TestAppContext,
-    ) -> RenderedText {
-        render_markdown_with_options(markdown, language_registry, MarkdownOptions::default(), cx)
-    }
-
-    fn render_markdown_at_width(
-        markdown: &str,
-        width: Pixels,
-        cx: &mut TestAppContext,
-    ) -> RenderedText {
-        ensure_theme_initialized(cx);
-
-        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
-        cx.run_until_parked();
-        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, Some(width), cx)
-    }
-
-    fn render_markdown_with_options(
-        markdown: &str,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        options: MarkdownOptions,
-        cx: &mut TestAppContext,
-    ) -> RenderedText {
-        ensure_theme_initialized(cx);
-
-        let markdown = cx.new(|cx| {
-            Markdown::new_with_options(
-                markdown.to_string().into(),
-                language_registry,
-                None,
-                options,
-                cx,
-            )
-        });
-        cx.run_until_parked();
-        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, None, cx)
-    }
-
-    fn rendered_code_chips(
-        markdown: &str,
-        style: MarkdownStyle,
-        cx: &mut TestAppContext,
-    ) -> Vec<(String, Hsla)> {
-        ensure_theme_initialized(cx);
-        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
-        cx.run_until_parked();
-        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
-        rendered
-            .lines
-            .iter()
-            .flat_map(|line| {
-                let text = line.layout.text();
-                line.code_chips
-                    .iter()
-                    .map(|(range, color)| (text[range.clone()].to_string(), *color))
-                    .collect::<Vec<_>>()
-            })
-            .collect()
-    }
-
     #[gpui::test]
     fn test_inline_code_chips_cover_exactly_the_code_span_glyphs(cx: &mut TestAppContext) {
         let chip_background = gpui::red();
@@ -6096,46 +5861,6 @@ mod tests {
                 ("four".to_string(), chip_background)
             ]
         );
-    }
-
-    fn render_markdown_with_image_resolver(
-        markdown: &str,
-        options: MarkdownOptions,
-        resolver: impl Fn(&str, &App) -> Option<ImageSource> + 'static,
-        cx: &mut TestAppContext,
-    ) -> RenderedText {
-        ensure_theme_initialized(cx);
-
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
-        let markdown = cx.new(|cx| {
-            Markdown::new_with_options(markdown.to_string().into(), None, None, options, cx)
-        });
-        cx.run_until_parked();
-        let (rendered, _) = cx.draw(
-            Default::default(),
-            size(px(600.0), px(600.0)),
-            |_window, _cx| {
-                MarkdownElement::new(markdown, MarkdownStyle::default())
-                    .image_resolver(resolver)
-                    .code_block_renderer(CodeBlockRenderer::Default {
-                        copy_button_visibility: CopyButtonVisibility::Hidden,
-                        wrap_button_visibility: WrapButtonVisibility::Hidden,
-                        border: false,
-                    })
-            },
-        );
-        rendered.text
-    }
-
-    fn test_image(cx: &mut TestAppContext) -> Arc<RenderImage> {
-        cx.update(|cx| {
-            cx.svg_renderer()
-                .render_single_frame(
-                    br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>"#,
-                    1.0,
-                )
-                .expect("test svg should render")
-        })
     }
 
     #[gpui::test]
@@ -6443,13 +6168,6 @@ mod tests {
         assert_eq!(second_word, "b");
     }
 
-    const REVIEW_TABLE: &str = concat!(
-        "| ID | Sev | File | Line | Summary |\n",
-        "|---|---|---|---|---|\n",
-        "| R1 | High | src/main.rs | 42 | Unwrap on user input can panic |\n",
-        "| R2 | Low | src/lib.rs | 7 | Prefer iterators over index loops |\n",
-    );
-
     #[gpui::test]
     fn test_table_columns_are_sized_to_their_content(cx: &mut TestAppContext) {
         fn cells(row: &str) -> impl Iterator<Item = &str> {
@@ -6601,66 +6319,6 @@ mod tests {
         assert!(table.in_cell);
         table.end();
         assert!(!table.in_cell);
-    }
-
-    struct ImageLayoutView {
-        markdown: Entity<Markdown>,
-        icon: Arc<RenderImage>,
-        tall_image: Arc<RenderImage>,
-    }
-
-    impl Render for ImageLayoutView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let icon = self.icon.clone();
-            let tall_image = self.tall_image.clone();
-            div().size_full().child(
-                MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                    .image_resolver(move |dest_url, _| {
-                        let image = if dest_url == "tall.png" {
-                            tall_image.clone()
-                        } else {
-                            icon.clone()
-                        };
-                        Some(ImageSource::Render(image))
-                    }),
-            )
-        }
-    }
-
-    fn render_image_layout(source: &'static str, cx: &mut TestAppContext) -> VisualTestContext {
-        ensure_theme_initialized(cx);
-        let render_svg = |svg: &'static [u8], cx: &mut TestAppContext| {
-            cx.update(|cx| {
-                cx.svg_renderer()
-                    .render_single_frame(svg, 1.0)
-                    .expect("test svg should render")
-            })
-        };
-        let icon = render_svg(
-            br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>"#,
-            cx,
-        );
-        let tall_image = render_svg(
-            br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="80"></svg>"#,
-            cx,
-        );
-        let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
-            let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
-            ImageLayoutView {
-                markdown,
-                icon,
-                tall_image,
-            }
-        });
-        cx.run_until_parked();
-        VisualTestContext::from_window(window.into(), cx)
-    }
-
-    fn image_selectors(source: &str) -> Vec<&'static str> {
-        source
-            .match_indices("![")
-            .map(|(offset, _)| &*format!("markdown_image_{offset}").leak())
-            .collect()
     }
 
     #[gpui::test]
@@ -7032,10 +6690,6 @@ mod tests {
         );
     }
 
-    fn nbsp(n: usize) -> String {
-        "\u{00A0}".repeat(n)
-    }
-
     #[test]
     fn test_escape_plain_text() {
         assert_eq!(Markdown::escape("hello world"), "hello world");
@@ -7121,14 +6775,6 @@ mod tests {
         assert_eq!(Markdown::escape("עברית `code`"), r"עברית \`code\`");
         // Non-ASCII followed by ASCII punctuation
         assert_eq!(Markdown::escape("Test: тест"), r"Test\: тест");
-    }
-
-    fn has_code_block(markdown: &str) -> bool {
-        let parsed_data = parse_markdown_with_options(markdown, false, false, false);
-        parsed_data
-            .events
-            .iter()
-            .any(|(_, event)| matches!(event, MarkdownEvent::Start(MarkdownTag::CodeBlock { .. })))
     }
 
     #[test]
@@ -7508,53 +7154,6 @@ mod tests {
         });
     }
 
-    fn failing_image_source() -> ImageSource {
-        ImageSource::Custom(Arc::new(|_, _| {
-            Some(Err(gpui::ImageCacheError::Asset(
-                "failed to load image".into(),
-            )))
-        }))
-    }
-
-    fn loaded_image_source() -> ImageSource {
-        let buffer = image::ImageBuffer::from_pixel(16, 16, image::Rgba([0, 0, 0, 255]));
-        ImageSource::Render(Arc::new(gpui::RenderImage::new(SmallVec::from_elem(
-            image::Frame::new(buffer),
-            1,
-        ))))
-    }
-
-    fn open_markdown_image_test_window<'a>(
-        source: &str,
-        image_source: ImageSource,
-        cx: &'a mut TestAppContext,
-    ) -> &'a mut gpui::VisualTestContext {
-        struct ImageTestView {
-            markdown: Entity<Markdown>,
-            image_source: ImageSource,
-        }
-
-        impl Render for ImageTestView {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                let image_source = self.image_source.clone();
-                div().size_full().child(
-                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                        .image_resolver(move |_, _| Some(image_source.clone())),
-                )
-            }
-        }
-
-        ensure_theme_initialized(cx);
-
-        let source = source.to_string();
-        let (_, cx) = cx.add_window_view(|_, cx| ImageTestView {
-            markdown: cx.new(|cx| Markdown::new(source.into(), None, None, cx)),
-            image_source,
-        });
-        cx.run_until_parked();
-        cx
-    }
-
     #[gpui::test]
     fn test_clicking_image_fallback_opens_image_url(cx: &mut TestAppContext) {
         let cx = open_markdown_image_test_window(
@@ -7598,42 +7197,6 @@ mod tests {
             cx.opened_url(),
             Some("https://example.com/link".to_string())
         );
-    }
-
-    #[track_caller]
-    fn assert_mappings(rendered: &RenderedText, expected: Vec<Vec<(usize, usize)>>) {
-        assert_eq!(rendered.lines.len(), expected.len(), "line count mismatch");
-        for (line_ix, line_mappings) in expected.into_iter().enumerate() {
-            let line = &rendered.lines[line_ix];
-
-            assert!(
-                line.source_mappings.windows(2).all(|mappings| {
-                    mappings[0].source_index < mappings[1].source_index
-                        && mappings[0].rendered_index < mappings[1].rendered_index
-                }),
-                "line {} has duplicate mappings: {:?}",
-                line_ix,
-                line.source_mappings
-            );
-
-            for (rendered_ix, source_ix) in line_mappings {
-                assert_eq!(
-                    line.source_index_for_rendered_index(rendered_ix),
-                    source_ix,
-                    "line {}, rendered_ix {}",
-                    line_ix,
-                    rendered_ix
-                );
-
-                assert_eq!(
-                    line.rendered_index_for_source_index(source_ix),
-                    rendered_ix,
-                    "line {}, source_ix {}",
-                    line_ix,
-                    source_ix
-                );
-            }
-        }
     }
 
     #[gpui::test]
@@ -7707,24 +7270,6 @@ mod tests {
             h3_line_height > body_line_height,
             "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
         );
-    }
-
-    fn preview_heading_weights(cx: &mut TestAppContext, font: MarkdownFont) -> [FontWeight; 6] {
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
-        cx.update(|window, cx| {
-            let style = MarkdownStyle::themed(font, window, cx);
-            let levels = style
-                .heading_level_styles
-                .expect("preview markdown should define per-level heading styles");
-            [
-                levels.h1, levels.h2, levels.h3, levels.h4, levels.h5, levels.h6,
-            ]
-            .map(|level| {
-                level
-                    .and_then(|level| level.font_weight)
-                    .expect("every preview heading level should set a font weight")
-            })
-        })
     }
 
     #[gpui::test]
@@ -8202,78 +7747,6 @@ mod tests {
         });
     }
 
-    /// Records the font runs of every line it shapes, delegating everything else.
-    struct FontRunRecordingTextSystem {
-        text_system: NoopTextSystem,
-        shaped_lines: Mutex<Vec<(String, Vec<usize>)>>,
-    }
-
-    impl PlatformTextSystem for FontRunRecordingTextSystem {
-        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> anyhow::Result<()> {
-            self.text_system.add_fonts(fonts)
-        }
-
-        fn all_font_names(&self) -> Vec<String> {
-            self.text_system.all_font_names()
-        }
-
-        fn font_id(&self, descriptor: &Font) -> anyhow::Result<FontId> {
-            self.text_system.font_id(descriptor)
-        }
-
-        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-            self.text_system.font_metrics(font_id)
-        }
-
-        fn typographic_bounds(
-            &self,
-            font_id: FontId,
-            glyph_id: GlyphId,
-        ) -> anyhow::Result<Bounds<f32>> {
-            self.text_system.typographic_bounds(font_id, glyph_id)
-        }
-
-        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
-            self.text_system.advance(font_id, glyph_id)
-        }
-
-        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-            self.text_system.glyph_for_char(font_id, ch)
-        }
-
-        fn glyph_raster_bounds(
-            &self,
-            params: &RenderGlyphParams,
-        ) -> anyhow::Result<Bounds<DevicePixels>> {
-            self.text_system.glyph_raster_bounds(params)
-        }
-
-        fn rasterize_glyph(
-            &self,
-            params: &RenderGlyphParams,
-            raster_bounds: Bounds<DevicePixels>,
-        ) -> anyhow::Result<(Size<DevicePixels>, Vec<u8>)> {
-            self.text_system.rasterize_glyph(params, raster_bounds)
-        }
-
-        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-            self.shaped_lines
-                .lock()
-                .expect("shaped lines lock should not be poisoned")
-                .push((text.to_string(), runs.iter().map(|run| run.len).collect()));
-            self.text_system.layout_line(text, font_size, runs)
-        }
-
-        fn recommended_rendering_mode(
-            &self,
-            font_id: FontId,
-            font_size: Pixels,
-        ) -> TextRenderingMode {
-            self.text_system
-                .recommended_rendering_mode(font_id, font_size)
-        }
-    }
-
     #[test]
     fn test_runs_differing_only_in_background_are_shaped_separately() {
         let text_system = Arc::new(FontRunRecordingTextSystem {
@@ -8315,100 +7788,6 @@ mod tests {
             .find(|(text, _)| text == "afi b")
             .expect("paragraph should be shaped");
         assert_eq!(font_run_lengths, &[1, 1, 3]);
-    }
-
-    /// Renders a paragraph followed by a fenced code block at the given
-    /// `buffer_line_height`, returning the rendered line heights of the
-    /// paragraph and of the first code block row.
-    ///
-    /// Note that this does not reproduce the `WithRemSize` wrapper the real
-    /// preview renders inside, so rem-derived lengths (such as the `rems(1.3)`
-    /// prose leading) resolve against the default rem size rather than
-    /// `markdown_preview.font_size`. Code block metrics are unaffected, since
-    /// the code font size is set as absolute pixels.
-    fn rendered_prose_and_code_line_heights(
-        cx: &mut TestAppContext,
-        font_size: f32,
-        buffer_line_height: f32,
-    ) -> (Pixels, Pixels) {
-        ensure_theme_initialized(cx);
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.markdown_preview.get_or_insert_default().font_size =
-                        Some(font_size.into());
-                    settings.theme.buffer_line_height =
-                        Some(settings::BufferLineHeight::Custom(buffer_line_height));
-                });
-            });
-        });
-        cx.run_until_parked();
-
-        let style = {
-            let window = cx.add_empty_window();
-            window.update(|window, cx| MarkdownStyle::themed(MarkdownFont::Preview, window, cx))
-        };
-
-        let markdown =
-            cx.new(|cx| Markdown::new("Body text\n\n```\nfoo\nbar\n```\n".into(), None, None, cx));
-        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
-
-        let [prose, code] = &rendered.lines[..] else {
-            panic!(
-                "expected a prose line and a code block line, got {} lines",
-                rendered.lines.len()
-            )
-        };
-        (prose.layout.line_height(), code.layout.line_height())
-    }
-
-    fn rust_test_theme() -> SyntaxTheme {
-        SyntaxTheme::new(
-            [
-                ("keyword", gpui::red()),
-                ("function", gpui::blue()),
-                ("type", gpui::green()),
-            ]
-            .into_iter()
-            .map(|(name, color)| {
-                (
-                    name.to_owned(),
-                    gpui::HighlightStyle {
-                        color: Some(color),
-                        ..gpui::HighlightStyle::default()
-                    },
-                )
-            }),
-        )
-    }
-
-    fn markdown_with_rust_language(
-        source: &str,
-        cx: &mut TestAppContext,
-    ) -> (Arc<Language>, Entity<Markdown>) {
-        let language = language::rust_lang();
-        language.set_theme(&rust_test_theme());
-        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        language_registry.add(language.clone());
-        let source = SharedString::from(source.to_owned());
-        let markdown = cx.new(|cx| Markdown::new(source, Some(language_registry), None, cx));
-        cx.run_until_parked();
-        (language, markdown)
-    }
-
-    fn cached_code_block_highlights(
-        markdown: &Entity<Markdown>,
-        code_start: usize,
-        cx: &mut TestAppContext,
-    ) -> ResolvedHighlights {
-        markdown.read_with(cx, |markdown, _| {
-            markdown
-                .parsed_markdown()
-                .code_block_highlights
-                .get(&code_start)
-                .expect("code block highlights must be computed during parse")
-                .clone()
-        })
     }
 
     #[gpui::test]
@@ -8512,6 +7891,627 @@ mod tests {
             COMMONMARK_CODE_BLOCK_EXAMPLES.len(),
             failures.join("\n\n")
         );
+    }
+
+    struct TestWindow;
+
+    impl Render for TestWindow {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    struct MarkdownTestView {
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        code_span_link: Option<CodeSpanLinkCallback>,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl Render for MarkdownTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut markdown_element =
+                MarkdownElement::new(self.markdown.clone(), self.style.clone());
+            if let Some(code_span_link) = self.code_span_link.clone() {
+                markdown_element =
+                    markdown_element.on_code_span_link(move |text, cx| code_span_link(text, cx));
+            }
+            CapturingMarkdownElement {
+                markdown_element: markdown_element.code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                ),
+                rendered_text: self.rendered_text.clone(),
+            }
+        }
+    }
+
+    struct CapturingMarkdownElement {
+        markdown_element: MarkdownElement,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl IntoElement for CapturingMarkdownElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for CapturingMarkdownElement {
+        type RequestLayoutState = RenderedMarkdown;
+        type PrepaintState = Hitbox;
+
+        fn id(&self) -> Option<ElementId> {
+            self.markdown_element.id()
+        }
+
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            self.markdown_element.source_location()
+        }
+
+        fn request_layout(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+            self.markdown_element
+                .request_layout(id, inspector_id, window, cx)
+        }
+
+        fn prepaint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            rendered_markdown: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            self.markdown_element
+                .prepaint(id, inspector_id, bounds, rendered_markdown, window, cx)
+        }
+
+        fn paint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            rendered_markdown: &mut Self::RequestLayoutState,
+            hitbox: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            self.markdown_element.paint(
+                id,
+                inspector_id,
+                bounds,
+                rendered_markdown,
+                hitbox,
+                window,
+                cx,
+            );
+            *self.rendered_text.borrow_mut() = Some(rendered_markdown.text.clone());
+        }
+    }
+
+    fn ensure_theme_initialized(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            if !cx.has_global::<settings::SettingsStore>() {
+                settings::init(cx);
+            }
+            if !cx.has_global::<theme::GlobalTheme>() {
+                theme_settings::init(theme::LoadThemes::JustBase, cx);
+            }
+        });
+    }
+
+    fn render_markdown_entity_in_view(
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        code_span_link: Option<CodeSpanLinkCallback>,
+        width: Option<Pixels>,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let rendered_text = rendered_text.clone();
+            move |_, _| MarkdownTestView {
+                markdown,
+                style,
+                code_span_link,
+                rendered_text,
+            }
+        });
+        if let Some(width) = width {
+            cx.simulate_resize(size(width, px(600.)));
+        }
+        cx.run_until_parked();
+
+        rendered_text
+            .borrow()
+            .clone()
+            .expect("markdown should be rendered in the test view")
+    }
+
+    fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
+        render_markdown_with_language_registry(markdown, None, cx)
+    }
+
+    fn render_markdown_with_code_span_link(
+        markdown: &str,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        render_markdown_with_code_span_link_style(markdown, MarkdownStyle::default(), callback, cx)
+    }
+
+    fn render_markdown_with_code_span_link_style(
+        markdown: &str,
+        style: MarkdownStyle,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        ensure_theme_initialized(cx);
+
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        render_markdown_entity_in_view(markdown, style, Some(Arc::new(callback)), None, cx)
+    }
+
+    fn render_markdown_with_language_registry(
+        markdown: &str,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        render_markdown_with_options(markdown, language_registry, MarkdownOptions::default(), cx)
+    }
+
+    fn render_markdown_at_width(
+        markdown: &str,
+        width: Pixels,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        ensure_theme_initialized(cx);
+
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, Some(width), cx)
+    }
+
+    fn render_markdown_with_options(
+        markdown: &str,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        options: MarkdownOptions,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        ensure_theme_initialized(cx);
+
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                markdown.to_string().into(),
+                language_registry,
+                None,
+                options,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, None, cx)
+    }
+
+    fn rendered_code_chips(
+        markdown: &str,
+        style: MarkdownStyle,
+        cx: &mut TestAppContext,
+    ) -> Vec<(String, Hsla)> {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
+        rendered
+            .lines
+            .iter()
+            .flat_map(|line| {
+                let text = line.layout.text();
+                line.code_chips
+                    .iter()
+                    .map(|(range, color)| (text[range.clone()].to_string(), *color))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn render_markdown_with_image_resolver(
+        markdown: &str,
+        options: MarkdownOptions,
+        resolver: impl Fn(&str, &App) -> Option<ImageSource> + 'static,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(markdown.to_string().into(), None, None, options, cx)
+        });
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .image_resolver(resolver)
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+            },
+        );
+        rendered.text
+    }
+
+    fn test_image(cx: &mut TestAppContext) -> Arc<RenderImage> {
+        cx.update(|cx| {
+            cx.svg_renderer()
+                .render_single_frame(
+                    br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>"#,
+                    1.0,
+                )
+                .expect("test svg should render")
+        })
+    }
+
+    const REVIEW_TABLE: &str = concat!(
+        "| ID | Sev | File | Line | Summary |\n",
+        "|---|---|---|---|---|\n",
+        "| R1 | High | src/main.rs | 42 | Unwrap on user input can panic |\n",
+        "| R2 | Low | src/lib.rs | 7 | Prefer iterators over index loops |\n",
+    );
+
+    struct ImageLayoutView {
+        markdown: Entity<Markdown>,
+        icon: Arc<RenderImage>,
+        tall_image: Arc<RenderImage>,
+    }
+
+    impl Render for ImageLayoutView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let icon = self.icon.clone();
+            let tall_image = self.tall_image.clone();
+            div().size_full().child(
+                MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                    .image_resolver(move |dest_url, _| {
+                        let image = if dest_url == "tall.png" {
+                            tall_image.clone()
+                        } else {
+                            icon.clone()
+                        };
+                        Some(ImageSource::Render(image))
+                    }),
+            )
+        }
+    }
+
+    fn render_image_layout(source: &'static str, cx: &mut TestAppContext) -> VisualTestContext {
+        ensure_theme_initialized(cx);
+        let render_svg = |svg: &'static [u8], cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                cx.svg_renderer()
+                    .render_single_frame(svg, 1.0)
+                    .expect("test svg should render")
+            })
+        };
+        let icon = render_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>"#,
+            cx,
+        );
+        let tall_image = render_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="80"></svg>"#,
+            cx,
+        );
+        let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
+            let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+            ImageLayoutView {
+                markdown,
+                icon,
+                tall_image,
+            }
+        });
+        cx.run_until_parked();
+        VisualTestContext::from_window(window.into(), cx)
+    }
+
+    fn image_selectors(source: &str) -> Vec<&'static str> {
+        source
+            .match_indices("![")
+            .map(|(offset, _)| &*format!("markdown_image_{offset}").leak())
+            .collect()
+    }
+
+    fn nbsp(n: usize) -> String {
+        "\u{00A0}".repeat(n)
+    }
+
+    fn has_code_block(markdown: &str) -> bool {
+        let parsed_data = parse_markdown_with_options(markdown, false, false, false);
+        parsed_data
+            .events
+            .iter()
+            .any(|(_, event)| matches!(event, MarkdownEvent::Start(MarkdownTag::CodeBlock { .. })))
+    }
+
+    fn failing_image_source() -> ImageSource {
+        ImageSource::Custom(Arc::new(|_, _| {
+            Some(Err(gpui::ImageCacheError::Asset(
+                "failed to load image".into(),
+            )))
+        }))
+    }
+
+    fn loaded_image_source() -> ImageSource {
+        let buffer = image::ImageBuffer::from_pixel(16, 16, image::Rgba([0, 0, 0, 255]));
+        ImageSource::Render(Arc::new(gpui::RenderImage::new(SmallVec::from_elem(
+            image::Frame::new(buffer),
+            1,
+        ))))
+    }
+
+    fn open_markdown_image_test_window<'a>(
+        source: &str,
+        image_source: ImageSource,
+        cx: &'a mut TestAppContext,
+    ) -> &'a mut gpui::VisualTestContext {
+        struct ImageTestView {
+            markdown: Entity<Markdown>,
+            image_source: ImageSource,
+        }
+
+        impl Render for ImageTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let image_source = self.image_source.clone();
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .image_resolver(move |_, _| Some(image_source.clone())),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let source = source.to_string();
+        let (_, cx) = cx.add_window_view(|_, cx| ImageTestView {
+            markdown: cx.new(|cx| Markdown::new(source.into(), None, None, cx)),
+            image_source,
+        });
+        cx.run_until_parked();
+        cx
+    }
+
+    #[track_caller]
+    fn assert_mappings(rendered: &RenderedText, expected: Vec<Vec<(usize, usize)>>) {
+        assert_eq!(rendered.lines.len(), expected.len(), "line count mismatch");
+        for (line_ix, line_mappings) in expected.into_iter().enumerate() {
+            let line = &rendered.lines[line_ix];
+
+            assert!(
+                line.source_mappings.windows(2).all(|mappings| {
+                    mappings[0].source_index < mappings[1].source_index
+                        && mappings[0].rendered_index < mappings[1].rendered_index
+                }),
+                "line {} has duplicate mappings: {:?}",
+                line_ix,
+                line.source_mappings
+            );
+
+            for (rendered_ix, source_ix) in line_mappings {
+                assert_eq!(
+                    line.source_index_for_rendered_index(rendered_ix),
+                    source_ix,
+                    "line {}, rendered_ix {}",
+                    line_ix,
+                    rendered_ix
+                );
+
+                assert_eq!(
+                    line.rendered_index_for_source_index(source_ix),
+                    rendered_ix,
+                    "line {}, source_ix {}",
+                    line_ix,
+                    source_ix
+                );
+            }
+        }
+    }
+
+    fn preview_heading_weights(cx: &mut TestAppContext, font: MarkdownFont) -> [FontWeight; 6] {
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.update(|window, cx| {
+            let style = MarkdownStyle::themed(font, window, cx);
+            let levels = style
+                .heading_level_styles
+                .expect("preview markdown should define per-level heading styles");
+            [
+                levels.h1, levels.h2, levels.h3, levels.h4, levels.h5, levels.h6,
+            ]
+            .map(|level| {
+                level
+                    .and_then(|level| level.font_weight)
+                    .expect("every preview heading level should set a font weight")
+            })
+        })
+    }
+
+    /// Records the font runs of every line it shapes, delegating everything else.
+    struct FontRunRecordingTextSystem {
+        text_system: NoopTextSystem,
+        shaped_lines: Mutex<Vec<(String, Vec<usize>)>>,
+    }
+
+    impl PlatformTextSystem for FontRunRecordingTextSystem {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> anyhow::Result<()> {
+            self.text_system.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            self.text_system.all_font_names()
+        }
+
+        fn font_id(&self, descriptor: &Font) -> anyhow::Result<FontId> {
+            self.text_system.font_id(descriptor)
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            self.text_system.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> anyhow::Result<Bounds<f32>> {
+            self.text_system.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
+            self.text_system.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            self.text_system.glyph_for_char(font_id, ch)
+        }
+
+        fn glyph_raster_bounds(
+            &self,
+            params: &RenderGlyphParams,
+        ) -> anyhow::Result<Bounds<DevicePixels>> {
+            self.text_system.glyph_raster_bounds(params)
+        }
+
+        fn rasterize_glyph(
+            &self,
+            params: &RenderGlyphParams,
+            raster_bounds: Bounds<DevicePixels>,
+        ) -> anyhow::Result<(Size<DevicePixels>, Vec<u8>)> {
+            self.text_system.rasterize_glyph(params, raster_bounds)
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.shaped_lines
+                .lock()
+                .expect("shaped lines lock should not be poisoned")
+                .push((text.to_string(), runs.iter().map(|run| run.len).collect()));
+            self.text_system.layout_line(text, font_size, runs)
+        }
+
+        fn recommended_rendering_mode(
+            &self,
+            font_id: FontId,
+            font_size: Pixels,
+        ) -> TextRenderingMode {
+            self.text_system
+                .recommended_rendering_mode(font_id, font_size)
+        }
+    }
+
+    /// Renders a paragraph followed by a fenced code block at the given
+    /// `buffer_line_height`, returning the rendered line heights of the
+    /// paragraph and of the first code block row.
+    ///
+    /// Note that this does not reproduce the `WithRemSize` wrapper the real
+    /// preview renders inside, so rem-derived lengths (such as the `rems(1.3)`
+    /// prose leading) resolve against the default rem size rather than
+    /// `markdown_preview.font_size`. Code block metrics are unaffected, since
+    /// the code font size is set as absolute pixels.
+    fn rendered_prose_and_code_line_heights(
+        cx: &mut TestAppContext,
+        font_size: f32,
+        buffer_line_height: f32,
+    ) -> (Pixels, Pixels) {
+        ensure_theme_initialized(cx);
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.markdown_preview.get_or_insert_default().font_size =
+                        Some(font_size.into());
+                    settings.theme.buffer_line_height =
+                        Some(settings::BufferLineHeight::Custom(buffer_line_height));
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let style = {
+            let window = cx.add_empty_window();
+            window.update(|window, cx| MarkdownStyle::themed(MarkdownFont::Preview, window, cx))
+        };
+
+        let markdown =
+            cx.new(|cx| Markdown::new("Body text\n\n```\nfoo\nbar\n```\n".into(), None, None, cx));
+        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
+
+        let [prose, code] = &rendered.lines[..] else {
+            panic!(
+                "expected a prose line and a code block line, got {} lines",
+                rendered.lines.len()
+            )
+        };
+        (prose.layout.line_height(), code.layout.line_height())
+    }
+
+    fn rust_test_theme() -> SyntaxTheme {
+        SyntaxTheme::new(
+            [
+                ("keyword", gpui::red()),
+                ("function", gpui::blue()),
+                ("type", gpui::green()),
+            ]
+            .into_iter()
+            .map(|(name, color)| {
+                (
+                    name.to_owned(),
+                    gpui::HighlightStyle {
+                        color: Some(color),
+                        ..gpui::HighlightStyle::default()
+                    },
+                )
+            }),
+        )
+    }
+
+    fn markdown_with_rust_language(
+        source: &str,
+        cx: &mut TestAppContext,
+    ) -> (Arc<Language>, Entity<Markdown>) {
+        let language = language::rust_lang();
+        language.set_theme(&rust_test_theme());
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(language.clone());
+        let source = SharedString::from(source.to_owned());
+        let markdown = cx.new(|cx| Markdown::new(source, Some(language_registry), None, cx));
+        cx.run_until_parked();
+        (language, markdown)
+    }
+
+    fn cached_code_block_highlights(
+        markdown: &Entity<Markdown>,
+        code_start: usize,
+        cx: &mut TestAppContext,
+    ) -> ResolvedHighlights {
+        markdown.read_with(cx, |markdown, _| {
+            markdown
+                .parsed_markdown()
+                .code_block_highlights
+                .get(&code_start)
+                .expect("code block highlights must be computed during parse")
+                .clone()
+        })
     }
 
     fn assert_code_block_copy(source: &str, expected: &str, cx: &mut TestAppContext) {
