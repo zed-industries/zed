@@ -7692,170 +7692,136 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_streaming_chunks_do_not_save_thread(cx: &mut TestAppContext) {
-        let (fake, model, acp_thread, _thread, session_id) = init_streaming_session(cx).await;
-        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
-
-        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
-        let send = cx.foreground_executor().spawn(send);
-        cx.run_until_parked();
-        let saves_before_stream = database.save_count();
+        let (turn, send) = StreamingTurn::start(cx).await;
+        let saves_before_stream = turn.database.save_count();
 
         for chunk in ["one ", "two ", "three"] {
-            fake.send_last_text(&model, chunk);
+            turn.fake.send_last_text(&turn.model, chunk);
             cx.run_until_parked();
         }
         assert_eq!(
-            database.save_count(),
+            turn.database.save_count(),
             saves_before_stream,
             "streamed chunks must not save the thread"
         );
 
-        fake.end_last(&model);
+        turn.fake.end_last(&turn.model);
         send.await.unwrap();
         cx.run_until_parked();
-        assert!(database.save_count() > saves_before_stream);
+        assert!(turn.database.save_count() > saves_before_stream);
         assert_eq!(
-            saved_markdown(&database, &session_id).await,
+            turn.saved_markdown().await,
             "## User\n\nhello\n\n## Assistant\n\none two three\n"
         );
     }
 
     #[gpui::test]
     async fn test_completed_message_saved_while_next_message_streams(cx: &mut TestAppContext) {
-        let (fake, model, acp_thread, _thread, session_id) = init_streaming_session(cx).await;
-        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+        let (turn, send) = StreamingTurn::start(cx).await;
 
-        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
-        let send = cx.foreground_executor().spawn(send);
-        cx.run_until_parked();
-
-        fake.send_last_event(
-            &model,
+        turn.fake.send_last_event(
+            &turn.model,
             LanguageModelCompletionEvent::StartMessage {
                 message_id: "first".into(),
             },
         );
-        fake.send_last_text(&model, "first message");
-        fake.send_last_event(
-            &model,
+        turn.fake.send_last_text(&turn.model, "first message");
+        turn.fake.send_last_event(
+            &turn.model,
             LanguageModelCompletionEvent::StartMessage {
                 message_id: "second".into(),
             },
         );
-        fake.send_last_text(&model, "second mess");
+        turn.fake.send_last_text(&turn.model, "second mess");
         cx.run_until_parked();
         assert_eq!(
-            saved_markdown(&database, &session_id).await,
+            turn.saved_markdown().await,
             "## User\n\nhello\n\n## Assistant\n\nfirst message\n",
             "a completed message must be saved even while the next one streams"
         );
 
-        fake.send_last_text(&model, "age");
-        fake.end_last(&model);
+        turn.fake.send_last_text(&turn.model, "age");
+        turn.fake.end_last(&turn.model);
         send.await.unwrap();
         cx.run_until_parked();
         assert_eq!(
-            saved_markdown(&database, &session_id).await,
+            turn.saved_markdown().await,
             "## User\n\nhello\n\n## Assistant\n\nfirst message\n\n## Assistant\n\nsecond message\n"
         );
     }
 
     #[gpui::test]
     async fn test_cancelling_stream_saves_partial_message(cx: &mut TestAppContext) {
-        let (fake, model, acp_thread, _thread, session_id) = init_streaming_session(cx).await;
-        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+        let (turn, send) = StreamingTurn::start(cx).await;
 
-        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
-        let send = cx.foreground_executor().spawn(send);
+        turn.fake.send_last_text(&turn.model, "partial");
         cx.run_until_parked();
-
-        fake.send_last_text(&model, "partial");
-        cx.run_until_parked();
-        acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        turn.acp_thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await;
         send.await.unwrap();
         cx.run_until_parked();
         assert_eq!(
-            saved_markdown(&database, &session_id).await,
+            turn.saved_markdown().await,
             "## User\n\nhello\n\n## Assistant\n\npartial\n"
         );
     }
 
     #[gpui::test]
     async fn test_settings_changes_save_while_message_streams(cx: &mut TestAppContext) {
-        let (fake, model, acp_thread, thread, session_id) = init_streaming_session(cx).await;
-        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
-
-        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
-        let send = cx.foreground_executor().spawn(send);
-        cx.run_until_parked();
-        fake.send_last_text(&model, "one ");
+        let (turn, send) = StreamingTurn::start(cx).await;
+        turn.fake.send_last_text(&turn.model, "one ");
         cx.run_until_parked();
 
-        thread.update(cx, |thread, cx| {
+        turn.thread.update(cx, |thread, cx| {
             thread.set_thinking_effort(Some("high".into()), cx);
         });
         cx.run_until_parked();
-        let db_thread = database
-            .load_thread(session_id.clone())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(db_thread.thinking_effort.as_deref(), Some("high"));
+        assert_eq!(
+            turn.saved_thread().await.thinking_effort.as_deref(),
+            Some("high")
+        );
 
-        thread.update(cx, |thread, cx| thread.set_title("Renamed".into(), cx));
+        turn.thread
+            .update(cx, |thread, cx| thread.set_title("Renamed".into(), cx));
         cx.run_until_parked();
-        let db_thread = database
-            .load_thread(session_id.clone())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(db_thread.title, "Renamed");
+        assert_eq!(turn.saved_thread().await.title, "Renamed");
 
         let draft = vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
             "next prompt",
         ))];
-        acp_thread.update(cx, |acp_thread, cx| {
+        turn.acp_thread.update(cx, |acp_thread, cx| {
             acp_thread.set_draft_prompt(Some(draft.clone()), cx);
         });
         // The thread view notifies the thread after a draft edit to request a save.
-        thread.update(cx, |_, cx| cx.notify());
+        turn.thread.update(cx, |_, cx| cx.notify());
         cx.run_until_parked();
-        let db_thread = database
-            .load_thread(session_id.clone())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(db_thread.draft_prompt, Some(draft));
+        assert_eq!(turn.saved_thread().await.draft_prompt, Some(draft));
 
-        let saves_after_changes = database.save_count();
-        fake.send_last_text(&model, "two");
+        let saves_after_changes = turn.database.save_count();
+        turn.fake.send_last_text(&turn.model, "two");
         cx.run_until_parked();
         assert_eq!(
-            database.save_count(),
+            turn.database.save_count(),
             saves_after_changes,
             "streamed chunks after a saved change must not save the thread"
         );
 
-        fake.end_last(&model);
+        turn.fake.end_last(&turn.model);
         send.await.unwrap();
     }
 
     #[gpui::test]
     async fn test_token_usage_does_not_save_while_message_streams(cx: &mut TestAppContext) {
-        let (fake, model, acp_thread, _thread, _session_id) = init_streaming_session(cx).await;
-        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
-
-        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
-        let send = cx.foreground_executor().spawn(send);
+        let (turn, send) = StreamingTurn::start(cx).await;
+        turn.fake.send_last_text(&turn.model, "one ");
         cx.run_until_parked();
-        fake.send_last_text(&model, "one ");
-        cx.run_until_parked();
-        let saves_before_usage = database.save_count();
+        let saves_before_usage = turn.database.save_count();
 
         // Some providers, like Google, report usage with every streamed chunk.
         for output_tokens in [10, 20, 30] {
-            fake.send_last_event(
-                &model,
+            turn.fake.send_last_event(
+                &turn.model,
                 LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
                     input_tokens: 100,
                     output_tokens,
@@ -7864,57 +7830,60 @@ mod internal_tests {
             );
             cx.run_until_parked();
         }
-        assert_eq!(database.save_count(), saves_before_usage);
+        assert_eq!(turn.database.save_count(), saves_before_usage);
 
-        fake.end_last(&model);
+        turn.fake.end_last(&turn.model);
         send.await.unwrap();
     }
 
-    async fn init_streaming_session(
-        cx: &mut TestAppContext,
-    ) -> (
-        Arc<FakeLanguageModelProvider>,
-        LanguageModel,
-        Entity<AcpThread>,
-        Entity<Thread>,
-        acp_v1::SessionId,
-    ) {
-        let fake = init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/", json!({ "a": {} })).await;
-        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx
-            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
-
-        let acp_thread = cx
-            .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
-            })
-            .await
-            .unwrap();
-        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let thread = agent.read_with(cx, |agent, _| {
-            agent.sessions.get(&session_id).unwrap().thread.clone()
-        });
-
-        let model = fake.model("fake");
-        thread.update(cx, |thread, cx| {
-            thread.set_model(model.clone(), cx);
-        });
-        (fake, model, acp_thread, thread, session_id)
+    /// A native session whose first prompt, "hello", is waiting on the fake model.
+    struct StreamingTurn {
+        fake: Arc<FakeLanguageModelProvider>,
+        model: LanguageModel,
+        acp_thread: Entity<AcpThread>,
+        thread: Entity<Thread>,
+        session_id: acp_v1::SessionId,
+        database: Arc<ThreadsDatabase>,
     }
 
-    async fn saved_markdown(database: &ThreadsDatabase, session_id: &acp_v1::SessionId) -> String {
-        let db_thread = database
-            .load_thread(session_id.clone())
-            .await
-            .unwrap()
-            .unwrap();
-        crate::thread::messages_to_markdown(&db_thread.messages)
+    impl StreamingTurn {
+        async fn start(
+            cx: &mut TestAppContext,
+        ) -> (Self, Task<Result<Option<acp_thread::SubmissionResponse>>>) {
+            let fake = init_test(cx);
+            let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+            let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+            let model = fake.model("fake");
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+            let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+
+            let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+            let send = cx.foreground_executor().spawn(send);
+            cx.run_until_parked();
+
+            let turn = Self {
+                fake,
+                model,
+                acp_thread,
+                thread,
+                session_id,
+                database,
+            };
+            (turn, send)
+        }
+
+        async fn saved_thread(&self) -> DbThread {
+            self.database
+                .load_thread(self.session_id.clone())
+                .await
+                .unwrap()
+                .unwrap()
+        }
+
+        async fn saved_markdown(&self) -> String {
+            crate::thread::messages_to_markdown(&self.saved_thread().await.messages)
+        }
     }
 
     #[gpui::test]
