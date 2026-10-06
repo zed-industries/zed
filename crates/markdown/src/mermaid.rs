@@ -210,6 +210,7 @@ impl CachedMermaidDiagram {
         let parsed_svg = Arc::new(OnceLock::<Arc<ParsedSvg>>::new());
         let svg_renderer = cx.svg_renderer();
         let mermaid_theme = build_mermaid_theme(cx);
+        let text_system = cx.text_system().clone();
 
         let task = cx.spawn({
             let render_image = render_image.clone();
@@ -218,8 +219,11 @@ impl CachedMermaidDiagram {
             async move |this, cx| {
                 let value = cx
                     .background_spawn(async move {
-                        let svg_string =
-                            mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
+                        let svg_string = mermaid_render::render_to_svg(
+                            &contents.contents,
+                            &mermaid_theme,
+                            text_system,
+                        )?;
                         let tree = svg_renderer
                             .parse_svg(svg_string.as_bytes())
                             .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -338,27 +342,6 @@ impl CachedMermaidDiagram {
     }
 }
 
-/// Merman has somewhat limited text measurement capabilities.
-///
-/// When it doesn't have metrics for any of the specified fonts, it chooses a
-/// fairly narrow width, which causes visible overflow. Adding `sans-serif`
-/// allows it to fall back to a more conservative (i.e. wider) measurement.
-///
-/// This isn't perfect - very wide fonts will likely still cause overflow. A
-/// proper fix would involve somehow piping `resvg`'s actual measurements into
-/// `merman`, but that is a lot of work for a fairly uncommon edge case.
-fn mermaid_font_family(font_family: &str) -> String {
-    let font_family = gpui::font_name_with_fallbacks(font_family, "system-ui");
-    if font_family
-        .split(',')
-        .any(|family| family.trim().eq_ignore_ascii_case("sans-serif"))
-    {
-        font_family.to_string()
-    } else {
-        format!("{font_family}, sans-serif")
-    }
-}
-
 fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
     let colors = cx.theme().colors();
     let theme_settings = ThemeSettings::get_global(cx);
@@ -370,7 +353,7 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
 
     mermaid_render::MermaidTheme {
         dark_mode: is_dark,
-        font_family: mermaid_font_family(theme_settings.ui_font.family.as_ref()),
+        font: theme_settings.ui_font.clone(),
         background: colors.editor_background,
         primary_color: colors.surface_background,
         primary_text_color: colors.text,
@@ -1092,31 +1075,6 @@ mod tests {
             .position(|diagram| diagram == &new_content)?;
         MermaidState::get_fallback_image(idx, old_full_order, new_full_order.len(), cache)
             .map(|(image, _)| image)
-    }
-
-    #[test]
-    fn test_mermaid_font_family_resolves_zed_virtual_fonts() {
-        assert_eq!(
-            super::mermaid_font_family(".ZedSans"),
-            "IBM Plex Sans, sans-serif"
-        );
-        assert_eq!(
-            super::mermaid_font_family("Zed Plex Sans"),
-            "IBM Plex Sans, sans-serif"
-        );
-        assert_eq!(super::mermaid_font_family(".ZedMono"), "Lilex, sans-serif");
-        assert_eq!(
-            super::mermaid_font_family(".SystemUIFont"),
-            "system-ui, sans-serif"
-        );
-        assert_eq!(
-            super::mermaid_font_family("Custom Font"),
-            "Custom Font, sans-serif"
-        );
-        assert_eq!(
-            super::mermaid_font_family("Custom Font, sans-serif"),
-            "Custom Font, sans-serif"
-        );
     }
 
     #[test]
