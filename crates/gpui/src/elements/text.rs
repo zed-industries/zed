@@ -166,14 +166,6 @@ macro_rules! text {
     }};
 }
 
-impl IntoElement for Text {
-    type Element = Self;
-    #[inline]
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for Text {
     type RequestLayoutState = TextLayout;
     type PrepaintState = ();
@@ -301,14 +293,6 @@ impl Element for &'static str {
     }
 }
 
-impl IntoElement for &'static str {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl IntoElement for String {
     type Element = SharedString;
 
@@ -372,14 +356,6 @@ impl Element for SharedString {
         cx: &mut App,
     ) {
         text_layout.paint(self.as_ref(), window, cx)
-    }
-}
-
-impl IntoElement for SharedString {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -598,14 +574,6 @@ impl Element for StyledText {
         cx: &mut App,
     ) {
         self.layout.paint(&self.text, window, cx)
-    }
-}
-
-impl IntoElement for StyledText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -1302,14 +1270,6 @@ impl Element for InteractiveText {
                 ((), interactive_state)
             },
         );
-    }
-}
-
-impl IntoElement for InteractiveText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

@@ -432,14 +432,6 @@ impl Element for IndentGuidesElement {
     }
 }
 
-impl IntoElement for IndentGuidesElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 fn compute_indent_guides(
     indents: &[usize],
     offset: usize,

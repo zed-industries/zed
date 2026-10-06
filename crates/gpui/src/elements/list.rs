@@ -9,9 +9,9 @@
 
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, Overflow, Pixels,
+    Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point, px,
+    size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -1618,14 +1618,6 @@ impl Element for List {
                 item.element.paint(window, cx);
             }
         });
-    }
-}
-
-impl IntoElement for List {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
