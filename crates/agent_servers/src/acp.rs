@@ -275,7 +275,7 @@ pub struct AcpConnection {
     connection: ConnectionTo<Agent>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     pending_sessions: RefCell<HashMap<acp::SessionId, PendingAcpSession>>,
-    auth_methods: Vec<acp::AuthMethod>,
+    auth_methods: Vec<acp_v2::AuthMethod>,
     agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
     request_elicitations: Entity<ElicitationStore>,
@@ -959,14 +959,14 @@ impl AcpConnection {
                 "args": gemini_args,
                 "env": original_command.env.unwrap_or_default(),
             });
-            let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
-            vec![acp::AuthMethod::Agent(
-                acp::AuthMethodAgent::new(GEMINI_TERMINAL_AUTH_METHOD_ID, "Login")
+            let meta = acp_v2::Meta::from_iter([("terminal-auth".to_string(), value)]);
+            vec![acp_v2::AuthMethod::Agent(
+                acp_v2::AuthMethodAgent::new(GEMINI_TERMINAL_AUTH_METHOD_ID, "Login")
                     .description("Login with your Google or Vertex AI account")
                     .meta(meta),
             )]
         } else {
-            response.auth_methods
+            acp_thread::auth_methods::from_v1(response.auth_methods)?
         };
         let defaults = AcpConnectionDefaults::new(default_mode, default_config_options);
         let settings_subscription = cx.update({
@@ -1519,17 +1519,17 @@ impl Drop for AcpConnection {
     }
 }
 
-fn terminal_auth_task_id(agent_id: &AgentId, method_id: &acp::AuthMethodId) -> String {
+fn terminal_auth_task_id(agent_id: &AgentId, method_id: &acp_v2::AuthMethodId) -> String {
     format!("external-agent-{}-{}-login", agent_id.0, method_id.0)
 }
 
 fn terminal_auth_task(
     command: &AgentServerCommand,
     agent_id: &AgentId,
-    method: &acp::AuthMethodTerminal,
+    method: &acp_v2::AuthMethodTerminal,
 ) -> SpawnInTerminal {
     acp_thread::build_terminal_auth_task(
-        terminal_auth_task_id(agent_id, &method.id),
+        terminal_auth_task_id(agent_id, &method.method_id),
         method.name.clone(),
         command.path.to_string_lossy().into_owned(),
         command.args.clone(),
@@ -1540,8 +1540,8 @@ fn terminal_auth_task(
 /// Used to support the _meta method prior to stabilization
 fn meta_terminal_auth_task(
     agent_id: &AgentId,
-    method_id: &acp::AuthMethodId,
-    method: &acp::AuthMethod,
+    method_id: &acp_v2::AuthMethodId,
+    method: &acp_v2::AuthMethod,
 ) -> Option<SpawnInTerminal> {
     #[derive(Deserialize)]
     struct MetaTerminalAuth {
@@ -1789,22 +1789,22 @@ impl AgentConnection for AcpConnection {
         )
     }
 
-    fn auth_methods(&self) -> &[acp::AuthMethod] {
+    fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
         &self.auth_methods
     }
 
     fn terminal_auth_task(
         &self,
-        method_id: &acp::AuthMethodId,
+        method_id: &acp_v2::AuthMethodId,
         cx: &App,
     ) -> Option<Task<Result<SpawnInTerminal>>> {
         let method = self
             .auth_methods
             .iter()
-            .find(|method| method.id() == method_id)?;
+            .find(|method| method.method_id() == method_id)?;
 
         match method {
-            acp::AuthMethod::Terminal(terminal) => {
+            acp_v2::AuthMethod::Terminal(terminal) => {
                 let agent_id = self.id.clone();
                 let terminal = terminal.clone();
                 let store = self.agent_server_store.clone();
@@ -1814,9 +1814,14 @@ impl AgentConnection for AcpConnection {
                             let agent = store
                                 .get_external_agent(&agent_id)
                                 .context("Agent server not found")?;
+                            let environment = terminal
+                                .env
+                                .iter()
+                                .map(|variable| (variable.name.clone(), variable.value.clone()))
+                                .collect();
                             anyhow::Ok(agent.get_command(
                                 terminal.args.clone(),
-                                HashMap::from_iter(terminal.env.clone()),
+                                environment,
                                 &mut cx.to_async(),
                             ))
                         })?
@@ -1825,17 +1830,28 @@ impl AgentConnection for AcpConnection {
                     Ok(terminal_auth_task(&command, &agent_id, &terminal))
                 }))
             }
-            _ => meta_terminal_auth_task(&self.id, method_id, method)
+            acp_v2::AuthMethod::Agent(_) => meta_terminal_auth_task(&self.id, method_id, method)
                 .map(|task| Task::ready(Ok(task))),
+            _ => None,
         }
     }
 
-    fn authenticate(&self, method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, method_id: acp_v2::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
+        if !self.auth_methods.iter().any(|method| {
+            matches!(method, acp_v2::AuthMethod::Agent(agent) if agent.method_id == method_id)
+        }) {
+            return Task::ready(Err(anyhow!(
+                "Authentication method is not supported for agent-managed login"
+            )));
+        }
+
         let conn = self.connection.clone();
         cx.foreground_executor().spawn(async move {
-            conn.send_request(acp::AuthenticateRequest::new(method_id))
-                .block_task()
-                .await?;
+            conn.send_request(acp::AuthenticateRequest::new(acp::AuthMethodId::new(
+                method_id.0,
+            )))
+            .block_task()
+            .await?;
             Ok(())
         })
     }
@@ -2212,19 +2228,19 @@ pub mod test_support {
                 .resume_session(session_id, project, work_dirs, title, cx)
         }
 
-        fn auth_methods(&self) -> &[acp::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             self.inner.auth_methods()
         }
 
         fn terminal_auth_task(
             &self,
-            method: &acp::AuthMethodId,
+            method: &acp_v2::AuthMethodId,
             cx: &App,
         ) -> Option<Task<Result<SpawnInTerminal>>> {
             self.inner.terminal_auth_task(method, cx)
         }
 
-        fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
+        fn authenticate(&self, method: acp_v2::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
             self.inner.authenticate(method, cx)
         }
 
@@ -2343,14 +2359,18 @@ pub mod test_support {
             .on_receive_request(
                 async move |req: acp::InitializeRequest, responder, _cx| {
                     responder.respond(
-                        acp::InitializeResponse::new(req.protocol_version).agent_capabilities(
-                            acp::AgentCapabilities::default()
-                                .load_session(true)
-                                .session_capabilities(
-                                    acp::SessionCapabilities::default()
-                                        .close(acp::SessionCloseCapabilities::new()),
-                                ),
-                        ),
+                        acp::InitializeResponse::new(req.protocol_version)
+                            .agent_capabilities(
+                                acp::AgentCapabilities::default()
+                                    .load_session(true)
+                                    .session_capabilities(
+                                        acp::SessionCapabilities::default()
+                                            .close(acp::SessionCloseCapabilities::new()),
+                                    ),
+                            )
+                            .auth_methods(vec![acp::AuthMethod::Agent(acp::AuthMethodAgent::new(
+                                "login", "Login",
+                            ))]),
                     )
                 },
                 agent_client_protocol::on_receive_request!(),
@@ -2361,7 +2381,8 @@ pub mod test_support {
                     let auth_elicitation_request = auth_elicitation_request.clone();
                     let auth_elicitation_response = auth_elicitation_response.clone();
                     let auth_elicitation_completion = auth_elicitation_completion.clone();
-                    async move |_req: acp::AuthenticateRequest, responder, cx| {
+                    async move |req: acp::AuthenticateRequest, responder, cx| {
+                        assert_eq!(req.method_id, acp::AuthMethodId::new("login"));
                         authenticate_count.fetch_add(1, Ordering::SeqCst);
                         let request = auth_elicitation_request
                             .lock()
@@ -2479,6 +2500,7 @@ pub mod test_support {
             .await?;
 
         let agent_capabilities = response.agent_capabilities;
+        let auth_methods = acp_thread::auth_methods::from_v1(response.auth_methods)?;
 
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let dispatch_context = ClientContext {
@@ -2517,6 +2539,8 @@ pub mod test_support {
             anyhow::Ok(())
         });
 
+        let mut connection = connection;
+        connection.auth_methods = auth_methods;
         Ok(FakeAcpConnectionHarness {
             connection: Rc::new(connection),
             load_session_count,
@@ -3239,7 +3263,7 @@ mod tests {
             .await;
         let connection = harness.connection.clone();
         let auth_task =
-            cx.update(|cx| connection.authenticate(acp::AuthMethodId::new("login"), cx));
+            cx.update(|cx| connection.authenticate(acp_v2::AuthMethodId::new("login"), cx));
         cx.run_until_parked();
 
         let store = connection
@@ -3322,7 +3346,7 @@ mod tests {
             .await;
         let connection = harness.connection.clone();
         let auth_task =
-            cx.update(|cx| connection.authenticate(acp::AuthMethodId::new("login"), cx));
+            cx.update(|cx| connection.authenticate(acp_v2::AuthMethodId::new("login"), cx));
         cx.run_until_parked();
 
         assert!(
@@ -3444,7 +3468,7 @@ mod tests {
         );
 
         let auth_task =
-            cx.update(|cx| connection.authenticate(acp::AuthMethodId::new("login"), cx));
+            cx.update(|cx| connection.authenticate(acp_v2::AuthMethodId::new("login"), cx));
         cx.run_until_parked();
 
         let store = connection
@@ -3560,11 +3584,42 @@ mod tests {
         fs.insert_tree("/", serde_json::json!({ "project": {} }))
             .await;
         let project = project::Project::test(fs, [std::path::Path::new("/project")], cx).await;
-        let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
-        let method_id = acp::AuthMethodId::new("login");
-        let method = acp::AuthMethod::Terminal(
-            acp::AuthMethodTerminal::new(method_id.clone(), "First-class login")
-                .args(vec!["first-class-auth".into()])
+        let mut harness = test_support::connect_fake_acp_connection(project.clone(), cx).await;
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings(HashMap::from_iter([(
+                    "test".to_string(),
+                    settings::CustomAgentServerSettings::Custom {
+                        path: PathBuf::from("test-agent"),
+                        args: vec!["--acp".into(), "--verbose".into()],
+                        env: HashMap::from_iter([
+                            ("BASE".into(), "1".into()),
+                            ("SHARED".into(), "base".into()),
+                        ]),
+                        default_mode: None,
+                        default_config_options: HashMap::default(),
+                        favorite_config_option_values: HashMap::default(),
+                    }
+                    .into(),
+                )])),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            harness.connection.auth_methods(),
+            &[acp_v2::AuthMethod::Agent(acp_v2::AuthMethodAgent::new(
+                "login", "Login"
+            ))]
+        );
+        let method_id = acp_v2::AuthMethodId::new("login");
+        let mut methods = acp_thread::auth_methods::from_v1(vec![acp::AuthMethod::Terminal(
+            acp::AuthMethodTerminal::new(method_id.0.clone(), "First-class login")
+                .args(vec!["first-class-auth".into(), "".into()])
+                .env(std::collections::HashMap::from_iter([
+                    ("SHARED".into(), "override".into()),
+                    ("EMPTY".into(), "".into()),
+                ]))
                 .meta(acp::Meta::from_iter([(
                     "terminal-auth".to_string(),
                     serde_json::json!({
@@ -3573,10 +3628,21 @@ mod tests {
                         "args": ["legacy-auth"],
                     }),
                 )])),
+        )])
+        .expect("terminal authentication should adapt");
+        let Some(acp_v2::AuthMethod::Terminal(terminal)) = methods.first_mut() else {
+            panic!("expected a shared terminal authentication method");
+        };
+        terminal.env.push(
+            acp_v2::EnvVariable::new("EXTRA", "2").meta(acp_v2::Meta::from_iter([(
+                "extension".into(),
+                serde_json::json!({"nested": [null, true]}),
+            )])),
         );
+        let advertised_methods = methods.clone();
         Rc::get_mut(&mut harness.connection)
             .expect("test harness should have the only connection handle")
-            .auth_methods = vec![method];
+            .auth_methods = methods;
 
         let terminal_task = cx
             .update(|cx| {
@@ -3594,9 +3660,64 @@ mod tests {
                 harness.connection.terminal_auth_task(&method_id, cx)
             })
             .expect("first-class terminal auth should be routed without ACP beta");
-        terminal_task
+        let terminal_task = terminal_task
             .await
-            .expect_err("first-class routing should resolve the test agent's external command");
+            .expect("first-class routing should resolve the test agent's external command");
+        assert_eq!(terminal_task.command.as_deref(), Some("test-agent"));
+        assert_eq!(
+            terminal_task.args,
+            vec!["--acp", "--verbose", "first-class-auth", ""]
+        );
+        assert_eq!(terminal_task.env.get("BASE").map(String::as_str), Some("1"));
+        assert_eq!(
+            terminal_task.env.get("SHARED").map(String::as_str),
+            Some("override")
+        );
+        assert_eq!(terminal_task.env.get("EMPTY").map(String::as_str), Some(""));
+        assert_eq!(
+            terminal_task.env.get("EXTRA").map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(terminal_task.label, "First-class login");
+        assert_eq!(harness.connection.auth_methods(), advertised_methods);
+        cx.update(|cx| harness.connection.authenticate(method_id.clone(), cx))
+            .await
+            .expect_err("terminal auth must not use the agent-managed login RPC");
+
+        let unknown = serde_json::json!({
+            "type": "_future_login",
+            "methodId": "unknown",
+            "name": "Unknown login",
+            "custom": {"nested": [null, true]},
+            "_meta": {"terminal-auth": {"label": "Not executable", "command": "agent"}}
+        });
+        Rc::get_mut(&mut harness.connection)
+            .expect("test harness should have the only connection handle")
+            .auth_methods = vec![serde_json::from_value(unknown.clone()).expect("unknown method")];
+        let unknown_id = acp_v2::AuthMethodId::new("unknown");
+        cx.update(|cx| {
+            assert!(
+                harness
+                    .connection
+                    .terminal_auth_task(&unknown_id, cx)
+                    .is_none()
+            );
+            harness.connection.authenticate(unknown_id, cx)
+        })
+        .await
+        .expect_err("unknown auth must not use the agent-managed login RPC");
+        assert_eq!(
+            serde_json::to_value(harness.connection.auth_methods()).expect("shared methods"),
+            serde_json::json!([unknown])
+        );
+
+        Rc::get_mut(&mut harness.connection)
+            .expect("test harness should have the only connection handle")
+            .auth_methods
+            .clear();
+        cx.update(|cx| harness.connection.authenticate(method_id, cx))
+            .await
+            .expect_err("unadvertised auth must not use the agent-managed login RPC");
 
         assert_eq!(harness.authenticate_count.load(Ordering::SeqCst), 0);
     }
@@ -3612,7 +3733,7 @@ mod tests {
                 ("EXTRA".into(), "2".into()),
             ])),
         };
-        let method = acp::AuthMethodTerminal::new("login", "Login");
+        let method = acp_v2::AuthMethodTerminal::new("login", "Login");
 
         let task = terminal_auth_task(&command, &AgentId::new("test-agent"), &method);
 
@@ -3632,19 +3753,21 @@ mod tests {
 
     #[test]
     fn legacy_terminal_auth_task_parses_meta_and_retries_session() {
-        let method_id = acp::AuthMethodId::new("legacy-login");
-        let method = acp::AuthMethod::Agent(
-            acp::AuthMethodAgent::new(method_id.clone(), "Login").meta(acp::Meta::from_iter([(
-                "terminal-auth".to_string(),
-                serde_json::json!({
-                    "label": "legacy /auth",
-                    "command": "legacy-agent",
-                    "args": ["auth", "--interactive"],
-                    "env": {
-                        "AUTH_MODE": "interactive",
-                    },
-                }),
-            )])),
+        let method_id = acp_v2::AuthMethodId::new("legacy-login");
+        let method = acp_v2::AuthMethod::Agent(
+            acp_v2::AuthMethodAgent::new(method_id.clone(), "Login").meta(acp_v2::Meta::from_iter(
+                [(
+                    "terminal-auth".to_string(),
+                    serde_json::json!({
+                        "label": "legacy /auth",
+                        "command": "legacy-agent",
+                        "args": ["auth", "--interactive"],
+                        "env": {
+                            "AUTH_MODE": "interactive",
+                        },
+                    }),
+                )],
+            )),
         );
 
         let task = meta_terminal_auth_task(&AgentId::new("test-agent"), &method_id, &method)
@@ -3662,14 +3785,16 @@ mod tests {
 
     #[test]
     fn legacy_terminal_auth_task_returns_none_for_invalid_meta() {
-        let method_id = acp::AuthMethodId::new("legacy-login");
-        let method = acp::AuthMethod::Agent(
-            acp::AuthMethodAgent::new(method_id.clone(), "Login").meta(acp::Meta::from_iter([(
-                "terminal-auth".to_string(),
-                serde_json::json!({
-                    "label": "legacy /auth",
-                }),
-            )])),
+        let method_id = acp_v2::AuthMethodId::new("legacy-login");
+        let method = acp_v2::AuthMethod::Agent(
+            acp_v2::AuthMethodAgent::new(method_id.clone(), "Login").meta(acp_v2::Meta::from_iter(
+                [(
+                    "terminal-auth".to_string(),
+                    serde_json::json!({
+                        "label": "legacy /auth",
+                    }),
+                )],
+            )),
         );
 
         assert!(
@@ -3679,15 +3804,12 @@ mod tests {
 
     #[test]
     fn first_class_terminal_auth_takes_precedence_over_legacy_meta() {
-        let method_id = acp::AuthMethodId::new("login");
-        let method = acp::AuthMethod::Terminal(
-            acp::AuthMethodTerminal::new(method_id, "Login")
+        let method_id = acp_v2::AuthMethodId::new("login");
+        let method = acp_v2::AuthMethod::Terminal(
+            acp_v2::AuthMethodTerminal::new(method_id, "Login")
                 .args(vec!["/auth".into()])
-                .env(std::collections::HashMap::from_iter([(
-                    "AUTH_MODE".into(),
-                    "first-class".into(),
-                )]))
-                .meta(acp::Meta::from_iter([(
+                .env(vec![acp_v2::EnvVariable::new("AUTH_MODE", "first-class")])
+                .meta(acp_v2::Meta::from_iter([(
                     "terminal-auth".to_string(),
                     serde_json::json!({
                         "label": "legacy /auth",
@@ -3710,7 +3832,7 @@ mod tests {
         };
 
         let task = match &method {
-            acp::AuthMethod::Terminal(terminal) => {
+            acp_v2::AuthMethod::Terminal(terminal) => {
                 terminal_auth_task(&command, &AgentId::new("test-agent"), terminal)
             }
             _ => unreachable!(),
