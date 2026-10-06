@@ -3857,7 +3857,7 @@ impl AcpThread {
     fn tool_call_has_accepted_user_answer(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
         self.elicitations.elicitations().iter().any(|elicitation| {
             matches!(elicitation.status, ElicitationStatus::Accepted)
-                && matches!(elicitation.request.mode, acp::ElicitationMode::Form(_))
+                && matches!(elicitation.request.mode, acp_v1::ElicitationMode::Form(_))
                 && elicitation_targets_tool_call(&elicitation.request, tool_call_id)
         })
     }

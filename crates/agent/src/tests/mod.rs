@@ -5796,9 +5796,8 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestAppContext) {
-    init_test(cx);
+    let fake = init_test(cx);
     cx.update(|cx| {
-        LanguageModelRegistry::test(cx);
         SettingsStore::update_global(cx, |store, cx| {
             store
                 .set_user_settings(
@@ -5840,7 +5839,7 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
     let thread = agent.read_with(cx, |agent, _| {
         agent.sessions.get(&session_id).unwrap().thread.clone()
     });
-    let model = Arc::new(FakeLanguageModel::default());
+    let model = fake.model("thread");
     thread.update(cx, |thread, cx| {
         thread.set_model(model.clone(), cx);
         thread.set_profile(AgentProfileId("ask-user".into()), cx);
@@ -5854,8 +5853,9 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
         options: Vec::new(),
         allow_free_text: true,
     };
-    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
-        LanguageModelToolUse {
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
             id: "call_1".into(),
             name: AskUserTool::NAME.into(),
             raw_input: serde_json::to_string(&ask_user_input).unwrap(),
@@ -5864,9 +5864,9 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
             ),
             is_input_complete: true,
             thought_signature: None,
-        },
-    ));
-    model.end_last_completion_stream();
+        }),
+    );
+    fake.end_last(&model);
     cx.run_until_parked();
 
     let (tool_call_id, elicitation_id) = acp_thread.read_with(cx, |thread, _| {
@@ -5929,8 +5929,8 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
         );
     });
 
-    model.send_last_completion_stream_text_chunk("Exploring src");
-    model.end_last_completion_stream();
+    fake.send_last_text(&model, "Exploring src");
+    fake.end_last(&model);
     send.await.unwrap();
 }
 

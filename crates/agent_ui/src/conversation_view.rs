@@ -9296,12 +9296,12 @@ pub(crate) mod tests {
     ) {
         init_test(cx);
 
-        let tool_call_id = acp::ToolCallId::new("ask-user-1");
+        let tool_call_id = acp_v1::ToolCallId::new("ask-user-1");
         let connection = StubAgentConnection::new();
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new(tool_call_id.clone(), "Which directory should we explore?")
-                .kind(acp::ToolKind::Other)
-                .status(acp::ToolCallStatus::InProgress)
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new(tool_call_id.clone(), "Which directory should we explore?")
+                .kind(acp_v1::ToolKind::Other)
+                .status(acp_v1::ToolCallStatus::InProgress)
                 .meta(acp_thread::meta_with_tool_name("ask_user")),
         )]);
 
@@ -9326,11 +9326,11 @@ pub(crate) mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(session_id.clone())
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id.clone())
                                 .tool_call_id(tool_call_id.clone()),
-                            acp::ElicitationSchema::new().string("other", true),
+                            acp_v1::ElicitationSchema::new().string("other", true),
                         ),
                         "Which directory should we explore?",
                     ),
@@ -9352,13 +9352,13 @@ pub(crate) mod tests {
 
         let other_answer = std::collections::BTreeMap::from([(
             "other".to_string(),
-            acp::ElicitationContentValue::from("delve into src"),
+            acp_v1::ElicitationContentValue::from("delve into src"),
         )]);
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new().content(other_answer),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new().content(other_answer),
                 )),
                 cx,
             );
@@ -9369,18 +9369,18 @@ pub(crate) mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
                         tool_call_id.clone(),
-                        acp::ToolCallUpdateFields::new()
+                        acp_v1::ToolCallUpdateFields::new()
                             .title("Answered: delve into src")
-                            .status(acp::ToolCallStatus::Completed),
+                            .status(acp_v1::ToolCallStatus::Completed),
                     )),
                     cx,
                 )
                 .expect("ask_user tool call should update");
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
                         "I'll explore src in depth.".into(),
                     )),
                     cx,
@@ -9413,12 +9413,12 @@ pub(crate) mod tests {
     async fn test_scroll_to_user_message_skips_accepted_url_elicitation(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp::ToolCallId::new("sign-in-1");
+        let tool_call_id = acp_v1::ToolCallId::new("sign-in-1");
         let connection = StubAgentConnection::new();
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new(tool_call_id.clone(), "Sign in to continue")
-                .kind(acp::ToolKind::Other)
-                .status(acp::ToolCallStatus::InProgress),
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new(tool_call_id.clone(), "Sign in to continue")
+                .kind(acp_v1::ToolKind::Other)
+                .status(acp_v1::ToolCallStatus::InProgress),
         )]);
 
         let (conversation_view, cx) =
@@ -9442,11 +9442,11 @@ pub(crate) mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationUrlMode::new(
-                            acp::ElicitationSessionScope::new(session_id.clone())
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationUrlMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id.clone())
                                 .tool_call_id(tool_call_id.clone()),
-                            acp::ElicitationId::new("sign-in-url-1"),
+                            acp_v1::ElicitationId::new("sign-in-url-1"),
                             "https://example.com/sign-in",
                         ),
                         "Continue in the browser",
@@ -9470,8 +9470,8 @@ pub(crate) mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
@@ -9482,7 +9482,7 @@ pub(crate) mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
                         "Waiting for sign-in to finish.".into(),
                     )),
                     cx,
