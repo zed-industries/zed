@@ -5395,49 +5395,6 @@ mod tests {
         });
     }
 
-    fn assert_code_block_copy(source: &str, expected: &str, cx: &mut TestAppContext) {
-        struct CodeBlockCopyTestView {
-            markdown: Entity<Markdown>,
-        }
-
-        impl Render for CodeBlockCopyTestView {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div().size_full().child(
-                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                        .code_block_renderer(CodeBlockRenderer::Default {
-                            copy_button_visibility: CopyButtonVisibility::AlwaysVisible,
-                            wrap_button_visibility: WrapButtonVisibility::Hidden,
-                            border: false,
-                        }),
-                )
-            }
-        }
-
-        ensure_theme_initialized(cx);
-
-        let source = source.to_string();
-        let (_, cx) = cx.add_window_view(|_, cx| CodeBlockCopyTestView {
-            markdown: cx.new(|cx| Markdown::new(source.into(), None, None, cx)),
-        });
-        cx.run_until_parked();
-
-        let copy_button_bounds = cx
-            .debug_bounds("ICON-Copy")
-            .expect("copy code button should be rendered");
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            "<copy button did not write to the clipboard>".to_string(),
-        ));
-        cx.simulate_click(copy_button_bounds.center(), Modifiers::default());
-
-        assert_eq!(
-            cx.read_from_clipboard().and_then(|item| item.text()),
-            Some(expected.to_string())
-        );
-
-        cx.executor().advance_clock(Duration::from_secs(2));
-        cx.run_until_parked();
-    }
-
     #[gpui::test]
     fn test_copy_code_block_uses_parsed_text(cx: &mut TestAppContext) {
         for (source, expected) in [
@@ -8454,6 +8411,152 @@ mod tests {
         })
     }
 
+    #[gpui::test]
+    fn test_copy_button_copies_commonmark_code_block_content(cx: &mut TestAppContext) {
+        struct CopyButtonTestView {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for CopyButtonTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .code_block_renderer(CodeBlockRenderer::Default {
+                            copy_button_visibility: CopyButtonVisibility::AlwaysVisible,
+                            wrap_button_visibility: WrapButtonVisibility::Hidden,
+                            border: false,
+                        }),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        // Written before each click so a click that copies nothing can't pass by
+        // leaving the previous block's text on the clipboard.
+        const NOT_COPIED: &str = "<copy button did not write to the clipboard>";
+
+        let mut failures = Vec::new();
+        for (example, source, expected_blocks) in COMMONMARK_CODE_BLOCK_EXAMPLES {
+            let markdown = cx.new(|cx| Markdown::new(source.to_string().into(), None, None, cx));
+            let (_, window_cx) = cx.add_window_view(|_, _| CopyButtonTestView {
+                markdown: markdown.clone(),
+            });
+            window_cx.run_until_parked();
+
+            let code_block_ends = markdown.read_with(window_cx, |markdown, _| {
+                markdown
+                    .parsed_markdown()
+                    .events()
+                    .iter()
+                    .filter(|(_, event)| {
+                        matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock))
+                    })
+                    .map(|(range, _)| range.end)
+                    .collect::<Vec<_>>()
+            });
+
+            if code_block_ends.len() != expected_blocks.len() {
+                failures.push(format!(
+                    "example {example}: rendered {} code blocks, expected {}\n  markdown: {source:?}",
+                    code_block_ends.len(),
+                    expected_blocks.len()
+                ));
+                continue;
+            }
+
+            for (block_index, (code_block_end, expected)) in code_block_ends
+                .iter()
+                .zip(expected_blocks.iter())
+                .enumerate()
+            {
+                let block_number = block_index + 1;
+                // `debug_bounds` only accepts `&'static str`, and leaking a few short
+                // strings is harmless in a test.
+                let selector: &'static str =
+                    format!("markdown_code_block_buttons_{code_block_end}").leak();
+                let Some(copy_button) = window_cx.debug_bounds(selector) else {
+                    failures.push(format!(
+                        "example {example}, code block {block_number}: no copy button rendered\n  markdown: {source:?}"
+                    ));
+                    continue;
+                };
+
+                window_cx.write_to_clipboard(ClipboardItem::new_string(NOT_COPIED.to_string()));
+                window_cx.simulate_click(copy_button.center(), gpui::Modifiers::default());
+
+                // An empty code block must still copy a text entry, rather than
+                // accepting unrelated clipboard entries as an empty string.
+                let copied =
+                    window_cx
+                        .read_from_clipboard()
+                        .and_then(|clipboard_item| match clipboard_item.entries() {
+                            [gpui::ClipboardEntry::String(clipboard_string)] => {
+                                Some(clipboard_string.text().clone())
+                            }
+                            _ => None,
+                        });
+
+                if copied.as_deref() != Some(*expected) {
+                    failures.push(format!(
+                        "example {example}, code block {block_number}: https://spec.commonmark.org/0.31.2/#example-{example}\n  markdown: {source:?}\n  expected: {expected:?}\n  copied:   {copied:?}"
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "{} code blocks copied the wrong text across {} CommonMark examples:\n\n{}",
+            failures.len(),
+            COMMONMARK_CODE_BLOCK_EXAMPLES.len(),
+            failures.join("\n\n")
+        );
+    }
+
+    fn assert_code_block_copy(source: &str, expected: &str, cx: &mut TestAppContext) {
+        struct CodeBlockCopyTestView {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for CodeBlockCopyTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .code_block_renderer(CodeBlockRenderer::Default {
+                            copy_button_visibility: CopyButtonVisibility::AlwaysVisible,
+                            wrap_button_visibility: WrapButtonVisibility::Hidden,
+                            border: false,
+                        }),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let source = source.to_string();
+        let (_, cx) = cx.add_window_view(|_, cx| CodeBlockCopyTestView {
+            markdown: cx.new(|cx| Markdown::new(source.into(), None, None, cx)),
+        });
+        cx.run_until_parked();
+
+        let copy_button_bounds = cx
+            .debug_bounds("ICON-Copy")
+            .expect("copy code button should be rendered");
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            "<copy button did not write to the clipboard>".to_string(),
+        ));
+        cx.simulate_click(copy_button_bounds.center(), Modifiers::default());
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(expected.to_string())
+        );
+
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+    }
+
     /// Every example in the CommonMark 0.31.2 spec (https://spec.commonmark.org/0.31.2/)
     /// that renders a code block, paired with the text inside that block's `<code>` element,
     /// which is what the copy button should put on the clipboard.
@@ -8654,107 +8757,4 @@ mod tests {
         (321, "- a\n  > b\n  ```\n  c\n  ```\n- d\n", &["c\n"]),
         (324, "1. ```\n   foo\n   ```\n\n   bar\n", &["foo\n"]),
     ];
-
-    #[gpui::test]
-    fn test_copy_button_copies_commonmark_code_block_content(cx: &mut TestAppContext) {
-        struct CopyButtonTestView {
-            markdown: Entity<Markdown>,
-        }
-
-        impl Render for CopyButtonTestView {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div().size_full().child(
-                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                        .code_block_renderer(CodeBlockRenderer::Default {
-                            copy_button_visibility: CopyButtonVisibility::AlwaysVisible,
-                            wrap_button_visibility: WrapButtonVisibility::Hidden,
-                            border: false,
-                        }),
-                )
-            }
-        }
-
-        ensure_theme_initialized(cx);
-
-        // Written before each click so a click that copies nothing can't pass by
-        // leaving the previous block's text on the clipboard.
-        const NOT_COPIED: &str = "<copy button did not write to the clipboard>";
-
-        let mut failures = Vec::new();
-        for (example, source, expected_blocks) in COMMONMARK_CODE_BLOCK_EXAMPLES {
-            let markdown = cx.new(|cx| Markdown::new(source.to_string().into(), None, None, cx));
-            let (_, window_cx) = cx.add_window_view(|_, _| CopyButtonTestView {
-                markdown: markdown.clone(),
-            });
-            window_cx.run_until_parked();
-
-            let code_block_ends = markdown.read_with(window_cx, |markdown, _| {
-                markdown
-                    .parsed_markdown()
-                    .events()
-                    .iter()
-                    .filter(|(_, event)| {
-                        matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock))
-                    })
-                    .map(|(range, _)| range.end)
-                    .collect::<Vec<_>>()
-            });
-
-            if code_block_ends.len() != expected_blocks.len() {
-                failures.push(format!(
-                    "example {example}: rendered {} code blocks, expected {}\n  markdown: {source:?}",
-                    code_block_ends.len(),
-                    expected_blocks.len()
-                ));
-                continue;
-            }
-
-            for (block_index, (code_block_end, expected)) in code_block_ends
-                .iter()
-                .zip(expected_blocks.iter())
-                .enumerate()
-            {
-                let block_number = block_index + 1;
-                // `debug_bounds` only accepts `&'static str`, and leaking a few short
-                // strings is harmless in a test.
-                let selector: &'static str =
-                    format!("markdown_code_block_buttons_{code_block_end}").leak();
-                let Some(copy_button) = window_cx.debug_bounds(selector) else {
-                    failures.push(format!(
-                        "example {example}, code block {block_number}: no copy button rendered\n  markdown: {source:?}"
-                    ));
-                    continue;
-                };
-
-                window_cx.write_to_clipboard(ClipboardItem::new_string(NOT_COPIED.to_string()));
-                window_cx.simulate_click(copy_button.center(), gpui::Modifiers::default());
-
-                // An empty code block must still copy a text entry, rather than
-                // accepting unrelated clipboard entries as an empty string.
-                let copied =
-                    window_cx
-                        .read_from_clipboard()
-                        .and_then(|clipboard_item| match clipboard_item.entries() {
-                            [gpui::ClipboardEntry::String(clipboard_string)] => {
-                                Some(clipboard_string.text().clone())
-                            }
-                            _ => None,
-                        });
-
-                if copied.as_deref() != Some(*expected) {
-                    failures.push(format!(
-                        "example {example}, code block {block_number}: https://spec.commonmark.org/0.31.2/#example-{example}\n  markdown: {source:?}\n  expected: {expected:?}\n  copied:   {copied:?}"
-                    ));
-                }
-            }
-        }
-
-        assert!(
-            failures.is_empty(),
-            "{} code blocks copied the wrong text across {} CommonMark examples:\n\n{}",
-            failures.len(),
-            COMMONMARK_CODE_BLOCK_EXAMPLES.len(),
-            failures.join("\n\n")
-        );
-    }
 }
