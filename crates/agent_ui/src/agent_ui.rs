@@ -41,7 +41,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ::ui::IconName;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
@@ -56,7 +56,7 @@ use language::{
     language_settings::{AllLanguageSettings, EditPredictionProvider},
 };
 use language_model::{
-    ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+    LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
@@ -71,8 +71,7 @@ use workspace::{OpenOptions, Workspace};
 use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, MaxIdleRetainedThreads, TerminalId,
-    ThreadTitleRegenerationResult,
+    AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, TerminalId, ThreadTitleRegenerationResult,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
@@ -347,6 +346,11 @@ actions!(
 pub struct AuthorizeToolCall {
     /// The tool call ID to authorize.
     pub tool_call_id: String,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub request_id: Option<acp_thread::PermissionRequestId>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// The permission option ID to use.
     pub option_id: String,
     /// The kind of permission option (serialized as string).
@@ -361,6 +365,11 @@ pub struct AuthorizeToolCall {
 pub struct SelectPermissionGranularity {
     /// The tool call ID for which to select the granularity.
     pub tool_call_id: String,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub request_id: Option<acp_thread::PermissionRequestId>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// The index of the selected granularity option.
     pub index: usize,
 }
@@ -372,6 +381,11 @@ pub struct SelectPermissionGranularity {
 pub struct ToggleCommandPattern {
     /// The tool call ID for which to toggle the pattern.
     pub tool_call_id: String,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub request_id: Option<acp_thread::PermissionRequestId>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// The index of the command pattern to toggle.
     pub pattern_index: usize,
 }
@@ -416,7 +430,7 @@ where
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewNativeAgentThreadFromSummary {
-    from_session_id: acp::SessionId,
+    from_session_id: acp_v1::SessionId,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -499,11 +513,11 @@ impl Agent {
 /// Content to initialize new external agent with.
 pub enum AgentInitialContent {
     ThreadSummary {
-        session_id: acp::SessionId,
+        session_id: acp_v1::SessionId,
         title: Option<SharedString>,
     },
     ContentBlock {
-        blocks: Vec<acp::ContentBlock>,
+        blocks: Vec<acp_v2::ContentBlock>,
         auto_submit: bool,
     },
     FromExternalSource(ExternalSourcePrompt),
@@ -538,7 +552,7 @@ pub(crate) enum ModelUsageContext {
 }
 
 impl ModelUsageContext {
-    pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
+    pub fn model(&self, cx: &App) -> Option<LanguageModel> {
         match self {
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
@@ -1010,9 +1024,12 @@ mod tests {
             sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            sidebar_side: Default::default(),
-            threads_sidebar_default_width: px(300.),
-            threads_sidebar_auto_open: true,
+            max_idle_retained_threads: 5,
+            threads_sidebar: agent_settings::ThreadsSidebarSettings {
+                auto_open: true,
+                default_width: px(300.),
+                position: settings::SidebarDockPosition::Left,
+            },
             thinking_display: Default::default(),
         };
 
