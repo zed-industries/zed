@@ -9326,11 +9326,13 @@ pub(crate) mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id.clone())
-                                .tool_call_id(tool_call_id.clone()),
-                            acp_v1::ElicitationSchema::new().string("other", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0.clone(),
+                            ))
+                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationSchema::new().string("other", true),
                         ),
                         "Which directory should we explore?",
                     ),
@@ -9352,13 +9354,13 @@ pub(crate) mod tests {
 
         let other_answer = std::collections::BTreeMap::from([(
             "other".to_string(),
-            acp_v1::ElicitationContentValue::from("delve into src"),
+            acp_v2::ElicitationContentValue::from("delve into src"),
         )]);
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new().content(other_answer),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new().content(other_answer),
                 )),
                 cx,
             );
@@ -9442,11 +9444,13 @@ pub(crate) mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationUrlMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id.clone())
-                                .tool_call_id(tool_call_id.clone()),
-                            acp_v1::ElicitationId::new("sign-in-url-1"),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0.clone(),
+                            ))
+                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationId::new("sign-in-url-1"),
                             "https://example.com/sign-in",
                         ),
                         "Continue in the browser",
@@ -9470,8 +9474,8 @@ pub(crate) mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );

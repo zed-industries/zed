@@ -3848,11 +3848,11 @@ impl AcpThread {
             matches!(elicitation.status, ElicitationStatus::Accepted)
                 // Accepting a URL elicitation only consents to opening a link,
                 // so it isn't an answer.
-                && matches!(elicitation.request.mode, acp_v1::ElicitationMode::Form(_))
+                && matches!(elicitation.request.mode, acp_v2::ElicitationMode::Form(_))
                 && matches!(
                     elicitation.request.scope(),
-                    acp_v1::ElicitationScope::Session(scope)
-                        if scope.tool_call_id.as_ref() == Some(tool_call_id)
+                    acp_v2::ElicitationScope::Session(scope)
+                        if scope.tool_call_id.as_ref().is_some_and(|id| id.0 == tool_call_id.0)
                 )
         })
     }

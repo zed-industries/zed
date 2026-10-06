@@ -5889,13 +5889,13 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
         let (_, elicitation) = thread
             .elicitation(&elicitation_id)
             .expect("elicitation should be stored");
-        let acp::ElicitationScope::Session(scope) = elicitation.request.scope() else {
+        let acp_v2::ElicitationScope::Session(scope) = elicitation.request.scope() else {
             panic!("ask_user elicitation should be session-scoped");
         };
         assert_ne!(tool_call_id, acp::ToolCallId::new("call_1"));
         assert_eq!(
-            scope.tool_call_id.as_ref(),
-            Some(&tool_call_id),
+            scope.tool_call_id.as_ref().map(|id| &id.0),
+            Some(&tool_call_id.0),
             "the elicitation must reference the tool card's scoped id"
         );
         (tool_call_id, elicitation_id)
@@ -5904,11 +5904,13 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
     acp_thread.update(cx, |thread, cx| {
         thread.respond_to_elicitation(
             &elicitation_id,
-            acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                acp::ElicitationAcceptAction::new().content(std::collections::BTreeMap::from([(
-                    "other".to_string(),
-                    acp::ElicitationContentValue::from("delve into src"),
-                )])),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                acp_v2::ElicitationAcceptAction::new().content(std::collections::BTreeMap::from([
+                    (
+                        "other".to_string(),
+                        acp_v2::ElicitationContentValue::from("delve into src"),
+                    ),
+                ])),
             )),
             cx,
         );
