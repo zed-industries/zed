@@ -103,6 +103,7 @@ pub fn scroll_event(recognizer: &UIPanGestureRecognizer, view: &UIView) -> Optio
             px(translation.x as f32),
             px(translation.y as f32),
         )),
+        wheel_notches: None,
         modifiers: modifiers(recognizer.modifierFlags()),
         touch_phase,
         source: ScrollSource::Pointer,
