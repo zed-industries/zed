@@ -38,6 +38,7 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use git_ui::solo_diff_view::{SoloDiffGitToolbar, SoloDiffStyleToolbar};
 use git_ui::staged_diff::StagedDiffToolbar;
 use git_ui::unstaged_diff::UnstagedDiffToolbar;
+use git_ui_core::file_diff_view::FileDiffStyleToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
@@ -572,7 +573,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         .detach();
 
         #[cfg(not(any(test, target_os = "macos")))]
-        initialize_file_watcher(window, cx);
+        initialize_file_watcher(workspace.app_state().fs.as_ref(), window, cx);
 
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
@@ -663,8 +664,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[allow(unused)]
-fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
-    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+fn initialize_file_watcher(fs: &dyn Fs, window: &mut Window, cx: &mut Context<Workspace>) {
+    if let Err(e) = fs.start_native_watcher() {
         let message = format!(
             db::indoc! {r#"
             inotify_init returned {}
@@ -694,8 +695,8 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
 
 #[cfg(target_os = "windows")]
 #[allow(unused)]
-fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
-    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+fn initialize_file_watcher(fs: &dyn Fs, window: &mut Window, cx: &mut Context<Workspace>) {
+    if let Err(e) = fs.start_native_watcher() {
         let message = format!(
             db::indoc! {r#"
             ReadDirectoryChangesW initialization failed: {}
@@ -1466,6 +1467,8 @@ fn initialize_pane(
             toolbar.add_item(multibuffer_hint, window, cx);
             let solo_diff_style_toolbar = cx.new(SoloDiffStyleToolbar::new);
             toolbar.add_item(solo_diff_style_toolbar, window, cx);
+            let file_diff_style_toolbar = cx.new(FileDiffStyleToolbar::new);
+            toolbar.add_item(file_diff_style_toolbar, window, cx);
             let breadcrumbs = cx.new(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, window, cx);
             let buffer_search_bar = cx.new(|cx| {
@@ -5935,6 +5938,7 @@ mod tests {
                 "language_selector",
                 "welcome",
                 "line_ending_selector",
+                "lsp_command_selector",
                 "lsp_tool",
                 "markdown",
                 "menu",
@@ -5973,6 +5977,7 @@ mod tests {
                 "toolchain",
                 "variable_list",
                 "vim",
+                "which_key",
                 "window",
                 "workspace",
                 "worktree_picker",
@@ -8258,6 +8263,7 @@ mod tests {
             )
             .await
             .expect("failed to save disable_ai=true to the fake settings file");
+        executor.advance_clock(Duration::from_secs(2));
         executor.run_until_parked();
 
         cx.update(|cx| {
