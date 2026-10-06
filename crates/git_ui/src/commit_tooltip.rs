@@ -448,8 +448,7 @@ impl Render for CommitTooltip {
                                                         commit_summary.sha.to_string(),
                                                         repo.downgrade(),
                                                         workspace.clone(),
-                                                        None,
-                                                        None,
+                                                        Default::default(),
                                                         window,
                                                         cx,
                                                     );

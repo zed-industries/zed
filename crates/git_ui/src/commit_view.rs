@@ -179,34 +179,29 @@ impl Addon for CommitDiffAddon {
 
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
+#[derive(Clone, Default)]
+pub struct CommitViewOptions {
+    pub stash: Option<usize>,
+    pub file_filter: Option<RepoPath>,
+}
+
 impl CommitView {
     pub fn open(
         commit_sha: String,
         repo: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
-        stash: Option<usize>,
-        file_filter: Option<RepoPath>,
+        options: CommitViewOptions,
         window: &mut Window,
         cx: &mut App,
     ) {
-        Self::open_with_options(
-            commit_sha,
-            repo,
-            workspace,
-            stash,
-            file_filter,
-            false,
-            window,
-            cx,
-        )
+        Self::open_with_options(commit_sha, repo, workspace, options, false, window, cx)
     }
 
     fn open_with_options(
         commit_sha: String,
         repo: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
-        stash: Option<usize>,
-        file_filter: Option<RepoPath>,
+        options: CommitViewOptions,
         ignore_shallow_boundary: bool,
         window: &mut Window,
         cx: &mut App,
@@ -229,7 +224,7 @@ impl CommitView {
                 let commit_details = commit_details.log_err()?;
 
                 // Filter to specific file if requested
-                if let Some(ref filter_path) = file_filter {
+                if let Some(ref filter_path) = options.file_filter {
                     commit_diff.files.retain(|f| &f.path == filter_path);
                 }
 
@@ -248,8 +243,7 @@ impl CommitView {
                                 project.clone(),
                                 workspace_entity,
                                 workspace_handle,
-                                stash,
-                                file_filter,
+                                options,
                                 window,
                                 cx,
                             )
@@ -295,11 +289,11 @@ impl CommitView {
         project: Entity<Project>,
         workspace_entity: Entity<Workspace>,
         workspace: WeakEntity<Workspace>,
-        stash: Option<usize>,
-        file_filter: Option<RepoPath>,
+        options: CommitViewOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let CommitViewOptions { stash, file_filter } = options;
         let language_registry = project.read(cx).languages().clone();
         let is_shallow_boundary = commit_diff.is_shallow_boundary;
         let multibuffer = cx.new(|cx| {
@@ -597,8 +591,10 @@ impl CommitView {
                                                     commit_sha,
                                                     repository,
                                                     workspace,
-                                                    stash,
-                                                    file_filter,
+                                                    CommitViewOptions {
+                                                        stash,
+                                                        file_filter,
+                                                    },
                                                     false,
                                                     window,
                                                     cx,
@@ -629,8 +625,10 @@ impl CommitView {
                                     commit_sha.clone(),
                                     repository.downgrade(),
                                     workspace.clone(),
-                                    stash,
-                                    file_filter.clone(),
+                                    CommitViewOptions {
+                                        stash,
+                                        file_filter: file_filter.clone(),
+                                    },
                                     true,
                                     window,
                                     cx,

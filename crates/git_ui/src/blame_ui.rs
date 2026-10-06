@@ -250,8 +250,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     blame_entry.sha.to_string(),
                                     repository.downgrade(),
                                     workspace.clone(),
-                                    None,
-                                    None,
+                                    Default::default(),
                                     window,
                                     cx,
                                 )
@@ -491,8 +490,7 @@ impl BlameRenderer for GitBlameRenderer {
                                                         commit_summary.sha.clone().into(),
                                                         repository.downgrade(),
                                                         workspace.clone(),
-                                                        None,
-                                                        None,
+                                                        Default::default(),
                                                         window,
                                                         cx,
                                                     );
@@ -524,8 +522,7 @@ impl BlameRenderer for GitBlameRenderer {
             blame_entry.sha.to_string(),
             repository.downgrade(),
             workspace,
-            None,
-            None,
+            Default::default(),
             window,
             cx,
         )
