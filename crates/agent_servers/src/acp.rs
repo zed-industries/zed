@@ -427,7 +427,10 @@ impl AcpSessionList {
 
     fn send_info_update(&self, session_id: acp::SessionId, update: acp::SessionInfoUpdate) {
         self.updates_tx
-            .try_send(acp_thread::SessionListUpdate::SessionInfo { session_id, update })
+            .try_send(acp_thread::SessionListUpdate::SessionInfo {
+                session_id,
+                update: acp_thread::session_info_update_from_v1(update),
+            })
             .log_err();
     }
 }

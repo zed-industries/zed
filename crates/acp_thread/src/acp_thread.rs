@@ -3361,10 +3361,8 @@ fn stop_reason_from_v1(reason: &acp_v1::StopReason) -> Option<acp_v2::StopReason
 }
 
 pub struct AcpThread {
-    session_id: acp_v1::SessionId,
-    work_dirs: Option<PathList>,
+    session_info: AgentSessionInfo,
     parent_session_id: Option<acp_v1::SessionId>,
-    title: Option<SharedString>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     // Notices stay with the live session, but never enter conversation history or exports.
@@ -3495,7 +3493,7 @@ impl From<&AcpThread> for ActionLogTelemetry {
     fn from(value: &AcpThread) -> Self {
         Self {
             agent_telemetry_id: value.connection().telemetry_id(),
-            session_id: value.session_id.0.clone(),
+            session_id: value.session_id().0.clone(),
         }
     }
 }
@@ -3691,7 +3689,14 @@ impl AcpThread {
         let receipt_submissions = connection.receipt_submissions(&session_id, cx);
         Self {
             parent_session_id,
-            work_dirs,
+            session_info: AgentSessionInfo {
+                session_id,
+                work_dirs,
+                title,
+                updated_at: None,
+                created_at: None,
+                meta: None,
+            },
             action_log,
             _git_store_subscription,
             update_last_checkpoint_if_changed_task: None,
@@ -3703,7 +3708,6 @@ impl AcpThread {
             permission_requests: IndexMap::default(),
             plans: HashMap::default(),
             visible_plan: None,
-            title,
             provisional_title: None,
             project,
             running_turn: None,
@@ -3711,7 +3715,6 @@ impl AcpThread {
             submissions: SessionSubmissions::new(receipt_submissions),
             activity: SessionActivity::default(),
             connection,
-            session_id,
             token_usage: None,
             cost: None,
             prompt_capabilities,
@@ -3791,7 +3794,8 @@ impl AcpThread {
     }
 
     pub fn title(&self) -> Option<SharedString> {
-        self.title
+        self.session_info
+            .title
             .clone()
             .or_else(|| self.provisional_title.clone())
     }
@@ -3847,19 +3851,23 @@ impl AcpThread {
     }
 
     pub fn session_id(&self) -> &acp_v1::SessionId {
-        &self.session_id
+        &self.session_info.session_id
+    }
+
+    pub fn session_info(&self) -> &AgentSessionInfo {
+        &self.session_info
     }
 
     pub fn supports_truncate(&self, cx: &App) -> bool {
-        self.connection.truncate(&self.session_id, cx).is_some()
+        self.connection.truncate(self.session_id(), cx).is_some()
     }
 
     pub fn work_dirs(&self) -> Option<&PathList> {
-        self.work_dirs.as_ref()
+        self.session_info.work_dirs.as_ref()
     }
 
     pub fn set_work_dirs(&mut self, work_dirs: PathList, cx: &mut Context<Self>) {
-        self.work_dirs = Some(work_dirs);
+        self.session_info.work_dirs = Some(work_dirs);
         cx.emit(AcpThreadEvent::WorkingDirectoriesUpdated)
     }
 
@@ -4284,16 +4292,7 @@ impl AcpThread {
                 cx.notify();
             }
             acp_v1::SessionUpdate::SessionInfoUpdate(info_update) => {
-                if let MaybeUndefined::Value(title) = info_update.title {
-                    let had_provisional = self.provisional_title.take().is_some();
-                    let title: SharedString = title.into();
-                    if self.title.as_ref() != Some(&title) {
-                        self.title = Some(title);
-                        cx.emit(AcpThreadEvent::TitleUpdated);
-                    } else if had_provisional {
-                        cx.emit(AcpThreadEvent::TitleUpdated);
-                    }
-                }
+                self.update_session_info(session_info_update_from_v1(info_update), cx);
             }
             acp_v1::SessionUpdate::AvailableCommandsUpdate(acp_v1::AvailableCommandsUpdate {
                 available_commands,
@@ -5107,16 +5106,33 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
+    pub fn update_session_info(
+        &mut self,
+        update: acp_v2::SessionInfoUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let previous_title = self.session_info.title.clone();
+        let had_provisional =
+            !update.title.is_undefined() && self.provisional_title.take().is_some();
+        let changed = self.session_info.apply_update(update);
+        if self.session_info.title != previous_title || had_provisional {
+            cx.emit(AcpThreadEvent::TitleUpdated);
+        }
+        if changed || had_provisional {
+            cx.notify();
+        }
+    }
+
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
-        self.connection.set_title(&self.session_id, cx).is_some()
+        self.connection.set_title(self.session_id(), cx).is_some()
     }
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Task<Result<()>> {
         let had_provisional = self.provisional_title.take().is_some();
-        if self.title.as_ref() != Some(&title) {
-            self.title = Some(title.clone());
+        if self.session_info.title.as_ref() != Some(&title) {
+            self.session_info.title = Some(title.clone());
             cx.emit(AcpThreadEvent::TitleUpdated);
-            if let Some(set_title) = self.connection.set_title(&self.session_id, cx) {
+            if let Some(set_title) = self.connection.set_title(self.session_id(), cx) {
                 return set_title.run(title, cx);
             }
         } else if had_provisional {
@@ -5543,7 +5559,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(PermissionRequestId, Task<acp_v2::RequestPermissionOutcome>)> {
         anyhow::ensure!(
-            acp_v1::SessionId::new(request.session_id.0.clone()) == self.session_id,
+            acp_v1::SessionId::new(request.session_id.0.clone()) == self.session_info.session_id,
             "Permission request belongs to a different session"
         );
         anyhow::ensure!(
@@ -6073,8 +6089,10 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> Submission {
-        let request =
-            acp_v2::PromptRequest::new(acp_v2::SessionId::new(self.session_id.0.clone()), message);
+        let request = acp_v2::PromptRequest::new(
+            acp_v2::SessionId::new(self.session_id().0.clone()),
+            message,
+        );
         if let Err(error) = self.validate_prompt_content(&request.prompt) {
             return self.track_submission(id, cx, async move |_, _| Err(error));
         }
@@ -6138,7 +6156,7 @@ impl AcpThread {
 
     pub fn can_retry(&self, cx: &App) -> bool {
         !self.uses_reported_activity()
-            && self.connection.retry(&self.session_id, cx).is_some()
+            && self.connection.retry(self.session_id(), cx).is_some()
             && self
                 .submissions
                 .latest_id()
@@ -6165,7 +6183,7 @@ impl AcpThread {
         self.run_turn(id, cx, async move |this, cx| {
             this.update(cx, |this, cx| {
                 this.connection
-                    .retry(&this.session_id, cx)
+                    .retry(this.session_id(), cx)
                     .map(|retry| retry.run(cx))
             })?
             .context("retrying a session is not supported")?
@@ -6396,7 +6414,7 @@ impl AcpThread {
             let Some(receiver) = self.activity.wait_for_idle() else {
                 return Task::ready(());
             };
-            self.connection.cancel(&self.session_id, cx);
+            self.connection.cancel(self.session_id(), cx);
             return cx.spawn(async move |_, _| {
                 if receiver.await.is_err() {
                     log::debug!("Session released before foreground cancellation completed");
@@ -6414,7 +6432,7 @@ impl AcpThread {
         };
         self.shrink_message_source_capacity(turn.first_entry_index);
         self.mark_pending_entries_as_canceled(permission_outcome, cx);
-        self.connection.cancel(&self.session_id, cx);
+        self.connection.cancel(self.session_id(), cx);
         self.set_foreground_state(
             acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
             cx,
@@ -6551,7 +6569,7 @@ impl AcpThread {
         client_id: ClientUserMessageId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
+        let Some(truncate) = self.connection.truncate(self.session_id(), cx) else {
             return Task::ready(Err(anyhow!("not supported")));
         };
 
@@ -18290,6 +18308,123 @@ mod tests {
             2,
             "session info title update should emit TitleUpdated"
         );
+
+        cx.run_until_parked();
+        let observer_notifications = Rc::new(RefCell::new(0));
+        let _observer = thread.update(cx, |_, cx| {
+            cx.observe_self({
+                let observer_notifications = observer_notifications.clone();
+                move |_, _| *observer_notifications.borrow_mut() += 1
+            })
+        });
+        thread.update(cx, |thread, cx| {
+            thread.update_session_info(
+                acp_v2::SessionInfoUpdate::new().updated_at("2026-03-04T05:06:07+02:30"),
+                cx,
+            );
+            assert_eq!(thread.title(), Some("Helping with Rust question".into()));
+            assert!(thread.session_info().updated_at.is_some());
+            assert_eq!(thread.session_info().meta, None);
+        });
+        cx.run_until_parked();
+        assert_eq!(*observer_notifications.borrow(), 1);
+        assert_eq!(*title_updated_events.borrow(), 2);
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_info(
+                acp_v2::SessionInfoUpdate::new().meta(acp_v2::Meta::from_iter([(
+                    "session".into(),
+                    serde_json::json!({"value": []}),
+                )])),
+                cx,
+            );
+            assert_eq!(thread.title(), Some("Helping with Rust question".into()));
+            assert_eq!(
+                thread.session_info().meta,
+                Some(acp_v2::Meta::from_iter([(
+                    "session".into(),
+                    serde_json::json!({"value": []}),
+                )]))
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(*observer_notifications.borrow(), 2);
+        assert_eq!(*title_updated_events.borrow(), 2);
+
+        thread.update(cx, |thread, cx| {
+            thread.set_provisional_title("Hidden provisional title".into(), cx);
+            thread.update_session_info(
+                acp_v2::SessionInfoUpdate::new().title("Helping with Rust question"),
+                cx,
+            );
+            assert!(!thread.has_provisional_title());
+        });
+        assert_eq!(*title_updated_events.borrow(), 4);
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(None::<String>), cx);
+            assert_eq!(thread.title(), None);
+            assert_eq!(thread.session_info().title, None);
+            assert!(thread.session_info().updated_at.is_some());
+            assert!(thread.session_info().meta.is_some());
+        });
+        assert_eq!(*title_updated_events.borrow(), 5);
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_info(
+                acp_v2::SessionInfoUpdate::new()
+                    .title(None::<String>)
+                    .updated_at(None::<String>)
+                    .meta(None::<acp_v2::Meta>),
+                cx,
+            );
+            assert_eq!(thread.session_info().updated_at, None);
+            assert_eq!(thread.session_info().meta, None);
+        });
+        assert_eq!(*title_updated_events.borrow(), 5);
+
+        thread.update(cx, |thread, cx| {
+            thread.set_provisional_title("Visible provisional title".into(), cx);
+            thread.update_session_info(acp_v2::SessionInfoUpdate::new(), cx);
+            assert_eq!(thread.title(), Some("Visible provisional title".into()));
+            thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(None::<String>), cx);
+            assert_eq!(thread.title(), None);
+            assert!(!thread.has_provisional_title());
+        });
+        assert_eq!(*title_updated_events.borrow(), 7);
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::SessionInfoUpdate(
+                        acp_v1::SessionInfoUpdate::new()
+                            .title("Legacy title")
+                            .meta(acp_v1::Meta::new()),
+                    ),
+                    cx,
+                )
+                .expect("legacy title patch");
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::SessionInfoUpdate(acp_v1::SessionInfoUpdate::new()),
+                    cx,
+                )
+                .expect("omitted legacy patch");
+            assert_eq!(thread.title(), Some("Legacy title".into()));
+            assert_eq!(thread.session_info().meta, Some(acp_v2::Meta::new()));
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::SessionInfoUpdate(
+                        acp_v1::SessionInfoUpdate::new().title(None::<String>),
+                    ),
+                    cx,
+                )
+                .expect("legacy title clear");
+            assert_eq!(thread.title(), None);
+            assert_eq!(thread.session_info().meta, Some(acp_v2::Meta::new()));
+        });
+        assert_eq!(*title_updated_events.borrow(), 9);
+
         assert!(
             connection.set_title_calls.borrow().is_empty(),
             "session info title update should not propagate back to the connection"
