@@ -4308,7 +4308,9 @@ mod internal_tests {
             };
             assert!(thread.is_compacting());
             assert!(compaction.is_in_progress());
-            assert!(compaction.summary.is_empty());
+            assert_eq!(compaction.summary.blocks().len(), 0);
+            assert!(compaction.summary.source_blocks().is_empty());
+            assert!(compaction.meta.is_none());
             compaction.id.clone()
         });
 
@@ -4322,7 +4324,14 @@ mod internal_tests {
             };
             assert_eq!(compaction.id, compaction_id);
             assert!(compaction.is_in_progress());
-            let [summary] = compaction.summary.as_slice() else {
+            assert_eq!(
+                compaction.summary.source_blocks(),
+                &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                    "retained "
+                ))]
+            );
+            let blocks = compaction.summary.blocks().collect::<Vec<_>>();
+            let [summary] = blocks.as_slice() else {
                 panic!("native text chunks should create one retained Markdown block");
             };
             let markdown = summary
@@ -4350,13 +4359,14 @@ mod internal_tests {
                 acp_thread::ContextCompactionStatus::Completed
             );
             assert!(compaction.error.is_none());
-            assert_eq!(compaction.summary.len(), 1);
+            assert_eq!(compaction.summary.blocks().len(), 1);
+            assert_eq!(compaction.summary.markdowns().next(), Some(&summary));
             assert_eq!(
-                compaction
-                    .summary
-                    .first()
-                    .and_then(|block| block.markdown()),
-                Some(&summary)
+                compaction.summary.source_blocks(),
+                &[
+                    acp_v2::ContentBlock::Text(acp_v2::TextContent::new("retained ")),
+                    acp_v2::ContentBlock::Text(acp_v2::TextContent::new("context")),
+                ]
             );
             assert_eq!(summary.read(cx).source().as_ref(), "retained context");
         });
@@ -4402,9 +4412,16 @@ mod internal_tests {
             assert_eq!(
                 compaction
                     .summary
-                    .first()
+                    .blocks()
+                    .next()
                     .map(|block| block.to_markdown(cx)),
                 Some("retained context")
+            );
+            assert_eq!(
+                compaction.summary.source_blocks(),
+                &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                    "retained context"
+                ))]
             );
         });
     }
@@ -4459,7 +4476,9 @@ mod internal_tests {
                 compaction.status,
                 acp_thread::ContextCompactionStatus::Completed
             );
-            assert!(compaction.summary.is_empty());
+            assert_eq!(compaction.summary.blocks().len(), 0);
+            assert!(compaction.summary.source_blocks().is_empty());
+            assert!(compaction.meta.is_none());
             assert!(compaction.error.is_none());
             assert!(!thread.is_compacting());
         });
@@ -4725,7 +4744,11 @@ mod internal_tests {
                 );
                 assert!(!thread.is_compacting(), "{scenario}");
                 assert_eq!(
-                    compaction.summary.first().map(|block| block.to_markdown(cx)),
+                    compaction
+                        .summary
+                        .blocks()
+                        .next()
+                        .map(|block| block.to_markdown(cx)),
                     partial_summary,
                     "{scenario}"
                 );
