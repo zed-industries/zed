@@ -18,7 +18,7 @@ use lsp::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use util::{ResultExt, fs::make_file_executable, maybe, rel_path::RelPath};
+use util::{ResultExt, maybe, rel_path::RelPath};
 
 use crate::{LanguageServerRegistryProxy, LspAccess};
 
@@ -215,21 +215,6 @@ impl DynLspInstaller for ExtensionLspAdapter {
                 };
                 let path = self.extension.path_from_extension(command_path);
 
-                // TODO: This should now be done via the `zed::make_file_executable` function in
-                // Zed extension API, but we're leaving these existing usages in place temporarily
-                // to avoid any compatibility issues between Zed and the extension versions.
-                //
-                // We can remove once the following extension versions no longer see any use:
-                // - toml@0.0.2
-                // - zig@0.0.1
-                if ["toml", "zig"].contains(&self.extension.manifest().id.as_ref())
-                    && path.starts_with(&self.extension.work_dir())
-                {
-                    make_file_executable(&path)
-                        .await
-                        .context("failed to set file permissions")?;
-                }
-
                 Ok(LanguageServerBinary {
                     path,
                     arguments: command
@@ -302,22 +287,20 @@ impl LspAdapter for ExtensionLspAdapter {
     }
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
-        // TODO: The language IDs can be provided via the language server options
-        // in `extension.toml now but we're leaving these existing usages in place temporarily
-        // to avoid any compatibility issues between Zed and the extension versions.
-        //
-        // We can remove once the following extension versions no longer see any use:
-        // - php@0.0.1
-        if self.extension.manifest().id.as_ref() == "php" {
-            return HashMap::from_iter([(LanguageName::new_static("PHP"), "php".into())]);
-        }
-
         self.extension
             .manifest()
             .language_servers
             .get(&self.language_server_id)
             .map(|server| server.language_ids.clone())
             .unwrap_or_default()
+    }
+
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.extension
+            .manifest()
+            .language_servers
+            .get(&self.language_server_id)
+            .is_some_and(|server| server.is_opt_in_for(language))
     }
 
     async fn initialization_options(
@@ -443,9 +426,7 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn additional_workspace_configuration(
         self: Arc<Self>,
         target_language_server_id: LanguageServerName,
-
         delegate: &Arc<dyn LspAdapterDelegate>,
-
         _cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let language_server_status_source = delegate.status_source_id();
