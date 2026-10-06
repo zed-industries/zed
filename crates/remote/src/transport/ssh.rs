@@ -208,9 +208,9 @@ impl RemoteEnvironment {
                 Write-Error -ErrorRecord $_ -ErrorAction Continue;
             };
 
-            $architecture = cmd.exe /c echo %PROCESSOR_ARCHITECTURE%;
-            if ($LASTEXITCODE -ne 0) {
-                exit $LASTEXITCODE;
+            $architecture = $env:PROCESSOR_ARCHITEW6432;
+            if (-not $architecture) {
+                $architecture = $env:PROCESSOR_ARCHITECTURE;
             };
 
             $version = "";
@@ -2181,34 +2181,43 @@ mod tests {
         {
             use base64::Engine as _;
 
-            for language_mode in ["FullLanguage", "ConstrainedLanguage"] {
-                let script = format!(
-                    "$ExecutionContext.SessionState.LanguageMode = '{language_mode}'; {}",
-                    RemoteEnvironment::windows_script()
-                );
-                let encoded_script = base64::engine::general_purpose::STANDARD.encode(
-                    script
-                        .encode_utf16()
-                        .flat_map(u16::to_le_bytes)
-                        .collect::<Vec<_>>(),
-                );
-                let output = smol::block_on(
-                    util::command::new_command("powershell.exe")
-                        .args(["-E", &encoded_script])
-                        .output(),
-                )?;
-                assert!(
-                    output.status.success(),
-                    "{language_mode}: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
+            for powershell in [
+                PathBuf::from("powershell.exe"),
+                #[cfg(target_arch = "x86_64")]
+                PathBuf::from(std::env::var("SystemRoot")?)
+                    // The 32-bit PowerShell on 64-bit Windows
+                    .join("SysWOW64/WindowsPowerShell/v1.0/powershell.exe"),
+            ] {
+                for language_mode in ["FullLanguage", "ConstrainedLanguage"] {
+                    let script = format!(
+                        "$ExecutionContext.SessionState.LanguageMode = '{language_mode}'; {}",
+                        RemoteEnvironment::windows_script()
+                    );
+                    let encoded_script = base64::engine::general_purpose::STANDARD.encode(
+                        script
+                            .encode_utf16()
+                            .flat_map(u16::to_le_bytes)
+                            .collect::<Vec<_>>(),
+                    );
+                    let output = smol::block_on(
+                        util::command::new_command(&powershell)
+                            .args(["-E", &encoded_script])
+                            .output(),
+                    )?;
+                    assert!(
+                        output.status.success(),
+                        "{} ({language_mode}): {}",
+                        powershell.display(),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
 
-                let environment =
-                    RemoteEnvironment::parse_windows(&String::from_utf8_lossy(&output.stdout))?;
-                assert_eq!(environment.platform.os, RemoteOs::Windows);
-                assert_eq!(environment.platform.arch.as_str(), std::env::consts::ARCH);
-                assert!(!environment.shell.is_empty());
-                assert!(environment.os_version.is_some());
+                    let environment =
+                        RemoteEnvironment::parse_windows(&String::from_utf8_lossy(&output.stdout))?;
+                    assert_eq!(environment.platform.os, RemoteOs::Windows);
+                    assert_eq!(environment.platform.arch.as_str(), std::env::consts::ARCH);
+                    assert!(!environment.shell.is_empty());
+                    assert!(environment.os_version.is_some());
+                }
             }
         }
 
