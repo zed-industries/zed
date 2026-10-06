@@ -235,8 +235,8 @@ struct Session {
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
     pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
-    /// The thread's save key as of the last enqueued save.
-    last_save_key: Option<SaveKey>,
+    /// The thread's streaming save key as of the last enqueued save.
+    last_streaming_save_key: Option<StreamingSaveKey>,
     save_wake: watch::Sender<()>,
     save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
@@ -256,6 +256,18 @@ impl Session {
         self.acp_thread.upgrade().is_some_and(|acp_thread| {
             acp_thread.read(cx).draft_prompt() != self.thread.read(cx).draft_prompt()
         })
+    }
+
+    /// Streaming notifies the thread once per chunk, but `to_db` doesn't
+    /// include the streaming message, so those notifies have nothing new to save.
+    fn can_skip_save_while_streaming(&self, cx: &App) -> bool {
+        let thread = self.thread.read(cx);
+        thread.is_streaming_message()
+            && self
+                .last_streaming_save_key
+                .as_ref()
+                .is_some_and(|key| *key == thread.streaming_save_key())
+            && !self.draft_prompt_changed(cx)
     }
 }
 
@@ -904,7 +916,7 @@ impl NativeAgent {
                 subagents: Vec::new(),
                 project_id,
                 pending_save,
-                last_save_key: None,
+                last_streaming_save_key: None,
                 save_wake,
                 save_worker,
                 _subscriptions: subscriptions,
@@ -1815,13 +1827,7 @@ impl NativeAgent {
         let Some(session) = self.sessions.get(&id) else {
             return;
         };
-        // This runs on every thread notify, and streaming notifies once per chunk.
-        if !session.draft_prompt_changed(cx)
-            && session
-                .last_save_key
-                .as_ref()
-                .is_some_and(|last_save_key| thread.read(cx).can_defer_save(last_save_key))
-        {
+        if session.can_skip_save_while_streaming(cx) {
             return;
         }
         let draft_prompt = session.draft_prompt(cx);
@@ -1846,7 +1852,7 @@ impl NativeAgent {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-        session.last_save_key = Some(session.thread.read(cx).save_key());
+        session.last_streaming_save_key = Some(session.thread.read(cx).streaming_save_key());
         *session.pending_save.lock() = Some(PendingThreadSave {
             folder_paths,
             db_thread,

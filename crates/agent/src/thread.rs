@@ -1274,7 +1274,7 @@ impl From<&ThreadModel> for Option<DbLanguageModel> {
 /// usage and scroll position are left out because they can change on every
 /// streamed chunk or scroll, and some fields never change after creation.
 #[derive(PartialEq)]
-pub(crate) struct SaveKey {
+pub(crate) struct StreamingSaveKey {
     message_count: usize,
     title: Option<SharedString>,
     summary: Option<SharedString>,
@@ -1942,6 +1942,8 @@ impl Thread {
         crate::sandboxing::sandbox_worktree_writable_paths(self.project.read(cx), cx)
     }
 
+    /// A field added here must also go in `StreamingSaveKey`, unless saving it
+    /// can wait until the response finishes streaming.
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         let mut thread = DbThread {
@@ -1976,15 +1978,12 @@ impl Thread {
         })
     }
 
-    /// Returns true while a message is streaming and the save key still matches
-    /// `last_save_key`. `to_db` doesn't include the pending message, so a save now would
-    /// only add fields that `SaveKey` leaves out.
-    pub(crate) fn can_defer_save(&self, last_save_key: &SaveKey) -> bool {
-        self.pending_message.is_some() && *last_save_key == self.save_key()
+    pub(crate) fn is_streaming_message(&self) -> bool {
+        self.pending_message.is_some()
     }
 
-    pub(crate) fn save_key(&self) -> SaveKey {
-        SaveKey {
+    pub(crate) fn streaming_save_key(&self) -> StreamingSaveKey {
+        StreamingSaveKey {
             message_count: self.messages.len(),
             title: self.title.clone(),
             summary: self.summary.clone(),
