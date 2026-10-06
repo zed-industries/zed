@@ -5424,6 +5424,9 @@ mod tests {
         let copy_button_bounds = cx
             .debug_bounds("ICON-Copy")
             .expect("copy code button should be rendered");
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            "<copy button did not write to the clipboard>".to_string(),
+        ));
         cx.simulate_click(copy_button_bounds.center(), Modifiers::default());
 
         assert_eq!(
