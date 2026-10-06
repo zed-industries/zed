@@ -1452,7 +1452,7 @@ impl ConversationView {
             .map(|native_connection| native_available_skills(&native_connection, &session_id, cx))
             .unwrap_or_default();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
-            thread.read(cx).prompt_capabilities(),
+            thread.read(cx).prompt_capabilities().clone(),
             thread.read(cx).available_commands().to_vec(),
             available_skills,
         )));
@@ -2072,10 +2072,9 @@ impl ConversationView {
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, _cx| {
-                        active
-                            .session_capabilities
-                            .write()
-                            .set_prompt_capabilities(thread.read(_cx).prompt_capabilities());
+                        active.session_capabilities.write().set_prompt_capabilities(
+                            thread.read(_cx).prompt_capabilities().clone(),
+                        );
                     });
                 }
             }
@@ -7904,10 +7903,10 @@ pub(crate) mod tests {
                 action_log,
                 session_id,
                 watch::Receiver::constant(
-                    acp_v1::PromptCapabilities::new()
-                        .image(true)
-                        .audio(true)
-                        .embedded_context(true),
+                    acp_v2::PromptCapabilities::new()
+                        .image(acp_v2::PromptImageCapabilities::new())
+                        .audio(acp_v2::PromptAudioCapabilities::new())
+                        .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                 ),
                 cx,
             )
@@ -8368,10 +8367,10 @@ pub(crate) mod tests {
                     action_log,
                     session_id,
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -8451,10 +8450,10 @@ pub(crate) mod tests {
                     action_log,
                     acp_v1::SessionId::new("test"),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -8530,10 +8529,10 @@ pub(crate) mod tests {
                     action_log,
                     acp_v1::SessionId::new("new-session"),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -8565,10 +8564,10 @@ pub(crate) mod tests {
                     action_log,
                     session_id,
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -14464,7 +14463,7 @@ pub(crate) mod tests {
                 project,
                 action_log,
                 acp_v1::SessionId::new(session_id),
-                watch::Receiver::constant(acp_v1::PromptCapabilities::new()),
+                watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
                 cx,
             )
         })
@@ -16755,8 +16754,14 @@ pub(crate) mod tests {
     async fn test_paste_text_into_queued_message_promotes_to_main_editor(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (conversation_view, cx) =
-            paste_into_queued_message(cx, ClipboardItem::new_string("PASTED".to_string())).await;
+        let (conversation_view, cx) = paste_into_queued_message(
+            cx,
+            ClipboardItem::new_string("PASTED".to_string()),
+            watch::Receiver::constant(
+                acp_v2::PromptCapabilities::new().image(acp_v2::PromptImageCapabilities::new()),
+            ),
+        )
+        .await;
 
         let queue_len = active_thread(&conversation_view, cx)
             .read_with(cx, |thread, _cx| thread.message_queue.len());
@@ -16778,15 +16783,22 @@ pub(crate) mod tests {
         let mut image_file = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
         image_file.write_all(&png_bytes).unwrap();
 
-        let (conversation_view, cx) = paste_into_queued_message(
-            cx,
-            ClipboardItem {
-                entries: vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
-                    vec![image_file.path().to_path_buf()].into(),
-                ))],
-            },
-        )
-        .await;
+        let initial_capabilities: acp_v2::PromptCapabilities = serde_json::from_value(json!({
+            "image": {},
+            "audio": {},
+            "embeddedContext": {},
+            "_meta": { "initial": ["preserved"] }
+        }))
+        .expect("valid advertised prompt capabilities");
+        let (mut capabilities_sender, capabilities_receiver) =
+            watch::channel(initial_capabilities.clone());
+        let image_clipboard = ClipboardItem {
+            entries: vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                vec![image_file.path().to_path_buf()].into(),
+            ))],
+        };
+        let (conversation_view, cx) =
+            paste_into_queued_message(cx, image_clipboard.clone(), capabilities_receiver).await;
 
         let queue_len = active_thread(&conversation_view, cx)
             .read_with(cx, |thread, _cx| thread.message_queue.len());
@@ -16803,21 +16815,95 @@ pub(crate) mod tests {
             text,
             format!("queued [@{image_name}]({expected_uri}) message"),
         );
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.read_with(cx, |view, cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(capabilities.supports_images());
+            assert!(capabilities.supports_embedded_context());
+            assert_eq!(capabilities.prompt_capabilities(), &initial_capabilities);
+            assert_eq!(
+                view.thread.read(cx).prompt_capabilities(),
+                &initial_capabilities
+            );
+        });
+
+        let replacement_payload = json!({
+            "image": { "_meta": { "image": ["opaque", 1] } },
+            "audio": { "_meta": { "audio": { "opaque": true } } },
+            "embeddedContext": { "_meta": { "context": ["opaque", null] } },
+            "_meta": { "replacement": { "opaque": [false, 2] } }
+        });
+        let replacement: acp_v2::PromptCapabilities =
+            serde_json::from_value(replacement_payload.clone())
+                .expect("valid replacement prompt capabilities");
+        capabilities_sender
+            .send(replacement)
+            .expect("thread is observing prompt capabilities");
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(capabilities.supports_images());
+            assert!(capabilities.supports_embedded_context());
+            assert_eq!(
+                serde_json::to_value(capabilities.prompt_capabilities())
+                    .expect("serialize retained prompt capabilities"),
+                replacement_payload
+            );
+            assert_eq!(
+                capabilities.prompt_capabilities(),
+                view.thread.read(cx).prompt_capabilities()
+            );
+        });
+
+        let disabled_capabilities: acp_v2::PromptCapabilities = serde_json::from_value(json!({
+            "image": null,
+            "audio": null,
+            "embeddedContext": null,
+            "_meta": { "disabled": ["preserved"] }
+        }))
+        .expect("valid unadvertised prompt capabilities");
+        capabilities_sender
+            .send(disabled_capabilities.clone())
+            .expect("thread is still observing prompt capabilities");
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(!capabilities.supports_images());
+            assert!(!capabilities.supports_embedded_context());
+            assert_eq!(capabilities.prompt_capabilities(), &disabled_capabilities);
+            assert_eq!(
+                view.thread.read(cx).prompt_capabilities(),
+                &disabled_capabilities
+            );
+        });
+
+        let editor = message_editor(&conversation_view, cx);
+        cx.write_to_clipboard(image_clipboard);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.clear(window, cx);
+            editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.is_empty(cx),
+                "disabled image support must prevent paste"
+            );
+        });
     }
 
     async fn paste_into_queued_message(
         cx: &mut TestAppContext,
         clipboard: ClipboardItem,
+        prompt_capabilities: watch::Receiver<acp_v2::PromptCapabilities>,
     ) -> (Entity<ConversationView>, &mut VisualTestContext) {
+        let connection = StubAgentConnection::new().with_prompt_capabilities(prompt_capabilities);
         let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
 
         active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
-            thread
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().image(true));
             thread.add_to_queue(
                 vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                     "queued message".to_string(),
@@ -17029,10 +17115,10 @@ pub(crate) mod tests {
                     action_log,
                     acp_v1::SessionId::new("close-capable-session"),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
