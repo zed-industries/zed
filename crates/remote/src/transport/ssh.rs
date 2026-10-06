@@ -205,7 +205,7 @@ impl RemoteEnvironment {
                 $process = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop;
                 $shell = (Get-CimInstance Win32_Process -Filter "ProcessId=$($process.ParentProcessId)" -ErrorAction Stop).Name;
             } catch {
-                [Console]::Error.WriteLine($_);
+                Write-Error -ErrorRecord $_ -ErrorAction Continue;
             };
 
             $architecture = cmd.exe /c echo %PROCESSOR_ARCHITECTURE%;
@@ -219,10 +219,10 @@ impl RemoteEnvironment {
                 $version = cmd.exe /c ver;
                 $status = $LASTEXITCODE;
             } catch {
-                [Console]::Error.WriteLine($_);
+                Write-Error -ErrorRecord $_ -ErrorAction Continue;
             };
 
-            [Console]::Write([string]::Join([char]0, @("", $shell, ($architecture -join "`n"), ($version -join "`n"), $status)));
+            Write-Output ([string]::Join([char]0, @("", $shell, ($architecture -join "`n"), ($version -join "`n"), $status)));
         "#
         // Remove extra whitespaces
         .lines()
@@ -275,7 +275,8 @@ impl RemoteEnvironment {
         let version = fields.next().context("Missing remote OS version")?;
         let status = fields
             .next()
-            .context("Missing remote OS version exit status")?;
+            .context("Missing remote OS version exit status")?
+            .trim();
         let os_version = if status == "0" {
             super::parse_os_version(RemoteOs::Windows, version)
         } else {
@@ -2180,30 +2181,35 @@ mod tests {
         {
             use base64::Engine as _;
 
-            let script = RemoteEnvironment::windows_script();
-            let encoded_script = base64::engine::general_purpose::STANDARD.encode(
-                script
-                    .encode_utf16()
-                    .flat_map(u16::to_le_bytes)
-                    .collect::<Vec<_>>(),
-            );
-            let output = smol::block_on(
-                util::command::new_command("powershell.exe")
-                    .args(["-E", &encoded_script])
-                    .output(),
-            )?;
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            for language_mode in ["FullLanguage", "ConstrainedLanguage"] {
+                let script = format!(
+                    "$ExecutionContext.SessionState.LanguageMode = '{language_mode}'; {}",
+                    RemoteEnvironment::windows_script()
+                );
+                let encoded_script = base64::engine::general_purpose::STANDARD.encode(
+                    script
+                        .encode_utf16()
+                        .flat_map(u16::to_le_bytes)
+                        .collect::<Vec<_>>(),
+                );
+                let output = smol::block_on(
+                    util::command::new_command("powershell.exe")
+                        .args(["-E", &encoded_script])
+                        .output(),
+                )?;
+                assert!(
+                    output.status.success(),
+                    "{language_mode}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
 
-            let environment =
-                RemoteEnvironment::parse_windows(&String::from_utf8_lossy(&output.stdout))?;
-            assert_eq!(environment.platform.os, RemoteOs::Windows);
-            assert_eq!(environment.platform.arch.as_str(), std::env::consts::ARCH);
-            assert!(!environment.shell.is_empty());
-            assert!(environment.os_version.is_some());
+                let environment =
+                    RemoteEnvironment::parse_windows(&String::from_utf8_lossy(&output.stdout))?;
+                assert_eq!(environment.platform.os, RemoteOs::Windows);
+                assert_eq!(environment.platform.arch.as_str(), std::env::consts::ARCH);
+                assert!(!environment.shell.is_empty());
+                assert!(environment.os_version.is_some());
+            }
         }
 
         #[cfg(unix)]
@@ -2230,22 +2236,18 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn version_query_failure_does_not_abort_probe() -> Result<()> {
-        let (command, version) = if cfg!(target_os = "macos") {
-            ("sw_vers", "15.6.1\n")
+        let command = if cfg!(target_os = "macos") {
+            "sw_vers"
         } else {
-            ("cat", "ID=ubuntu\nVERSION_ID=24.04\n")
+            "cat"
         };
-        // mock error
         let script = format!(
-            r#"{command}() {{ printf "%s" "{version}"; return 7; }};
-            {}"#,
+            "{command}() {{ return 7; }}; {}",
             RemoteEnvironment::posix_script()
         );
         let output = smol::block_on(
             util::command::new_command("/bin/bash")
-                .args(["--posix", "-c", &script])
-                .env("SHELLOPTS", "errexit")
-                .env("SHELL", "/bin/bash")
+                .args(["--posix", "-e", "-c", &script])
                 .output(),
         )?;
         assert!(
@@ -2255,7 +2257,6 @@ mod tests {
         );
 
         let environment = RemoteEnvironment::parse_posix(std::str::from_utf8(&output.stdout)?)?;
-        assert_eq!(environment.shell, "/bin/bash");
         assert_eq!(environment.os_version, None);
         Ok(())
     }
