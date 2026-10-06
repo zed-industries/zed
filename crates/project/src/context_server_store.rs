@@ -35,6 +35,15 @@ use crate::{
 /// Prevents extremely large timeout values from tying up resources indefinitely.
 const MAX_TIMEOUT_SECS: u64 = 600; // 10 minutes
 
+type SharedOAuthTokenProvider = Arc<async_lock::Mutex<Option<Arc<McpOAuthTokenProvider>>>>;
+
+#[derive(Default)]
+struct GlobalOAuthTokenProviders {
+    providers: HashMap<String, SharedOAuthTokenProvider>,
+}
+
+impl gpui::Global for GlobalOAuthTokenProviders {}
+
 pub fn init(cx: &mut App) {
     extension::init(cx);
 }
@@ -872,7 +881,7 @@ impl ContextServerStore {
             let id = id.clone();
             cx.spawn(async move |_this, cx| {
                 let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-                if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await
+                if let Err(err) = Self::clear_session(&credentials_provider, &server_url, cx).await
                 {
                     log::warn!("{} failed to clear OAuth session on removal: {}", id, err);
                 }
@@ -993,20 +1002,9 @@ impl ContextServerStore {
                     None
                 } else {
                     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-                    let http_client = cx.update(|cx| cx.http_client());
-
-                    match Self::load_session(&credentials_provider, url, &cx).await {
-                        Ok(Some(session)) => {
-                            log::info!("{} loaded cached OAuth session from keychain", id);
-                            Some(Self::create_oauth_token_provider(
-                                &id,
-                                url,
-                                session,
-                                http_client,
-                                credentials_provider,
-                                cx,
-                            ))
-                        }
+                    match Self::load_oauth_token_provider(&id, url, credentials_provider, cx).await
+                    {
+                        Ok(Some(provider)) => Some(provider as Arc<dyn oauth::OAuthTokenProvider>),
                         Ok(None) => None,
                         Err(err) => {
                             log::warn!("{} failed to load cached OAuth session: {}", id, err);
@@ -1155,25 +1153,87 @@ impl ContextServerStore {
         merged
     }
 
+    fn shared_oauth_token_provider(
+        server_url: &url::Url,
+        cx: &AsyncApp,
+    ) -> SharedOAuthTokenProvider {
+        cx.update(|cx| {
+            cx.default_global::<GlobalOAuthTokenProviders>()
+                .providers
+                .entry(Self::keychain_key(server_url))
+                .or_default()
+                .clone()
+        })
+    }
+
+    async fn load_oauth_token_provider(
+        id: &ContextServerId,
+        server_url: &url::Url,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &AsyncApp,
+    ) -> Result<Option<Arc<McpOAuthTokenProvider>>> {
+        let shared_provider = Self::shared_oauth_token_provider(server_url, cx);
+        let mut provider = shared_provider.lock().await;
+        if let Some(provider) = provider.as_ref() {
+            return Ok(provider.session().map(|_| provider.clone()));
+        }
+        let Some(session) = Self::load_session(&credentials_provider, server_url, cx).await? else {
+            return Ok(None);
+        };
+        log::info!("{} loaded cached OAuth session from keychain", id);
+        let http_client = cx.update(|cx| cx.http_client());
+        let token_provider = Self::create_oauth_token_provider(
+            id,
+            server_url,
+            session,
+            http_client,
+            credentials_provider,
+            &shared_provider,
+            cx,
+        );
+        *provider = Some(token_provider.clone());
+        Ok(Some(token_provider))
+    }
+
     fn create_oauth_token_provider(
         id: &ContextServerId,
         server_url: &url::Url,
         session: OAuthSession,
         http_client: Arc<dyn HttpClient>,
         credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut AsyncApp,
-    ) -> Arc<dyn oauth::OAuthTokenProvider> {
-        let (token_refresh_tx, mut token_refresh_rx) = futures::channel::mpsc::unbounded();
+        shared_provider: &SharedOAuthTokenProvider,
+        cx: &AsyncApp,
+    ) -> Arc<McpOAuthTokenProvider> {
+        let (token_refresh_tx, mut token_refresh_rx) =
+            futures::channel::mpsc::unbounded::<Arc<OAuthSession>>();
         let id = id.clone();
         let server_url = server_url.clone();
+        let shared_provider = Arc::downgrade(shared_provider);
 
         cx.spawn(async move |cx| {
             while let Some(refreshed_session) = token_refresh_rx.next().await {
-                if let Err(err) =
-                    Self::store_session(&credentials_provider, &server_url, &refreshed_session, &cx)
+                let Some(shared_provider) = shared_provider.upgrade() else {
+                    break;
+                };
+                let provider = shared_provider.lock().await;
+                // Serialize credential writes with login/logout, and discard queued
+                // updates that no longer belong to the current session.
+                if !provider
+                    .as_ref()
+                    .and_then(|provider| provider.session())
+                    .is_some_and(|session| Arc::ptr_eq(&session, &refreshed_session))
+                {
+                    continue;
+                }
+                if let Err(error) =
+                    Self::store_session(&credentials_provider, &server_url, &refreshed_session, cx)
                         .await
                 {
-                    log::warn!("{} failed to persist refreshed OAuth session: {}", id, err);
+                    log::warn!(
+                        "{} failed to persist refreshed OAuth session: {}",
+                        id,
+                        error
+                    );
                 }
             }
             log::debug!("{} OAuth session persistence task ended", id);
@@ -1521,18 +1581,29 @@ impl ContextServerStore {
             tokens,
         };
 
-        Self::store_session(&credentials_provider, &server_url, &session, cx)
-            .await
-            .context("Failed to persist OAuth session in keychain")?;
-
-        let token_provider = Self::create_oauth_token_provider(
-            &id,
-            &server_url,
-            session,
-            http_client.clone(),
-            credentials_provider,
-            cx,
-        );
+        let shared_provider = Self::shared_oauth_token_provider(&server_url, cx);
+        let token_provider = {
+            let mut provider = shared_provider.lock().await;
+            Self::store_session(&credentials_provider, &server_url, &session, cx)
+                .await
+                .context("Failed to persist OAuth session in keychain")?;
+            if let Some(provider) = provider.as_ref() {
+                provider.set_session(Some(session));
+                provider.clone()
+            } else {
+                let token_provider = Self::create_oauth_token_provider(
+                    &id,
+                    &server_url,
+                    session,
+                    http_client.clone(),
+                    credentials_provider,
+                    &shared_provider,
+                    cx,
+                );
+                *provider = Some(token_provider.clone());
+                token_provider
+            }
+        };
 
         let new_server = this.update(cx, |_this, cx| match configuration.as_ref() {
             ContextServerConfiguration::Http {
@@ -1604,6 +1675,11 @@ impl ContextServerStore {
         server_url: &url::Url,
         cx: &AsyncApp,
     ) -> Result<()> {
+        let shared_provider = Self::shared_oauth_token_provider(server_url, cx);
+        let provider = shared_provider.lock().await;
+        if let Some(provider) = provider.as_ref() {
+            provider.set_session(None);
+        }
         let key = Self::keychain_key(server_url);
         credentials_provider.delete_credentials(&key, cx).await
     }
@@ -1668,7 +1744,7 @@ impl ContextServerStore {
 
         cx.spawn(async move |this, cx| {
             let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-            if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await {
+            if let Err(err) = Self::clear_session(&credentials_provider, &server_url, cx).await {
                 log::error!("{} failed to clear OAuth session: {}", id, err);
             }
             // Also clear any client secret so the user gets a fresh prompt on
