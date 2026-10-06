@@ -1816,7 +1816,10 @@ impl ThreadView {
         let text = text.trim();
         if text == "/login" || text == "/logout" {
             let connection = thread.read(cx).connection().clone();
-            let can_login = !connection.auth_methods().is_empty();
+            let can_login = connection
+                .auth_methods()
+                .iter()
+                .any(acp_thread::auth_methods::is_supported);
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
                 && self

@@ -804,7 +804,11 @@ pub struct ConversationView {
 impl ConversationView {
     pub fn has_auth_methods(&self) -> bool {
         self.as_connected().map_or(false, |connected| {
-            !connected.connection.auth_methods().is_empty()
+            connected
+                .connection
+                .auth_methods()
+                .iter()
+                .any(acp_thread::auth_methods::is_supported)
         })
     }
 
@@ -936,7 +940,7 @@ enum AuthState {
     Ok,
     Unauthenticated {
         description: Option<Entity<Markdown>>,
-        pending_auth_method: Option<acp_v1::AuthMethodId>,
+        pending_auth_method: Option<acp_v2::AuthMethodId>,
     },
 }
 
@@ -1452,7 +1456,7 @@ impl ConversationView {
             .map(|native_connection| native_available_skills(&native_connection, &session_id, cx))
             .unwrap_or_default();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
-            thread.read(cx).prompt_capabilities(),
+            thread.read(cx).prompt_capabilities().clone(),
             thread.read(cx).available_commands().to_vec(),
             available_skills,
         )));
@@ -2072,10 +2076,9 @@ impl ConversationView {
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, _cx| {
-                        active
-                            .session_capabilities
-                            .write()
-                            .set_prompt_capabilities(thread.read(_cx).prompt_capabilities());
+                        active.session_capabilities.write().set_prompt_capabilities(
+                            thread.read(_cx).prompt_capabilities().clone(),
+                        );
                     });
                 }
             }
@@ -2175,7 +2178,7 @@ impl ConversationView {
 
     fn authenticate(
         &mut self,
-        method: acp_v1::AuthMethodId,
+        method: acp_v2::AuthMethodId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2186,6 +2189,11 @@ impl ConversationView {
             return;
         };
         let connection = connected.connection.clone();
+        if !connection.auth_methods().iter().any(|advertised| {
+            advertised.method_id() == &method && acp_thread::auth_methods::is_supported(advertised)
+        }) {
+            return;
+        }
 
         let AuthState::Unauthenticated {
             pending_auth_method,
@@ -2375,7 +2383,7 @@ impl ConversationView {
         login: task::SpawnInTerminal,
         workspace: Entity<Workspace>,
         project: Entity<Project>,
-        method: acp_v1::AuthMethodId,
+        method: acp_v2::AuthMethodId,
         previous_attempt: bool,
         window: &mut Window,
         cx: &mut App,
@@ -2514,11 +2522,15 @@ impl ConversationView {
         &self,
         connection: &Rc<dyn AgentConnection>,
         description: Option<&Entity<Markdown>>,
-        pending_auth_method: Option<&acp_v1::AuthMethodId>,
+        pending_auth_method: Option<&acp_v2::AuthMethodId>,
         window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let auth_methods = connection.auth_methods();
+        let auth_methods = connection
+            .auth_methods()
+            .iter()
+            .filter(|method| acp_thread::auth_methods::is_supported(method))
+            .collect::<Vec<_>>();
 
         let agent_display_name = self
             .agent_server_store
@@ -2531,43 +2543,34 @@ impl ConversationView {
 
         let auth_buttons = || {
             h_flex().justify_end().flex_wrap().gap_1().children(
-                connection
-                    .auth_methods()
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .map(|(ix, method)| {
-                        let (method_id, name) = (method.id().0.clone(), method.name().to_string());
-                        let agent_telemetry_id = connection.telemetry_id();
+                auth_methods.iter().enumerate().rev().map(|(ix, method)| {
+                    let (method_id, name) = (method.method_id().clone(), method.name().to_string());
+                    let agent_telemetry_id = connection.telemetry_id();
 
-                        Button::new(method_id.clone(), name)
-                            .label_size(LabelSize::Small)
-                            .map(|this| {
-                                if ix == 0 {
-                                    this.style(ButtonStyle::Tinted(TintColor::Accent))
-                                } else {
-                                    this.style(ButtonStyle::Outlined)
-                                }
-                            })
-                            .when_some(method.description(), |this, description| {
-                                this.tooltip(Tooltip::text(description.to_string()))
-                            })
-                            .on_click({
-                                cx.listener(move |this, _, window, cx| {
-                                    telemetry::event!(
-                                        "Authenticate Agent Started",
-                                        agent = agent_telemetry_id,
-                                        method = method_id
-                                    );
+                    Button::new(method_id.0.clone(), name)
+                        .label_size(LabelSize::Small)
+                        .map(|this| {
+                            if ix == 0 {
+                                this.style(ButtonStyle::Tinted(TintColor::Accent))
+                            } else {
+                                this.style(ButtonStyle::Outlined)
+                            }
+                        })
+                        .when_some(method.description(), |this, description| {
+                            this.tooltip(Tooltip::text(description.to_string()))
+                        })
+                        .on_click({
+                            cx.listener(move |this, _, window, cx| {
+                                telemetry::event!(
+                                    "Authenticate Agent Started",
+                                    agent = agent_telemetry_id,
+                                    method = method_id.0
+                                );
 
-                                    this.authenticate(
-                                        acp_v1::AuthMethodId::new(method_id.clone()),
-                                        window,
-                                        cx,
-                                    )
-                                })
+                                this.authenticate(method_id.clone(), window, cx)
                             })
-                    }),
+                        })
+                }),
             )
         };
 
@@ -5766,13 +5769,13 @@ pub(crate) mod tests {
             }
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -6369,7 +6372,7 @@ pub(crate) mod tests {
 
         let connection = AuthGatedAgentConnection::new();
         let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
 
         // When new_session returns AuthRequired, the server should transition
         // to Connected + Unauthenticated rather than getting stuck in Loading.
@@ -6377,6 +6380,53 @@ pub(crate) mod tests {
             let connected = view
                 .as_connected()
                 .expect("Should be in Connected state even though auth is required");
+            assert!(view.has_auth_methods());
+            assert_eq!(
+                connected.connection.auth_methods(),
+                connection.auth_methods()
+            );
+            let [unknown, agent, terminal] = connected.connection.auth_methods() else {
+                panic!("expected the complete mixed authentication advertisement");
+            };
+            assert!(matches!(unknown, acp_v2::AuthMethod::Other(_)));
+            assert_eq!(
+                serde_json::to_value(unknown).expect("unknown auth method must serialize"),
+                json!({
+                    "type": "_future_login",
+                    "methodId": AuthGatedAgentConnection::OTHER_AUTH_METHOD_ID,
+                    "name": "Future Login",
+                    "description": "Not supported by this client",
+                    "_meta": {
+                        "terminal-auth": {"command": "must-not-run", "args": ["login"]}
+                    },
+                    "args": ["must-not-run"],
+                    "details": {"nested": [1, {"preserve": true}]}
+                })
+            );
+            assert_eq!(
+                agent.method_id(),
+                &acp_v2::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID)
+            );
+            assert_eq!(agent.name(), "Test Login");
+            assert_eq!(agent.description(), Some("Sign in with the test provider"));
+            assert_eq!(
+                agent.meta().and_then(|meta| meta.get("fixture")),
+                Some(&json!({"nested": ["retain", 7]}))
+            );
+            assert_eq!(terminal.name(), "Terminal Login");
+            assert_eq!(
+                connected
+                    .connection
+                    .auth_methods()
+                    .iter()
+                    .filter(|method| acp_thread::auth_methods::is_supported(method))
+                    .map(|method| method.method_id().clone())
+                    .collect::<Vec<_>>(),
+                vec![
+                    acp_v2::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID),
+                    acp_v2::AuthMethodId::new(AuthGatedAgentConnection::TERMINAL_AUTH_METHOD_ID),
+                ]
+            );
             assert!(
                 !connected.auth_state.is_ok(),
                 "Auth state should be Unauthenticated"
@@ -6426,23 +6476,76 @@ pub(crate) mod tests {
             assert!(view.has_pending_selections());
         });
 
+        for method_id in [
+            AuthGatedAgentConnection::OTHER_AUTH_METHOD_ID,
+            "unadvertised:login",
+        ] {
+            conversation_view.update_in(cx, |view, window, cx| {
+                view.authenticate(acp_v2::AuthMethodId::new(method_id), window, cx);
+                assert!(view.auth_task.is_none());
+                assert!(matches!(
+                    &view
+                        .as_connected()
+                        .expect("connection must remain")
+                        .auth_state,
+                    AuthState::Unauthenticated {
+                        pending_auth_method: None,
+                        ..
+                    }
+                ));
+            });
+        }
+        cx.run_until_parked();
+        assert!(connection.authenticate_calls.lock().is_empty());
+        assert!(connection.terminal_auth_calls.lock().is_empty());
+        assert!(!*connection.authenticated.lock());
+        conversation_view.read_with(cx, |view, _cx| {
+            assert!(view.active_thread().is_none());
+            assert!(view.has_pending_selections());
+        });
+
         // Authenticate using the real authenticate flow on ConnectionView.
         // This calls connection.authenticate(), which flips the internal flag,
         // then on success triggers reset() -> new_session() which now succeeds.
         conversation_view.update_in(cx, |view, window, cx| {
-            view.authenticate(
-                acp_v1::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID),
-                window,
-                cx,
-            );
+            let method_id = acp_v2::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID);
+            view.authenticate(method_id.clone(), window, cx);
+            let AuthState::Unauthenticated {
+                pending_auth_method,
+                ..
+            } = &view
+                .as_connected()
+                .expect("connection must remain")
+                .auth_state
+            else {
+                panic!("authentication should be pending before reset");
+            };
+            assert_eq!(pending_auth_method.as_ref(), Some(&method_id));
+            assert!(view.auth_task.is_some());
         });
         cx.run_until_parked();
+        assert_eq!(
+            *connection.authenticate_calls.lock(),
+            vec![acp_v2::AuthMethodId::new(
+                AuthGatedAgentConnection::AUTH_METHOD_ID
+            )]
+        );
+        assert_eq!(
+            *connection.terminal_auth_calls.lock(),
+            vec![acp_v2::AuthMethodId::new(
+                AuthGatedAgentConnection::AUTH_METHOD_ID
+            )]
+        );
 
         // After auth, the server should have an active thread in the Ok state.
         conversation_view.read_with(cx, |view, cx| {
             let connected = view
                 .as_connected()
                 .expect("Should still be in Connected state after auth");
+            assert_eq!(
+                connected.connection.auth_methods(),
+                connection.auth_methods()
+            );
             assert!(connected.auth_state.is_ok(), "Auth state should be Ok");
             assert!(
                 view.supports_logout(),
@@ -6510,6 +6613,55 @@ pub(crate) mod tests {
                 "Unauthenticated auth UI should render request elicitations outside ThreadView"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_auth_unavailable_without_supported_methods(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = AuthGatedAgentConnection::new();
+        let unsupported_methods = connection
+            .auth_methods()
+            .iter()
+            .filter(|method| !acp_thread::auth_methods::is_supported(method))
+            .cloned()
+            .collect::<Vec<_>>();
+        for auth_methods in [unsupported_methods, Vec::new()] {
+            let mut connection = connection.clone();
+            connection.auth_methods = auth_methods;
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            conversation_view.update_in(cx, |view, window, cx| {
+                assert!(!view.has_auth_methods());
+                assert!(!view.supports_logout());
+                assert_eq!(
+                    view.as_connected()
+                        .expect("auth-required connection must remain")
+                        .connection
+                        .auth_methods(),
+                    connection.auth_methods()
+                );
+                view.authenticate(
+                    acp_v2::AuthMethodId::new(AuthGatedAgentConnection::OTHER_AUTH_METHOD_ID),
+                    window,
+                    cx,
+                );
+                assert!(view.auth_task.is_none());
+                assert!(matches!(
+                    &view
+                        .as_connected()
+                        .expect("connection must remain")
+                        .auth_state,
+                    AuthState::Unauthenticated {
+                        pending_auth_method: None,
+                        ..
+                    }
+                ));
+            });
+            cx.run_until_parked();
+            assert!(connection.authenticate_calls.lock().is_empty());
+            assert!(connection.terminal_auth_calls.lock().is_empty());
+        }
     }
 
     #[gpui::test]
@@ -7904,10 +8056,10 @@ pub(crate) mod tests {
                 action_log,
                 session_id,
                 watch::Receiver::constant(
-                    acp_v1::PromptCapabilities::new()
-                        .image(true)
-                        .audio(true)
-                        .embedded_context(true),
+                    acp_v2::PromptCapabilities::new()
+                        .image(acp_v2::PromptImageCapabilities::new())
+                        .audio(acp_v2::PromptAudioCapabilities::new())
+                        .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                 ),
                 cx,
             )
@@ -7970,13 +8122,13 @@ pub(crate) mod tests {
             Task::ready(Ok(thread))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -8101,13 +8253,13 @@ pub(crate) mod tests {
             Some(self.store.clone())
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -8213,13 +8365,13 @@ pub(crate) mod tests {
             Some(self.store.clone())
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -8285,13 +8437,13 @@ pub(crate) mod tests {
             Task::ready(Ok(thread))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -8318,19 +8470,54 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct AuthGatedAgentConnection {
         authenticated: Arc<Mutex<bool>>,
-        auth_method: acp_v1::AuthMethod,
+        auth_methods: Vec<acp_v2::AuthMethod>,
+        authenticate_calls: Arc<Mutex<Vec<acp_v2::AuthMethodId>>>,
+        terminal_auth_calls: Arc<Mutex<Vec<acp_v2::AuthMethodId>>>,
     }
 
     impl AuthGatedAgentConnection {
-        const AUTH_METHOD_ID: &str = "test-login";
+        const AUTH_METHOD_ID: &str = "login:provider/β?scope=team";
+        const TERMINAL_AUTH_METHOD_ID: &str = "terminal:login/opaque";
+        const OTHER_AUTH_METHOD_ID: &str = "future:login/opaque";
 
         fn new() -> Self {
             Self {
                 authenticated: Arc::new(Mutex::new(false)),
-                auth_method: acp_v1::AuthMethod::Agent(acp_v1::AuthMethodAgent::new(
-                    Self::AUTH_METHOD_ID,
-                    "Test Login",
-                )),
+                auth_methods: vec![
+                    acp_v2::AuthMethod::Other(
+                        acp_v2::OtherAuthMethod::new(
+                            "_future_login",
+                            Self::OTHER_AUTH_METHOD_ID,
+                            "Future Login",
+                            std::collections::BTreeMap::from([
+                                ("args".into(), json!(["must-not-run"])),
+                                ("details".into(), json!({"nested": [1, {"preserve": true}]})),
+                            ]),
+                        )
+                        .description("Not supported by this client")
+                        .meta(serde_json::Map::from_iter([(
+                            "terminal-auth".into(),
+                            json!({"command": "must-not-run", "args": ["login"]}),
+                        )])),
+                    ),
+                    acp_v2::AuthMethod::Agent(
+                        acp_v2::AuthMethodAgent::new(Self::AUTH_METHOD_ID, "Test Login")
+                            .description("Sign in with the test provider")
+                            .meta(serde_json::Map::from_iter([(
+                                "fixture".into(),
+                                json!({"nested": ["retain", 7]}),
+                            )])),
+                    ),
+                    acp_v2::AuthMethod::Terminal(
+                        acp_v2::AuthMethodTerminal::new(
+                            Self::TERMINAL_AUTH_METHOD_ID,
+                            "Terminal Login",
+                        )
+                        .description("Sign in with the terminal"),
+                    ),
+                ],
+                authenticate_calls: Arc::new(Mutex::new(Vec::new())),
+                terminal_auth_calls: Arc::new(Mutex::new(Vec::new())),
             }
         }
     }
@@ -8368,26 +8555,36 @@ pub(crate) mod tests {
                     action_log,
                     session_id,
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
             })))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
-            std::slice::from_ref(&self.auth_method)
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
+            &self.auth_methods
+        }
+
+        fn terminal_auth_task(
+            &self,
+            method_id: &acp_v2::AuthMethodId,
+            _cx: &App,
+        ) -> Option<Task<Result<task::SpawnInTerminal>>> {
+            self.terminal_auth_calls.lock().push(method_id.clone());
+            None
         }
 
         fn authenticate(
             &self,
-            method_id: acp_v1::AuthMethodId,
+            method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            if &method_id == self.auth_method.id() {
+            self.authenticate_calls.lock().push(method_id.clone());
+            if method_id == acp_v2::AuthMethodId::new(Self::AUTH_METHOD_ID) {
                 *self.authenticated.lock() = true;
                 Task::ready(Ok(()))
             } else {
@@ -8451,23 +8648,23 @@ pub(crate) mod tests {
                     action_log,
                     acp_v1::SessionId::new("test"),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
             })))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             unimplemented!()
@@ -8530,10 +8727,10 @@ pub(crate) mod tests {
                     action_log,
                     acp_v1::SessionId::new("new-session"),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -8565,10 +8762,10 @@ pub(crate) mod tests {
                     action_log,
                     session_id,
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -8576,13 +8773,13 @@ pub(crate) mod tests {
             Task::ready(Ok(thread))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -14550,7 +14747,7 @@ pub(crate) mod tests {
                 project,
                 action_log,
                 acp_v1::SessionId::new(session_id),
-                watch::Receiver::constant(acp_v1::PromptCapabilities::new()),
+                watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
                 cx,
             )
         })
@@ -16841,8 +17038,14 @@ pub(crate) mod tests {
     async fn test_paste_text_into_queued_message_promotes_to_main_editor(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (conversation_view, cx) =
-            paste_into_queued_message(cx, ClipboardItem::new_string("PASTED".to_string())).await;
+        let (conversation_view, cx) = paste_into_queued_message(
+            cx,
+            ClipboardItem::new_string("PASTED".to_string()),
+            watch::Receiver::constant(
+                acp_v2::PromptCapabilities::new().image(acp_v2::PromptImageCapabilities::new()),
+            ),
+        )
+        .await;
 
         let queue_len = active_thread(&conversation_view, cx)
             .read_with(cx, |thread, _cx| thread.message_queue.len());
@@ -16864,15 +17067,22 @@ pub(crate) mod tests {
         let mut image_file = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
         image_file.write_all(&png_bytes).unwrap();
 
-        let (conversation_view, cx) = paste_into_queued_message(
-            cx,
-            ClipboardItem {
-                entries: vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
-                    vec![image_file.path().to_path_buf()].into(),
-                ))],
-            },
-        )
-        .await;
+        let initial_capabilities: acp_v2::PromptCapabilities = serde_json::from_value(json!({
+            "image": {},
+            "audio": {},
+            "embeddedContext": {},
+            "_meta": { "initial": ["preserved"] }
+        }))
+        .expect("valid advertised prompt capabilities");
+        let (mut capabilities_sender, capabilities_receiver) =
+            watch::channel(initial_capabilities.clone());
+        let image_clipboard = ClipboardItem {
+            entries: vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                vec![image_file.path().to_path_buf()].into(),
+            ))],
+        };
+        let (conversation_view, cx) =
+            paste_into_queued_message(cx, image_clipboard.clone(), capabilities_receiver).await;
 
         let queue_len = active_thread(&conversation_view, cx)
             .read_with(cx, |thread, _cx| thread.message_queue.len());
@@ -16889,21 +17099,95 @@ pub(crate) mod tests {
             text,
             format!("queued [@{image_name}]({expected_uri}) message"),
         );
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.read_with(cx, |view, cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(capabilities.supports_images());
+            assert!(capabilities.supports_embedded_context());
+            assert_eq!(capabilities.prompt_capabilities(), &initial_capabilities);
+            assert_eq!(
+                view.thread.read(cx).prompt_capabilities(),
+                &initial_capabilities
+            );
+        });
+
+        let replacement_payload = json!({
+            "image": { "_meta": { "image": ["opaque", 1] } },
+            "audio": { "_meta": { "audio": { "opaque": true } } },
+            "embeddedContext": { "_meta": { "context": ["opaque", null] } },
+            "_meta": { "replacement": { "opaque": [false, 2] } }
+        });
+        let replacement: acp_v2::PromptCapabilities =
+            serde_json::from_value(replacement_payload.clone())
+                .expect("valid replacement prompt capabilities");
+        capabilities_sender
+            .send(replacement)
+            .expect("thread is observing prompt capabilities");
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(capabilities.supports_images());
+            assert!(capabilities.supports_embedded_context());
+            assert_eq!(
+                serde_json::to_value(capabilities.prompt_capabilities())
+                    .expect("serialize retained prompt capabilities"),
+                replacement_payload
+            );
+            assert_eq!(
+                capabilities.prompt_capabilities(),
+                view.thread.read(cx).prompt_capabilities()
+            );
+        });
+
+        let disabled_capabilities: acp_v2::PromptCapabilities = serde_json::from_value(json!({
+            "image": null,
+            "audio": null,
+            "embeddedContext": null,
+            "_meta": { "disabled": ["preserved"] }
+        }))
+        .expect("valid unadvertised prompt capabilities");
+        capabilities_sender
+            .send(disabled_capabilities.clone())
+            .expect("thread is still observing prompt capabilities");
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(!capabilities.supports_images());
+            assert!(!capabilities.supports_embedded_context());
+            assert_eq!(capabilities.prompt_capabilities(), &disabled_capabilities);
+            assert_eq!(
+                view.thread.read(cx).prompt_capabilities(),
+                &disabled_capabilities
+            );
+        });
+
+        let editor = message_editor(&conversation_view, cx);
+        cx.write_to_clipboard(image_clipboard);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.clear(window, cx);
+            editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.is_empty(cx),
+                "disabled image support must prevent paste"
+            );
+        });
     }
 
     async fn paste_into_queued_message(
         cx: &mut TestAppContext,
         clipboard: ClipboardItem,
+        prompt_capabilities: watch::Receiver<acp_v2::PromptCapabilities>,
     ) -> (Entity<ConversationView>, &mut VisualTestContext) {
+        let connection = StubAgentConnection::new().with_prompt_capabilities(prompt_capabilities);
         let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
 
         active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
-            thread
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().image(true));
             thread.add_to_queue(
                 vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                     "queued message".to_string(),
@@ -17115,10 +17399,10 @@ pub(crate) mod tests {
                     action_log,
                     acp_v1::SessionId::new("close-capable-session"),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -17139,13 +17423,13 @@ pub(crate) mod tests {
             Task::ready(Ok(()))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))

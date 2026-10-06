@@ -1,9 +1,11 @@
+pub mod auth_methods;
 pub mod commands;
 pub mod config_options;
 mod connection;
 pub mod content;
 mod diff;
 mod mention;
+pub mod prompt_capabilities;
 mod submission;
 mod terminal;
 pub use ::terminal::HeadlessTerminal;
@@ -3384,7 +3386,7 @@ pub struct AcpThread {
     activity: SessionActivity,
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
-    prompt_capabilities: acp_v1::PromptCapabilities,
+    prompt_capabilities: acp_v2::PromptCapabilities,
     available_commands: Vec<acp_v2::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
     _idle_sleep_subscriptions: Vec<Subscription>,
@@ -3624,7 +3626,7 @@ impl AcpThread {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         session_id: acp_v1::SessionId,
-        mut prompt_capabilities_rx: watch::Receiver<acp_v1::PromptCapabilities>,
+        mut prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = prompt_capabilities_rx.borrow().clone();
@@ -3739,8 +3741,8 @@ impl AcpThread {
         self.parent_session_id.as_ref()
     }
 
-    pub fn prompt_capabilities(&self) -> acp_v1::PromptCapabilities {
-        self.prompt_capabilities.clone()
+    pub fn prompt_capabilities(&self) -> &acp_v2::PromptCapabilities {
+        &self.prompt_capabilities
     }
 
     pub fn available_commands(&self) -> &[acp_v2::AvailableCommand] {
@@ -17089,7 +17091,7 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct FakeAgentConnection {
-        auth_methods: Vec<acp_v1::AuthMethod>,
+        auth_methods: Vec<acp_v2::AuthMethod>,
         supports_truncate: bool,
         sessions: Arc<parking_lot::Mutex<HashMap<acp_v1::SessionId, WeakEntity<AcpThread>>>>,
         set_title_calls: Rc<RefCell<Vec<SharedString>>>,
@@ -17123,7 +17125,7 @@ mod tests {
         }
 
         #[expect(unused)]
-        fn with_auth_methods(mut self, auth_methods: Vec<acp_v1::AuthMethod>) -> Self {
+        fn with_auth_methods(mut self, auth_methods: Vec<acp_v2::AuthMethod>) -> Self {
             self.auth_methods = auth_methods;
             self
         }
@@ -17151,7 +17153,7 @@ mod tests {
             "fake".into()
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &self.auth_methods
         }
 
@@ -17179,10 +17181,10 @@ mod tests {
                     action_log,
                     session_id.clone(),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -17193,10 +17195,14 @@ mod tests {
 
         fn authenticate(
             &self,
-            method: acp_v1::AuthMethodId,
+            method: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            if self.auth_methods().iter().any(|m| m.id() == &method) {
+            if self
+                .auth_methods()
+                .iter()
+                .any(|candidate| candidate.method_id() == &method)
+            {
                 Task::ready(Ok(()))
             } else {
                 Task::ready(Err(anyhow!("Invalid Auth Method")))
@@ -19041,7 +19047,7 @@ mod tests {
                     project,
                     action_log,
                     acp_v1::SessionId::new("subagent"),
-                    watch::Receiver::constant(acp_v1::PromptCapabilities::new()),
+                    watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
                     cx,
                 )
             })

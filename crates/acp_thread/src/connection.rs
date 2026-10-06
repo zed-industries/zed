@@ -164,17 +164,17 @@ pub trait AgentConnection {
         false
     }
 
-    fn auth_methods(&self) -> &[acp_v1::AuthMethod];
+    fn auth_methods(&self) -> &[acp_v2::AuthMethod];
 
     fn terminal_auth_task(
         &self,
-        _method: &acp_v1::AuthMethodId,
+        _method: &acp_v2::AuthMethodId,
         _cx: &App,
     ) -> Option<Task<Result<SpawnInTerminal>>> {
         None
     }
 
-    fn authenticate(&self, method: acp_v1::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
+    fn authenticate(&self, method: acp_v2::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
     fn supports_logout(&self) -> bool {
         false
@@ -868,6 +868,7 @@ mod test_support {
         supports_set_title: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
+        prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
     }
 
     struct Session {
@@ -899,6 +900,12 @@ mod test_support {
                 supports_set_title: true,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
+                prompt_capabilities_rx: watch::Receiver::constant(
+                    acp_v2::PromptCapabilities::new()
+                        .image(acp_v2::PromptImageCapabilities::new())
+                        .audio(acp_v2::PromptAudioCapabilities::new())
+                        .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+                ),
             }
         }
 
@@ -964,6 +971,14 @@ mod test_support {
             self
         }
 
+        pub fn with_prompt_capabilities(
+            mut self,
+            prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
+        ) -> Self {
+            self.prompt_capabilities_rx = prompt_capabilities_rx;
+            self
+        }
+
         pub fn with_supports_session_additional_directories(
             mut self,
             supports_session_additional_directories: bool,
@@ -1005,12 +1020,7 @@ mod test_support {
                     project,
                     action_log,
                     session_id.clone(),
-                    watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
+                    self.prompt_capabilities_rx.clone(),
                     cx,
                 )
             });
@@ -1068,7 +1078,7 @@ mod test_support {
             self.telemetry_id.clone()
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
@@ -1116,7 +1126,7 @@ mod test_support {
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             unimplemented!()
