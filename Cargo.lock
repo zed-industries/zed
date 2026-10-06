@@ -22490,6 +22490,7 @@ dependencies = [
  "migrator",
  "mimalloc",
  "miniprofiler_ui",
+ "nix",
  "node_runtime",
  "notifications",
  "onboarding",
