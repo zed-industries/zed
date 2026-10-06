@@ -868,6 +868,7 @@ mod test_support {
         supports_set_title: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
+        prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
     }
 
     struct Session {
@@ -899,6 +900,12 @@ mod test_support {
                 supports_set_title: true,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
+                prompt_capabilities_rx: watch::Receiver::constant(
+                    acp_v2::PromptCapabilities::new()
+                        .image(acp_v2::PromptImageCapabilities::new())
+                        .audio(acp_v2::PromptAudioCapabilities::new())
+                        .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+                ),
             }
         }
 
@@ -964,6 +971,14 @@ mod test_support {
             self
         }
 
+        pub fn with_prompt_capabilities(
+            mut self,
+            prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
+        ) -> Self {
+            self.prompt_capabilities_rx = prompt_capabilities_rx;
+            self
+        }
+
         pub fn with_supports_session_additional_directories(
             mut self,
             supports_session_additional_directories: bool,
@@ -1005,12 +1020,7 @@ mod test_support {
                     project,
                     action_log,
                     session_id.clone(),
-                    watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
+                    self.prompt_capabilities_rx.clone(),
                     cx,
                 )
             });

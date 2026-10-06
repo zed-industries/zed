@@ -976,8 +976,10 @@ impl AcpConnection {
         })
     }
 
-    pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
-        &self.agent_capabilities.prompt_capabilities
+    pub fn prompt_capabilities(&self) -> acp_v2::PromptCapabilities {
+        acp_thread::prompt_capabilities::from_v1(
+            self.agent_capabilities.prompt_capabilities.clone(),
+        )
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1195,7 +1197,7 @@ impl AcpConnection {
                 project,
                 action_log,
                 session_id.clone(),
-                watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
+                watch::Receiver::constant(self.prompt_capabilities()),
                 cx,
             )
         });
@@ -1687,9 +1689,7 @@ impl AgentConnection for AcpConnection {
                     action_log,
                     response.session_id.clone(),
                     // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
-                    watch::Receiver::constant(
-                        self.agent_capabilities.prompt_capabilities.clone(),
-                    ),
+                    watch::Receiver::constant(self.prompt_capabilities()),
                     cx,
                 )
             });
