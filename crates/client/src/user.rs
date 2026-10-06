@@ -832,6 +832,14 @@ impl UserStore {
         self.edit_prediction_usage
     }
 
+    /// Returns whether the current plan includes no Zed edit predictions at all, as opposed to
+    /// having used up a nonzero allowance. Cloud expresses this as a zero usage limit, which is
+    /// how the Free plan is configured now that it no longer includes edit predictions.
+    pub fn edit_predictions_excluded_from_plan(&self) -> bool {
+        self.edit_prediction_usage
+            .is_some_and(|usage| usage.limit == UsageLimit::Limited(0))
+    }
+
     pub fn update_edit_prediction_usage(
         &mut self,
         usage: EditPredictionUsage,
