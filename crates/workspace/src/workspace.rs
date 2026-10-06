@@ -7676,6 +7676,17 @@ impl Workspace {
     }
 
     fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
+        // Restoring a workspace deserializes items into fresh panes and only
+        // installs the restored center layout at the end. Until then `self.center`
+        // still holds the placeholder pane, so serializing now would persist an
+        // empty pane tree and delete the stored layout being restored -- including
+        // the `items` rows that items referencing another persisted item (such as a
+        // markdown preview of a restored editor) read to tell which items are part
+        // of the restore. `load_workspace` serializes once the layout is installed.
+        if self.restoring_workspace {
+            return Task::ready(());
+        }
+
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
         };
@@ -11543,8 +11554,15 @@ async fn open_remote_project_inner(
             );
             workspace.update_history(cx);
 
-            if let Some(ref serialized) = serialized_workspace {
+            if let Some(serialized) = &serialized_workspace {
                 workspace.centered_layout = serialized.centered_layout;
+                // A serialization triggered by the toolchain loads below or by
+                // any project event would fire while `restoring_workspace` is
+                // still false, persisting this fresh workspace's empty
+                // placeholder center over the stored layout `load_workspace`
+                // is about to deserialize. Arm the flag here, the way
+                // `load_workspace` does before its own first await.
+                workspace.restoring_workspace = true;
             }
 
             workspace
@@ -11564,7 +11582,16 @@ async fn open_remote_project_inner(
     })?;
 
     let db = cx.update(|cx| WorkspaceDb::global(cx));
-    let toolchains = db.toolchains(workspace_id).await?;
+    let toolchains = match db.toolchains(workspace_id).await {
+        Ok(toolchains) => toolchains,
+        Err(error) => {
+            // `restoring_workspace` was armed for the pending restore; without
+            // this reset a toolchain-load failure would leave it armed forever,
+            // disabling serialization for the lifetime of this workspace.
+            workspace.update(cx, |workspace, _| workspace.restoring_workspace = false);
+            return Err(error);
+        }
+    };
     for (toolchain, worktree_path, path) in toolchains {
         project
             .update(cx, |this, cx| {
@@ -19720,6 +19747,90 @@ mod tests {
                 PathBuf::from(path!("/project/b.rs")),
                 PathBuf::from(path!("/project/a.rs")),
             ]
+        );
+    }
+
+    // Restoring a workspace deserializes items into fresh panes and installs the
+    // restored center layout only at the end, but restored items schedule a
+    // workspace serialization as they are added. A serialization that runs in
+    // between must not persist the placeholder center: doing so deletes the stored
+    // layout, including the `items` rows an item that references another persisted
+    // item (a markdown preview of a restored editor) reads to tell which items are
+    // part of the restore.
+    #[gpui::test]
+    async fn test_serializing_while_restoring_preserves_the_stored_layout(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(register_serializable_item::<TestItem>);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| TestItem::new(cx).with_serialize(|| Some(Task::ready(Ok(())))));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_random_database_id();
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+        let item_id = item.entity_id();
+        let serialized_item_id = item_id.as_u64();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+        assert!(
+            cx.update(|_, cx| {
+                WorkspaceDb::global(cx)
+                    .contains_serialized_item(workspace_id, serialized_item_id)
+                    .unwrap()
+            }),
+            "the stored layout must contain the item before the race is simulated"
+        );
+
+        // Restore is in progress and the restored layout is not installed yet: the
+        // live pane is emptied while the stored layout still lists the item.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.remove_item(item_id, false, false, window, cx)
+            });
+            workspace.set_restoring_workspace(true);
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+        assert!(
+            cx.update(|_, cx| {
+                WorkspaceDb::global(cx)
+                    .contains_serialized_item(workspace_id, serialized_item_id)
+                    .unwrap()
+            }),
+            "serializing while restoring must not overwrite the layout being restored"
+        );
+
+        // Control: once the restore is over the live layout is persisted again, so
+        // the assertion above is not vacuous.
+        workspace.update(cx, |workspace, _| workspace.set_restoring_workspace(false));
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+        assert!(
+            !cx.update(|_, cx| {
+                WorkspaceDb::global(cx)
+                    .contains_serialized_item(workspace_id, serialized_item_id)
+                    .unwrap()
+            }),
+            "after restore the emptied live layout is persisted"
         );
     }
 

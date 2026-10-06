@@ -1575,9 +1575,9 @@ fn serialized_editor_for_restore(
     }
 }
 
-/// Whether session restore will restore the editor persisted for `item_id` in
-/// `workspace_id` for `abs_path` from its saved unsaved contents, even though the
-/// file no longer exists.
+/// Whether session restore will restore a file-backed editor for `abs_path` in
+/// `workspace_id` from its saved unsaved contents, even though the file no longer
+/// exists.
 ///
 /// This mirrors the condition [`Editor::deserialize`] applies to a file-backed
 /// editor, and additionally requires that the editor is still part of the pane
@@ -1586,27 +1586,44 @@ fn serialized_editor_for_restore(
 /// — must remain restorable exactly when the editor does, so it consults this
 /// instead of re-deriving the rules. A row left behind by a closed or renamed
 /// editor tab therefore does not make its preview restorable.
+///
+/// `source_item_id` is the editor the caller recorded when it persisted, or `None`
+/// for rows persisted before that id was recorded, or when no canonical editor was
+/// open at serialize time. In either `None` case the source is matched from the
+/// saved layout — every editor persisted for `abs_path` that the layout still
+/// contains — so a migrated row is associated only with an editor the restore will
+/// actually reopen, never with an arbitrary id, and a closed editor's surviving row
+/// cannot make the preview restorable.
 pub fn restores_unsaved_contents(
-    item_id: ItemId,
+    source_item_id: Option<ItemId>,
     workspace_id: WorkspaceId,
     abs_path: &Path,
     cx: &App,
 ) -> bool {
-    if !WorkspaceDb::global(cx)
-        .contains_serialized_item(workspace_id, item_id)
-        .unwrap_or(false)
-    {
-        return false;
-    }
+    let candidates = match source_item_id {
+        Some(item_id) => vec![item_id],
+        None => {
+            match EditorDb::global(cx).serialized_editor_ids_for_path(workspace_id, abs_path) {
+                Ok(item_ids) => item_ids,
+                // A read error fails closed: the derived item is refused rather
+                // than restored against unverifiable state.
+                Err(_) => return false,
+            }
+        }
+    };
 
-    // A read error fails closed: the derived item is refused rather than restored
-    // against unverifiable state.
-    serialized_editor_for_restore(item_id, workspace_id, cx)
-        .ok()
-        .flatten()
-        .is_some_and(|editor| {
-            editor.contents.is_some() && editor.abs_path.as_deref() == Some(abs_path)
-        })
+    candidates.into_iter().any(|item_id| {
+        // Only an editor still in the pane layout is part of the restore.
+        WorkspaceDb::global(cx)
+            .contains_serialized_item(workspace_id, item_id)
+            .unwrap_or(false)
+            && serialized_editor_for_restore(item_id, workspace_id, cx)
+                .ok()
+                .flatten()
+                .is_some_and(|editor| {
+                    editor.contents.is_some() && editor.abs_path.as_deref() == Some(abs_path)
+                })
+    })
 }
 
 #[derive(Debug, Default)]

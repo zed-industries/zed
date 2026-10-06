@@ -241,6 +241,18 @@ impl EditorDb {
         }
     }
 
+    // The item ids of the editors persisted for `workspace_id` whose file path is
+    // `path`. Sessions that restored an item derived from an editor but persisted
+    // before the source id was recorded use this to find the editor that produced
+    // it; callers intersect the result with the pane layout being restored, so a
+    // row left behind by a closed tab is not mistaken for a restored editor.
+    query! {
+        pub fn serialized_editor_ids_for_path(workspace_id: WorkspaceId, path: &Path) -> Result<Vec<ItemId>> {
+            SELECT item_id FROM editors
+            WHERE workspace_id = ? AND path = ?
+        }
+    }
+
     query! {
         pub async fn save_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId, serialized_editor: SerializedEditor) -> Result<()> {
             INSERT INTO editors
