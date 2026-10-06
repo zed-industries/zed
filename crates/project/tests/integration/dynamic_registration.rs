@@ -2744,6 +2744,74 @@ async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::Tes
     );
 }
 
+#[gpui::test]
+async fn test_registration_pattern_scopes_capability_to_matching_documents(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+    fs.insert_tree(path!("/the-root"), json!({ "b.rs": "" }))
+        .await;
+    let method = "textDocument/completion";
+
+    let (buffer_a, _lsp_handle_a) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let (buffer_b, _lsp_handle_b) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_triggers = |buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext| {
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
+
+    register_capability(
+        &fake_server,
+        method,
+        "completion-invalid-pattern",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "pattern": "**/[a.rs" }],
+            "triggerCharacters": [":"],
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, fake_server.server.server_id(), cx).completion_provider,
+        None,
+        "expected a registration with an invalid pattern to be rejected",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "completion-a",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "pattern": "**/a.rs" }],
+            "triggerCharacters": ["."],
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(&buffer_a, cx),
+        BTreeSet::from([".".to_string()]),
+        "expected the registration to apply to the document matching its pattern",
+    );
+    assert_eq!(
+        buffer_triggers(&buffer_b, cx),
+        BTreeSet::new(),
+        "expected the registration not to apply to a document outside its pattern",
+    );
+}
+
 async fn setup_dynamic_registration_test(
     cx: &mut gpui::TestAppContext,
     capabilities: lsp::ServerCapabilities,

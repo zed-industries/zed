@@ -685,7 +685,7 @@ linkify = "0.10.0"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 lru = "0.16"
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f1783e63a7f4eb4397bf51d4148b4895a1f7ab16" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "82d7fc66ebdfabcfeb26ba16bbed9f3d26211fc3" }
 mach2 = "0.6"
 markup5ever_rcdom = "0.39"
 mdbook = { version = "=0.4.40", default-features = false, features = ["search"] }

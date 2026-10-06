@@ -16,7 +16,8 @@ use lsp::{
 
 use crate::lsp_store::{
     LanguageServerState, LspStore, RenamePathsWatchedForServer,
-    completion_trigger_characters_for_buffer, lsp_workspace_diagnostics_refresh,
+    completion_trigger_characters_for_buffer, document_filter_pattern_matcher,
+    lsp_workspace_diagnostics_refresh,
 };
 
 #[derive(Debug)]
@@ -83,6 +84,7 @@ impl LspStore {
         cx: &mut Context<Self>,
         capability_of: impl Fn(&mut lsp::ServerCapabilities) -> &mut Option<T>,
     ) -> anyhow::Result<CapabilityRegistrationChange> {
+        validate_document_selector(document_selector.as_ref())?;
         let server_id = server.server_id();
         let local = self
             .as_local_mut()
@@ -369,7 +371,7 @@ impl LspStore {
         for handle in buffers_with_language_server {
             handle.update(cx, |buffer, cx| {
                 let triggers =
-                    completion_trigger_characters_for_buffer(local, server_id, adapter, buffer);
+                    completion_trigger_characters_for_buffer(local, server_id, adapter, buffer, cx);
                 buffer.set_completion_triggers(server_id, triggers, cx);
             });
         }
@@ -1264,6 +1266,19 @@ fn parse_text_document_registration(
         .map(serde_json::from_value::<lsp::TextDocumentRegistrationOptions>)
         .transpose()?
         .and_then(|options| options.document_selector))
+}
+
+/// Rejects unusable patterns up front, so that matching never has to decide what they mean.
+fn validate_document_selector(document_selector: Option<&lsp::DocumentSelector>) -> Result<()> {
+    for pattern in document_selector
+        .into_iter()
+        .flatten()
+        .filter_map(|filter| filter.pattern.as_ref())
+    {
+        document_filter_pattern_matcher(pattern)
+            .with_context(|| format!("invalid document filter pattern {pattern:?}"))?;
+    }
+    Ok(())
 }
 
 // Registration with registerOptions as null, should fallback to true.
