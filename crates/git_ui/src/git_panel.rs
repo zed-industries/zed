@@ -67,7 +67,8 @@ use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{
-        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op,
+        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId,
+        diff_buffer_list::DiffBase, pending_op,
     },
     project_settings::{GitPathStyle, ProjectSettings},
 };
@@ -2630,10 +2631,19 @@ impl GitPanel {
         let Some(repository) = self.active_repository.clone() else {
             return;
         };
+        let diff_base = match self
+            .selected_entry
+            .and_then(|index| self.section_for_entry_index(index))
+        {
+            Some(Section::Staged) => DiffBase::Staged,
+            Some(Section::Unstaged) => DiffBase::Index,
+            _ => DiffBase::Head,
+        };
         for entry in self.effective_status_entries() {
             SoloDiffView::open_or_focus(
                 entry,
                 repository.clone(),
+                diff_base.clone(),
                 self.workspace.clone(),
                 window,
                 cx,
