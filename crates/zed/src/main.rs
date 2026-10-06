@@ -60,7 +60,7 @@ use std::{
     process,
     rc::Rc,
     sync::{Arc, LazyLock, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use theme_settings::load_user_theme;
@@ -83,6 +83,8 @@ use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+const LOGIN_SHELL_ENVIRONMENT_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn build_application() -> Application {
     let platform = gpui_platform::current_platform(false);
@@ -441,19 +443,20 @@ fn main() {
     );
 
     let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
-    let (language_model_env_loaded_tx, language_model_env_loaded_rx) = oneshot::channel();
+    let (shell_env_loaded_for_language_models_tx, shell_env_loaded_for_language_models_rx) =
+        oneshot::channel();
     if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
                 #[cfg(unix)]
                 util::load_login_shell_environment().await.log_err();
                 shell_env_loaded_tx.send(()).ok();
-                language_model_env_loaded_tx.send(()).ok();
+                shell_env_loaded_for_language_models_tx.send(()).ok();
             })
             .detach();
     } else {
         drop(shell_env_loaded_tx);
-        drop(language_model_env_loaded_tx);
+        drop(shell_env_loaded_for_language_models_tx);
     }
 
     app.on_open_urls({
@@ -700,11 +703,21 @@ fn main() {
         );
         // Language model providers snapshot API keys from the process environment when they are
         // initialized. When Zed is launched from the macOS Dock or another GUI launcher, that
-        // environment is loaded asynchronously from the user's login shell. Wait for the capture
-        // to finish so providers do not permanently cache missing API keys during startup.
-        cx.foreground_executor()
-            .block_on(language_model_env_loaded_rx)
-            .ok();
+        // environment is loaded asynchronously from the user's login shell. Give the capture a
+        // bounded amount of time to finish so providers do not permanently cache missing API keys
+        // during normal startup without letting a slow shell block the application indefinitely.
+        if cx
+            .foreground_executor()
+            .block_with_timeout(
+                LOGIN_SHELL_ENVIRONMENT_WAIT_TIMEOUT,
+                shell_env_loaded_for_language_models_rx,
+            )
+            .is_err()
+        {
+            log::warn!(
+                "timed out waiting for the login shell environment before initializing language models"
+            );
+        }
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
