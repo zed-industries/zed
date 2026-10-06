@@ -232,6 +232,44 @@ fn is_br_tag(html: &str) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("br"))
 }
 
+fn yaml_frontmatter_candidate(text: &str) -> Option<&str> {
+    // strip_prefix checks only the three-byte prefix and borrows the remainder without copying.
+    let after_fence = text.strip_prefix("---")?;
+    let opening_whitespace_length = after_fence
+        .bytes()
+        .take_while(|byte| *byte != b'\n' && byte.is_ascii_whitespace())
+        .count();
+    let after_opening_line = after_fence
+        .get(opening_whitespace_length..)?
+        .strip_prefix('\n')?;
+
+    // Keep offsets relative to the original text, including the stripped opening line.
+    let mut line_start = text.len() - after_opening_line.len();
+    let lines = after_opening_line.split_inclusive('\n');
+    for line in lines {
+        if let Some(suffix) = line
+            .strip_prefix("---")
+            .or_else(|| line.strip_prefix("..."))
+        {
+            let suffix = suffix.trim_start_matches(' ');
+            let line_ending_length = if suffix.starts_with("\r\n") {
+                Some(2)
+            } else if suffix.starts_with(['\r', '\n']) {
+                Some(1)
+            } else if suffix.is_empty() {
+                Some(0)
+            } else {
+                None
+            };
+            if let Some(line_ending_length) = line_ending_length {
+                return text.get(..line_start + line.len() - suffix.len() + line_ending_length);
+            }
+        }
+        line_start += line.len();
+    }
+    None
+}
+
 pub(crate) fn parse_markdown_with_options(
     text: &str,
     parse_html: bool,
@@ -251,10 +289,10 @@ pub(crate) fn parse_markdown_with_options(
     let mut current_metadata_block_start = None;
     let mut metadata_block_content_range: Option<Range<usize>> = None;
     let mut frontmatter = Vec::new();
-    if parse_metadata_blocks && text.starts_with("---") {
-        // YAML metadata can occur anywhere in pulldown-cmark, but frontmatter must come first.
+    if parse_metadata_blocks && let Some(candidate) = yaml_frontmatter_candidate(text) {
+        // Creating the parser scans the entire input, so exclude the body from the YAML probe.
         let mut parser = Parser::new_ext(
-            text,
+            candidate,
             PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS),
         )
         .into_offset_iter()
@@ -1082,6 +1120,9 @@ mod tests {
             "---\ntitle: Post\n---\n\n",
             "---\r\ntitle: Post\r\n---\r\n\r\n",
             "---\ntitle: Post\n...\n\n",
+            "--- \t\ntitle: Post\n---  \n\n",
+            "---\r\ntitle: Post\r\n...  \r\n\r\n",
+            "---\ntitle: Post\n---\r",
         ] {
             let body = "# Café\n\n[Before][target]\n\n---\n## First section\n\n**Bold** and [inside][target].\n\n---\n## Second section\n\n[target]: https://example.com\n";
             let source = format!("{frontmatter}{body}");
@@ -1139,12 +1180,42 @@ mod tests {
             "# Heading\n\n> ---\n> **Bold**\n> ---\n",
             "# Heading\n\n- item\n\n  ---\n  **Bold**\n\n  ---\n",
             "\n---\n**Bold**\n---\n",
+            "",
+            "--",
+            "---",
+            "---not metadata",
+            "---\ntitle: Café\nBody with `---`",
+            "---\ntitle: Post\n---\t\n# Heading",
+            "---\n---\n# Heading",
+            "---\n...\n# Heading",
+            "---\n\nBody\n---\n# Heading",
         ] {
             assert_eq!(
                 parse_markdown_with_options(source, false, false, true),
                 parse_markdown_with_options(source, false, false, false),
                 "{source:?}"
             );
+        }
+    }
+
+    #[test]
+    fn test_yaml_frontmatter_ignores_invalid_closing_fences() {
+        let content = "title: Café\n----\n---not a fence\n ---\n---\t\n...\t\n";
+        let source = format!("---\n{content}...\n# Body\n");
+        let parsed = parse_markdown_with_options(&source, false, true, true);
+        let metadata = parsed.metadata_blocks.get(&0).expect("frontmatter");
+        assert_eq!(&source[metadata.content_range.clone()], content);
+        let heading_offset = parsed.heading_slugs["body"];
+        assert!(source[heading_offset..].starts_with("Body"));
+    }
+
+    #[test]
+    fn test_yaml_frontmatter_closing_fence_at_eof() {
+        for closing_fence in ["---", "...  "] {
+            let source = format!("---\ntitle: Café\n{closing_fence}");
+            let parsed = parse_markdown_with_options(&source, false, false, true);
+            let metadata = parsed.metadata_blocks.get(&0).expect("frontmatter");
+            assert_eq!(&source[metadata.content_range.clone()], "title: Café\n");
         }
     }
 
