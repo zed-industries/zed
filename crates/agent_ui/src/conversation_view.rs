@@ -540,7 +540,7 @@ impl Conversation {
         &mut self,
         session_id: acp_v1::SessionId,
         elicitation_id: ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let thread = self.threads.get(&session_id)?.clone();
@@ -2634,7 +2634,7 @@ impl ConversationView {
             .map(|elicitation| {
                 let is_pending = matches!(elicitation.status, ElicitationStatus::Pending { .. });
                 let schema = match &elicitation.request.mode {
-                    acp_v1::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    acp_v2::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
                     _ => None,
                 };
                 (elicitation.id.clone(), is_pending, schema)
@@ -2814,7 +2814,7 @@ impl ConversationView {
         };
 
         match mode {
-            acp_v1::ElicitationMode::Form(mode) => {
+            acp_v2::ElicitationMode::Form(mode) => {
                 let Some(state) = self
                     .request_elicitation_form_states
                     .get_mut(&elicitation_id)
@@ -2847,9 +2847,9 @@ impl ConversationView {
                             Ok(content) => {
                                 this.respond_to_request_elicitation(
                                     elicitation_id,
-                                    acp_v1::CreateElicitationResponse::new(
-                                        acp_v1::ElicitationAction::Accept(
-                                            acp_v1::ElicitationAcceptAction::new().content(content),
+                                    acp_v2::CreateElicitationResponse::new(
+                                        acp_v2::ElicitationAction::Accept(
+                                            acp_v2::ElicitationAcceptAction::new().content(content),
                                         ),
                                     ),
                                     cx,
@@ -2868,11 +2868,11 @@ impl ConversationView {
                 })
                 .detach();
             }
-            acp_v1::ElicitationMode::Url(_) => {
+            acp_v2::ElicitationMode::Url(_) => {
                 self.respond_to_request_elicitation(
                     elicitation_id,
-                    acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                        acp_v1::ElicitationAcceptAction::new(),
+                    acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                        acp_v2::ElicitationAcceptAction::new(),
                     )),
                     cx,
                 );
@@ -2889,7 +2889,7 @@ impl ConversationView {
     ) {
         self.respond_to_request_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
             cx,
         );
     }
@@ -2902,7 +2902,7 @@ impl ConversationView {
     ) {
         self.respond_to_request_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Cancel),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Cancel),
             cx,
         );
     }
@@ -2924,7 +2924,7 @@ impl ConversationView {
     fn respond_to_request_elicitation(
         &mut self,
         elicitation_id: ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
         self.request_elicitation_form_states.remove(&elicitation_id);
@@ -4143,7 +4143,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
         assert!(matches!(
             response.lock().as_ref(),
-            Some(acp_v1::ElicitationAction::Cancel)
+            Some(acp_v2::ElicitationAction::Cancel)
         ));
     }
 
@@ -4198,7 +4198,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
         assert!(matches!(
             response.lock().as_ref(),
-            Some(acp_v1::ElicitationAction::Cancel)
+            Some(acp_v2::ElicitationAction::Cancel)
         ));
     }
 
@@ -4230,7 +4230,7 @@ pub(crate) mod tests {
                 .elicitations()
                 .iter()
                 .find_map(|elicitation| {
-                    let acp_v1::ElicitationScope::Request(scope) = elicitation.request.scope()
+                    let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope()
                     else {
                         return None;
                     };
@@ -4242,8 +4242,8 @@ pub(crate) mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &first_elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
@@ -4252,7 +4252,7 @@ pub(crate) mod tests {
 
         assert!(matches!(
             response.lock().as_ref(),
-            Some(acp_v1::ElicitationAction::Accept(_))
+            Some(acp_v2::ElicitationAction::Accept(_))
         ));
         conversation_view.read_with(cx, |view, _cx| {
             let connected = view
@@ -4270,7 +4270,7 @@ pub(crate) mod tests {
                     store.elicitations()
                 );
             };
-            let acp_v1::ElicitationScope::Request(scope) = remaining.request.scope() else {
+            let acp_v2::ElicitationScope::Request(scope) = remaining.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
             assert_eq!(scope.request_id, second_request_id);
@@ -8111,10 +8111,12 @@ pub(crate) mod tests {
             thread.update(cx, |thread, cx| {
                 thread
                     .request_elicitation(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationFormMode::new(
-                                acp_v1::ElicitationSessionScope::new(session_id),
-                                acp_v1::ElicitationSchema::new().string("name", true),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationFormMode::new(
+                                acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                    session_id.0,
+                                )),
+                                acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
                         ),
@@ -8165,7 +8167,7 @@ pub(crate) mod tests {
 
     struct SessionCreationRequestElicitationServer {
         store: Entity<ElicitationStore>,
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentServer for SessionCreationRequestElicitationServer {
@@ -8197,7 +8199,7 @@ pub(crate) mod tests {
 
     struct SessionCreationRequestElicitationConnection {
         store: Entity<ElicitationStore>,
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentConnection for SessionCreationRequestElicitationConnection {
@@ -8225,10 +8227,10 @@ pub(crate) mod tests {
             let first_response_task = self.store.update(cx, |store, cx| {
                 store
                     .request_elicitation(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationFormMode::new(
-                                acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                                acp_v1::ElicitationSchema::new().string("name", true),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationFormMode::new(
+                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
                         ),
@@ -8240,12 +8242,12 @@ pub(crate) mod tests {
                 .update(cx, |store, cx| {
                     store
                         .request_elicitation(
-                            acp_v1::CreateElicitationRequest::new(
-                                acp_v1::ElicitationFormMode::new(
-                                    acp_v1::ElicitationRequestScope::new(
+                            acp_v2::CreateElicitationRequest::new(
+                                acp_v2::ElicitationFormMode::new(
+                                    acp_v2::ElicitationRequestScope::new(
                                         acp_v1::RequestId::Number(2),
                                     ),
-                                    acp_v1::ElicitationSchema::new().string("account", true),
+                                    acp_v2::ElicitationSchema::new().string("account", true),
                                 ),
                                 "Provide an account",
                             ),
@@ -8295,7 +8297,7 @@ pub(crate) mod tests {
     }
 
     struct ReleaseRequestElicitationServer {
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentServer for ReleaseRequestElicitationServer {
@@ -8327,7 +8329,7 @@ pub(crate) mod tests {
 
     struct ReleaseRequestElicitationConnection {
         store: Entity<ElicitationStore>,
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentConnection for ReleaseRequestElicitationConnection {
@@ -8355,10 +8357,10 @@ pub(crate) mod tests {
             let response_task = self.store.update(cx, |store, cx| {
                 store
                     .request_elicitation(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationFormMode::new(
-                                acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                                acp_v1::ElicitationSchema::new().string("name", true),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationFormMode::new(
+                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
                         ),

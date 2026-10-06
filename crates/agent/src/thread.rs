@@ -1204,10 +1204,10 @@ fn ensure_tool_call_authorization_not_interrupted(
 /// message to display.
 #[derive(Debug)]
 pub struct ElicitationRequest {
-    pub tool_call_id: acp::ToolCallId,
+    pub tool_call_id: acp_v2::ToolCallId,
     pub message: String,
-    pub schema: acp::ElicitationSchema,
-    pub response: oneshot::Sender<acp::CreateElicitationResponse>,
+    pub schema: acp_v2::ElicitationSchema,
+    pub response: oneshot::Sender<acp_v2::CreateElicitationResponse>,
 }
 
 fn auto_resolve_permission_outcome(
@@ -6535,11 +6535,11 @@ impl ToolCallEventStream {
     pub fn request_elicitation(
         &self,
         message: String,
-        schema: acp::ElicitationSchema,
+        schema: acp_v2::ElicitationSchema,
         cx: &mut App,
-    ) -> Task<Result<acp::CreateElicitationResponse>> {
+    ) -> Task<Result<acp_v2::CreateElicitationResponse>> {
         let stream = self.stream.clone();
-        let tool_call_id = self.tool_call_id.clone();
+        let tool_call_id = acp_v2::ToolCallId::new(self.tool_call_id.0.clone());
         cx.spawn(async move |_cx| {
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) =

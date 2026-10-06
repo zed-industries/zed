@@ -3248,19 +3248,33 @@ mod tests {
         let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
 
         let request_id = acp::RequestId::Number(1);
+        let request = acp::CreateElicitationRequest::new(
+            acp::ElicitationFormMode::new(
+                acp::ElicitationRequestScope::new(request_id.clone()),
+                acp::ElicitationSchema::new()
+                    .property(
+                        "name",
+                        acp::StringPropertySchema::new().meta(acp::Meta::from_iter([(
+                            "property".into(),
+                            serde_json::json!({"nested": [null, true]}),
+                        )])),
+                        true,
+                    )
+                    .meta(acp::Meta::from_iter([(
+                        "schema".into(),
+                        serde_json::json!({"nested": [1, "retained"]}),
+                    )])),
+            ),
+            "Provide a name",
+        )
+        .meta(acp::Meta::from_iter([(
+            "request".into(),
+            serde_json::json!({"nested": [null, {"value": "retained"}]}),
+        )]));
+        let expected_request = serde_json::to_value(&request).expect("legacy request");
         let (harness, response_rx) =
-            test_support::connect_fake_acp_connection_with_auth_elicitation(
-                project,
-                acp::CreateElicitationRequest::new(
-                    acp::ElicitationFormMode::new(
-                        acp::ElicitationRequestScope::new(request_id.clone()),
-                        acp::ElicitationSchema::new().string("name", true),
-                    ),
-                    "Provide a name",
-                ),
-                cx,
-            )
-            .await;
+            test_support::connect_fake_acp_connection_with_auth_elicitation(project, request, cx)
+                .await;
         let connection = harness.connection.clone();
         let auth_task =
             cx.update(|cx| connection.authenticate(acp_v2::AuthMethodId::new("login"), cx));
@@ -3276,7 +3290,11 @@ mod tests {
                     store.elicitations()
                 );
             };
-            let acp::ElicitationScope::Request(scope) = elicitation.request.scope() else {
+            assert_eq!(
+                serde_json::to_value(&elicitation.request).expect("shared request"),
+                expected_request
+            );
+            let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
             assert_eq!(scope.request_id, request_id);
@@ -3291,12 +3309,22 @@ mod tests {
             "name".to_string(),
             acp::ElicitationContentValue::from("Ada"),
         )]);
+        let response_metadata = acp_v2::Meta::from_iter([(
+            "response".into(),
+            serde_json::json!({"nested": [null, {"value": "retained"}]}),
+        )]);
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new().content(expected_content.clone()),
-                )),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new().content(
+                        std::collections::BTreeMap::from([(
+                            "name".to_string(),
+                            acp_v2::ElicitationContentValue::from("Ada"),
+                        )]),
+                    ),
+                ))
+                .meta(response_metadata.clone()),
                 cx,
             );
         });
@@ -3305,6 +3333,7 @@ mod tests {
             .recv()
             .await
             .expect("fake auth flow should receive elicitation response");
+        assert_eq!(response.meta.as_ref(), Some(&response_metadata));
         assert_eq!(
             response.action,
             acp::ElicitationAction::Accept(
@@ -3367,7 +3396,7 @@ mod tests {
                     store.elicitations()
                 );
             };
-            let acp::ElicitationScope::Request(scope) = elicitation.request.scope() else {
+            let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
             assert_eq!(scope.request_id, request_id);
@@ -3381,8 +3410,8 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &entry_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
@@ -3481,7 +3510,7 @@ mod tests {
                     store.elicitations()
                 );
             };
-            let acp::ElicitationScope::Request(scope) = elicitation.request.scope() else {
+            let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
             assert_eq!(scope.request_id, request_id);
@@ -3503,7 +3532,7 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
                 cx,
             );
         });
@@ -6486,16 +6515,23 @@ fn handle_create_elicitation(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    let args = match acp_thread::elicitation::request_from_v1(args) {
+        Ok(args) => args,
+        Err(error) => return respond_err(responder, acp::Error::from(error)),
+    };
     match args.scope() {
-        acp::ElicitationScope::Session(scope) => {
-            let thread = match session_thread(ctx, &scope.session_id) {
+        acp_v2::ElicitationScope::Session(scope) => {
+            let thread = match session_thread(ctx, &acp::SessionId::new(scope.session_id.0.clone()))
+            {
                 Ok(t) => t,
                 Err(e) => return respond_err(responder, e),
             };
 
             let (elicitation_id, task) = match thread
                 .update(cx, |thread, cx| {
-                    thread.request_elicitation_with_id(args, cx)
+                    thread
+                        .request_elicitation_with_id(args, cx)
+                        .map_err(acp_thread::elicitation::error_to_v1)
                 })
                 .flatten_acp()
             {
@@ -6506,7 +6542,10 @@ fn handle_create_elicitation(
             let cancellation = responder.cancellation();
             cx.spawn(async move |cx| {
                 let result: Result<_, acp::Error> = cancellation
-                    .run_until_cancelled(async { Ok(task.await) })
+                    .run_until_cancelled(async {
+                        acp_thread::elicitation::response_to_v1(task.await)
+                            .map_err(acp::Error::from)
+                    })
                     .await;
 
                 match result {
@@ -6527,19 +6566,25 @@ fn handle_create_elicitation(
             })
             .detach();
         }
-        acp::ElicitationScope::Request(_) => {
+        acp_v2::ElicitationScope::Request(_) => {
             let store = ctx.request_elicitations.clone();
-            let (elicitation_id, task) =
-                match store.update(cx, |store, cx| store.request_elicitation_with_id(args, cx)) {
-                    Ok(task) => task,
-                    Err(e) => return respond_err(responder, e),
-                };
+            let (elicitation_id, task) = match store.update(cx, |store, cx| {
+                store
+                    .request_elicitation_with_id(args, cx)
+                    .map_err(acp_thread::elicitation::error_to_v1)
+            }) {
+                Ok(task) => task,
+                Err(e) => return respond_err(responder, e),
+            };
             let store = store.downgrade();
 
             let cancellation = responder.cancellation();
             cx.spawn(async move |cx| {
                 let result: Result<_, acp::Error> = cancellation
-                    .run_until_cancelled(async { Ok(task.await) })
+                    .run_until_cancelled(async {
+                        acp_thread::elicitation::response_to_v1(task.await)
+                            .map_err(acp::Error::from)
+                    })
                     .await;
 
                 match result {
@@ -6581,7 +6626,7 @@ fn handle_complete_elicitation(
         .map(|session| session.thread.clone())
         .collect::<Vec<_>>();
     let request_elicitations = ctx.request_elicitations.clone();
-    let elicitation_id = args.elicitation_id;
+    let elicitation_id = acp_v2::ElicitationId::new(args.elicitation_id.0);
 
     cx.spawn(async move |cx| {
         for thread in threads {
