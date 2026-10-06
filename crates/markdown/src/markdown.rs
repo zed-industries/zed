@@ -3143,6 +3143,9 @@ impl Element for MarkdownElement {
                                 let use_hover = any_hover && !any_always;
 
                                 let button_row = h_flex()
+                                    .debug_selector(|| {
+                                        format!("markdown_code_block_buttons_{}", range.end)
+                                    })
                                     .gap_0p5()
                                     .absolute()
                                     .bg(cx.theme().colors().editor_background)
@@ -8350,5 +8353,309 @@ mod tests {
                 .expect("code block highlights must be computed during parse")
                 .clone()
         })
+    }
+
+    /// Every example in the CommonMark 0.31.2 spec (https://spec.commonmark.org/0.31.2/)
+    /// that renders a code block, paired with the text inside that block's `<code>` element,
+    /// which is what the copy button should put on the clipboard.
+    ///
+    /// Examples that render more than one code block list the expected text for each block,
+    /// in document order.
+    const COMMONMARK_CODE_BLOCK_EXAMPLES: &[(u32, &str, &[&str])] = &[
+        (1, "\tfoo\tbaz\t\tbim\n", &["foo\tbaz\t\tbim\n"]),
+        (2, "  \tfoo\tbaz\t\tbim\n", &["foo\tbaz\t\tbim\n"]),
+        (3, "    a\ta\n    ὐ\ta\n", &["a\ta\nὐ\ta\n"]),
+        (5, "- foo\n\n\t\tbar\n", &["  bar\n"]),
+        (6, ">\t\tfoo\n", &["  foo\n"]),
+        (7, "-\t\tfoo\n", &["  foo\n"]),
+        (8, "    foo\n\tbar\n", &["foo\nbar\n"]),
+        (18, "    \\[\\]\n", &["\\[\\]\n"]),
+        (19, "~~~\n\\[\\]\n~~~\n", &["\\[\\]\n"]),
+        (24, "``` foo\\+bar\nfoo\n```\n", &["foo\n"]),
+        (34, "``` f&ouml;&ouml;\nfoo\n```\n", &["foo\n"]),
+        (36, "    f&ouml;f&ouml;\n", &["f&ouml;f&ouml;\n"]),
+        (48, "    ***\n", &["***\n"]),
+        (69, "    # foo\n", &["# foo\n"]),
+        (
+            85,
+            "    Foo\n    ---\n\n    Foo\n---\n",
+            &["Foo\n---\n\nFoo\n"],
+        ),
+        (100, "    foo\n---\n", &["foo\n"]),
+        (
+            107,
+            "    a simple\n      indented code block\n",
+            &["a simple\n  indented code block\n"],
+        ),
+        (
+            110,
+            "    <a/>\n    *hi*\n\n    - one\n",
+            &["<a/>\n*hi*\n\n- one\n"],
+        ),
+        (
+            111,
+            "    chunk1\n\n    chunk2\n  \n \n \n    chunk3\n",
+            &["chunk1\n\nchunk2\n\n\n\nchunk3\n"],
+        ),
+        (
+            112,
+            "    chunk1\n      \n      chunk2\n",
+            &["chunk1\n  \n  chunk2\n"],
+        ),
+        (114, "    foo\nbar\n", &["foo\n"]),
+        (
+            115,
+            "# Heading\n    foo\nHeading\n------\n    foo\n----\n",
+            &["foo\n", "foo\n"],
+        ),
+        (116, "        foo\n    bar\n", &["    foo\nbar\n"]),
+        (117, "\n    \n    foo\n    \n\n", &["foo\n"]),
+        (118, "    foo  \n", &["foo  \n"]),
+        (119, "```\n<\n >\n```\n", &["<\n >\n"]),
+        (120, "~~~\n<\n >\n~~~\n", &["<\n >\n"]),
+        (122, "```\naaa\n~~~\n```\n", &["aaa\n~~~\n"]),
+        (123, "~~~\naaa\n```\n~~~\n", &["aaa\n```\n"]),
+        (124, "````\naaa\n```\n``````\n", &["aaa\n```\n"]),
+        (125, "~~~~\naaa\n~~~\n~~~~\n", &["aaa\n~~~\n"]),
+        (126, "```\n", &[""]),
+        (127, "`````\n\n```\naaa\n", &["\n```\naaa\n"]),
+        (128, "> ```\n> aaa\n\nbbb\n", &["aaa\n"]),
+        (129, "```\n\n  \n```\n", &["\n  \n"]),
+        (130, "```\n```\n", &[""]),
+        (131, " ```\n aaa\naaa\n```\n", &["aaa\naaa\n"]),
+        (132, "  ```\naaa\n  aaa\naaa\n  ```\n", &["aaa\naaa\naaa\n"]),
+        (
+            133,
+            "   ```\n   aaa\n    aaa\n  aaa\n   ```\n",
+            &["aaa\n aaa\naaa\n"],
+        ),
+        (134, "    ```\n    aaa\n    ```\n", &["```\naaa\n```\n"]),
+        (135, "```\naaa\n  ```\n", &["aaa\n"]),
+        (136, "   ```\naaa\n  ```\n", &["aaa\n"]),
+        (137, "```\naaa\n    ```\n", &["aaa\n    ```\n"]),
+        (139, "~~~~~~\naaa\n~~~ ~~\n", &["aaa\n~~~ ~~\n"]),
+        (140, "foo\n```\nbar\n```\nbaz\n", &["bar\n"]),
+        (141, "foo\n---\n~~~\nbar\n~~~\n# baz\n", &["bar\n"]),
+        (
+            142,
+            "```ruby\ndef foo(x)\n  return 3\nend\n```\n",
+            &["def foo(x)\n  return 3\nend\n"],
+        ),
+        (
+            143,
+            "~~~~    ruby startline=3 $%@#$\ndef foo(x)\n  return 3\nend\n~~~~~~~\n",
+            &["def foo(x)\n  return 3\nend\n"],
+        ),
+        (144, "````;\n````\n", &[""]),
+        (146, "~~~ aa ``` ~~~\nfoo\n~~~\n", &["foo\n"]),
+        (147, "```\n``` aaa\n```\n", &["``` aaa\n"]),
+        (
+            183,
+            "  <!-- foo -->\n\n    <!-- foo -->\n",
+            &["<!-- foo -->\n"],
+        ),
+        (184, "  <div>\n\n    <div>\n", &["<div>\n"]),
+        (
+            191,
+            "<table>\n\n  <tr>\n\n    <td>\n      Hi\n    </td>\n\n  </tr>\n\n</table>\n",
+            &["<td>\n  Hi\n</td>\n"],
+        ),
+        (
+            211,
+            "    [foo]: /url \"title\"\n\n[foo]\n",
+            &["[foo]: /url \"title\"\n"],
+        ),
+        (212, "```\n[foo]: /url\n```\n\n[foo]\n", &["[foo]: /url\n"]),
+        (225, "    aaa\nbbb\n", &["aaa\n"]),
+        (
+            231,
+            "    > # Foo\n    > bar\n    > baz\n",
+            &["> # Foo\n> bar\n> baz\n"],
+        ),
+        (236, ">     foo\n    bar\n", &["foo\n", "bar\n"]),
+        (237, "> ```\nfoo\n```\n", &["", ""]),
+        (252, ">     code\n\n>    not code\n", &["code\n"]),
+        (
+            253,
+            "A paragraph\nwith two lines.\n\n    indented code\n\n> A block quote.\n",
+            &["indented code\n"],
+        ),
+        (
+            254,
+            "1.  A paragraph\n    with two lines.\n\n        indented code\n\n    > A block quote.\n",
+            &["indented code\n"],
+        ),
+        (257, " -    one\n\n     two\n", &[" two\n"]),
+        (
+            263,
+            "1.  foo\n\n    ```\n    bar\n    ```\n\n    baz\n\n    > bam\n",
+            &["bar\n"],
+        ),
+        (
+            264,
+            "- Foo\n\n      bar\n\n\n      baz\n",
+            &["bar\n\n\nbaz\n"],
+        ),
+        (270, "- foo\n\n      bar\n", &["bar\n"]),
+        (271, "  10.  foo\n\n           bar\n", &["bar\n"]),
+        (
+            272,
+            "    indented code\n\nparagraph\n\n    more code\n",
+            &["indented code\n", "more code\n"],
+        ),
+        (
+            273,
+            "1.     indented code\n\n   paragraph\n\n       more code\n",
+            &["indented code\n", "more code\n"],
+        ),
+        (
+            274,
+            "1.      indented code\n\n   paragraph\n\n       more code\n",
+            &[" indented code\n", "more code\n"],
+        ),
+        (
+            278,
+            "-\n  foo\n-\n  ```\n  bar\n  ```\n-\n      baz\n",
+            &["bar\n", "baz\n"],
+        ),
+        (
+            286,
+            " 1.  A paragraph\n     with two lines.\n\n         indented code\n\n     > A block quote.\n",
+            &["indented code\n"],
+        ),
+        (
+            287,
+            "  1.  A paragraph\n      with two lines.\n\n          indented code\n\n      > A block quote.\n",
+            &["indented code\n"],
+        ),
+        (
+            288,
+            "   1.  A paragraph\n       with two lines.\n\n           indented code\n\n       > A block quote.\n",
+            &["indented code\n"],
+        ),
+        (
+            289,
+            "    1.  A paragraph\n        with two lines.\n\n            indented code\n\n        > A block quote.\n",
+            &[
+                "1.  A paragraph\n    with two lines.\n\n        indented code\n\n    > A block quote.\n",
+            ],
+        ),
+        (
+            290,
+            "  1.  A paragraph\nwith two lines.\n\n          indented code\n\n      > A block quote.\n",
+            &["indented code\n"],
+        ),
+        (
+            309,
+            "-   foo\n\n    notcode\n\n-   foo\n\n<!-- -->\n\n    code\n",
+            &["code\n"],
+        ),
+        (313, "1. a\n\n  2. b\n\n    3. c\n", &["3. c\n"]),
+        (318, "- a\n- ```\n  b\n\n\n  ```\n- c\n", &["b\n\n\n"]),
+        (321, "- a\n  > b\n  ```\n  c\n  ```\n- d\n", &["c\n"]),
+        (324, "1. ```\n   foo\n   ```\n\n   bar\n", &["foo\n"]),
+    ];
+
+    #[gpui::test]
+    fn test_copy_button_copies_commonmark_code_block_content(cx: &mut TestAppContext) {
+        struct CopyButtonTestView {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for CopyButtonTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .code_block_renderer(CodeBlockRenderer::Default {
+                            copy_button_visibility: CopyButtonVisibility::AlwaysVisible,
+                            wrap_button_visibility: WrapButtonVisibility::Hidden,
+                            border: false,
+                        }),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        // Written before each click so a click that copies nothing can't pass by
+        // leaving the previous block's text on the clipboard.
+        const NOT_COPIED: &str = "<copy button did not write to the clipboard>";
+
+        let mut failures = Vec::new();
+        for (example, source, expected_blocks) in COMMONMARK_CODE_BLOCK_EXAMPLES {
+            let markdown = cx.new(|cx| Markdown::new(source.to_string().into(), None, None, cx));
+            let (_, window_cx) = cx.add_window_view(|_, _| CopyButtonTestView {
+                markdown: markdown.clone(),
+            });
+            window_cx.run_until_parked();
+
+            let code_block_ends = markdown.read_with(window_cx, |markdown, _| {
+                markdown
+                    .parsed_markdown()
+                    .events()
+                    .iter()
+                    .filter(|(_, event)| {
+                        matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock))
+                    })
+                    .map(|(range, _)| range.end)
+                    .collect::<Vec<_>>()
+            });
+
+            if code_block_ends.len() != expected_blocks.len() {
+                failures.push(format!(
+                    "example {example}: rendered {} code blocks, expected {}\n  markdown: {source:?}",
+                    code_block_ends.len(),
+                    expected_blocks.len()
+                ));
+                continue;
+            }
+
+            for (block_index, (code_block_end, expected)) in code_block_ends
+                .iter()
+                .zip(expected_blocks.iter())
+                .enumerate()
+            {
+                let block_number = block_index + 1;
+                // `debug_bounds` only accepts `&'static str`, and leaking a few short
+                // strings is harmless in a test.
+                let selector: &'static str =
+                    format!("markdown_code_block_buttons_{code_block_end}").leak();
+                let Some(copy_button) = window_cx.debug_bounds(selector) else {
+                    failures.push(format!(
+                        "example {example}, code block {block_number}: no copy button rendered\n  markdown: {source:?}"
+                    ));
+                    continue;
+                };
+
+                window_cx.write_to_clipboard(ClipboardItem::new_string(NOT_COPIED.to_string()));
+                window_cx.simulate_click(copy_button.center(), gpui::Modifiers::default());
+                let copied = window_cx.read_from_clipboard().map(|clipboard_item| {
+                    clipboard_item
+                        .entries()
+                        .iter()
+                        .filter_map(|entry| match entry {
+                            gpui::ClipboardEntry::String(clipboard_string) => {
+                                Some(clipboard_string.text().as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect::<String>()
+                });
+
+                if copied.as_deref() != Some(*expected) {
+                    failures.push(format!(
+                        "example {example}, code block {block_number}: https://spec.commonmark.org/0.31.2/#example-{example}\n  markdown: {source:?}\n  expected: {expected:?}\n  copied:   {copied:?}"
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "{} code blocks copied the wrong text across {} CommonMark examples:\n\n{}",
+            failures.len(),
+            COMMONMARK_CODE_BLOCK_EXAMPLES.len(),
+            failures.join("\n\n")
+        );
     }
 }
