@@ -441,16 +441,19 @@ fn main() {
     );
 
     let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
+    let (language_model_env_loaded_tx, language_model_env_loaded_rx) = oneshot::channel();
     if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
                 #[cfg(unix)]
                 util::load_login_shell_environment().await.log_err();
                 shell_env_loaded_tx.send(()).ok();
+                language_model_env_loaded_tx.send(()).ok();
             })
             .detach();
     } else {
-        drop(shell_env_loaded_tx)
+        drop(shell_env_loaded_tx);
+        drop(language_model_env_loaded_tx);
     }
 
     app.on_open_urls({
@@ -695,6 +698,13 @@ fn main() {
             app_state.user_store.clone(),
             cx,
         );
+        // Language model providers snapshot API keys from the process environment when they are
+        // initialized. When Zed is launched from the macOS Dock or another GUI launcher, that
+        // environment is loaded asynchronously from the user's login shell. Wait for the capture
+        // to finish so providers do not permanently cache missing API keys during startup.
+        cx.foreground_executor()
+            .block_on(language_model_env_loaded_rx)
+            .ok();
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
