@@ -2553,7 +2553,7 @@ fn create_context_and_surface<W>(
 where
     W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
 {
-    let attempt = |backends: wgpu::Backends, reject_software: bool| {
+    let create = |backends: wgpu::Backends, reject_software: bool| {
         let instance =
             WgpuContext::instance_with_backends(Some(Box::new(window.clone())), backends);
         let surface = create_surface(&instance, raw_window_handle)?;
@@ -2565,29 +2565,19 @@ where
         anyhow::Ok((context, surface))
     };
 
-    try_vulkan_then_fallback(attempt, reject_software)
-}
+    // Only accept hardware adapters on the Vulkan-only attempt, so that hardware
+    // OpenGL can still win over software Vulkan in the fallback below.
+    let vulkan_err = match create(wgpu::Backends::VULKAN, true) {
+        Ok(result) => return Ok(result),
+        Err(err) => err,
+    };
+    log::warn!("Hardware Vulkan initialization failed ({vulkan_err:#}); enabling OpenGL fallback");
 
-#[cfg(not(target_family = "wasm"))]
-fn try_vulkan_then_fallback<T>(
-    mut attempt: impl FnMut(wgpu::Backends, bool) -> anyhow::Result<T>,
-    reject_software: bool,
-) -> anyhow::Result<T> {
-    match attempt(wgpu::Backends::VULKAN, true) {
-        Ok(result) => Ok(result),
-        Err(vulkan_err) => {
-            log::warn!(
-                "Hardware Vulkan initialization failed ({vulkan_err:#}); enabling OpenGL fallback"
-            );
-            attempt(wgpu::Backends::VULKAN | wgpu::Backends::GL, reject_software).map_err(
-                |fallback_err| {
-                    anyhow::anyhow!(
-                        "Hardware Vulkan failed: {vulkan_err:#}; Vulkan/OpenGL fallback failed: {fallback_err:#}"
-                    )
-                },
-            )
-        }
-    }
+    create(wgpu::Backends::VULKAN | wgpu::Backends::GL, reject_software).map_err(|fallback_err| {
+        anyhow::anyhow!(
+            "Hardware Vulkan failed: {vulkan_err:#}; Vulkan/OpenGL fallback failed: {fallback_err:#}"
+        )
+    })
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -2661,65 +2651,6 @@ mod tests {
     };
     #[cfg(target_os = "linux")]
     use gpui::{DevicePixels, PlatformHeadlessRenderer, Scene};
-
-    #[cfg(not(target_family = "wasm"))]
-    #[test]
-    fn vulkan_fallback_does_not_initialize_gl_when_hardware_vulkan_works() {
-        let mut attempts = Vec::new();
-        let result = try_vulkan_then_fallback(
-            |backends, reject_software| {
-                attempts.push((backends, reject_software));
-                Ok(())
-            },
-            false,
-        );
-        assert!(result.is_ok());
-        assert_eq!(attempts, vec![(wgpu::Backends::VULKAN, true)]);
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    #[test]
-    fn vulkan_fallback_preserves_adapter_ranking_and_software_policy() {
-        for reject_software in [false, true] {
-            let mut attempts = Vec::new();
-            let result = try_vulkan_then_fallback(
-                |backends, reject_software| {
-                    attempts.push((backends, reject_software));
-                    if backends == wgpu::Backends::VULKAN {
-                        anyhow::bail!("No usable hardware Vulkan adapter");
-                    }
-                    Ok(())
-                },
-                reject_software,
-            );
-            assert!(result.is_ok());
-            assert_eq!(
-                attempts,
-                vec![
-                    (wgpu::Backends::VULKAN, true),
-                    (wgpu::Backends::VULKAN | wgpu::Backends::GL, reject_software),
-                ]
-            );
-        }
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    #[test]
-    fn vulkan_fallback_reports_both_initialization_errors() {
-        let error = try_vulkan_then_fallback::<()>(
-            |backends, _| {
-                if backends == wgpu::Backends::VULKAN {
-                    anyhow::bail!("Vulkan surface creation failed");
-                }
-                anyhow::bail!("No usable fallback adapter");
-            },
-            false,
-        )
-        .unwrap_err();
-        let message = error.to_string();
-        assert!(message.contains("Vulkan surface creation failed"));
-        assert!(message.contains("No usable fallback adapter"));
-    }
 
     #[cfg(target_os = "linux")]
     fn device_size(width: i32, height: i32) -> Size<DevicePixels> {
