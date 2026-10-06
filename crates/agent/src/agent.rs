@@ -235,8 +235,8 @@ struct Session {
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
     pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
-    /// The thread's message count as of the last enqueued save.
-    saved_message_count: Option<usize>,
+    /// The thread's state as of the last enqueued save.
+    last_save: Option<SaveCheckpoint>,
     save_wake: watch::Sender<()>,
     save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
@@ -248,6 +248,14 @@ impl Session {
             Some(acp_thread) => acp_thread.read(cx).draft_prompt().map(Vec::from),
             None => self.thread.read(cx).draft_prompt().map(Vec::from),
         }
+    }
+
+    /// Saving copies the draft from the ACP thread into the native thread, so
+    /// they differ only when the draft changed since the last save.
+    fn draft_prompt_changed(&self, cx: &App) -> bool {
+        self.acp_thread.upgrade().is_some_and(|acp_thread| {
+            acp_thread.read(cx).draft_prompt() != self.thread.read(cx).draft_prompt()
+        })
     }
 }
 
@@ -896,7 +904,7 @@ impl NativeAgent {
                 subagents: Vec::new(),
                 project_id,
                 pending_save,
-                saved_message_count: None,
+                last_save: None,
                 save_wake,
                 save_worker,
                 _subscriptions: subscriptions,
@@ -1808,7 +1816,9 @@ impl NativeAgent {
             return;
         };
         // This runs on every thread notify, and streaming notifies once per chunk.
-        if thread.read(cx).can_defer_save(session.saved_message_count) {
+        if !session.draft_prompt_changed(cx)
+            && thread.read(cx).can_defer_save(session.last_save.as_ref())
+        {
             return;
         }
         let draft_prompt = session.draft_prompt(cx);
@@ -1833,7 +1843,7 @@ impl NativeAgent {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-        session.saved_message_count = Some(session.thread.read(cx).message_count());
+        session.last_save = Some(session.thread.read(cx).save_checkpoint());
         *session.pending_save.lock() = Some(PendingThreadSave {
             folder_paths,
             db_thread,
@@ -7679,7 +7689,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_streaming_chunks_do_not_save_thread(cx: &mut TestAppContext) {
-        let (fake, model, acp_thread, session_id) = init_streaming_session(cx).await;
+        let (fake, model, acp_thread, _thread, session_id) = init_streaming_session(cx).await;
         let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
 
         let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
@@ -7709,7 +7719,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_completed_message_saved_while_next_message_streams(cx: &mut TestAppContext) {
-        let (fake, model, acp_thread, session_id) = init_streaming_session(cx).await;
+        let (fake, model, acp_thread, _thread, session_id) = init_streaming_session(cx).await;
         let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
 
         let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
@@ -7749,7 +7759,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_cancelling_stream_saves_partial_message(cx: &mut TestAppContext) {
-        let (fake, model, acp_thread, session_id) = init_streaming_session(cx).await;
+        let (fake, model, acp_thread, _thread, session_id) = init_streaming_session(cx).await;
         let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
 
         let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
@@ -7767,12 +7777,103 @@ mod internal_tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_settings_changes_save_while_message_streams(cx: &mut TestAppContext) {
+        let (fake, model, acp_thread, thread, session_id) = init_streaming_session(cx).await;
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        fake.send_last_text(&model, "one ");
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            thread.set_thinking_effort(Some("high".into()), cx);
+        });
+        cx.run_until_parked();
+        let db_thread = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(db_thread.thinking_effort.as_deref(), Some("high"));
+
+        thread.update(cx, |thread, cx| thread.set_title("Renamed".into(), cx));
+        cx.run_until_parked();
+        let db_thread = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(db_thread.title, "Renamed");
+
+        let draft = vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+            "next prompt",
+        ))];
+        acp_thread.update(cx, |acp_thread, cx| {
+            acp_thread.set_draft_prompt(Some(draft.clone()), cx);
+        });
+        // The thread view notifies the thread after a draft edit to request a save.
+        thread.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        let db_thread = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(db_thread.draft_prompt, Some(draft));
+
+        let saves_after_changes = database.save_count();
+        fake.send_last_text(&model, "two");
+        cx.run_until_parked();
+        assert_eq!(
+            database.save_count(),
+            saves_after_changes,
+            "streamed chunks after a saved change must not save the thread"
+        );
+
+        fake.end_last(&model);
+        send.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_token_usage_does_not_save_while_message_streams(cx: &mut TestAppContext) {
+        let (fake, model, acp_thread, _thread, _session_id) = init_streaming_session(cx).await;
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        fake.send_last_text(&model, "one ");
+        cx.run_until_parked();
+        let saves_before_usage = database.save_count();
+
+        // Some providers, like Google, report usage with every streamed chunk.
+        for output_tokens in [10, 20, 30] {
+            fake.send_last_event(
+                &model,
+                LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
+                    input_tokens: 100,
+                    output_tokens,
+                    ..Default::default()
+                }),
+            );
+            cx.run_until_parked();
+        }
+        assert_eq!(database.save_count(), saves_before_usage);
+
+        fake.end_last(&model);
+        send.await.unwrap();
+    }
+
     async fn init_streaming_session(
         cx: &mut TestAppContext,
     ) -> (
         Arc<FakeLanguageModelProvider>,
         LanguageModel,
         Entity<AcpThread>,
+        Entity<Thread>,
         acp_v1::SessionId,
     ) {
         let fake = init_test(cx);
@@ -7801,7 +7902,7 @@ mod internal_tests {
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
         });
-        (fake, model, acp_thread, session_id)
+        (fake, model, acp_thread, thread, session_id)
     }
 
     async fn saved_markdown(database: &ThreadsDatabase, session_id: &acp_v1::SessionId) -> String {

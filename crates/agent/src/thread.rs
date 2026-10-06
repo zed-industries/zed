@@ -1270,6 +1270,23 @@ impl From<&ThreadModel> for Option<DbLanguageModel> {
     }
 }
 
+/// The parts of `to_db` that are worth saving while a message streams. Token
+/// usage and scroll position are left out because they can change on every
+/// streamed chunk or scroll, and some fields never change after creation.
+#[derive(PartialEq)]
+pub(crate) struct SaveCheckpoint {
+    message_count: usize,
+    title: Option<SharedString>,
+    summary: Option<SharedString>,
+    model: Option<DbLanguageModel>,
+    profile_id: AgentProfileId,
+    speed: Option<Speed>,
+    thinking_enabled: bool,
+    thinking_effort: Option<String>,
+    sandboxed_terminal_temp_dir: Option<PathBuf>,
+    sandbox_grants: crate::db::DbSandboxGrants,
+}
+
 pub struct Thread {
     id: acp::SessionId,
     prompt_id: PromptId,
@@ -1959,11 +1976,26 @@ impl Thread {
         })
     }
 
-    /// Returns true while a message is streaming and no message has completed
-    /// since the last save. `to_db` doesn't include the pending message, so a
-    /// save now would write the same data as the last one.
-    pub(crate) fn can_defer_save(&self, saved_message_count: Option<usize>) -> bool {
-        self.pending_message.is_some() && saved_message_count == Some(self.messages.len())
+    /// Returns true while a message is streaming and nothing in `last_save` has
+    /// changed. `to_db` doesn't include the pending message, so a save now would
+    /// only add fields that `SaveCheckpoint` leaves out.
+    pub(crate) fn can_defer_save(&self, last_save: Option<&SaveCheckpoint>) -> bool {
+        self.pending_message.is_some() && last_save == Some(&self.save_checkpoint())
+    }
+
+    pub(crate) fn save_checkpoint(&self) -> SaveCheckpoint {
+        SaveCheckpoint {
+            message_count: self.messages.len(),
+            title: self.title.clone(),
+            summary: self.summary.clone(),
+            model: (&self.model).into(),
+            profile_id: self.profile_id.clone(),
+            speed: self.speed,
+            thinking_enabled: self.thinking_enabled,
+            thinking_effort: self.thinking_effort.clone(),
+            sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
+            sandbox_grants: self.sandbox_grants.borrow().to_db(),
+        }
     }
 
     /// Create a snapshot of the current project state including git information and unsaved buffers.
@@ -4074,10 +4106,6 @@ impl Thread {
                 Message::User(user_message) => Some(user_message),
                 Message::Agent(_) | Message::Resume | Message::Compaction(_) => None,
             })
-    }
-
-    pub(crate) fn message_count(&self) -> usize {
-        self.messages.len()
     }
 
     fn pending_message(&mut self) -> &mut AgentMessage {
