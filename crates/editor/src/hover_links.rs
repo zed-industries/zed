@@ -910,7 +910,7 @@ impl ResolvedFileTarget {
                 };
                 let snapshot = buffer.read(cx).snapshot();
                 let point = if let Some(heading) = &self.heading {
-                    let Some(row) = markdown_heading_row(&snapshot.text(), heading) else {
+                    let Some(row) = markdown_heading_row(snapshot.as_rope(), heading) else {
                         return;
                     };
                     language::Point::new(row, 0)
@@ -929,15 +929,21 @@ impl ResolvedFileTarget {
 
 /// Finds the row of the first ATX heading (`## Title`) whose slug matches, using the same
 /// slugs as Markdown Preview.
-fn markdown_heading_row(text: &str, slug: &str) -> Option<u32> {
-    let row = text.lines().position(|line| {
+fn markdown_heading_row(text: &text::Rope, slug: &str) -> Option<u32> {
+    let mut lines = text.chunks().lines();
+    let mut row = 0;
+    while let Some(line) = lines.next() {
         let title = line.trim_start_matches('#');
         let level = line.len() - title.len();
-        (1..=6).contains(&level)
+        if (1..=6).contains(&level)
             && title.starts_with([' ', '\t'])
             && generate_heading_slug(title.trim().trim_end_matches('#')) == slug
-    })?;
-    u32::try_from(row).ok()
+        {
+            return Some(row);
+        }
+        row += 1;
+    }
+    None
 }
 
 pub(crate) async fn find_file(
