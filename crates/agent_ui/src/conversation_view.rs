@@ -9913,6 +9913,92 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_thinking_preview_copies_selected_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(r#"{ "agent": { "thinking_display": "preview" } }"#, cx)
+                    .expect("thinking preview settings");
+            });
+        });
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentThoughtChunk(
+            acp_v1::ContentChunk::new("**first**".into()),
+        )]);
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Think first", cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, cx| {
+                state.auto_expand_streaming_thought(view.thread.read(cx), cx);
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        for is_constrained in [true, false] {
+            if !is_constrained {
+                thread_view.update(cx, |view, cx| {
+                    view.entry_view_state.update(cx, |state, cx| {
+                        state.toggle_thinking_block_expansion((1, 0), cx);
+                    });
+                    cx.notify();
+                });
+                cx.run_until_parked();
+            }
+            thread_view.read_with(cx, |view, cx| {
+                assert_eq!(
+                    view.entry_view_state
+                        .read(cx)
+                        .thinking_block_state((1, 0), cx),
+                    (true, is_constrained),
+                );
+            });
+
+            for (menu_item, expected) in [
+                ("MENU_ITEM-Copy", "first"),
+                ("MENU_ITEM-Copy as Markdown", "**first**"),
+            ] {
+                let bounds = cx
+                    .debug_bounds("message-content-1-0-0")
+                    .expect("thinking content");
+                let position = bounds.origin + point(px(12.), bounds.size.height / 2.);
+                cx.simulate_event(gpui::MouseDownEvent {
+                    position,
+                    button: gpui::MouseButton::Left,
+                    modifiers: gpui::Modifiers::default(),
+                    click_count: 2,
+                    first_mouse: false,
+                });
+                cx.simulate_mouse_up(
+                    position,
+                    gpui::MouseButton::Left,
+                    gpui::Modifiers::default(),
+                );
+                cx.simulate_mouse_down(
+                    position,
+                    gpui::MouseButton::Right,
+                    gpui::Modifiers::default(),
+                );
+                cx.simulate_mouse_up(
+                    position,
+                    gpui::MouseButton::Right,
+                    gpui::Modifiers::default(),
+                );
+                let copy = cx
+                    .debug_bounds(menu_item)
+                    .expect("thinking selection copy command");
+                cx.simulate_click(copy.center(), gpui::Modifiers::default());
+                let copied =
+                    cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+                assert_eq!(copied.as_deref(), Some(expected));
+            }
+        }
+    }
+
+    #[gpui::test]
     async fn test_message_context_menu_copies_selected_content(cx: &mut TestAppContext) {
         init_test(cx);
         let connection = StubAgentConnection::new();
