@@ -800,6 +800,11 @@ impl Editor {
         let buffer_ids: HashSet<BufferId> = self
             .selections
             .disjoint_anchor_ranges()
+            .chain(
+                self.selections
+                    .pending_anchor()
+                    .map(|selection| selection.range()),
+            )
             .flat_map(|range| snapshot.buffer_ids_for_range(range))
             .collect();
         for buffer_id in buffer_ids {
