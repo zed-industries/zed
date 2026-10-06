@@ -26,7 +26,7 @@ use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{ContextMenu, CopyButton, Divider, prelude::*, tooltip_container};
-use util::{ResultExt as _, paths::PathStyle};
+use util::paths::PathStyle;
 use workspace::{Workspace, notifications::NotifyTaskExt as _};
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
@@ -253,7 +253,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     repository.downgrade(),
                                     workspace.clone(),
                                     CommitViewOptions {
-                                        scroll_to: blame_entry_scroll_target(&blame_entry),
+                                        scroll_to: blame_entry.commit_line(),
                                         ..Default::default()
                                     },
                                     window,
@@ -321,7 +321,7 @@ impl BlameRenderer for GitBlameRenderer {
             .unwrap_or(OffsetDateTime::now_utc());
 
         let sha = blame.sha.to_string().into();
-        let scroll_to = blame_entry_scroll_target(&blame);
+        let scroll_to = blame.commit_line();
         let author: SharedString = blame
             .author
             .clone()
@@ -532,7 +532,7 @@ impl BlameRenderer for GitBlameRenderer {
             repository.downgrade(),
             workspace,
             CommitViewOptions {
-                scroll_to: blame_entry_scroll_target(&blame_entry),
+                scroll_to: blame_entry.commit_line(),
                 ..Default::default()
             },
             window,
@@ -782,9 +782,4 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
         }
         Err(_) => "Error parsing date".to_string(),
     }
-}
-
-fn blame_entry_scroll_target(blame_entry: &BlameEntry) -> Option<(RepoPath, u32)> {
-    let path = RepoPath::new(&blame_entry.filename).log_err()?;
-    Some((path, blame_entry.original_line_number.saturating_sub(1)))
 }

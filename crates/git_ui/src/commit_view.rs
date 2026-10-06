@@ -88,6 +88,7 @@ pub struct CommitView {
     remote: Option<GitRemote>,
     is_shallow_boundary: bool,
     file_filter: Option<RepoPath>,
+    scroll_to: Option<(RepoPath, u32)>,
     _load_diff_task: Task<Result<()>>,
 }
 
@@ -341,6 +342,7 @@ impl CommitView {
 
         let repository_clone = repository.clone();
         let project_clone = project.clone();
+        let scroll_to_clone = scroll_to.clone();
 
         let load_diff_task = cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
@@ -348,7 +350,7 @@ impl CommitView {
             let mut scroll_target = None;
 
             for file in commit_diff.files {
-                let scroll_row = scroll_to
+                let scroll_row = scroll_to_clone
                     .as_ref()
                     .filter(|(path, _)| *path == file.path)
                     .map(|(_, row)| *row);
@@ -560,6 +562,7 @@ impl CommitView {
             remote,
             is_shallow_boundary,
             file_filter,
+            scroll_to,
             _load_diff_task: load_diff_task,
         }
     }
@@ -570,6 +573,7 @@ impl CommitView {
         let workspace = self.workspace.clone();
         let stash = self.stash;
         let file_filter = self.file_filter.clone();
+        let scroll_to = self.scroll_to.clone();
         let unshallow_state = self.repository.read(cx).unshallow_state();
         let can_fetch = !self.project.read(cx).is_via_collab()
             && unshallow_state != UnshallowState::Unshallowed;
@@ -597,6 +601,7 @@ impl CommitView {
                         let repository = repository.clone();
                         let workspace = workspace.clone();
                         let file_filter = file_filter.clone();
+                        let scroll_to = scroll_to.clone();
                         this.child(
                             Button::new(
                                 "fetch-unshallow",
@@ -622,6 +627,7 @@ impl CommitView {
                                     let repository = repository.downgrade();
                                     let workspace = workspace.clone();
                                     let file_filter = file_filter.clone();
+                                    let scroll_to = scroll_to.clone();
                                     window
                                         .spawn(cx, async move |cx| {
                                             fetch.await?;
@@ -633,7 +639,7 @@ impl CommitView {
                                                     CommitViewOptions {
                                                         stash,
                                                         file_filter,
-                                                        ..Default::default()
+                                                        scroll_to,
                                                     },
                                                     false,
                                                     window,
@@ -668,7 +674,7 @@ impl CommitView {
                                     CommitViewOptions {
                                         stash,
                                         file_filter: file_filter.clone(),
-                                        ..Default::default()
+                                        scroll_to: scroll_to.clone(),
                                     },
                                     true,
                                     window,
@@ -1414,6 +1420,7 @@ impl Item for CommitView {
                 remote: self.remote.clone(),
                 is_shallow_boundary: self.is_shallow_boundary,
                 file_filter: self.file_filter.clone(),
+                scroll_to: self.scroll_to.clone(),
                 _load_diff_task: Task::ready(Ok(())),
             }
         })))
