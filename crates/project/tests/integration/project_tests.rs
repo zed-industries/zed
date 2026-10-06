@@ -1810,19 +1810,20 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    // Save notifications are reported to all servers.
-    project
-        .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
-        .await
-        .unwrap();
+    // Static save capabilities only cover the documents a server was opened with, so saving
+    // the TOML buffer notifies no server: the next save notifications are for their own buffers.
+    for buffer in [toml_buffer, rust_buffer2.clone(), json_buffer.clone()] {
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer, cx))
+            .await
+            .unwrap();
+    }
     assert_eq!(
         fake_rust_server
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(
-            lsp::Uri::from_file_path(path!("/dir/Cargo.toml")).unwrap()
-        )
+        lsp::TextDocumentIdentifier::new(lsp::Uri::from_file_path(path!("/dir/test2.rs")).unwrap())
     );
     assert_eq!(
         fake_json_server
@@ -1830,7 +1831,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentIdentifier::new(
-            lsp::Uri::from_file_path(path!("/dir/Cargo.toml")).unwrap()
+            lsp::Uri::from_file_path(path!("/dir/package.json")).unwrap()
         )
     );
 
