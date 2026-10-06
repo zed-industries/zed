@@ -173,6 +173,7 @@ impl DirectManipulationEventHandler {
                     .push(PlatformInput::ScrollWheel(ScrollWheelEvent {
                         position,
                         delta: ScrollDelta::Pixels(point(px(0.0), px(0.0))),
+                        wheel_notches: None,
                         modifiers,
                         touch_phase: TouchPhase::Ended,
                     }));
@@ -327,6 +328,7 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
                     .push(PlatformInput::ScrollWheel(ScrollWheelEvent {
                         position,
                         delta: ScrollDelta::Pixels(point(px(dx), px(dy))),
+                        wheel_notches: None,
                         modifiers,
                         touch_phase,
                     }));
