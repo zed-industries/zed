@@ -2055,6 +2055,96 @@ async fn test_late_lsp_adapter_registration(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_language_servers_disabled_by_default(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    async fn running_language_servers(
+        settings_json_contents: serde_json::Value,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<LanguageServerName> {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/the-root"),
+            json!({
+                ".zed": {
+                    "settings.json": settings_json_contents.to_string(),
+                },
+                "main.rs": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        let _default_server = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "default-server",
+                ..Default::default()
+            },
+        );
+        let _opt_in_server = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "opt-in-server",
+                opt_in_languages: HashSet::from_iter([LanguageName::new_static("Rust")]),
+                ..Default::default()
+            },
+        );
+        cx.run_until_parked();
+
+        let (buffer, _handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                buffer.update(cx, |buffer, cx| {
+                    lsp_store
+                        .running_language_servers_for_local_buffer(buffer, cx)
+                        .map(|(adapter, _)| adapter.name())
+                        .sorted()
+                        .collect()
+                })
+            })
+        })
+    }
+
+    assert_eq!(
+        running_language_servers(json!({}), cx).await,
+        vec![LanguageServerName::new_static("default-server")],
+        "servers disabled by default must not be started without explicit configuration"
+    );
+    assert_eq!(
+        running_language_servers(
+            json!({ "languages": { "Rust": { "language_servers": ["!default-server", "..."] } } }),
+            cx
+        )
+        .await,
+        Vec::<LanguageServerName>::new(),
+        "the `...` wildcard must not include servers disabled by default"
+    );
+    assert_eq!(
+        running_language_servers(
+            json!({ "languages": { "Rust": { "language_servers": ["opt-in-server", "..."] } } }),
+            cx
+        )
+        .await,
+        vec![
+            LanguageServerName::new_static("default-server"),
+            LanguageServerName::new_static("opt-in-server"),
+        ],
+        "servers disabled by default must start when listed explicitly"
+    );
+}
+
+#[gpui::test]
 async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -3388,7 +3478,7 @@ async fn test_registry_reload_detaches_buffers_from_language_servers(
     language_registry.register_test_language(LanguageConfig {
         name: "Rust".into(),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["rs".to_string()],
+            path_suffixes: vec!["rs".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
@@ -4366,6 +4456,15 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                                 ..Diagnostic::default()
                             },
                         ),
+                        DiagnosticEntry::new(
+                            Unclipped(PointUtf16::new(3, 0))..Unclipped(PointUtf16::new(3, 0)),
+                            Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error on empty line".into(),
+                                source_kind: DiagnosticSourceKind::Pushed,
+                                ..Diagnostic::default()
+                            },
+                        ),
                     ],
                     cx,
                 )
@@ -4391,6 +4490,13 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                 ("\nlet three = 3;\n", None)
             ]
         );
+
+        let snapshot = buffer.snapshot();
+        let diagnostics = snapshot
+            .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(3, 0), false)
+            .collect::<Vec<_>>();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range, Point::new(3, 0)..Point::new(3, 0));
     });
 }
 
@@ -7947,6 +8053,88 @@ async fn test_range_formatting_prefers_range_capable_current_server(cx: &mut gpu
         0,
         "expected manual range formatting not to use the full-format-only server",
     );
+}
+
+#[gpui::test]
+async fn test_full_buffer_formatting_edit_preserves_unchanged_anchors(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let initial_text = "fn main() {\n    println!(\"🙂\");  \n}\n";
+    let formatted_text = "fn main() {\n    println!(\"🙂\");\n}\n";
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "main.rs": initial_text }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let _format_requests = fake_server.set_request_handler::<lsp::request::Formatting, _, _>({
+        let formatted_text = formatted_text.to_string();
+        move |_, _| {
+            let formatted_text = formatted_text.clone();
+            async move {
+                Ok(Some(vec![lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                    new_text: formatted_text,
+                }]))
+            }
+        }
+    });
+    let unchanged_anchor = buffer.read_with(cx, |buffer, _| {
+        buffer.anchor_before(initial_text.find("println!").unwrap())
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                project::lsp_store::LspFormatTarget::Buffers,
+                false,
+                project::lsp_store::FormatTrigger::Manual,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), formatted_text);
+        assert_eq!(
+            unchanged_anchor.to_offset(buffer),
+            formatted_text.find("println!").unwrap()
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -19640,6 +19828,22 @@ async fn test_undo_encoding_change(cx: &mut gpui::TestAppContext) {
         assert_ne!(buffer.text(), "Hi");
         assert!(!buffer.is_dirty());
     });
+
+    let thai = "สวัสดีชาวโลกนี่คือข้อความทดสอบภาษาไทย";
+    fs.insert_file(
+        path!("/dir/test.txt"),
+        thai.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+    )
+    .await;
+    cx.run_until_parked();
+    assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), thai);
+    buffer
+        .update(cx, |buffer, cx| {
+            buffer.reload_with_encoding(encoding_rs::UTF_16LE, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), thai);
 }
 
 #[gpui::test]
@@ -19773,7 +19977,7 @@ fn json_lang() -> Arc<Language> {
         LanguageConfig {
             name: "JSON".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["json".to_string()],
+                path_suffixes: vec!["json".into()],
                 ..Default::default()
             })
             .into(),
@@ -19788,7 +19992,7 @@ fn js_lang() -> Arc<Language> {
         LanguageConfig {
             name: "JavaScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
+                path_suffixes: vec!["js".into()],
                 ..Default::default()
             })
             .into(),
@@ -19857,7 +20061,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             LanguageConfig {
                 name: "Python".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["py".to_string()],
+                    path_suffixes: vec!["py".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -19877,7 +20081,7 @@ fn typescript_lang() -> Arc<Language> {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -19892,7 +20096,7 @@ fn tsx_lang() -> Arc<Language> {
         LanguageConfig {
             name: "tsx".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["tsx".to_string()],
+                path_suffixes: vec!["tsx".into()],
                 ..Default::default()
             })
             .into(),
@@ -20493,10 +20697,10 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![
-                    "**/generated/**".to_string(),
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
                     "**/*.gen.rs".to_string(),
-                ]);
+                    "**/generated/**".to_string(),
+                ]));
             });
         });
     });
@@ -20562,6 +20766,56 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_read_only_files_splice_project_settings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
+                    SplicingVec::REST.to_string(),
+                    "**/*.lock".to_string(),
+                ]));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{"read_only_files": ["**/generated/**", "..."]}"#,
+            },
+            "generated": {"schema.rs": ""},
+            "src": {"main.rs": ""},
+            "yarn.lock": "",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    cx.executor().run_until_parked();
+
+    for (relative_path, expected_read_only) in [
+        ("generated/schema.rs", true),
+        ("src/main.rs", false),
+        ("yarn.lock", true),
+    ] {
+        let full_path = Path::new(path!("/root")).join(relative_path);
+        let result = project
+            .update(cx, |project, cx| project.open_local_buffer(&full_path, cx))
+            .await;
+        match result {
+            Ok(buffer) => assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.read_only()),
+                expected_read_only,
+                "{relative_path}"
+            ),
+            Err(error) => panic!("could not open {relative_path}: {error}"),
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -20569,7 +20823,7 @@ async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![]);
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![]));
             });
         });
     });
@@ -20661,10 +20915,10 @@ async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
                     "**/*.lock".to_string(),
                     "**/package-lock.json".to_string(),
-                ]);
+                ]));
             });
         });
     });

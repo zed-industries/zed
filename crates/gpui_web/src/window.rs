@@ -9,12 +9,12 @@ use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
-    Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, TextInputConfiguration, TextInputStateChange, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
-    WindowInsets, WindowParams, WindowVisibility, px,
+    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult,
+    FrameRequestSource, GpuSpecs, Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
+    RequestFrameOptions, ResizeEdge, Scene, Size, TextInputConfiguration, TextInputStateChange,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    WindowDecorations, WindowInsets, WindowParams, WindowVisibility, px,
 };
 use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
@@ -195,7 +195,7 @@ impl WebWindow {
             title: String::new(),
             input_handler: None,
             is_fullscreen: false,
-            is_active: true,
+            is_active: document_is_active(&browser_window),
             visibility: document_visibility(&browser_window),
             is_hovered: false,
             mouse_position: Point::default(),
@@ -388,6 +388,8 @@ impl WebWindow {
                     callback(RequestFrameOptions {
                         require_presentation: true,
                         force_render: true,
+                        signal_at: None,
+                        signal_source: FrameRequestSource::NativeCallback,
                     })
                 },
             );
@@ -415,6 +417,16 @@ impl WebWindowInner {
             |callbacks| &mut callbacks.visual_viewport_changed,
             |callback| callback(),
         );
+    }
+
+    pub(crate) fn refresh_active_status(&self) {
+        let active = document_is_active(&self.browser_window);
+        if std::mem::replace(&mut self.state.borrow_mut().is_active, active) != active {
+            self.with_callback(
+                |callbacks| &mut callbacks.active_status_change,
+                |callback| callback(active),
+            );
+        }
     }
 
     /// Invokes a registered callback with take/call/restore semantics.
@@ -449,6 +461,8 @@ impl WebWindowInner {
                     callback(RequestFrameOptions {
                         require_presentation: false,
                         force_render: false,
+                        signal_at: None,
+                        signal_source: FrameRequestSource::NativeCallback,
                     })
                 },
             );
@@ -518,17 +532,11 @@ impl WebWindowInner {
             "visibilitychange",
             move |_event: JsValue| {
                 let visibility = document_visibility(&this.browser_window);
-                let is_visible = visibility.is_visible();
-
                 let visibility_changed = {
                     let mut state = this.state.borrow_mut();
-                    state.is_active = is_visible;
                     std::mem::replace(&mut state.visibility, visibility) != visibility
                 };
-                this.with_callback(
-                    |callbacks| &mut callbacks.active_status_change,
-                    |callback| callback(is_visible),
-                );
+                this.refresh_active_status();
                 if visibility_changed {
                     this.with_callback(
                         |callbacks| &mut callbacks.visibility_change,
@@ -653,6 +661,14 @@ fn document_visibility(browser_window: &web_sys::Window) -> WindowVisibility {
     } else {
         WindowVisibility::Hidden
     }
+}
+
+fn document_is_active(browser_window: &web_sys::Window) -> bool {
+    document_visibility(browser_window).is_visible()
+        && browser_window
+            .document()
+            .and_then(|document| document.has_focus().ok())
+            .unwrap_or(true)
 }
 
 struct MqlHandle {
@@ -1003,7 +1019,7 @@ impl PlatformWindow for WebWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        Some(self.inner.state.borrow().renderer.gpu_specs())
+        self.inner.state.borrow().renderer.gpu_specs()
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
