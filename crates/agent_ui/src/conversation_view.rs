@@ -5349,12 +5349,26 @@ pub(crate) mod tests {
         let notice =
             acp_v1::Notice::new(acp_v1::NoticeSeverity::Error, "Optional integration failed")
                 .description("**Plain text**, not Markdown. Work continues.");
+        let shared_notice = acp_thread::notices::from_v1(notice.clone()).expect("shared notice");
+        let custom_notice = acp_v2::Notice::new(
+            acp_v2::NoticeSeverity::Other("_custom/β".into()),
+            "**Plain text**, not Markdown",
+        )
+        .description("")
+        .meta(acp_v2::Meta::from_iter([(
+            "extension".into(),
+            json!({"nested": [null, true, {"value": "retained"}]}),
+        )]));
         thread.update(cx, |thread, cx| {
-            for _ in 0..2 {
-                thread
-                    .handle_session_update(acp_v1::SessionUpdate::Notice(notice.clone()), cx)
-                    .expect("notice should be accepted");
-            }
+            thread
+                .handle_session_update(acp_v1::SessionUpdate::Notice(notice), cx)
+                .expect("notice should be accepted");
+            thread.push_notice(custom_notice.clone(), cx);
+            assert_eq!(
+                thread.notices(),
+                &[(0, shared_notice), (1, custom_notice.clone())]
+            );
+            assert!(thread.to_markdown(cx).is_empty());
         });
         cx.run_until_parked();
 
@@ -5370,7 +5384,7 @@ pub(crate) mod tests {
         cx.simulate_click(dismiss.center(), gpui::Modifiers::default());
         cx.run_until_parked();
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.notices(), &[(1, notice)]);
+            assert_eq!(thread.notices(), &[(1, custom_notice)]);
         });
         assert!(cx.debug_bounds("dismiss-session-notice-0").is_none());
 

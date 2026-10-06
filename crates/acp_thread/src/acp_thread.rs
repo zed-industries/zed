@@ -5,6 +5,7 @@ mod connection;
 pub mod content;
 mod diff;
 mod mention;
+pub mod notices;
 pub mod prompt_capabilities;
 mod submission;
 mod terminal;
@@ -3368,7 +3369,7 @@ pub struct AcpThread {
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     // Notices stay with the live session, but never enter conversation history or exports.
-    notices: Vec<(usize, acp_v1::Notice)>,
+    notices: Vec<(usize, acp_v2::Notice)>,
     next_notice_id: usize,
     elicitations: ElicitationStore,
     permission_requests: IndexMap<PermissionRequestId, PermissionRequest>,
@@ -3810,8 +3811,16 @@ impl AcpThread {
         &self.entries
     }
 
-    pub fn notices(&self) -> &[(usize, acp_v1::Notice)] {
+    pub fn notices(&self) -> &[(usize, acp_v2::Notice)] {
         &self.notices
+    }
+
+    pub fn push_notice(&mut self, notice: acp_v2::Notice, cx: &mut Context<Self>) {
+        let notice_id = self.next_notice_id;
+        self.next_notice_id += 1;
+        self.notices.push((notice_id, notice));
+        cx.emit(AcpThreadEvent::NoticesUpdated);
+        cx.notify();
     }
 
     pub fn dismiss_notice(&mut self, notice_id: usize, cx: &mut Context<Self>) {
@@ -4287,11 +4296,7 @@ impl AcpThread {
                 self.update_plan(plan, cx).map_err(acp_v1::Error::from)?;
             }
             acp_v1::SessionUpdate::Notice(notice) => {
-                let notice_id = self.next_notice_id;
-                self.next_notice_id += 1;
-                self.notices.push((notice_id, notice));
-                cx.emit(AcpThreadEvent::NoticesUpdated);
-                cx.notify();
+                self.push_notice(notices::from_v1(notice).map_err(acp_v1::Error::from)?, cx);
             }
             acp_v1::SessionUpdate::SessionInfoUpdate(info_update) => {
                 self.update_session_info(session_info_update_from_v1(info_update), cx);
@@ -18463,29 +18468,32 @@ mod tests {
         });
 
         let warning =
-            acp_v1::Notice::new(acp_v1::NoticeSeverity::Warning, "MCP server unavailable")
+            acp_v2::Notice::new(acp_v2::NoticeSeverity::Warning, "MCP server unavailable")
                 .description("Continuing without it.");
         let notices = vec![
-            acp_v1::Notice::new(acp_v1::NoticeSeverity::Info, "Using default configuration"),
+            acp_v2::Notice::new(acp_v2::NoticeSeverity::Info, "Using default configuration"),
             warning.clone(),
             warning.clone(),
-            acp_v1::Notice::new(acp_v1::NoticeSeverity::Error, "Optional integration failed"),
-            acp_v1::Notice::new(
-                acp_v1::NoticeSeverity::Other("critical".into()),
+            acp_v2::Notice::new(acp_v2::NoticeSeverity::Error, "Optional integration failed")
+                .description("")
+                .meta(acp_v2::Meta::new()),
+            acp_v2::Notice::new(
+                acp_v2::NoticeSeverity::Other("critical".into()),
                 "Future severity",
             ),
-            acp_v1::Notice::new(
-                acp_v1::NoticeSeverity::Other("_custom".into()),
+            acp_v2::Notice::new(
+                acp_v2::NoticeSeverity::Other("_custom".into()),
                 "**Plain text**, not Markdown",
             )
-            .meta(acp_v1::Meta::from_iter([("source".into(), "test".into())])),
+            .meta(acp_v2::Meta::from_iter([(
+                "extension".into(),
+                serde_json::json!({"nested": [null, true, {"value": "retained"}]}),
+            )])),
         ];
 
         thread.update(cx, |thread, cx| {
             for notice in &notices {
-                thread
-                    .handle_session_update(acp_v1::SessionUpdate::Notice(notice.clone()), cx)
-                    .expect("notice should be accepted");
+                thread.push_notice(notice.clone(), cx);
             }
             assert_eq!(
                 thread.notices(),
@@ -18523,9 +18531,7 @@ mod tests {
                 thread.dismiss_notice(notice_id, cx);
             }
             assert!(thread.notices().is_empty());
-            thread
-                .handle_session_update(acp_v1::SessionUpdate::Notice(warning.clone()), cx)
-                .expect("a repeated notice is a new live event");
+            thread.push_notice(warning.clone(), cx);
             thread.dismiss_notice(1, cx);
             assert_eq!(thread.notices(), &[(notices.len(), warning)]);
             assert!(thread.entries().is_empty());
