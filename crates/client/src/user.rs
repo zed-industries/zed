@@ -762,6 +762,15 @@ impl UserStore {
         cx.notify();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_current_organization_plan_for_test(&mut self, plan: Plan, cx: &mut Context<Self>) {
+        if let Some(organization) = &self.current_organization {
+            self.plans_by_organization
+                .insert(organization.id.clone(), plan);
+        }
+        cx.notify();
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -832,12 +841,11 @@ impl UserStore {
         self.edit_prediction_usage
     }
 
-    /// Returns whether the current plan includes no Zed edit predictions at all, as opposed to
-    /// having used up a nonzero allowance. Cloud expresses this as a zero usage limit, which is
-    /// how the Free plan is configured now that it no longer includes edit predictions.
+    /// Returns whether the current plan doesn't include Zed's hosted edit predictions. This is
+    /// decided by plan rather than by the usage limit Cloud reports, because Cloud may still
+    /// report a nonzero Free allowance while it denies requests.
     pub fn edit_predictions_excluded_from_plan(&self) -> bool {
-        self.edit_prediction_usage
-            .is_some_and(|usage| usage.limit == UsageLimit::Limited(0))
+        self.plan() == Some(Plan::ZedFree)
     }
 
     pub fn update_edit_prediction_usage(
