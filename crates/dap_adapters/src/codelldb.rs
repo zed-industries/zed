@@ -340,15 +340,26 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         if command.is_none() {
             delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
             let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
-            let version_path = match self.fetch_latest_adapter_version(delegate).await {
+            let downloaded = async {
+                adapters::ensure_download_allowed(
+                    &self.name(),
+                    adapters::is_adapter_downloaded(&self.name()),
+                    delegate.as_ref(),
+                )
+                .await?;
+                let version = self.fetch_latest_adapter_version(delegate).await?;
+                adapters::download_adapter_from_github(
+                    self.name(),
+                    version.clone(),
+                    adapters::DownloadedFileType::Vsix,
+                    delegate.as_ref(),
+                )
+                .await?;
+                anyhow::Ok(version)
+            }
+            .await;
+            let version_path = match downloaded {
                 Ok(version) => {
-                    adapters::download_adapter_from_github(
-                        self.name(),
-                        version.clone(),
-                        adapters::DownloadedFileType::Vsix,
-                        delegate.as_ref(),
-                    )
-                    .await?;
                     let version_path =
                         adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version.tag_name));
                     remove_matching(&adapter_path, |entry| entry != version_path).await;
@@ -425,5 +436,44 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             envs: user_env.unwrap_or_default(),
             connection: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use http_client::{AsyncBody, FakeHttpClient, Response};
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_no_network_before_download_approval(cx: &mut TestAppContext) {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let requests = requests.clone();
+            move |_| {
+                requests.fetch_add(1, Ordering::SeqCst);
+                async { Ok(Response::builder().status(404).body(AsyncBody::default())?) }
+            }
+        });
+        let delegate = test_mocks::MockDelegate::with_http_client_and_fs(
+            http_client,
+            FakeFs::new(cx.executor()),
+        );
+        let config = DebugTaskDefinition {
+            label: "test".into(),
+            adapter: CodeLldbDebugAdapter::ADAPTER_NAME.into(),
+            config: serde_json::json!({ "request": "launch", "program": "/tmp/test/a.out" }),
+            tcp_connection: None,
+        };
+
+        CodeLldbDebugAdapter::default()
+            .get_binary(&delegate, &config, None, None, None, &mut cx.to_async())
+            .await
+            .unwrap_err();
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
     }
 }

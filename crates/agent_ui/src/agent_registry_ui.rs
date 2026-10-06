@@ -10,7 +10,10 @@ use gpui::{
     uniform_list,
 };
 use project::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
-use project::{AgentRegistryStore, RegistryAgent};
+use project::{
+    AgentRegistryStore, RegistryAgent,
+    binary_downloads::{self, BinaryDownload},
+};
 use settings::{Settings, SettingsStore, update_settings_file};
 use theme_settings::ThemeSettings;
 use ui::{
@@ -537,6 +540,14 @@ impl AgentRegistryPage {
                             .color(Color::Muted),
                     )
                     .on_click(move |_, window, cx| {
+                        if let Some(workspace) = Workspace::for_window(window, cx) {
+                            let project = workspace.read(cx).project().clone();
+                            binary_downloads::allow_for_project(
+                                &project,
+                                BinaryDownload::new(agent_id.clone()),
+                                cx,
+                            );
+                        }
                         update_settings_file(fs.clone(), cx, {
                             let agent_id = agent_id.clone();
                             move |settings, _| {

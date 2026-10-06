@@ -1,21 +1,31 @@
 use std::{
     borrow::Cow,
+    cell::RefCell,
     path::{Path, PathBuf},
-    sync::Arc,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use collections::HashMap;
 use fs::{FakeFs, Fs};
-use futures::{FutureExt, StreamExt};
-use gpui::{Entity, TestAppContext, UpdateGlobal as _};
+use futures::{FutureExt, StreamExt, future::LocalBoxFuture};
+use gpui::{AsyncApp, Entity, Task, TestAppContext, UpdateGlobal as _};
+use http_client::FakeHttpClient;
 use language::{
-    Buffer, CodeLabel, DiagnosticSourceKind, FakeLspAdapter, HighlightId, LocalFile, rust_lang,
+    Buffer, CachedLspAdapter, CodeLabel, DiagnosticSourceKind, FakeLspAdapter, HighlightId,
+    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, rust_lang,
 };
-use lsp::{LanguageServerId, LanguageServerName, Uri};
+use lsp::{
+    LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName, Uri,
+};
 use parking_lot::Mutex;
 use project::{
     DiagnosticSummary, Event, Project,
+    binary_downloads::{self, BinaryDownload, BinaryDownloads},
     lsp_store::{
         log_store::{TestRpcLogHeaderState, TestRpcRequestTracker},
         *,
@@ -1142,6 +1152,122 @@ async fn test_initialization_options_contributions_without_own_options(cx: &mut 
     );
 }
 
+#[gpui::test]
+async fn test_language_server_download_waits_for_consent(cx: &mut TestAppContext) {
+    let (project, delegate, _download_dir) = download_consent_test_setup(cx).await;
+
+    let (cached, cached_fetches) = DownloadableLspAdapter::new(Some("/cached/server"));
+    let download = BinaryDownload::new(cached.name().0);
+    let (existing_binary, download_task) =
+        language_server_command(&cached, delegate.clone(), cx).await;
+    assert_eq!(
+        existing_binary.unwrap().path,
+        PathBuf::from("/cached/server")
+    );
+    assert!(download_task.is_none());
+    assert_eq!(cached_fetches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        cx.update(|cx| binary_downloads::pending_downloads(project.read(cx), cx)),
+        vec![download.clone()]
+    );
+
+    let (missing, missing_fetches) = DownloadableLspAdapter::new(None);
+    let (existing_binary, download_task) = language_server_command(&missing, delegate, cx).await;
+    assert!(existing_binary.is_err());
+    let download_task = cx.spawn(async move |_| download_task.unwrap().await);
+    cx.run_until_parked();
+    assert_eq!(missing_fetches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        cx.update(|cx| binary_downloads::pending_downloads(project.read(cx), cx)),
+        vec![download.clone()]
+    );
+    let persisted = Rc::new(RefCell::new(None));
+
+    cx.update(|cx| {
+        BinaryDownloads::try_get_global(cx)
+            .unwrap()
+            .update(cx, |binary_downloads, cx| {
+                binary_downloads.allow_download(&project, download.clone(), cx);
+                binary_downloads.schedule_serialization(cx, {
+                    let persisted = persisted.clone();
+                    move |allowed_downloads, _| {
+                        *persisted.borrow_mut() = Some(allowed_downloads);
+                        Task::ready(())
+                    }
+                });
+            });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        download_task
+            .now_or_never()
+            .map(|binary| binary.map(|binary| binary.path).ok()),
+        Some(Some(PathBuf::from("/downloaded/server")))
+    );
+    assert_eq!(missing_fetches.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        cx.update(|cx| binary_downloads::pending_downloads(project.read(cx), cx)),
+        Vec::new()
+    );
+    assert_eq!(
+        persisted.take(),
+        Some(HashMap::from_iter([(
+            None,
+            collections::HashSet::from_iter([download])
+        )]))
+    );
+}
+
+#[gpui::test]
+async fn test_denied_language_server_download_fails(cx: &mut TestAppContext) {
+    let (project, delegate, _download_dir) = download_consent_test_setup(cx).await;
+    let (adapter, fetches) = DownloadableLspAdapter::new(None);
+    let download = BinaryDownload::new(adapter.name().0);
+
+    let (existing_binary, download_task) =
+        language_server_command(&adapter, delegate.clone(), cx).await;
+    assert!(existing_binary.is_err());
+    let download_task = cx.spawn(async move |_| download_task.unwrap().await);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|cx| binary_downloads::pending_downloads(project.read(cx), cx)),
+        vec![download.clone()]
+    );
+
+    cx.update(|cx| {
+        BinaryDownloads::try_get_global(cx)
+            .unwrap()
+            .update(cx, |binary_downloads, cx| {
+                binary_downloads.deny_download(&project, download.clone(), cx);
+            });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        download_task
+            .now_or_never()
+            .map(|binary| binary.map(|binary| binary.path).ok()),
+        Some(None)
+    );
+    assert_eq!(
+        cx.update(|cx| binary_downloads::pending_downloads(project.read(cx), cx)),
+        Vec::new()
+    );
+
+    let (_, retry_task) = language_server_command(&adapter, delegate, cx).await;
+    assert_eq!(
+        retry_task
+            .unwrap()
+            .now_or_never()
+            .map(|binary| binary.map(|binary| binary.path).ok()),
+        Some(None)
+    );
+    assert_eq!(fetches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        cx.update(|cx| binary_downloads::pending_downloads(project.read(cx), cx)),
+        Vec::new()
+    );
+}
+
 async fn project_with_rust_server(
     fs: Arc<FakeFs>,
     root: &str,
@@ -1200,4 +1326,126 @@ fn worktree_entries(project: &Entity<Project>, cx: &TestAppContext) -> Vec<Strin
             .map(|entry| entry.path.as_unix_str().to_string())
             .collect()
     })
+}
+
+async fn language_server_command(
+    adapter: &Arc<CachedLspAdapter>,
+    delegate: Arc<dyn LspAdapterDelegate>,
+    cx: &mut TestAppContext,
+) -> (
+    anyhow::Result<LanguageServerBinary>,
+    Option<LocalBoxFuture<'static, anyhow::Result<LanguageServerBinary>>>,
+) {
+    let download_gate = cx.update(|cx| binary_downloads::download_gate(cx));
+    let mut async_cx = cx.to_async();
+    adapter
+        .clone()
+        .get_language_server_command(
+            delegate,
+            None,
+            LanguageServerBinaryOptions {
+                allow_path_lookup: true,
+                allow_binary_download: true,
+                pre_release: false,
+            },
+            download_gate,
+            &mut async_cx,
+        )
+        .await
+        .await
+}
+
+struct DownloadableLspAdapter {
+    cached_binary: Option<&'static str>,
+    fetches: Arc<AtomicUsize>,
+}
+
+impl DownloadableLspAdapter {
+    fn new(cached_binary: Option<&'static str>) -> (Arc<CachedLspAdapter>, Arc<AtomicUsize>) {
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let adapter = CachedLspAdapter::new(Arc::new(Self {
+            cached_binary,
+            fetches: fetches.clone(),
+        }));
+        (adapter, fetches)
+    }
+}
+
+impl LspInstaller for DownloadableLspAdapter {
+    type BinaryVersion = ();
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn fetch_server_binary(
+        &self,
+        _: (),
+        _: PathBuf,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = anyhow::Result<LanguageServerBinary>> + use<> {
+        self.fetches.fetch_add(1, Ordering::SeqCst);
+        async { Ok(test_binary("/downloaded/server")) }
+    }
+
+    async fn cached_server_binary(
+        &self,
+        _: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        self.cached_binary.map(test_binary)
+    }
+}
+
+impl LspAdapter for DownloadableLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName::new_static("downloadable-language-server")
+    }
+}
+
+fn test_binary(path: &str) -> LanguageServerBinary {
+    LanguageServerBinary {
+        path: PathBuf::from(path),
+        arguments: Vec::new(),
+        env: None,
+    }
+}
+
+async fn download_consent_test_setup(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    Arc<dyn LspAdapterDelegate>,
+    tempfile::TempDir,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        binary_downloads::init(HashMap::default(), cx);
+    });
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "" }))
+        .await;
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let download_dir = tempfile::tempdir().unwrap();
+    let delegate = project.update(cx, |project, cx| {
+        let mut languages = LanguageRegistry::test(cx.background_executor().clone());
+        languages.set_language_server_download_dir(download_dir.path());
+        let worktree = project.worktrees(cx).next().unwrap();
+        LocalLspAdapterDelegate::new(
+            Arc::new(languages),
+            project.environment(),
+            project.lsp_store().downgrade(),
+            &worktree,
+            FakeHttpClient::with_404_response(),
+            fs.clone(),
+            cx,
+        ) as Arc<dyn LspAdapterDelegate>
+    });
+    (project, delegate, download_dir)
 }

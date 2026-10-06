@@ -28,6 +28,7 @@ doctest = false
 anyhow.workspace = true
 bytes.workspace = true
 futures.workspace = true
+gpui_shared_string.workspace = true
 http-body.workspace = true
 http.workspace = true
 log = { workspace = true, optional = true }

@@ -39,7 +39,10 @@ use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
 use gpui::{App, AsyncApp, Entity, EntityId, SharedString};
-use http_client::HttpClient;
+use http_client::{
+    HttpClient,
+    download_gate::{BinaryDownload, DownloadGate},
+};
 
 pub use language_core::{
     SymbolKind,
@@ -390,16 +393,38 @@ impl CachedLspAdapter {
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
+        download_gate: DownloadGate,
         cx: &mut AsyncApp,
     ) -> LanguageServerBinaryLocations {
         let cached_binary = self.cached_binary.clone().lock_owned().await;
-        self.adapter.clone().get_language_server_command(
+        let locations = self.adapter.clone().get_language_server_command(
             delegate,
             toolchains,
             binary_options,
             cached_binary,
             cx.clone(),
-        )
+        );
+        let download = BinaryDownload::new(self.name().0);
+        async move {
+            let (existing_binary, download_binary) = locations.await;
+            let Some(download_binary) = download_binary else {
+                return (existing_binary, None);
+            };
+            if existing_binary.is_ok() {
+                let download_binary = download_gate.check(download).then_some(download_binary);
+                return (existing_binary, download_binary);
+            }
+            let download_binary = async move {
+                anyhow::ensure!(
+                    download_gate.request(download.clone()).await,
+                    "downloading language server {download} was not allowed"
+                );
+                download_binary.await
+            }
+            .boxed_local();
+            (existing_binary, Some(download_binary))
+        }
+        .boxed_local()
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {

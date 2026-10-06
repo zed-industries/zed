@@ -1,4 +1,5 @@
 mod async_body;
+pub mod download_gate;
 #[cfg(not(target_family = "wasm"))]
 pub mod github;
 #[cfg(all(not(target_family = "wasm"), feature = "github-download"))]

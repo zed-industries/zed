@@ -203,6 +203,23 @@ Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add 
 
 `integer` values from `6` to `100` pixels (inclusive)
 
+## Allow Binary Downloads
+
+- Description: Whether Zed may download tools without asking first.
+  This covers built-in language servers, built-in debug adapters, the Zed-managed Node.js, Prettier, GitHub Copilot, registry agents, and `ipykernel` installs for the REPL.
+  When `false`, Zed waits for your approval, which you give from the "Downloads Blocked" button in the title bar.
+  Approvals are remembered per tool and host.
+  Denied tools stay blocked until Zed restarts.
+  Already downloaded tools keep working while their updates wait for approval.
+  Run `workspace::ClearAllowedBinaryDownloads` to forget all approvals.
+  Extensions are not covered; they have their own permissions in `granted_extension_capabilities`.
+- Setting: `allow_binary_downloads`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Allow Rewrap
 
 - Description: Controls where the {#action editor::Rewrap} action is allowed in the current language scope

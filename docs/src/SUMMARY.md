@@ -88,6 +88,7 @@
 # Privacy & Security
 
 - [Worktree Trust](./worktree-trust.md)
+- [Tool Downloads](./tool-downloads.md)
 - [Privacy for Business](./business/privacy.md)
 - [Telemetry](./telemetry.md)
 - [SOC2](./soc2.md)

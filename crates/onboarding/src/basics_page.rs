@@ -7,6 +7,7 @@ use collections::HashMap;
 use fs::Fs;
 use gpui::{Action, Animation, AnimationExt, App, Entity, IntoElement, TaskExt, pulsating_between};
 use project::agent_server_store::AllAgentServersSettings;
+use project::binary_downloads::{self, BinaryDownload, BinaryDownloadsSettings};
 use project::project_settings::ProjectSettings;
 use project::{AgentRegistryStore, RegistryAgent};
 use settings::{
@@ -474,6 +475,48 @@ fn render_worktree_auto_trust_switch(tab_index: &mut isize, cx: &mut App) -> imp
     .tooltip(Tooltip::text(tooltip_description))
 }
 
+fn render_binary_downloads_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
+    let toggle_state = if BinaryDownloadsSettings::get_global(cx).allow_binary_downloads {
+        ui::ToggleState::Selected
+    } else {
+        ui::ToggleState::Unselected
+    };
+
+    let tooltip_description = "Zed asks before downloading language servers, debug adapters, Node.js, Prettier, Copilot, and agents. Blocked downloads are shown in the title bar.";
+
+    SwitchField::new(
+        "onboarding-allow-binary-downloads",
+        Some("Download Tools Without Asking"),
+        Some("Automatically download language servers and other tools Zed needs".into()),
+        toggle_state,
+        {
+            let fs = <dyn Fs>::global(cx);
+            move |&selection, _, cx| {
+                let allow = match selection {
+                    ToggleState::Selected => true,
+                    ToggleState::Unselected => false,
+                    ToggleState::Indeterminate => {
+                        return;
+                    }
+                };
+                update_settings_file(fs.clone(), cx, move |setting, _| {
+                    setting.allow_binary_downloads = Some(allow);
+                });
+
+                telemetry::event!(
+                    "Welcome Page Binary Downloads Toggled",
+                    options = if allow { "on" } else { "off" }
+                );
+            }
+        },
+    )
+    .tab_index({
+        *tab_index += 1;
+        *tab_index - 1
+    })
+    .tooltip(Tooltip::text(tooltip_description))
+}
+
 fn render_setting_import_button(
     tab_index: isize,
     label: SharedString,
@@ -575,6 +618,14 @@ fn render_registry_agent_button(
         .disabled(installed)
         .on_click(move |_, window, cx| {
             telemetry::event!("Welcome Agent Install Clicked", agent = agent_id.as_str());
+            if let Some(workspace) = workspace::Workspace::for_window(window, cx) {
+                let project = workspace.read(cx).project().clone();
+                binary_downloads::allow_for_project(
+                    &project,
+                    BinaryDownload::new(agent_id.clone()),
+                    cx,
+                );
+            }
             update_settings_file(fs.clone(), cx, {
                 let agent_id = agent_id.clone();
                 move |settings, _| {
@@ -724,6 +775,7 @@ pub(crate) fn render_basics_page(user_store: &Entity<UserStore>, cx: &mut App) -
         .child(render_import_settings_section(&mut tab_index, cx))
         .child(render_vim_mode_switch(&mut tab_index, cx))
         .child(render_worktree_auto_trust_switch(&mut tab_index, cx))
+        .child(render_binary_downloads_switch(&mut tab_index, cx))
         .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
         .child(render_telemetry_section(&mut tab_index, cx))
 }

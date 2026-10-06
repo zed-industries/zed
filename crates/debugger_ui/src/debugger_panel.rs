@@ -26,7 +26,10 @@ use gpui::{
 use itertools::Itertools as _;
 use language::Buffer;
 use project::debugger::session::{Session, SessionQuirks, SessionState, SessionStateEvent};
-use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId};
+use project::{
+    DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId,
+    binary_downloads::{self, BinaryDownloads},
+};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
@@ -43,7 +46,7 @@ use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
 use workspace::item::SaveOptions;
 use workspace::{
-    Item, Pane, Workspace,
+    Item, Pane, ToggleBinaryDownloads, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::debug_panel::ToggleFocus;
@@ -71,7 +74,7 @@ pub struct DebugPanel {
     pub(crate) session_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
     is_zoomed: bool,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: Vec<Subscription>,
     breakpoint_list: Entity<BreakpointList>,
 }
 
@@ -99,6 +102,8 @@ impl DebugPanel {
                 cx.observe(&project.read(cx).breakpoint_store(), |_, _, cx| {
                     cx.notify();
                 });
+            let binary_downloads_subscription = BinaryDownloads::try_get_global(cx)
+                .map(|binary_downloads| cx.observe(&binary_downloads, |_, _, cx| cx.notify()));
 
             Self {
                 sessions_with_children: Default::default(),
@@ -118,7 +123,10 @@ impl DebugPanel {
                 thread_picker_menu_handle,
                 session_picker_menu_handle,
                 is_zoomed: false,
-                _subscriptions: [focus_subscription, breakpoint_subscription],
+                _subscriptions: [focus_subscription, breakpoint_subscription]
+                    .into_iter()
+                    .chain(binary_downloads_subscription)
+                    .collect(),
                 debug_scenario_scheduled_last: true,
             }
         })
@@ -1022,6 +1030,7 @@ impl DebugPanel {
                         .child(
                             h_flex()
                                 .gap_0p5()
+                                .children(self.render_blocked_downloads(cx))
                                 .children(self.render_session_menu(
                                     self.active_session(),
                                     self.running_state(cx),
@@ -1037,6 +1046,29 @@ impl DebugPanel {
                                 }),
                         ),
                 ),
+        )
+    }
+
+    fn render_blocked_downloads(&self, cx: &App) -> Option<IconButton> {
+        let session_booting = self
+            .active_session
+            .as_ref()
+            .is_some_and(|session| session.read(cx).session(cx).read(cx).is_building());
+        if !session_booting
+            || binary_downloads::pending_downloads(self.project.read(cx), cx).is_empty()
+        {
+            return None;
+        }
+        Some(
+            IconButton::new("debug-downloads-blocked", IconName::CloudDownload)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Warning)
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleBinaryDownloads.boxed_clone(), cx);
+                })
+                .tooltip(Tooltip::text(
+                    "Debug session may be waiting for download approval",
+                )),
         )
     }
 

@@ -7,7 +7,7 @@ use client::{Client, UserStore};
 use futures::channel::oneshot;
 use gpui::AppContext as _;
 use gpui::TaskExt;
-use http_client::FakeHttpClient;
+use http_client::{FakeHttpClient, download_gate::DownloadGate};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use project::{
@@ -133,7 +133,7 @@ fn main() -> Result<(), anyhow::Error> {
         let client = Client::production(cx);
         let http_client = FakeHttpClient::with_200_response();
         let (_, rx) = watch::channel(None);
-        let node = NodeRuntime::new(http_client, None, rx);
+        let node = NodeRuntime::new(http_client, None, rx, DownloadGate::allow_all());
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         let fs = RealFs::new(None, cx.background_executor().clone());

@@ -28,6 +28,7 @@ use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
 use crate::agent_registry_store::{AgentRegistryStore, RegistryAgent, RegistryTargetConfig};
+use crate::binary_downloads::{self, BinaryDownload};
 
 use crate::worktree_store::WorktreeStore;
 
@@ -400,6 +401,7 @@ impl AgentServerStore {
                                         http_client: http_client.clone(),
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
+                                        registry_id: Arc::from(name.as_str()),
                                         installation_dir: paths::external_agents_dir()
                                             .join("registry")
                                             .join(sanitize_path_component(name)),
@@ -1119,6 +1121,7 @@ struct LocalRegistryArchiveAgent {
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
+    registry_id: Arc<str>,
     installation_dir: PathBuf,
     version: SharedString,
     targets: HashMap<String, RegistryTargetConfig>,
@@ -1158,6 +1161,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
+        let registry_id = self.registry_id.clone();
         let installation_dir = self.installation_dir.clone();
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
@@ -1220,6 +1224,20 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 
             if !fs.is_dir(&version_dir).await {
                 let mut loading_status_tx = loading_status_tx;
+                let download = BinaryDownload::new(registry_id.to_string());
+                let download_gate = cx.update(|cx| binary_downloads::download_gate(cx));
+                if !download_gate.is_allowed(&download) {
+                    if let Some(tx) = loading_status_tx.as_mut() {
+                        tx.send(Some(format!(
+                            "Waiting for approval to download {registry_id}…"
+                        )))
+                        .ok();
+                    }
+                    anyhow::ensure!(
+                        download_gate.request(download).await,
+                        "downloading {registry_id} was not allowed"
+                    );
+                }
                 if let Some(tx) = loading_status_tx.as_mut() {
                     tx.send(Some(format!("Installing {}…", version.as_ref())))
                         .ok();
@@ -1391,13 +1409,27 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             fs.create_dir(&install_dir).await?;
 
             let (package_name, package_spec) = bounded_npm_package_spec(&package);
-            node_runtime
-                .run_npm_subcommand(
-                    Some(&install_dir),
-                    "install",
-                    &[package_spec.as_str(), "--save-exact"],
-                )
-                .await?;
+            let download_gate = cx.update(|cx| binary_downloads::download_gate(cx));
+            let installed = node_runtime::read_package_executable(
+                install_dir.join("node_modules"),
+                package_name,
+            )
+            .await
+            .is_ok();
+            let download_allowed = download_gate
+                .allowed(BinaryDownload::new(registry_id.to_string()), installed)
+                .await;
+            if download_allowed {
+                node_runtime
+                    .run_npm_subcommand(
+                        Some(&install_dir),
+                        "install",
+                        &[package_spec.as_str(), "--save-exact"],
+                    )
+                    .await?;
+            } else {
+                anyhow::ensure!(installed, "downloading {registry_id} was not allowed");
+            }
             let executable = node_runtime::read_package_executable(
                 install_dir.join("node_modules"),
                 package_name,
@@ -1713,6 +1745,15 @@ mod tests {
         http_client: Arc<dyn HttpClient>,
         sha256: Option<String>,
     ) -> LocalRegistryArchiveAgent {
+        cx.update(|cx| {
+            binary_downloads::init(
+                binary_downloads::DbBinaryDownloads::from_iter([(
+                    None,
+                    collections::HashSet::from_iter([BinaryDownload::new("test-agent")]),
+                )]),
+                cx,
+            );
+        });
         let fs: Arc<dyn Fs> = fs::RealFs::new(None, cx.executor());
         let target = RegistryTargetConfig {
             archive: TEST_ARCHIVE_URL.to_string(),
@@ -1745,6 +1786,7 @@ mod tests {
                 http_client,
                 node_runtime: NodeRuntime::unavailable(),
                 project_environment,
+                registry_id: Arc::from("test-agent"),
                 installation_dir,
                 version: "1.0.0".into(),
                 targets,

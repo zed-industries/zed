@@ -11,7 +11,7 @@ use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_extension::LspAccess;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
-use project::project_settings::ProjectSettings;
+use project::{binary_downloads::DownloadGate, project_settings::ProjectSettings};
 use prompt_store::PromptBuilder;
 use release_channel::{AppCommitSha, AppVersion};
 use reqwest_client::ReqwestClient;
@@ -102,7 +102,12 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
         node_options_tx.send(Some(options)).log_err();
     })
     .detach();
-    let node_runtime = NodeRuntime::new(client.http_client(), None, node_options_rx);
+    let node_runtime = NodeRuntime::new(
+        client.http_client(),
+        None,
+        node_options_rx,
+        DownloadGate::allow_all(),
+    );
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);

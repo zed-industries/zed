@@ -294,13 +294,23 @@ impl PythonDebugAdapter {
                     .join("debugpy")
                     .join("adapter");
 
-                if let Err(error) = self.maybe_fetch_new_wheel(toolchain, delegate).await {
-                    if delegate
-                        .fs()
-                        .metadata(&adapter_path)
-                        .await
-                        .is_ok_and(|m| m.is_some())
-                    {
+                let installed = delegate
+                    .fs()
+                    .metadata(&adapter_path)
+                    .await
+                    .is_ok_and(|m| m.is_some());
+                let fetched = match adapters::ensure_download_allowed(
+                    &Self::DEBUG_ADAPTER_NAME,
+                    installed,
+                    delegate.as_ref(),
+                )
+                .await
+                {
+                    Ok(()) => self.maybe_fetch_new_wheel(toolchain, delegate).await,
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = fetched {
+                    if installed {
                         log::warn!(
                             "Failed to fetch latest debugpy, using cached version: {error:#}"
                         );

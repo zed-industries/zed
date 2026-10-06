@@ -8,6 +8,7 @@ use remote::Interactive;
 
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
+    binary_downloads::{self, DownloadGate},
     debugger::session::SessionQuirks,
     project_settings::{DapBinary, ProjectSettings},
     worktree_store::WorktreeStore,
@@ -614,6 +615,7 @@ impl DapStore {
                 .environment
                 .update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx)),
             local_store.is_headless,
+            binary_downloads::download_gate(cx),
         ))
     }
 
@@ -945,6 +947,7 @@ pub struct DapAdapterDelegate {
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
     is_headless: bool,
+    download_gate: DownloadGate,
 }
 
 impl DapAdapterDelegate {
@@ -957,6 +960,7 @@ impl DapAdapterDelegate {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
         is_headless: bool,
+        download_gate: DownloadGate,
     ) -> Self {
         Self {
             fs,
@@ -967,6 +971,7 @@ impl DapAdapterDelegate {
             toolchain_store,
             load_shell_env_task,
             is_headless,
+            download_gate,
         }
     }
 }
@@ -1033,5 +1038,9 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
 
     fn is_headless(&self) -> bool {
         self.is_headless
+    }
+
+    fn download_gate(&self) -> DownloadGate {
+        self.download_gate.clone()
     }
 }

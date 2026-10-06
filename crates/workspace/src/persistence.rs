@@ -22,6 +22,7 @@ use db::{
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     ProjectGroupKey,
+    binary_downloads::{BinaryDownload, DbBinaryDownloads},
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
@@ -1064,6 +1065,14 @@ impl Domain for WorkspaceDb {
         ),
         sql!(
             ALTER TABLE workspaces ADD COLUMN native_window_state BLOB;
+        ),
+        sql!(
+            CREATE TABLE IF NOT EXISTS allowed_binary_downloads (
+                download_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_name TEXT,
+                host_name TEXT,
+                tool TEXT NOT NULL
+            ) STRICT;
         ),
     ];
 
@@ -2699,6 +2708,55 @@ VALUES {placeholders};"#
             DELETE FROM trusted_worktrees
         }
     }
+
+    pub async fn save_binary_downloads(
+        &self,
+        allowed_downloads: DbBinaryDownloads,
+    ) -> anyhow::Result<()> {
+        self.write(move |conn| {
+            conn.exec(sql!(DELETE FROM allowed_binary_downloads;))?()?;
+            let mut insert = conn.exec_bound::<(Option<String>, Option<String>, String)>(sql!(
+                INSERT INTO allowed_binary_downloads(user_name, host_name, tool)
+                VALUES (?1, ?2, ?3);
+            ))?;
+            for (host, downloads) in allowed_downloads {
+                for download in downloads {
+                    insert((
+                        host.as_ref()
+                            .and_then(|host| Some(host.user_name.as_ref()?.to_string())),
+                        host.as_ref().map(|host| host.host_identifier.to_string()),
+                        download.tool.to_string(),
+                    ))?;
+                }
+            }
+            anyhow::Ok(())
+        })
+        .await
+    }
+
+    pub fn fetch_binary_downloads(&self) -> Result<DbBinaryDownloads> {
+        Ok(self.allowed_binary_downloads()?.into_iter().fold(
+            DbBinaryDownloads::default(),
+            |mut allowed_downloads, (user_name, host_name, tool)| {
+                let host = host_name.map(|host_name| RemoteHostLocation {
+                    user_name: user_name.map(SharedString::from),
+                    host_identifier: SharedString::from(host_name),
+                });
+                allowed_downloads
+                    .entry(host)
+                    .or_default()
+                    .insert(BinaryDownload::new(tool));
+                allowed_downloads
+            },
+        ))
+    }
+
+    query! {
+        fn allowed_binary_downloads() -> Result<Vec<(Option<String>, Option<String>, String)>> {
+            SELECT user_name, host_name, tool
+            FROM allowed_binary_downloads
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -3237,6 +3295,52 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(test_text_1, "test-text-1");
+    }
+
+    #[gpui::test]
+    async fn test_binary_downloads_round_trip() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_binary_downloads_round_trip").await;
+        let remote_host = RemoteHostLocation {
+            user_name: Some(SharedString::from("user")),
+            host_identifier: SharedString::from("example.com"),
+        };
+        let anonymous_host = RemoteHostLocation {
+            user_name: None,
+            host_identifier: SharedString::from("wsl"),
+        };
+        let allowed_downloads = DbBinaryDownloads::from_iter([
+            (
+                None,
+                HashSet::from_iter([
+                    BinaryDownload::new("rust-analyzer"),
+                    BinaryDownload::new("Node.js"),
+                ]),
+            ),
+            (
+                Some(remote_host),
+                HashSet::from_iter([BinaryDownload::new("pyright")]),
+            ),
+            (
+                Some(anonymous_host.clone()),
+                HashSet::from_iter([BinaryDownload::new("Node.js")]),
+            ),
+        ]);
+
+        db.save_binary_downloads(allowed_downloads.clone())
+            .await
+            .unwrap();
+        assert_eq!(db.fetch_binary_downloads().unwrap(), allowed_downloads);
+
+        let remaining_downloads = DbBinaryDownloads::from_iter([(
+            Some(anonymous_host),
+            HashSet::from_iter([BinaryDownload::new("Node.js")]),
+        )]);
+        db.save_binary_downloads(remaining_downloads.clone())
+            .await
+            .unwrap();
+        assert_eq!(db.fetch_binary_downloads().unwrap(), remaining_downloads);
     }
 
     #[gpui::test]

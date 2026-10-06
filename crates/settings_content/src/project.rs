@@ -498,6 +498,7 @@ pub struct SessionSettingsContent {
     /// Whether or not to skip worktree trust checks.
     /// When trusted, project settings are synchronized automatically,
     /// language and MCP servers are downloaded and started automatically.
+    /// Downloads still require approval unless `allow_binary_downloads` is `true`.
     ///
     /// Default: false
     pub trust_all_worktrees: Option<bool>,

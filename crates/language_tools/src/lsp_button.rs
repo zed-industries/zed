@@ -18,8 +18,11 @@ use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use path::PathStyle;
 use project::{
-    LspStore, LspStoreEvent, Worktree, lsp_store::log_store::GlobalLogStore,
-    project_settings::ProjectSettings, trusted_worktrees::TrustedWorktrees,
+    LspStore, LspStoreEvent, Worktree,
+    binary_downloads::{self, BinaryDownloads},
+    lsp_store::log_store::GlobalLogStore,
+    project_settings::ProjectSettings,
+    trusted_worktrees::TrustedWorktrees,
 };
 use settings::{Settings as _, SettingsStore};
 use ui::{
@@ -27,7 +30,7 @@ use ui::{
 };
 
 use util::{ResultExt, paths::PathExt, rel_path::RelPath};
-use workspace::{StatusItemView, ToggleWorktreeSecurity, Workspace};
+use workspace::{StatusItemView, ToggleBinaryDownloads, ToggleWorktreeSecurity, Workspace};
 
 use crate::lsp_log_view;
 
@@ -266,6 +269,38 @@ impl LanguageServerState {
                     window.dispatch_action(ToggleWorktreeSecurity.boxed_clone(), cx);
                 },
             );
+        } else {
+            let blocked_downloads = self.blocked_downloads(cx);
+            if !blocked_downloads.is_empty() {
+                let blocked_message = SharedString::from(format!(
+                    "Waiting for approval to download {}.",
+                    blocked_downloads.join(", ")
+                ));
+                menu = menu.custom_entry(
+                    move |_window, _cx| {
+                        v_flex()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(IconName::CloudDownload)
+                                            .color(Color::Warning)
+                                            .size(IconSize::XSmall),
+                                    )
+                                    .child(Label::new("Downloads Blocked").size(LabelSize::Small)),
+                            )
+                            .child(
+                                Label::new(blocked_message.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .into_any_element()
+                    },
+                    move |window, cx| {
+                        window.dispatch_action(ToggleBinaryDownloads.boxed_clone(), cx);
+                    },
+                );
+            }
         }
 
         let path_style = self
@@ -694,6 +729,23 @@ impl LanguageServerState {
         }
         menu
     }
+
+    fn blocked_downloads(&self, cx: &App) -> Vec<SharedString> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Vec::new();
+        };
+        binary_downloads::pending_downloads(workspace.read(cx).project().read(cx), cx)
+            .into_iter()
+            .map(|download| download.tool)
+            .filter(|tool| {
+                tool == binary_downloads::NODE_RUNTIME
+                    || self
+                        .language_servers
+                        .binary_statuses
+                        .contains_key(&LanguageServerName(tool.clone()))
+            })
+            .collect()
+    }
 }
 
 fn tooltip_for_server_binary(
@@ -917,6 +969,13 @@ impl LspButton {
             cx.subscribe_in(&lsp_store, window, |lsp_button, _, e, window, cx| {
                 lsp_button.on_lsp_store_event(e, window, cx)
             });
+        let binary_downloads_subscription =
+            BinaryDownloads::try_get_global(cx).map(|binary_downloads| {
+                cx.observe_in(&binary_downloads, window, |lsp_button, _, window, cx| {
+                    lsp_button.refresh_lsp_menu(false, window, cx);
+                    cx.notify();
+                })
+            });
 
         let server_state = cx.new(|_| LanguageServerState {
             workspace: workspace.weak_handle(),
@@ -932,7 +991,10 @@ impl LspButton {
             popover_menu_handle,
             lsp_menu: None,
             lsp_menu_refresh: Task::ready(()),
-            _subscriptions: vec![settings_subscription, lsp_store_subscription],
+            _subscriptions: [settings_subscription, lsp_store_subscription]
+                .into_iter()
+                .chain(binary_downloads_subscription)
+                .collect(),
         };
         let is_restricted = TrustedWorktrees::has_restricted_worktrees(
             &workspace.project().read(cx).worktree_store(),
@@ -1390,6 +1452,7 @@ impl Render for LspButton {
         }
 
         let state = self.server_state.read(cx);
+        let downloads_blocked = !is_restricted && !state.blocked_downloads(cx).is_empty();
         let is_via_ssh = state
             .workspace
             .upgrade()
@@ -1419,6 +1482,11 @@ impl Render for LspButton {
             (
                 Some(Indicator::dot().color(Color::Warning)),
                 "Restricted Mode",
+            )
+        } else if downloads_blocked {
+            (
+                Some(Indicator::dot().color(Color::Warning)),
+                "Downloads Blocked",
             )
         } else if has_errors {
             (
@@ -1462,13 +1530,22 @@ impl Render for LspButton {
                 .anchor(Anchor::BottomLeft)
                 .with_handle(self.popover_menu_handle.clone())
                 .trigger_with_tooltip(
-                    IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
-                        .when_some(indicator, IconButton::indicator)
-                        .icon_size(IconSize::Small)
-                        .tab_index(0isize)
-                        .aria_label("Language Servers")
-                        .when(is_restricted, |s| s.icon_color(Color::Warning))
-                        .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
+                    IconButton::new(
+                        "zed-lsp-tool-button",
+                        if downloads_blocked {
+                            IconName::CloudDownload
+                        } else {
+                            IconName::BoltOutlined
+                        },
+                    )
+                    .when_some(indicator, IconButton::indicator)
+                    .icon_size(IconSize::Small)
+                    .tab_index(0isize)
+                    .aria_label("Language Servers")
+                    .when(is_restricted || downloads_blocked, |s| {
+                        s.icon_color(Color::Warning)
+                    })
+                    .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
                     move |_window, cx| {
                         Tooltip::with_meta("Language Servers", Some(&ToggleMenu), description, cx)
                     },

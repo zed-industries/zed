@@ -6,7 +6,7 @@ use gpui::AsyncApp;
 use serde_json::Value;
 use std::{path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
-use util::{ResultExt, maybe, shell::ShellKind};
+use util::{maybe, shell::ShellKind};
 
 use crate::*;
 
@@ -510,16 +510,27 @@ impl DebugAdapter for JsDebugAdapter {
     ) -> Result<DebugAdapterBinary> {
         if self.checked.set(()).is_ok() {
             delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+            let downloaded = async {
+                adapters::ensure_download_allowed(
+                    &self.name(),
+                    adapters::is_adapter_downloaded(&self.name()),
+                    delegate.as_ref(),
+                )
+                .await?;
+                let version = self.fetch_latest_adapter_version(delegate).await?;
                 adapters::download_adapter_from_github(
                     self.name(),
                     version,
                     adapters::DownloadedFileType::GzipTar,
                     delegate.as_ref(),
                 )
-                .await?;
-            } else {
-                delegate.output_to_console(format!("{} debug adapter is up to date", self.name()));
+                .await
+            }
+            .await;
+            if let Err(error) = downloaded {
+                log::warn!("Failed to download {}: {error:#}", self.name());
+                delegate
+                    .output_to_console(format!("Failed to download {}: {error:#}", self.name()));
             }
         }
 

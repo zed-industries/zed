@@ -7,8 +7,11 @@ use anyhow::{Context as _, Result};
 use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
-use project::{ProjectItem as _, WorktreeId};
-use workspace::{Workspace, notifications::NotificationId};
+use project::{
+    ProjectItem as _, WorktreeId,
+    binary_downloads::{self, BinaryDownload},
+};
+use workspace::{ToggleBinaryDownloads, Workspace, notifications::NotificationId};
 
 use crate::kernels::PythonEnvKernelSpecification;
 use crate::repl_store::ReplStore;
@@ -93,16 +96,28 @@ pub fn install_ipykernel_and_assign(
     struct IpykernelInstall;
     let notification_id = NotificationId::unique::<IpykernelInstall>();
 
+    let download_gate = binary_downloads::download_gate(cx);
+    let download = BinaryDownload::new("ipykernel");
+    let awaiting_approval = !download_gate.is_allowed(&download);
+
     let workspace = Workspace::for_window(window, cx);
     if let Some(workspace) = &workspace {
         workspace.update(cx, |workspace, cx| {
-            workspace.show_toast(
+            let toast = if awaiting_approval {
+                workspace::Toast::new(
+                    notification_id.clone(),
+                    format!("Waiting for approval to install ipykernel in {env_name}…"),
+                )
+                .on_click("Review Downloads", |window, cx| {
+                    window.dispatch_action(Box::new(ToggleBinaryDownloads), cx);
+                })
+            } else {
                 workspace::Toast::new(
                     notification_id.clone(),
                     format!("Installing ipykernel in {}...", env_name),
-                ),
-                cx,
-            );
+                )
+            };
+            workspace.show_toast(toast, cx);
         });
     }
 
@@ -110,6 +125,10 @@ pub fn install_ipykernel_and_assign(
     let window_handle = window.window_handle();
 
     let install_task = cx.background_spawn(async move {
+        anyhow::ensure!(
+            download_gate.request(download).await,
+            "installing ipykernel was not allowed"
+        );
         let output = if is_uv {
             util::command::new_command("uv")
                 .args(&[

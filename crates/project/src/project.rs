@@ -1,5 +1,6 @@
 pub mod agent_registry_store;
 pub mod agent_server_store;
+pub mod binary_downloads;
 pub mod bookmark_store;
 pub mod buffer_store;
 pub mod color_extractor;
@@ -1458,6 +1459,12 @@ impl Project {
 
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+            binary_downloads::track_remote_binary_downloads(
+                &worktree_store,
+                RemoteHostLocation::from(connection_options.clone()),
+                remote_proto.clone(),
+                cx,
+            );
             if init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
@@ -1688,6 +1695,7 @@ impl Project {
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
             remote_proto.add_entity_request_handler(Self::handle_trust_worktrees);
             remote_proto.add_entity_request_handler(Self::handle_restrict_worktrees);
+            remote_proto.add_entity_message_handler(Self::handle_update_pending_binary_downloads);
             remote_proto.add_entity_request_handler(Self::handle_find_search_candidates_chunk);
 
             remote_proto.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
@@ -3909,7 +3917,9 @@ impl Project {
                 });
                 cx.emit(Event::DisconnectedFromRemote { server_not_running });
             }
-            &remote::RemoteClientEvent::Reconnected => {}
+            &remote::RemoteClientEvent::Reconnected => {
+                binary_downloads::resync_remote_binary_downloads(&self.worktree_store, cx);
+            }
         }
     }
 
@@ -5792,6 +5802,29 @@ impl Project {
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         });
         Ok(proto::Ack {})
+    }
+
+    async fn handle_update_pending_binary_downloads(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::UpdatePendingBinaryDownloads>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let binary_downloads = cx
+            .update(|cx| binary_downloads::BinaryDownloads::try_get_global(cx))
+            .context("missing binary downloads")?;
+        binary_downloads.update(&mut cx, |binary_downloads, cx| {
+            binary_downloads.set_remote_pending(
+                &this.read(cx).worktree_store().downgrade(),
+                envelope
+                    .payload
+                    .tools
+                    .into_iter()
+                    .map(binary_downloads::BinaryDownload::new)
+                    .collect(),
+                cx,
+            );
+        });
+        Ok(())
     }
 
     // Goes from host to client.

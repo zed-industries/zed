@@ -22,7 +22,10 @@ use language::{
         AllLanguageSettings, EditPredictionProvider, LanguageSettings, all_language_settings,
     },
 };
-use project::{DisableAiSettings, Project};
+use project::{
+    DisableAiSettings, Project,
+    binary_downloads::{self, BinaryDownloads},
+};
 use settings::{
     Settings, SettingsContent, SettingsStore, SplicingVec, find_value_range_in_json_text,
     update_settings_file,
@@ -35,8 +38,8 @@ use ui::{
 use util::ResultExt as _;
 
 use workspace::{
-    HideStatusItem, StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
-    notifications::NotificationId,
+    HideStatusItem, StatusItemView, Toast, ToggleBinaryDownloads, Workspace,
+    create_and_open_local_file, item::ItemHandle, notifications::NotificationId,
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
 
@@ -101,6 +104,31 @@ impl Render for EditPredictionButton {
                     }
                     _ => IconName::CopilotInit,
                 };
+
+                let download_blocked = matches!(status, Status::Starting { .. })
+                    && self.project.upgrade().is_some_and(|project| {
+                        binary_downloads::pending_downloads(project.read(cx), cx)
+                            .iter()
+                            .any(|download| {
+                                download.tool == binary_downloads::COPILOT
+                                    || download.tool == binary_downloads::NODE_RUNTIME
+                            })
+                    });
+                if download_blocked {
+                    return div().child(
+                        IconButton::new("copilot-download-blocked", IconName::CloudDownload)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Warning)
+                            .tab_index(0isize)
+                            .aria_label("GitHub Copilot")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(ToggleBinaryDownloads.boxed_clone(), cx);
+                            })
+                            .tooltip(Tooltip::text(
+                                "GitHub Copilot is waiting for download approval",
+                            )),
+                    );
+                }
 
                 if let Status::Error(e) = status {
                     return div().child(
@@ -549,6 +577,10 @@ impl EditPredictionButton {
         });
         if let Some(copilot) = copilot {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
+        }
+        if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
+            cx.observe(&binary_downloads, |_, _, cx| cx.notify())
+                .detach();
         }
 
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())

@@ -486,6 +486,14 @@ fn main() {
             }
         };
         trusted_worktrees::init(db_trusted_paths, cx);
+        let db_binary_downloads = match workspace::WorkspaceDb::global(cx).fetch_binary_downloads()
+        {
+            Ok(binary_downloads) => binary_downloads,
+            Err(e) => {
+                log::error!("Failed to fetch allowed binary downloads: {e:#}");
+                HashMap::default()
+            }
+        };
         menu::init();
         zed_actions::init();
 
@@ -556,7 +564,13 @@ fn main() {
         .detach();
         ui::on_new_scrollbars::<SettingsStore>(cx);
 
-        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
+        let download_gate = project::binary_downloads::init(db_binary_downloads, cx);
+        let node_runtime = NodeRuntime::new(
+            client.http_client(),
+            Some(shell_env_loaded_rx),
+            rx,
+            download_gate,
+        );
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);

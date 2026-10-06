@@ -694,8 +694,13 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime =
-                NodeRuntime::new(http_client.clone(), shell_env_loaded_rx, node_settings_rx);
+            let download_gate = project::binary_downloads::init(HashMap::default(), cx);
+            let node_runtime = NodeRuntime::new(
+                http_client.clone(),
+                shell_env_loaded_rx,
+                node_settings_rx,
+                download_gate,
+            );
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());

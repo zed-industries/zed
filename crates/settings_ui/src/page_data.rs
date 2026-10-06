@@ -322,7 +322,7 @@ fn general_page(cx: &App) -> SettingsPage {
             }),
         ]
     }
-    fn security_section() -> [SettingsPageItem; 2] {
+    fn security_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Security"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -342,6 +342,20 @@ fn general_page(cx: &App) -> SettingsPage {
                             .session
                             .get_or_insert_default()
                             .trust_all_worktrees = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Download Tools Without Asking",
+                description: "Download language servers, debug adapters, Node.js, Prettier, Copilot, and agents without asking for approval first.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("allow_binary_downloads"),
+                    pick: |settings_content| settings_content.allow_binary_downloads.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.allow_binary_downloads = value;
                     },
                 }),
                 metadata: None,

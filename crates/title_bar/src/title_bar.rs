@@ -34,7 +34,10 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
-    Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
+    Project,
+    binary_downloads::{self, BinaryDownloads},
+    git_store::GitStoreEvent,
+    project_settings::ProjectSettings,
     trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
@@ -53,7 +56,7 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    AccessibleMode, MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    AccessibleMode, MultiWorkspace, ToggleBinaryDownloads, ToggleWorktreeSecurity, Workspace,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -328,6 +331,7 @@ impl Render for TitleBar {
                             },
                         )
                         .children(self.render_restricted_mode(cx))
+                        .children(self.render_blocked_downloads(cx))
                         .when(render_project_items, |title_bar| {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
@@ -508,6 +512,9 @@ impl TitleBar {
             subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
                 cx.notify();
             }));
+        }
+        if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
+            subscriptions.push(cx.observe(&binary_downloads, |_, _, cx| cx.notify()));
         }
 
         let update_version = cx.new(|cx| UpdateVersion::new(cx));
@@ -742,6 +749,41 @@ impl TitleBar {
         } else {
             Some(button.into_any_element())
         }
+    }
+
+    pub fn render_blocked_downloads(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if binary_downloads::pending_downloads(self.project.read(cx), cx).is_empty() {
+            return None;
+        }
+
+        Some(
+            Button::new("blocked_downloads_trigger", "Downloads Blocked")
+                .style(ButtonStyle::Tinted(TintColor::Warning))
+                .label_size(LabelSize::Small)
+                .color(Color::Warning)
+                .start_icon(
+                    Icon::new(IconName::CloudDownload)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
+                .tooltip(|_, cx| {
+                    Tooltip::with_meta(
+                        "Downloads Blocked",
+                        Some(&ToggleBinaryDownloads),
+                        "Some tools are waiting for your approval to download",
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(|title_bar, _, window, cx| {
+                    title_bar
+                        .workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.toggle_binary_downloads_modal(window, cx)
+                        })
+                        .ok();
+                }))
+                .into_any_element(),
+        )
     }
 
     pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

@@ -13,7 +13,9 @@ use futures::{
     future::{self, Shared},
     stream::FuturesUnordered,
 };
-use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{
+    AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
+};
 use language::{
     Buffer, LanguageRegistry, LocalFile, OffsetUtf16,
     language_settings::{Formatter, LanguageSettings},
@@ -27,8 +29,11 @@ use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt, rel_path::RelPath};
 
 use crate::{
-    File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
-    project_settings::ProjectSettings, worktree_store::WorktreeStore,
+    File, PathChange, ProjectEntryId, Worktree,
+    binary_downloads::{self, BinaryDownload, BinaryDownloads},
+    lsp_store::WorktreeId,
+    project_settings::ProjectSettings,
+    worktree_store::WorktreeStore,
 };
 
 pub struct PrettierStore {
@@ -40,6 +45,8 @@ pub struct PrettierStore {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_ignores_per_worktree: HashMap<WorktreeId, HashSet<PathBuf>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
+    blocked_download: Option<(Option<WorktreeId>, BinaryDownload)>,
+    _binary_downloads_subscription: Option<Subscription>,
 }
 
 pub(crate) enum PrettierStoreEvent {
@@ -59,8 +66,14 @@ impl PrettierStore {
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
         worktree_store: Entity<WorktreeStore>,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let binary_downloads_subscription =
+            BinaryDownloads::try_get_global(cx).map(|binary_downloads| {
+                cx.observe(&binary_downloads, |prettier_store, _, cx| {
+                    prettier_store.retry_blocked_default_prettier_install(cx);
+                })
+            });
         Self {
             node,
             fs,
@@ -70,6 +83,8 @@ impl PrettierStore {
             prettiers_per_worktree: HashMap::default(),
             prettier_ignores_per_worktree: HashMap::default(),
             prettier_instances: HashMap::default(),
+            blocked_download: None,
+            _binary_downloads_subscription: binary_downloads_subscription,
         }
     }
 
@@ -583,6 +598,8 @@ impl PrettierStore {
 
         let plugins_to_install = new_plugins.clone();
         let fs = Arc::clone(&self.fs);
+        let download_gate = binary_downloads::download_gate(cx);
+        let download = BinaryDownload::new(binary_downloads::PRETTIER);
         let new_installation_task = cx
             .spawn(async move  |prettier_store, cx| {
                 cx.background_executor().timer(Duration::from_millis(30)).await;
@@ -651,6 +668,14 @@ impl PrettierStore {
                             }
                             needs_install |= !new_plugins.is_empty();
                         })?;
+                        if needs_install && !download_gate.check(download.clone()) {
+                            prettier_store.update(cx, |prettier_store, _| {
+                                prettier_store.blocked_download = Some((worktree, download.clone()));
+                            })?;
+                            return Err(Arc::new(anyhow!(
+                                "downloading {} was not allowed", binary_downloads::PRETTIER
+                            )));
+                        }
                         if needs_install {
                             log::info!("Initializing default prettier with plugins {new_plugins:?}");
                             let installed_plugins = new_plugins.clone();
@@ -695,6 +720,27 @@ impl PrettierStore {
             installation_task: Some(new_installation_task),
             not_installed_plugins: plugins_to_install,
         };
+    }
+
+    fn retry_blocked_default_prettier_install(&mut self, cx: &mut Context<Self>) {
+        let Some((worktree, download)) = &self.blocked_download else {
+            return;
+        };
+        if !binary_downloads::download_gate(cx).is_allowed(download) {
+            return;
+        }
+        let worktree = *worktree;
+        self.blocked_download = None;
+        if let PrettierInstallation::NotInstalled {
+            attempts,
+            installation_task,
+            ..
+        } = &mut self.default_prettier.prettier
+        {
+            *attempts = 0;
+            *installation_task = None;
+        }
+        self.install_default_prettier(worktree, std::iter::empty(), cx);
     }
 }
 

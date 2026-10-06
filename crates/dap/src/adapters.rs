@@ -7,7 +7,11 @@ pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumen
 use fs::Fs;
 use futures::io::BufReader;
 use gpui::{AsyncApp, SharedString};
-pub use http_client::{HttpClient, github::latest_github_release};
+pub use http_client::{
+    HttpClient,
+    download_gate::{BinaryDownload, DownloadGate},
+    github::latest_github_release,
+};
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use schemars::JsonSchema;
@@ -47,6 +51,7 @@ pub trait DapDelegate: Send + Sync + 'static {
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
     fn is_headless(&self) -> bool;
+    fn download_gate(&self) -> DownloadGate;
 }
 
 #[derive(
@@ -271,6 +276,28 @@ pub struct GithubRepo {
     pub repo_owner: String,
 }
 
+pub fn is_adapter_downloaded(adapter_name: &DebugAdapterName) -> bool {
+    std::fs::read_dir(paths::debug_adapters_dir().join(adapter_name.as_ref()))
+        .is_ok_and(|mut entries| entries.next().is_some())
+}
+
+pub async fn ensure_download_allowed(
+    adapter_name: &DebugAdapterName,
+    installed: bool,
+    delegate: &dyn DapDelegate,
+) -> Result<()> {
+    let download = BinaryDownload::new(adapter_name.0.clone());
+    let download_gate = delegate.download_gate();
+    if !installed && !download_gate.is_allowed(&download) {
+        delegate.output_to_console(format!("Waiting for approval to download {download}…"));
+    }
+    anyhow::ensure!(
+        download_gate.allowed(download.clone(), installed).await,
+        "downloading {download} was not allowed"
+    );
+    Ok(())
+}
+
 pub async fn download_adapter_from_github(
     adapter_name: DebugAdapterName,
     github_version: AdapterVersion,
@@ -284,6 +311,13 @@ pub async fn download_adapter_from_github(
     if version_path.exists() {
         return Ok(version_path);
     }
+
+    ensure_download_allowed(
+        &adapter_name,
+        is_adapter_downloaded(&adapter_name),
+        delegate,
+    )
+    .await?;
 
     if !adapter_path.exists() {
         fs.create_dir(adapter_path.as_path())

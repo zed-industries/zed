@@ -2316,6 +2316,15 @@
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Env": [".env.*"],
   },
+  // Whether Zed may download tools without asking first:
+  // built-in language servers, built-in debug adapters, Zed's own Node.js,
+  // Prettier, GitHub Copilot, registry agents, and `ipykernel` for the REPL.
+  // When `false`, Zed waits for approval, given from the "Downloads Blocked"
+  // button in the title bar, and remembers it per tool and host.
+  // Extensions are not covered by this setting.
+  //
+  // Default: false
+  "allow_binary_downloads": false,
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
   //
@@ -2708,6 +2717,7 @@
     // Whether or not to skip worktree trust checks.
     // When trusted, project settings are synchronized automatically,
     // language and MCP servers are downloaded and started automatically.
+    // Downloads still require approval unless `allow_binary_downloads` is `true`.
     //
     // Default: false
     "trust_all_worktrees": false,

@@ -41,7 +41,10 @@ use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
 };
 use parking_lot::{Mutex, RwLock};
-use project::{AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath};
+use project::{
+    AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath,
+    binary_downloads::{self, BinaryDownloads},
+};
 
 use crate::conversation_view::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
@@ -73,7 +76,8 @@ use util::{
     time::duration_alt_display,
 };
 use workspace::{
-    CollaboratorId, MultiWorkspace, NewTerminal, PathList, Workspace, path_link::sanitize_path_text,
+    CollaboratorId, MultiWorkspace, NewTerminal, PathList, ToggleBinaryDownloads, Workspace,
+    path_link::sanitize_path_text,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};
 
@@ -1026,6 +1030,9 @@ impl ConversationView {
                 }
             }
         }));
+        if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
+            subscriptions.push(cx.observe(&binary_downloads, |_, _, cx| cx.notify()));
+        }
 
         cx.on_release(|this, cx| {
             this.request_elicitation_form_states.clear();
@@ -3671,11 +3678,20 @@ impl Render for ConversationView {
                     .loading_status
                     .clone()
                     .unwrap_or_else(|| "Loading…".into());
+                let agent_id = self.agent.agent_id();
+                let download_blocked =
+                    binary_downloads::pending_downloads(self.project.read(cx), cx)
+                        .iter()
+                        .any(|download| {
+                            download.tool == agent_id.0
+                                || download.tool == binary_downloads::NODE_RUNTIME
+                        });
                 v_flex()
                     .flex_1()
                     .size_full()
                     .items_center()
                     .justify_center()
+                    .gap_2()
                     .child(
                         Label::new(label_text).color(Color::Muted).with_animation(
                             "loading-agent-label",
@@ -3685,6 +3701,19 @@ impl Render for ConversationView {
                             |label, delta| label.alpha(delta),
                         ),
                     )
+                    .when(download_blocked, |this| {
+                        this.child(
+                            Button::new("review-blocked-download", "Review Download")
+                                .start_icon(
+                                    Icon::new(IconName::CloudDownload)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(ToggleBinaryDownloads.boxed_clone(), cx);
+                                }),
+                        )
+                    })
                     .into_any()
             }
             ServerState::LoadError { error: e, .. } => v_flex()

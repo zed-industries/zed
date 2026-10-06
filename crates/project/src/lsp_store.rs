@@ -35,7 +35,7 @@ use crate::{
     CodeAction, Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource,
     CoreCompletion, Hover, InlayHint, InlayId, LocationLink, LspAction, LspPullDiagnostics,
     ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
-    PulledDiagnostics, ResolveState, Symbol,
+    PulledDiagnostics, ResolveState, Symbol, binary_downloads,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -815,6 +815,7 @@ impl LocalLspStore {
                 .and_then(|f| f.pre_release)
                 .unwrap_or(false),
         };
+        let download_gate = binary_downloads::download_gate(cx);
 
         cx.spawn(async move |cx| {
             if let Some(mut wait_until_worktree_trust) = wait_until_worktree_trust {
@@ -839,7 +840,13 @@ impl LocalLspStore {
 
             let (existing_binary, maybe_download_binary) = adapter
                 .clone()
-                .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
+                .get_language_server_command(
+                    delegate.clone(),
+                    toolchain,
+                    lsp_binary_options,
+                    download_gate,
+                    cx,
+                )
                 .await
                 .await;
 

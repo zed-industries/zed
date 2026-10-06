@@ -17,6 +17,7 @@ use project::{
     AgentRegistryStore, LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment,
     ProjectPath, ToolchainStore, WorktreeId,
     agent_server_store::AgentServerStore,
+    binary_downloads::{BinaryDownload, BinaryDownloads},
     buffer_store::{BufferStore, BufferStoreEvent},
     context_server_store::ContextServerStore,
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
@@ -122,6 +123,11 @@ impl HeadlessProject {
                 None,
                 cx,
             );
+        }
+        if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
+            binary_downloads.update(cx, |binary_downloads, _| {
+                binary_downloads.set_downstream_client(session.clone(), REMOTE_SERVER_PROJECT_ID);
+            });
         }
 
         let environment =
@@ -312,6 +318,8 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_image_by_path);
         session.add_entity_request_handler(Self::handle_trust_worktrees);
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
+        session.add_entity_message_handler(Self::handle_allow_binary_downloads);
+        session.add_entity_message_handler(Self::handle_deny_binary_downloads);
         session.add_entity_request_handler(Self::handle_download_file_by_path);
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
@@ -777,6 +785,48 @@ impl HeadlessProject {
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         });
         Ok(proto::Ack {})
+    }
+
+    pub async fn handle_allow_binary_downloads(
+        _: Entity<Self>,
+        envelope: TypedEnvelope<proto::AllowBinaryDownloads>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let binary_downloads = cx
+            .update(|cx| BinaryDownloads::try_get_global(cx))
+            .context("missing binary downloads")?;
+        binary_downloads.update(&mut cx, |binary_downloads, _| {
+            binary_downloads.allow_from_downstream(
+                envelope
+                    .payload
+                    .tools
+                    .into_iter()
+                    .map(BinaryDownload::new)
+                    .collect(),
+            );
+        });
+        Ok(())
+    }
+
+    pub async fn handle_deny_binary_downloads(
+        _: Entity<Self>,
+        envelope: TypedEnvelope<proto::DenyBinaryDownloads>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let binary_downloads = cx
+            .update(|cx| BinaryDownloads::try_get_global(cx))
+            .context("missing binary downloads")?;
+        binary_downloads.update(&mut cx, |binary_downloads, _| {
+            binary_downloads.deny_from_downstream(
+                envelope
+                    .payload
+                    .tools
+                    .into_iter()
+                    .map(BinaryDownload::new)
+                    .collect(),
+            );
+        });
+        Ok(())
     }
 
     pub async fn handle_download_file_by_path(

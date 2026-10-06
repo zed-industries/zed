@@ -47,12 +47,27 @@ mod test_mocks {
 
     pub(crate) struct MockDelegate {
         worktree_root: PathBuf,
+        http_client: Option<Arc<dyn http_client::HttpClient>>,
+        fs: Option<Arc<dyn fs::Fs>>,
     }
 
     impl MockDelegate {
         pub(crate) fn new() -> Arc<dyn adapters::DapDelegate> {
             Arc::new(Self {
                 worktree_root: PathBuf::from("/tmp/test"),
+                http_client: None,
+                fs: None,
+            })
+        }
+
+        pub(crate) fn with_http_client_and_fs(
+            http_client: Arc<dyn http_client::HttpClient>,
+            fs: Arc<dyn fs::Fs>,
+        ) -> Arc<dyn adapters::DapDelegate> {
+            Arc::new(Self {
+                worktree_root: PathBuf::from("/tmp/test"),
+                http_client: Some(http_client),
+                fs: Some(fs),
             })
         }
     }
@@ -68,7 +83,7 @@ mod test_mocks {
         }
 
         fn http_client(&self) -> Arc<dyn http_client::HttpClient> {
-            unimplemented!("Not needed for tests")
+            self.http_client.clone().expect("Not needed for tests")
         }
 
         fn node_runtime(&self) -> node_runtime::NodeRuntime {
@@ -80,7 +95,7 @@ mod test_mocks {
         }
 
         fn fs(&self) -> Arc<dyn fs::Fs> {
-            unimplemented!("Not needed for tests")
+            self.fs.clone().expect("Not needed for tests")
         }
 
         fn output_to_console(&self, _msg: String) {}
@@ -99,6 +114,10 @@ mod test_mocks {
 
         fn is_headless(&self) -> bool {
             false
+        }
+
+        fn download_gate(&self) -> adapters::DownloadGate {
+            adapters::DownloadGate::deny_all()
         }
     }
 }

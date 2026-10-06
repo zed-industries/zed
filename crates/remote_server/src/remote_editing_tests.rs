@@ -20,12 +20,13 @@ use editor::{
 };
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
+use futures::FutureExt as _;
 use git::{
     Oid,
     repository::{CommitData, GitCommitTemplate, RepoPath, Worktree as GitWorktree},
 };
 use gpui::{
-    AppContext as _, Entity, ImageSource, IntoElement as _, SharedString, TestAppContext,
+    AppContext as _, Entity, ImageSource, IntoElement as _, SharedString, Task, TestAppContext,
     UpdateGlobal, VisualContext, img, px, size,
 };
 use http_client::{BlockedHttpClient, FakeHttpClient};
@@ -42,11 +43,13 @@ use node_runtime::NodeRuntime;
 use project::{
     CompletionSource, LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
+    binary_downloads::{self, BinaryDownload, BinaryDownloads},
     image_store,
     lsp_store::log_store::{
         GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
     },
     search::{SearchQuery, SearchResult},
+    trusted_worktrees::RemoteHostLocation,
 };
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
 use rpc::proto;
@@ -5666,6 +5669,89 @@ async fn test_log_store_keys_remote_events_by_primary_kind_on_supplementary_id_c
             "host server logs should not leak into the supplementary server with the same ID"
         );
     });
+}
+
+#[gpui::test]
+async fn test_remote_binary_download_approval(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        binary_downloads::init(HashMap::default(), cx);
+    });
+    let server_fs = Arc::new(FakeFs::new(server_cx.executor()));
+    let (project, headless) = init_test(&server_fs, cx, server_cx).await;
+    let server_gate = server_cx.update(|cx| {
+        let gate = binary_downloads::init(HashMap::default(), cx);
+        let session = headless.read(cx).session.clone();
+        BinaryDownloads::try_get_global(cx)
+            .unwrap()
+            .update(cx, |binary_downloads, _| {
+                binary_downloads.set_downstream_client(session, proto::REMOTE_SERVER_PROJECT_ID);
+            });
+        gate
+    });
+    let download = BinaryDownload::new("remote-tool");
+
+    let request = server_cx.background_spawn({
+        let server_gate = server_gate.clone();
+        let download = download.clone();
+        async move { server_gate.request(download).await }
+    });
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|cx| binary_downloads::pending_downloads(project.read(cx), cx)),
+        vec![download.clone()]
+    );
+
+    let persisted = Rc::new(RefCell::new(None));
+    cx.update(|cx| {
+        BinaryDownloads::try_get_global(cx)
+            .unwrap()
+            .update(cx, |binary_downloads, cx| {
+                binary_downloads.allow_download(&project, download.clone(), cx);
+                binary_downloads.schedule_serialization(cx, {
+                    let persisted = persisted.clone();
+                    move |allowed_downloads, _| {
+                        *persisted.borrow_mut() = Some(allowed_downloads);
+                        Task::ready(())
+                    }
+                });
+            });
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(server_gate.is_allowed(&download));
+    assert_eq!(request.now_or_never(), Some(true));
+    assert_eq!(
+        cx.update(|cx| binary_downloads::pending_downloads(project.read(cx), cx)),
+        Vec::new()
+    );
+    let host = cx.update(|cx| {
+        RemoteHostLocation::from(project.read(cx).remote_connection_options(cx).unwrap())
+    });
+    assert_eq!(
+        persisted.take(),
+        Some(HashMap::from_iter([(
+            Some(host),
+            HashSet::from_iter([download])
+        )]))
+    );
+
+    let installed_agent = BinaryDownload::new("installed-agent");
+    cx.update(|cx| {
+        binary_downloads::allow_for_project(&project, installed_agent.clone(), cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(server_gate.is_allowed(&installed_agent));
+    assert_eq!(
+        cx.update(|cx| { binary_downloads::download_gate(cx).is_allowed(&installed_agent) }),
+        false
+    );
 }
 
 pub async fn init_test(

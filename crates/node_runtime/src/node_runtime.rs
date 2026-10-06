@@ -3,7 +3,10 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use chrono::{DateTime, Utc};
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
-use http_client::{Host, HttpClient, Url};
+use http_client::{
+    Host, HttpClient, Url,
+    download_gate::{BinaryDownload, DownloadGate, NODE_RUNTIME},
+};
 use log::Level;
 use semver::{Version, VersionReq};
 use serde::Deserialize;
@@ -57,6 +60,7 @@ struct NodeRuntimeState {
     last_options: Option<NodeBinaryOptions>,
     options: watch::Receiver<Option<NodeBinaryOptions>>,
     shell_env_loaded: Shared<oneshot::Receiver<()>>,
+    download_gate: DownloadGate,
 }
 
 impl NodeRuntime {
@@ -64,6 +68,7 @@ impl NodeRuntime {
         http: Arc<dyn HttpClient>,
         shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: watch::Receiver<Option<NodeBinaryOptions>>,
+        download_gate: DownloadGate,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
             http,
@@ -71,6 +76,7 @@ impl NodeRuntime {
             last_options: None,
             options,
             shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
+            download_gate,
         })))
     }
 
@@ -81,6 +87,7 @@ impl NodeRuntime {
             last_options: None,
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
             shell_env_loaded: oneshot::channel().1.shared(),
+            download_gate: DownloadGate::deny_all(),
         })))
     }
 
@@ -156,7 +163,7 @@ impl NodeRuntime {
                     "`node.ignore_system_version` is `true` in settings".to_string(),
                 ),
             };
-            match ManagedNodeRuntime::install_if_needed(&state.http).await {
+            match ManagedNodeRuntime::install_if_needed(&state.http, &state.download_gate).await {
                 Ok(instance) => {
                     log::log!(
                         log_level,
@@ -616,7 +623,10 @@ impl ManagedNodeRuntime {
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
 
-    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Self> {
+    async fn install_if_needed(
+        http: &Arc<dyn HttpClient>,
+        download_gate: &DownloadGate,
+    ) -> Result<Self> {
         log::info!("Node runtime install_if_needed");
 
         let os = match consts::OS {
@@ -678,6 +688,12 @@ impl ManagedNodeRuntime {
         };
 
         if !valid {
+            anyhow::ensure!(
+                download_gate
+                    .request(BinaryDownload::new(NODE_RUNTIME))
+                    .await,
+                "downloading Zed managed Node.js was not allowed"
+            );
             _ = fs::remove_dir_all(&node_containing_dir).await;
             fs::create_dir(&node_containing_dir)
                 .await

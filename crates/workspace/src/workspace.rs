@@ -1,4 +1,5 @@
 pub mod active_file_name;
+pub mod binary_downloads_modal;
 pub mod dock;
 pub mod history_manager;
 pub mod invalid_item_view;
@@ -62,10 +63,10 @@ use futures::{
 };
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AppContext, AsyncApp, AsyncWindowContext, Axis,
-    Bounds, ClipboardItem, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke,
-    ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size,
-    Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
+    Bounds, ClipboardItem, Context, CursorStyle, Decorations, DismissEvent, DragMoveEvent, Entity,
+    EntityId, EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext,
+    Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
+    Size, Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
     WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
     transparent_black,
 };
@@ -100,6 +101,7 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     WorktreeSettings,
+    binary_downloads::{self, BinaryDownloads},
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     git_store::{GitStoreEvent, RepositoryEvent},
     project_settings::ProjectSettings,
@@ -165,14 +167,15 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
-use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::NotificationId};
 use crate::{
+    binary_downloads_modal::BinaryDownloadsModal,
     persistence::{
         SerializedAxis,
         model::{SerializedItem, SerializedPane, SerializedPaneGroup},
     },
     security_modal::SecurityModal,
 };
+use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::NotificationId};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 pub const MAX_RECENT_SELECTIONS: usize = 20;
@@ -493,6 +496,10 @@ actions!(
         /// Clears all trusted worktrees, placing them in restricted mode on next open.
         /// Requires restart to take effect on already opened projects.
         ClearTrustedWorktrees,
+        /// Shows the tools that are waiting for approval to download.
+        ToggleBinaryDownloads,
+        /// Forgets all allowed tool downloads, so Zed asks again before the next download.
+        ClearAllowedBinaryDownloads,
         /// Stops following a collaborator.
         Unfollow,
         /// Restores the banner.
@@ -1708,6 +1715,21 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
+            cx.subscribe(&binary_downloads, |_, binary_downloads, _, cx| {
+                binary_downloads.update(cx, |binary_downloads, cx| {
+                    binary_downloads.schedule_serialization(cx, |allowed_downloads, cx| {
+                        let timeout = cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
+                        let db = WorkspaceDb::global(cx);
+                        cx.background_spawn(async move {
+                            timeout.await;
+                            db.save_binary_downloads(allowed_downloads).await.log_err();
+                        })
+                    })
+                });
+            })
+            .detach();
+        }
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             cx.subscribe(&trusted_worktrees, |_, worktrees_store, e, cx| {
                 if let TrustedWorktreesEvent::Trusted(..) = e {
@@ -8250,6 +8272,20 @@ impl Workspace {
                     workspace.show_worktree_trust_security_modal(true, window, cx);
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ToggleBinaryDownloads, window, cx| {
+                    workspace.toggle_binary_downloads_modal(window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |_: &mut Workspace, _: &ClearAllowedBinaryDownloads, _, cx| {
+                    if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
+                        binary_downloads.update(cx, |binary_downloads, cx| {
+                            binary_downloads.clear_allowed_downloads(cx);
+                        });
+                    }
+                },
+            ))
             .on_action(
                 cx.listener(|_: &mut Workspace, _: &ClearTrustedWorktrees, _, cx| {
                     if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
@@ -9093,6 +9129,18 @@ impl Workspace {
                     SecurityModal::new(worktree_store, remote_host, window, cx)
                 });
             }
+        }
+    }
+
+    pub fn toggle_binary_downloads_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(modal) = self.active_modal::<BinaryDownloadsModal>(cx) {
+            modal.update(cx, |_, cx| cx.emit(DismissEvent));
+        } else if !binary_downloads::pending_downloads(self.project.read(cx), cx).is_empty() {
+            let project = self.project.clone();
+            let fs = self.app_state.fs.clone();
+            self.toggle_modal(window, cx, |_, cx| {
+                BinaryDownloadsModal::new(&project, fs, cx)
+            });
         }
     }
 }

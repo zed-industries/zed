@@ -10,6 +10,7 @@ use super::dap_command::{
     TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
+use crate::binary_downloads::{self, BinaryDownload};
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
@@ -3020,7 +3021,10 @@ impl Session {
                 if let Some(companion_port) = this.read_with(cx, |this, _| this.companion_port)? {
                     companion_port
                 } else {
-                    let task = cx.spawn(async move |cx| spawn_companion(node_runtime, cx).await);
+                    let task = cx.spawn({
+                        let console_output = console_output.clone();
+                        async move |cx| spawn_companion(node_runtime, console_output, cx).await
+                    });
                     match task.await {
                         Ok((port, child)) => {
                             companion_process = Some(child);
@@ -3188,6 +3192,7 @@ struct KillCompanionBrowserParams {
 
 async fn spawn_companion(
     node_runtime: NodeRuntime,
+    console_output: mpsc::UnboundedSender<String>,
     cx: &mut AsyncApp,
 ) -> Result<(u16, util::command::Child)> {
     let binary_path = node_runtime
@@ -3195,7 +3200,7 @@ async fn spawn_companion(
         .await
         .context("getting node path")?;
     let path = cx
-        .spawn(async move |cx| get_or_install_companion(node_runtime, cx).await)
+        .spawn(async move |cx| get_or_install_companion(node_runtime, console_output, cx).await)
         .await?;
     log::info!("will launch js-debug-companion version {path:?}");
 
@@ -3226,7 +3231,11 @@ async fn spawn_companion(
     Ok((port, child))
 }
 
-async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Result<PathBuf> {
+async fn get_or_install_companion(
+    node: NodeRuntime,
+    console_output: mpsc::UnboundedSender<String>,
+    cx: &mut AsyncApp,
+) -> Result<PathBuf> {
     const PACKAGE_NAME: &str = "@zed-industries/js-debug-companion-cli";
 
     async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
@@ -3247,10 +3256,9 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
     }
 
     let dir = paths::debug_adapters_dir().join("js-debug-companion");
-    let (latest_installed_version, latest_version) = cx
+    let latest_installed_version = cx
         .background_spawn({
             let dir = dir.clone();
-            let node = node.clone();
             async move {
                 smol::fs::create_dir_all(&dir)
                     .await
@@ -3272,27 +3280,44 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
                         ))
                     })
                     .max_by_key(|(_, version)| version.clone());
-
-                let latest_version = node
-                    .npm_package_latest_version(PACKAGE_NAME)
-                    .await
-                    .log_err();
-                anyhow::Ok((latest_installed_version, latest_version))
+                anyhow::Ok(latest_installed_version)
             }
         })
         .await?;
 
+    let download = BinaryDownload::new(PACKAGE_NAME);
+    let download_gate = cx.update(|cx| binary_downloads::download_gate(cx));
+    let installed = latest_installed_version.is_some();
+    if !installed && !download_gate.is_allowed(&download) {
+        console_output
+            .unbounded_send(format!("Waiting for approval to download {download}…"))
+            .ok();
+    }
+    let download_allowed = download_gate.allowed(download, installed).await;
+
     let path = if let Some((installed_path, installed_version)) = latest_installed_version {
-        if let Some(latest_version) = latest_version
+        if download_allowed
+            && let Some(latest_version) = cx
+                .background_spawn({
+                    let node = node.clone();
+                    async move {
+                        node.npm_package_latest_version(PACKAGE_NAME)
+                            .await
+                            .log_err()
+                    }
+                })
+                .await
             && latest_version != installed_version
         {
             cx.background_spawn(install_latest_version(dir.clone(), node.clone()))
                 .detach();
         }
         Ok(installed_path)
-    } else {
+    } else if download_allowed {
         cx.background_spawn(install_latest_version(dir.clone(), node.clone()))
             .await
+    } else {
+        Err(anyhow!("downloading {PACKAGE_NAME} was not allowed"))
     };
 
     Ok(path?
