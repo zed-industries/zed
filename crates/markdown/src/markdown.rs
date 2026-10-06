@@ -8725,18 +8725,18 @@ mod tests {
 
                 window_cx.write_to_clipboard(ClipboardItem::new_string(NOT_COPIED.to_string()));
                 window_cx.simulate_click(copy_button.center(), gpui::Modifiers::default());
-                let copied = window_cx.read_from_clipboard().map(|clipboard_item| {
-                    clipboard_item
-                        .entries()
-                        .iter()
-                        .filter_map(|entry| match entry {
-                            gpui::ClipboardEntry::String(clipboard_string) => {
-                                Some(clipboard_string.text().as_str())
+
+                // An empty code block must still copy a text entry, rather than
+                // accepting unrelated clipboard entries as an empty string.
+                let copied =
+                    window_cx
+                        .read_from_clipboard()
+                        .and_then(|clipboard_item| match clipboard_item.entries() {
+                            [gpui::ClipboardEntry::String(clipboard_string)] => {
+                                Some(clipboard_string.text().clone())
                             }
                             _ => None,
-                        })
-                        .collect::<String>()
-                });
+                        });
 
                 if copied.as_deref() != Some(*expected) {
                     failures.push(format!(
