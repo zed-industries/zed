@@ -21,7 +21,7 @@ use cloud_llm_client::{
     ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
-use copilot::{Copilot, Reinstall, SignIn, SignOut};
+use copilot::{Copilot, Reinstall};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
@@ -70,7 +70,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 
 pub mod cursor_excerpt;
 pub mod data_collection;
@@ -83,6 +83,7 @@ pub mod ollama;
 mod onboarding_modal;
 pub mod open_ai_response;
 mod prediction;
+pub mod sweep_prompt;
 
 pub mod udiff;
 
@@ -138,6 +139,10 @@ pub struct EditPredictionJumpsFeatureFlag;
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
     type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 register_feature_flag!(EditPredictionJumpsFeatureFlag);
 
@@ -188,6 +193,7 @@ pub(crate) struct EditPredictionRejectionPayload {
 pub enum EditPredictionModel {
     Zeta,
     Fim { format: EditPredictionPromptFormat },
+    SweepPrompt,
     Mercury,
 }
 
@@ -197,6 +203,7 @@ pub struct EditPredictionModelInput {
     snapshot: BufferSnapshot,
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
+    stored_events: Vec<StoredEvent>,
     related_files: Vec<RelatedFile>,
     editable_context: Option<Task<anyhow::Result<Vec<RelatedFile>>>>,
     mode: PredictEditsMode,
@@ -904,11 +911,14 @@ pub(crate) fn buffer_path_with_id_fallback(
     snapshot: &TextBufferSnapshot,
     cx: &App,
 ) -> Arc<Path> {
-    if let Some(file) = file {
-        file.full_path(cx).into()
-    } else {
-        Path::new(&format!("untitled-{}", snapshot.remote_id())).into()
-    }
+    let Some(file) = file else {
+        return Path::new(&format!("untitled-{}", snapshot.remote_id())).into();
+    };
+    let full_path = file.full_path(cx);
+    let Some(path) = RelPath::new(&full_path, file.path_style(cx)).ok() else {
+        return Path::new(&format!("untitled-{}", snapshot.remote_id())).into();
+    };
+    path.as_std_path().into()
 }
 
 fn predict_edits_request_trigger_from_editor_trigger(
@@ -928,6 +938,17 @@ fn predict_edits_request_trigger_from_editor_trigger(
         }
         EditPredictionRequestTrigger::PredictionPartiallyAccepted => {
             PredictEditsRequestTrigger::PredictionPartiallyAccepted
+        }
+        EditPredictionRequestTrigger::EditorCreated => PredictEditsRequestTrigger::EditorCreated,
+        EditPredictionRequestTrigger::ProviderChanged => {
+            PredictEditsRequestTrigger::ProviderChanged
+        }
+        EditPredictionRequestTrigger::UserInfoChanged => {
+            PredictEditsRequestTrigger::UserInfoChanged
+        }
+        EditPredictionRequestTrigger::VimModeChanged => PredictEditsRequestTrigger::VimModeChanged,
+        EditPredictionRequestTrigger::SettingsChanged => {
+            PredictEditsRequestTrigger::SettingsChanged
         }
         EditPredictionRequestTrigger::Other => PredictEditsRequestTrigger::Other,
     }
@@ -1173,7 +1194,7 @@ impl EditPredictionStore {
                     .with_down(IconName::ZedPredictDown)
                     .with_error(IconName::ZedPredictError)
             }
-            EditPredictionModel::Fim { .. } => {
+            EditPredictionModel::Fim { .. } | EditPredictionModel::SweepPrompt => {
                 let settings = &all_language_settings(None, cx).edit_predictions;
                 match settings.provider {
                     EditPredictionProvider::Ollama => {
@@ -1858,7 +1879,7 @@ impl EditPredictionStore {
                     zeta::edit_prediction_accepted(self, current_prediction, cx)
                 }
             }
-            EditPredictionModel::Fim { .. } => {}
+            EditPredictionModel::Fim { .. } | EditPredictionModel::SweepPrompt => {}
         }
     }
 
@@ -2269,7 +2290,7 @@ impl EditPredictionStore {
                     cx,
                 );
             }
-            EditPredictionModel::Fim { .. } => {}
+            EditPredictionModel::SweepPrompt | EditPredictionModel::Fim { .. } => {}
         }
     }
 
@@ -2284,6 +2305,7 @@ impl EditPredictionStore {
         project: Entity<Project>,
         buffer: Entity<Buffer>,
         position: language::Anchor,
+        debounce_duration: Duration,
         trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
@@ -2293,29 +2315,35 @@ impl EditPredictionStore {
 
         let trigger = predict_edits_request_trigger_from_editor_trigger(trigger);
 
-        self.queue_prediction_refresh(project.clone(), buffer.entity_id(), cx, move |this, cx| {
-            let Some(request_task) = this
-                .update(cx, |this, cx| {
-                    this.request_prediction_internal(
-                        project.clone(),
-                        buffer.clone(),
-                        position,
-                        trigger,
-                        cx,
-                    )
-                })
-                .log_err()
-            else {
-                return Task::ready(anyhow::Ok(None));
-            };
+        self.queue_prediction_refresh(
+            project.clone(),
+            buffer.entity_id(),
+            debounce_duration,
+            cx,
+            move |this, cx| {
+                let Some(request_task) = this
+                    .update(cx, |this, cx| {
+                        this.request_prediction_internal(
+                            project.clone(),
+                            buffer.clone(),
+                            position,
+                            trigger,
+                            cx,
+                        )
+                    })
+                    .log_err()
+                else {
+                    return Task::ready(anyhow::Ok(None));
+                };
 
-            cx.spawn(async move |_cx| {
-                request_task.await.map(|prediction_result| {
-                    prediction_result
-                        .map(|prediction_result| (prediction_result, buffer.entity_id()))
+                cx.spawn(async move |_cx| {
+                    request_task.await.map(|prediction_result| {
+                        prediction_result
+                            .map(|prediction_result| (prediction_result, buffer.entity_id()))
+                    })
                 })
-            })
-        })
+            },
+        )
     }
 
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
@@ -2488,6 +2516,7 @@ impl EditPredictionStore {
         &mut self,
         project: Entity<Project>,
         throttle_entity: EntityId,
+        debounce_duration: Duration,
         cx: &mut Context<Self>,
         do_refresh: impl FnOnce(
             WeakEntity<Self>,
@@ -2516,6 +2545,10 @@ impl EditPredictionStore {
         let throttle_at_enqueue = project_state.last_edit_prediction_refresh;
 
         let task = cx.spawn(async move |this, cx| {
+            if !debounce_duration.is_zero() {
+                cx.background_executor().timer(debounce_duration).await;
+            }
+
             let throttle_wait = this
                 .update(cx, |this, cx| {
                     let project_state = this.get_or_init_project(&project, cx);
@@ -2832,6 +2865,7 @@ impl EditPredictionStore {
             snapshot,
             position,
             events,
+            stored_events: stored_events.clone(),
             related_files,
             editable_context,
             mode,
@@ -2877,6 +2911,7 @@ impl EditPredictionStore {
                 )
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
+            EditPredictionModel::SweepPrompt => sweep_prompt::request_prediction(inputs, cx),
             EditPredictionModel::Mercury => {
                 self.mercury
                     .request_prediction(inputs, self.credentials_provider.clone(), cx)
@@ -3514,19 +3549,9 @@ pub fn init(cx: &mut App) {
             })
         }
 
-        workspace.register_action(|workspace, _: &SignIn, window, cx| {
-            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
-                copilot_ui::initiate_sign_in(copilot, window, cx);
-            }
-        });
         workspace.register_action(|workspace, _: &Reinstall, window, cx| {
             if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
                 copilot_ui::reinstall_and_sign_in(copilot, window, cx);
-            }
-        });
-        workspace.register_action(|workspace, _: &SignOut, window, cx| {
-            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
-                copilot_ui::initiate_sign_out(copilot, window, cx);
             }
         });
     })

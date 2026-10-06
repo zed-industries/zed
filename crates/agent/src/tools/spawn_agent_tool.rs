@@ -4,9 +4,11 @@ use anyhow::Result;
 use gpui::{App, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
+
+use acp_thread::AgentModelId;
 
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
@@ -30,6 +32,12 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - When a plan has multiple independent steps, prefer delegating those steps in parallel rather than serializing them unnecessarily.
 /// - Reuse the returned session_id when you want to follow up on the same delegated subproblem instead of creating a duplicate session.
 ///
+/// ### Model selection
+/// - When the user requests a particular model or asks you to choose based on cost or capability, call `list_agents_and_models` first, then pass the exact `models[].id` from the native Zed agent entry (`is_native: true`) in `model`.
+/// - Omit `model` to use the user's configured subagent model, or the parent model when no subagent model is configured.
+/// - Do not silently choose a different model when an explicit model is unavailable unless the user allowed fallback.
+/// - A resumed session keeps its existing model, so `model` cannot be combined with `session_id`.
+///
 /// ### Output
 /// - You will receive only the agent's final message as output.
 /// - Successful calls return a session_id that you can use for follow-up messages.
@@ -41,9 +49,34 @@ pub struct SpawnAgentToolInput {
     pub label: String,
     /// The prompt for the agent. For new sessions, include full context needed for the task. For follow-ups (with session_id), you can rely on the agent already having the previous message.
     pub message: String,
-    /// Session ID of an existing agent session to continue instead of creating a new one.
-    #[serde(default)]
+    /// Session ID of an existing agent session to continue instead of creating a new one. Omit to create a new agent.
+    #[serde(default, deserialize_with = "deserialize_session_id")]
     pub session_id: Option<acp::SessionId>,
+    /// Optional model override. Pass the exact `models[].id` returned for the
+    /// native Zed agent (`is_native: true`) by `list_agents_and_models`.
+    /// Omit to preserve default behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+fn deserialize_session_id<'de, D>(deserializer: D) -> Result<Option<acp::SessionId>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    if value
+        .as_str()
+        .is_some_and(|session_id| session_id.trim().is_empty())
+    {
+        return Ok(None);
+    }
+
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,11 +174,22 @@ impl AgentTool for SpawnAgentTool {
                     session_info: None,
                 })?;
 
+            let SpawnAgentToolInput {
+                label,
+                message,
+                session_id,
+                model,
+            } = input;
             let (subagent, mut session_info) = cx.update(|cx| {
-                let subagent = if let Some(session_id) = input.session_id {
-                    self.environment.resume_subagent(session_id, cx)
-                } else {
-                    self.environment.create_subagent(input.label, cx)
+                let subagent = match (session_id, model) {
+                    (Some(_), Some(_)) => Err(anyhow::anyhow!(
+                        "model cannot be changed when resuming a subagent session"
+                    )),
+                    (Some(session_id), None) => self.environment.resume_subagent(session_id, cx),
+                    (None, model) => {
+                        self.environment
+                            .create_subagent(label, model.map(AgentModelId::from), cx)
+                    }
                 };
                 let subagent = subagent.map_err(|err| SpawnAgentToolOutput::Error {
                     session_id: None,
@@ -170,7 +214,7 @@ impl AgentTool for SpawnAgentTool {
                 Ok((subagent, session_info))
             })?;
 
-            let send_result = subagent.send(input.message, cx).await;
+            let send_result = subagent.send(message, cx).await;
 
             let status = if send_result.is_ok() {
                 "completed"
@@ -252,5 +296,40 @@ impl AgentTool for SpawnAgentTool {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn deserializes_blank_session_id_as_absent() {
+        for session_id in [json!(null), json!(""), json!("   ")] {
+            let input: SpawnAgentToolInput = serde_json::from_value(json!({
+                "label": "label",
+                "message": "message",
+                "session_id": session_id,
+            }))
+            .unwrap();
+
+            assert!(input.session_id.is_none());
+        }
+
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+        }))
+        .unwrap();
+        assert!(input.session_id.is_none());
+
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+            "session_id": "existing-session",
+        }))
+        .unwrap();
+        assert_eq!(input.session_id.unwrap().to_string(), "existing-session");
     }
 }

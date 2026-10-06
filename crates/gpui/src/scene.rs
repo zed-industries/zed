@@ -495,6 +495,40 @@ pub enum PrimitiveBatch {
     Surfaces(Range<usize>),
 }
 
+impl PrimitiveBatch {
+    #[expect(missing_docs)]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Shadows(range) => format!("shadows ({})", range.len()),
+            Self::Quads(range) => format!("quads ({})", range.len()),
+            Self::Paths(range) => format!("paths ({})", range.len()),
+            Self::Underlines(range) => format!("underlines ({})", range.len()),
+            Self::MonochromeSprites { texture_id, range } => {
+                format!(
+                    "monochrome sprites ({}) on atlas {}",
+                    range.len(),
+                    texture_id.index
+                )
+            }
+            Self::SubpixelSprites { texture_id, range } => {
+                format!(
+                    "subpixel sprites ({}) on atlas {}",
+                    range.len(),
+                    texture_id.index
+                )
+            }
+            Self::PolychromeSprites { texture_id, range } => {
+                format!(
+                    "polychrome sprites ({}) on atlas {}",
+                    range.len(),
+                    texture_id.index
+                )
+            }
+            Self::Surfaces(range) => format!("surfaces ({})", range.len()),
+        }
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone)]
 #[repr(C)]
 #[expect(missing_docs)]
@@ -735,7 +769,7 @@ pub struct PaintSurface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub image_buffer: core_video::pixel_buffer::CVPixelBuffer,
 }
 

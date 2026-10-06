@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     os::windows::ffi::OsStrExt,
     path::Path,
     sync::LazyLock,
@@ -363,7 +363,19 @@ fn release_file_handles(app_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) -> Result<()> {
+#[allow(clippy::disallowed_methods, reason = "doesn't run in the main binary")]
+fn zed_launch_command(app_dir: &Path, launch_arguments: &[OsString]) -> std::process::Command {
+    let mut command = std::process::Command::new(app_dir.join("Zed.exe"));
+    command.args(launch_arguments);
+    command
+}
+
+pub(crate) fn perform_update(
+    app_dir: &Path,
+    hwnd: Option<isize>,
+    launch: bool,
+    launch_arguments: &[OsString],
+) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
     // Try to release file handles before starting the update
@@ -428,7 +440,9 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
 
     if launch {
         #[allow(clippy::disallowed_methods, reason = "doesn't run in the main binary")]
-        let _ = std::process::Command::new(app_dir.join("Zed.exe")).spawn();
+        let _child = zed_launch_command(app_dir, launch_arguments)
+            .spawn()
+            .context("Failed to launch Zed after update")?;
     }
     log::info!("Update completed successfully");
     Ok(())
@@ -436,19 +450,42 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
 
 #[cfg(test)]
 mod test {
-    use super::perform_update;
+    use std::{ffi::OsString, path::Path};
+
+    use super::{perform_update, zed_launch_command};
+
+    #[test]
+    fn test_zed_launch_command_preserves_arguments() {
+        let arguments = vec![
+            OsString::from("--user-data-dir"),
+            OsString::from(r"C:\Zed Data"),
+        ];
+        let command = zed_launch_command(Path::new(r"C:\Program Files\Zed"), &arguments);
+
+        assert_eq!(
+            command.get_program(),
+            Path::new(r"C:\Program Files\Zed\Zed.exe").as_os_str()
+        );
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            arguments
+                .iter()
+                .map(OsString::as_os_str)
+                .collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn test_perform_update() {
         let app_dir = tempfile::tempdir().unwrap();
         let app_dir = app_dir.path();
-        assert!(perform_update(app_dir, None, false).is_ok());
+        assert!(perform_update(app_dir, None, false, &[]).is_ok());
 
         let app_dir = tempfile::tempdir().unwrap();
         let app_dir = app_dir.path();
         // Simulate a timeout
         unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err1") };
-        let ret = perform_update(app_dir, None, false);
+        let ret = perform_update(app_dir, None, false, &[]);
         assert!(
             ret.is_err_and(|e| e.to_string().as_str() == "Autoupdate failed, nothing to rollback")
         );
@@ -457,7 +494,7 @@ mod test {
         let app_dir = app_dir.path();
         // Simulate a timeout
         unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err2") };
-        let ret = perform_update(app_dir, None, false);
+        let ret = perform_update(app_dir, None, false, &[]);
         assert!(
             ret.is_err_and(|e| e.to_string().as_str() == "Autoupdate failed, rollback successful")
         );

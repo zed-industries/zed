@@ -45,6 +45,17 @@ pub struct BedrockModelCacheConfiguration {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct BedrockThinkingConfig {
+    #[serde(default)]
+    pub adaptive: bool,
+    #[serde(default)]
+    pub has_xhigh: bool,
+    #[serde(default)]
+    pub budget_tokens: Option<u64>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum ConverseModel {
     // Anthropic Claude 4+ models
@@ -55,6 +66,13 @@ pub enum ConverseModel {
         alias = "claude-fable-5-thinking-latest"
     )]
     ClaudeFable5,
+    #[serde(
+        rename = "claude-opus-5",
+        alias = "claude-opus-5-latest",
+        alias = "claude-opus-5-thinking",
+        alias = "claude-opus-5-thinking-latest"
+    )]
+    ClaudeOpus5,
     #[serde(
         rename = "claude-opus-4-8",
         alias = "claude-opus-4-8-latest",
@@ -224,6 +242,12 @@ pub enum ConverseModel {
         max_output_tokens: Option<u64>,
         default_temperature: Option<f32>,
         cache_configuration: Option<BedrockModelCacheConfiguration>,
+        #[serde(default)]
+        supports_tool_use: Option<bool>,
+        #[serde(default)]
+        supports_images: Option<bool>,
+        #[serde(default)]
+        thinking: Option<BedrockThinkingConfig>,
     },
 }
 
@@ -235,6 +259,8 @@ impl ConverseModel {
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
         if id.starts_with("claude-fable-5") {
             Ok(Self::ClaudeFable5)
+        } else if id.starts_with("claude-opus-5") {
+            Ok(Self::ClaudeOpus5)
         } else if id.starts_with("claude-opus-4-8") {
             Ok(Self::ClaudeOpus4_8)
         } else if id.starts_with("claude-opus-4-7") {
@@ -263,6 +289,7 @@ impl ConverseModel {
     pub fn id(&self) -> &str {
         match self {
             Self::ClaudeFable5 => "claude-fable-5",
+            Self::ClaudeOpus5 => "claude-opus-5",
             Self::ClaudeOpus4_8 => "claude-opus-4-8",
             Self::ClaudeOpus4_7 => "claude-opus-4-7",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
@@ -316,6 +343,7 @@ impl ConverseModel {
     pub fn request_id(&self) -> &str {
         match self {
             Self::ClaudeFable5 => "anthropic.claude-fable-5",
+            Self::ClaudeOpus5 => "anthropic.claude-opus-5",
             Self::ClaudeOpus4_8 => "anthropic.claude-opus-4-8",
             Self::ClaudeOpus4_7 => "anthropic.claude-opus-4-7",
             Self::ClaudeOpus4_6 => "anthropic.claude-opus-4-6-v1",
@@ -369,6 +397,7 @@ impl ConverseModel {
     pub fn display_name(&self) -> &str {
         match self {
             Self::ClaudeFable5 => "Claude Fable 5",
+            Self::ClaudeOpus5 => "Claude Opus 5",
             Self::ClaudeOpus4_8 => "Claude Opus 4.8",
             Self::ClaudeOpus4_7 => "Claude Opus 4.7",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
@@ -424,6 +453,7 @@ impl ConverseModel {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -461,6 +491,7 @@ impl ConverseModel {
     pub fn max_output_tokens(&self) -> u64 {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -500,30 +531,20 @@ impl ConverseModel {
         }
     }
 
-    pub fn default_temperature(&self) -> f32 {
+    pub fn default_temperature(&self) -> Option<f32> {
         match self {
-            Self::ClaudeFable5
-            | Self::ClaudeOpus4_8
-            | Self::ClaudeOpus4_7
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeSonnet5
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5 => 1.0,
             Self::Custom {
                 default_temperature,
                 ..
-            } => default_temperature.unwrap_or(1.0),
-            _ => 1.0,
+            } => *default_temperature,
+            _ => Some(1.0),
         }
     }
 
     pub fn supports_tool_use(&self) -> bool {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -551,6 +572,9 @@ impl ConverseModel {
             Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => true,
             Self::KimiK2Thinking | Self::KimiK2_5 => true,
             Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => true,
+            Self::Custom {
+                supports_tool_use, ..
+            } => supports_tool_use.unwrap_or(false),
             _ => false,
         }
     }
@@ -558,6 +582,7 @@ impl ConverseModel {
     pub fn supports_images(&self) -> bool {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -572,6 +597,9 @@ impl ConverseModel {
             Self::PixtralLarge => true,
             Self::Qwen3VL235B => true,
             Self::KimiK2_5 => true,
+            Self::Custom {
+                supports_images, ..
+            } => supports_images.unwrap_or(false),
             _ => false,
         }
     }
@@ -579,6 +607,7 @@ impl ConverseModel {
     pub fn supports_caching(&self) -> bool {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -598,42 +627,69 @@ impl ConverseModel {
     }
 
     pub fn supports_thinking(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::ClaudeFable5
-                | Self::ClaudeOpus4_8
-                | Self::ClaudeOpus4_7
-                | Self::ClaudeOpus4_6
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_1
-                | Self::ClaudeSonnet5
-                | Self::ClaudeSonnet4_6
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4
-                | Self::ClaudeHaiku4_5
-        )
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet5
+            | Self::ClaudeSonnet4_6
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5 => true,
+            Self::Custom { thinking, .. } => thinking.is_some(),
+            _ => false,
+        }
     }
 
     pub fn supports_adaptive_thinking(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::ClaudeFable5
-                | Self::ClaudeOpus4_8
-                | Self::ClaudeOpus4_7
-                | Self::ClaudeOpus4_6
-                | Self::ClaudeSonnet5
-                | Self::ClaudeSonnet4_6
-        )
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeSonnet5
+            | Self::ClaudeSonnet4_6 => true,
+            Self::Custom { thinking, .. } => {
+                thinking.as_ref().is_some_and(|thinking| thinking.adaptive)
+            }
+            _ => false,
+        }
     }
 
     pub fn supports_xhigh_adaptive_thinking(&self) -> bool {
-        matches!(
-            self,
-            Self::ClaudeFable5 | Self::ClaudeOpus4_8 | Self::ClaudeSonnet5
-        )
+        match self {
+            Self::ClaudeFable5 | Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeSonnet5 => {
+                true
+            }
+            Self::Custom { thinking, .. } => {
+                thinking.as_ref().is_some_and(|thinking| thinking.has_xhigh)
+            }
+            _ => false,
+        }
     }
 
     pub fn thinking_mode(&self) -> BedrockModelMode {
+        if let Self::Custom {
+            thinking: Some(thinking),
+            ..
+        } = self
+        {
+            return if thinking.adaptive {
+                BedrockModelMode::AdaptiveThinking {
+                    effort: BedrockAdaptiveThinkingEffort::default(),
+                }
+            } else {
+                BedrockModelMode::Thinking {
+                    budget_tokens: Some(thinking.budget_tokens.unwrap_or(4096)),
+                }
+            };
+        }
+
         if self.supports_adaptive_thinking() {
             BedrockModelMode::AdaptiveThinking {
                 effort: BedrockAdaptiveThinkingEffort::default(),
@@ -653,10 +709,15 @@ impl ConverseModel {
         allow_global: bool,
     ) -> anyhow::Result<String> {
         let model_id = self.request_id();
+        // custom models return the name exactly
+        if matches!(self, Self::Custom { .. }) {
+            return Ok(model_id.into());
+        }
 
         let supports_global = matches!(
             self,
             Self::ClaudeFable5
+                | Self::ClaudeOpus5
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
@@ -715,11 +776,10 @@ impl ConverseModel {
         };
 
         match (self, region_group) {
-            (Self::Custom { .. }, _) => Ok(model_id.into()),
-
             // Global inference profiles
             (
                 Self::ClaudeFable5
+                | Self::ClaudeOpus5
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
@@ -739,6 +799,7 @@ impl ConverseModel {
             // US region inference profiles
             (
                 Self::ClaudeFable5
+                | Self::ClaudeOpus5
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
@@ -763,9 +824,21 @@ impl ConverseModel {
             // Canada region inference profiles
             (Self::NovaLite, "ca") => Ok(format!("{}.{}", region_group, model_id)),
 
+            // Canada has no Claude-specific `ca.` profiles. AWS instead lists
+            // ca-central-1 and ca-west-1 as source regions of the US geo
+            // profiles for these models, which keep data within US and Canada
+            // regions:
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-8.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-7.html>
+            (Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7, "ca") => {
+                Ok(format!("us.{}", model_id))
+            }
+
             // EU region inference profiles
             (
-                Self::ClaudeOpus4_8
+                Self::ClaudeOpus5
+                | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
                 | Self::ClaudeSonnet4_6
@@ -780,7 +853,8 @@ impl ConverseModel {
 
             // Australia region inference profiles
             (
-                Self::ClaudeOpus4_8
+                Self::ClaudeOpus5
+                | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
                 | Self::ClaudeSonnet4_6
@@ -789,9 +863,14 @@ impl ConverseModel {
                 "au",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Japan region inference profiles
+            // Japan region inference profiles. Claude Opus 5 is deliberately
+            // absent: its model card lists only `us.`/`eu.`/`au.` geo profiles
+            // (plus `global.`):
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
             (
-                Self::ClaudeSonnet4_6
+                Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
+                | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite,
@@ -834,6 +913,12 @@ pub enum MantleProtocol {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum MantleModel {
+    #[serde(rename = "gpt-5.6-sol")]
+    Gpt5_6Sol,
+    #[serde(rename = "gpt-5.6-terra")]
+    Gpt5_6Terra,
+    #[serde(rename = "gpt-5.6-luna")]
+    Gpt5_6Luna,
     #[serde(rename = "gpt-5.5")]
     Gpt5_5,
     #[serde(rename = "gpt-5.4")]
@@ -857,6 +942,9 @@ impl MantleModel {
     /// The model id Zed uses internally (also used as the `name` in settings).
     pub fn id(&self) -> &str {
         match self {
+            Self::Gpt5_6Sol => "gpt-5.6-sol",
+            Self::Gpt5_6Terra => "gpt-5.6-terra",
+            Self::Gpt5_6Luna => "gpt-5.6-luna",
             Self::Gpt5_5 => "gpt-5.5",
             Self::Gpt5_4 => "gpt-5.4",
             Self::Grok4_3 => "grok-4.3",
@@ -867,6 +955,9 @@ impl MantleModel {
     /// The model id as expected in Bedrock Mantle request bodies, e.g. `openai.gpt-5.5`.
     pub fn request_id(&self) -> &str {
         match self {
+            Self::Gpt5_6Sol => "openai.gpt-5.6-sol",
+            Self::Gpt5_6Terra => "openai.gpt-5.6-terra",
+            Self::Gpt5_6Luna => "openai.gpt-5.6-luna",
             Self::Gpt5_5 => "openai.gpt-5.5",
             Self::Gpt5_4 => "openai.gpt-5.4",
             Self::Grok4_3 => "xai.grok-4.3",
@@ -876,6 +967,9 @@ impl MantleModel {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::Gpt5_6Sol => "GPT-5.6 Sol",
+            Self::Gpt5_6Terra => "GPT-5.6 Terra",
+            Self::Gpt5_6Luna => "GPT-5.6 Luna",
             Self::Gpt5_5 => "GPT-5.5",
             Self::Gpt5_4 => "GPT-5.4",
             Self::Grok4_3 => "Grok 4.3",
@@ -888,13 +982,19 @@ impl MantleModel {
     /// Which OpenAI-compatible API this model must be called through.
     pub fn protocol(&self) -> MantleProtocol {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => MantleProtocol::Responses,
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => MantleProtocol::Responses,
             Self::Custom { protocol, .. } => *protocol,
         }
     }
 
     pub fn max_token_count(&self) -> u64 {
         match self {
+            Self::Gpt5_6Sol | Self::Gpt5_6Terra | Self::Gpt5_6Luna => 1_000_000,
             Self::Gpt5_5 | Self::Gpt5_4 => 272_000,
             Self::Grok4_3 => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -903,8 +1003,12 @@ impl MantleModel {
 
     pub fn max_output_tokens(&self) -> u64 {
         match self {
-            // AWS doesn't document a hard cap for GPT-5.5/5.4 on Mantle.
-            Self::Gpt5_5 | Self::Gpt5_4 => 128_000,
+            // AWS doesn't document a hard cap for the GPT-5.x models on Mantle.
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4 => 128_000,
             Self::Grok4_3 => 131_072,
             Self::Custom {
                 max_output_tokens, ..
@@ -914,14 +1018,24 @@ impl MantleModel {
 
     pub fn supports_tools(&self) -> bool {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => true,
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
             Self::Custom { supports_tools, .. } => *supports_tools,
         }
     }
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => true,
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
             Self::Custom {
                 supports_images, ..
             } => *supports_images,
@@ -930,7 +1044,12 @@ impl MantleModel {
 
     pub fn supports_thinking(&self) -> bool {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => true,
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
             Self::Custom {
                 supports_thinking, ..
             } => *supports_thinking,
@@ -944,9 +1063,82 @@ mod tests {
 
     #[test]
     fn test_builtin_mantle_models_use_responses_protocol() {
+        assert_eq!(MantleModel::Gpt5_6Sol.protocol(), MantleProtocol::Responses);
+        assert_eq!(
+            MantleModel::Gpt5_6Terra.protocol(),
+            MantleProtocol::Responses
+        );
+        assert_eq!(
+            MantleModel::Gpt5_6Luna.protocol(),
+            MantleProtocol::Responses
+        );
         assert_eq!(MantleModel::Gpt5_5.protocol(), MantleProtocol::Responses);
         assert_eq!(MantleModel::Gpt5_4.protocol(), MantleProtocol::Responses);
         assert_eq!(MantleModel::Grok4_3.protocol(), MantleProtocol::Responses);
+    }
+
+    #[test]
+    fn test_gpt_5_6_mantle_model_metadata() {
+        // Values mirror the AWS Bedrock model cards for GPT-5.6 Sol/Terra/Luna,
+        // which are served only through the `bedrock-mantle` Responses API.
+        for (model, id, request_id, display_name) in [
+            (
+                MantleModel::Gpt5_6Sol,
+                "gpt-5.6-sol",
+                "openai.gpt-5.6-sol",
+                "GPT-5.6 Sol",
+            ),
+            (
+                MantleModel::Gpt5_6Terra,
+                "gpt-5.6-terra",
+                "openai.gpt-5.6-terra",
+                "GPT-5.6 Terra",
+            ),
+            (
+                MantleModel::Gpt5_6Luna,
+                "gpt-5.6-luna",
+                "openai.gpt-5.6-luna",
+                "GPT-5.6 Luna",
+            ),
+        ] {
+            assert_eq!(model.id(), id);
+            assert_eq!(model.request_id(), request_id);
+            assert_eq!(model.display_name(), display_name);
+            assert_eq!(model.max_token_count(), 1_000_000);
+            assert!(model.supports_tools());
+            assert!(model.supports_images());
+            assert!(model.supports_thinking());
+        }
+    }
+
+    #[test]
+    fn test_builtin_mantle_models_have_unique_ids_and_sane_token_limits() {
+        use std::collections::HashSet;
+        use strum::IntoEnumIterator;
+
+        let mut ids = HashSet::new();
+        let mut request_ids = HashSet::new();
+        for model in
+            MantleModel::iter().filter(|model| !matches!(model, MantleModel::Custom { .. }))
+        {
+            assert!(
+                ids.insert(model.id().to_string()),
+                "duplicate MantleModel id: {}",
+                model.id()
+            );
+            assert!(
+                request_ids.insert(model.request_id().to_string()),
+                "duplicate MantleModel request_id: {}",
+                model.request_id()
+            );
+            assert!(
+                model.max_output_tokens() <= model.max_token_count(),
+                "{} has max_output_tokens ({}) greater than max_token_count ({})",
+                model.id(),
+                model.max_output_tokens(),
+                model.max_token_count()
+            );
+        }
     }
 
     #[test]
@@ -966,6 +1158,10 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeSonnet5.cross_region_inference_id("us-east-1", false)?,
             "us.anthropic.claude-sonnet-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-opus-5"
         );
         assert_eq!(
             ConverseModel::NovaPro.cross_region_inference_id("us-east-2", false)?,
@@ -1003,6 +1199,10 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeOpus4_8.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("eu-west-1", false)?,
+            "eu.anthropic.claude-opus-5"
         );
         Ok(())
     }
@@ -1063,6 +1263,10 @@ mod tests {
             ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ap-southeast-2", false)?,
             "au.anthropic.claude-opus-4-8"
         );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("ap-southeast-2", false)?,
+            "au.anthropic.claude-opus-5"
+        );
         Ok(())
     }
 
@@ -1071,6 +1275,21 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeHaiku4_5.cross_region_inference_id("ap-northeast-1", false)?,
             "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
+        );
+        // Claude Opus 5 has no `jp.` geo profile, so it falls through to the
+        // bare model id (which fails at request time with a region hint)
+        // rather than fabricating an undocumented profile.
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("ap-northeast-1", false)?,
+            "anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ap-northeast-1", false)?,
+            "jp.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ap-northeast-3", false)?,
+            "jp.anthropic.claude-opus-4-7"
         );
         assert_eq!(
             ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("ap-northeast-3", false)?,
@@ -1088,6 +1307,20 @@ mod tests {
         assert_eq!(
             ConverseModel::NovaLite.cross_region_inference_id("ca-central-1", false)?,
             "ca.amazon.nova-lite-v1:0"
+        );
+        // Canadian regions are source regions of the US geo profile for
+        // recent Opus models; there are no `ca.` Claude profiles.
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ca-west-1", false)?,
+            "us.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-opus-4-7"
         );
         Ok(())
     }
@@ -1130,6 +1363,10 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeOpus4_8.cross_region_inference_id("us-east-1", true)?,
             "global.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("us-east-1", true)?,
+            "global.anthropic.claude-opus-5"
         );
         assert_eq!(
             ConverseModel::ClaudeFable5.cross_region_inference_id("us-east-1", true)?,
@@ -1191,6 +1428,9 @@ mod tests {
             max_output_tokens: Some(8192),
             default_temperature: Some(0.7),
             cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
         };
 
         assert_eq!(
@@ -1200,6 +1440,75 @@ mod tests {
         assert_eq!(
             custom_model.cross_region_inference_id("eu-west-1", true)?,
             "custom.my-model-v1:0"
+        );
+
+        let prefixed = ConverseModel::Custom {
+            name: "us.anthropic.claude-sonnet-4-7".to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            prefixed.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-sonnet-4-7"
+        );
+        assert_eq!(
+            prefixed.cross_region_inference_id("eu-west-1", false)?,
+            "us.anthropic.claude-sonnet-4-7"
+        );
+
+        let unprefixed = ConverseModel::Custom {
+            name: "anthropic.claude-sonnet-4-7".to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            unprefixed.cross_region_inference_id("us-east-1", false)?,
+            "anthropic.claude-sonnet-4-7"
+        );
+
+        let grok = ConverseModel::Custom {
+            name: "xai.grok-4.6".to_string(),
+            max_tokens: 500_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            grok.cross_region_inference_id("us-east-1", false)?,
+            "xai.grok-4.6"
+        );
+
+        let arn = ConverseModel::Custom {
+            name: "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc"
+                .to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            arn.cross_region_inference_id("us-east-1", false)?,
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc"
         );
         Ok(())
     }
@@ -1211,6 +1520,7 @@ mod tests {
         assert_eq!(ConverseModel::DeepSeekR1.id(), "deepseek-r1");
         assert_eq!(ConverseModel::Llama4Scout17B.id(), "llama-4-scout-17b");
         assert_eq!(ConverseModel::ClaudeFable5.id(), "claude-fable-5");
+        assert_eq!(ConverseModel::ClaudeOpus5.id(), "claude-opus-5");
         assert_eq!(ConverseModel::ClaudeSonnet5.id(), "claude-sonnet-5");
 
         assert_eq!(
@@ -1229,6 +1539,10 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeFable5.request_id(),
             "anthropic.claude-fable-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.request_id(),
+            "anthropic.claude-opus-5"
         );
         assert_eq!(
             ConverseModel::ClaudeSonnet5.request_id(),
@@ -1250,6 +1564,12 @@ mod tests {
             "claude-fable-5"
         );
         assert_eq!(
+            ConverseModel::from_id("claude-opus-5-thinking")
+                .unwrap()
+                .id(),
+            "claude-opus-5"
+        );
+        assert_eq!(
             ConverseModel::from_id("claude-sonnet-5-thinking")
                 .unwrap()
                 .id(),
@@ -1264,14 +1584,17 @@ mod tests {
         assert!(ConverseModel::ClaudeSonnet4_5.supports_thinking());
         assert!(ConverseModel::ClaudeOpus4_6.supports_thinking());
         assert!(ConverseModel::ClaudeFable5.supports_thinking());
+        assert!(ConverseModel::ClaudeOpus5.supports_thinking());
 
         assert!(!ConverseModel::ClaudeSonnet4.supports_adaptive_thinking());
         assert!(ConverseModel::ClaudeOpus4_6.supports_adaptive_thinking());
         assert!(ConverseModel::ClaudeSonnet4_6.supports_adaptive_thinking());
         assert!(ConverseModel::ClaudeFable5.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus5.supports_adaptive_thinking());
         assert!(ConverseModel::ClaudeSonnet5.supports_adaptive_thinking());
         assert!(!ConverseModel::ClaudeOpus4_7.supports_xhigh_adaptive_thinking());
         assert!(ConverseModel::ClaudeFable5.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus5.supports_xhigh_adaptive_thinking());
         assert!(ConverseModel::ClaudeSonnet5.supports_xhigh_adaptive_thinking());
         assert!(ConverseModel::ClaudeOpus4_8.supports_xhigh_adaptive_thinking());
         assert_eq!(BedrockAdaptiveThinkingEffort::XHigh.as_str(), "xhigh");
@@ -1301,6 +1624,7 @@ mod tests {
         assert_eq!(ConverseModel::ClaudeSonnet4_5.max_token_count(), 1_000_000);
         assert_eq!(ConverseModel::ClaudeOpus4_6.max_token_count(), 1_000_000);
         assert_eq!(ConverseModel::ClaudeFable5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeOpus5.max_token_count(), 1_000_000);
         assert_eq!(ConverseModel::ClaudeSonnet5.max_token_count(), 1_000_000);
         assert_eq!(ConverseModel::Llama4Scout17B.max_token_count(), 128_000);
         assert_eq!(ConverseModel::NovaPremier.max_token_count(), 1_000_000);
@@ -1311,6 +1635,7 @@ mod tests {
         assert_eq!(ConverseModel::ClaudeSonnet4_5.max_output_tokens(), 64_000);
         assert_eq!(ConverseModel::ClaudeOpus4_6.max_output_tokens(), 128_000);
         assert_eq!(ConverseModel::ClaudeFable5.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeOpus5.max_output_tokens(), 128_000);
         assert_eq!(ConverseModel::ClaudeSonnet5.max_output_tokens(), 128_000);
         assert_eq!(ConverseModel::ClaudeOpus4_1.max_output_tokens(), 32_000);
         assert_eq!(ConverseModel::Gemma3_4B.max_output_tokens(), 8_192);
@@ -1337,5 +1662,132 @@ mod tests {
         assert!(ConverseModel::ClaudeFable5.supports_caching());
         assert!(!ConverseModel::Llama4Scout17B.supports_caching());
         assert!(!ConverseModel::NovaPro.supports_caching());
+    }
+
+    fn custom_model(
+        supports_tool_use: Option<bool>,
+        supports_images: Option<bool>,
+        thinking: Option<BedrockThinkingConfig>,
+    ) -> ConverseModel {
+        ConverseModel::Custom {
+            name: "us.anthropic.claude-custom-v1:0".to_string(),
+            max_tokens: 200_000,
+            display_name: Some("Custom Claude".to_string()),
+            max_output_tokens: Some(8192),
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use,
+            supports_images,
+            thinking,
+        }
+    }
+
+    #[test]
+    fn test_custom_model_defaults_disable_optional_capabilities() {
+        let model = custom_model(None, None, None);
+        assert!(!model.supports_tool_use());
+        assert!(!model.supports_images());
+        assert!(!model.supports_thinking());
+        assert!(!model.supports_adaptive_thinking());
+        assert!(!model.supports_xhigh_adaptive_thinking());
+        assert_eq!(model.thinking_mode(), BedrockModelMode::Default);
+        assert_eq!(model.default_temperature(), None);
+        assert_eq!(
+            ConverseModel::ClaudeSonnet4_5.default_temperature(),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn test_custom_model_optional_capabilities() {
+        let model = custom_model(
+            Some(true),
+            Some(true),
+            Some(BedrockThinkingConfig {
+                adaptive: false,
+                has_xhigh: false,
+                budget_tokens: None,
+            }),
+        );
+        assert!(model.supports_tool_use());
+        assert!(model.supports_images());
+        assert!(model.supports_thinking());
+        assert!(!model.supports_adaptive_thinking());
+        assert_eq!(
+            model.thinking_mode(),
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(4096)
+            }
+        );
+    }
+
+    #[test]
+    fn test_custom_model_thinking_budget_tokens() {
+        let model = custom_model(
+            None,
+            None,
+            Some(BedrockThinkingConfig {
+                adaptive: false,
+                has_xhigh: false,
+                budget_tokens: Some(8192),
+            }),
+        );
+        assert!(model.supports_thinking());
+        assert_eq!(
+            model.thinking_mode(),
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(8192)
+            }
+        );
+    }
+
+    #[test]
+    fn test_custom_model_adaptive_thinking() {
+        let model = custom_model(
+            None,
+            None,
+            Some(BedrockThinkingConfig {
+                adaptive: true,
+                has_xhigh: false,
+                budget_tokens: None,
+            }),
+        );
+        assert!(model.supports_thinking());
+        assert!(model.supports_adaptive_thinking());
+        assert!(!model.supports_xhigh_adaptive_thinking());
+        assert_eq!(
+            model.thinking_mode(),
+            BedrockModelMode::AdaptiveThinking {
+                effort: BedrockAdaptiveThinkingEffort::High
+            }
+        );
+
+        let model = custom_model(
+            None,
+            None,
+            Some(BedrockThinkingConfig {
+                adaptive: true,
+                has_xhigh: true,
+                budget_tokens: None,
+            }),
+        );
+        assert!(model.supports_xhigh_adaptive_thinking());
+    }
+
+    #[test]
+    fn test_custom_model_legacy_config_deserializes() {
+        let model: ConverseModel = serde_json::from_value(serde_json::json!({
+            "custom": {
+                "name": "eu.anthropic.claude-new-v1:0",
+                "max_tokens": 200000
+            }
+        }))
+        .expect("legacy custom model config should deserialize");
+
+        assert_eq!(model.id(), "eu.anthropic.claude-new-v1:0");
+        assert!(!model.supports_tool_use());
+        assert!(!model.supports_images());
+        assert!(!model.supports_thinking());
+        assert_eq!(model.thinking_mode(), BedrockModelMode::Default);
     }
 }

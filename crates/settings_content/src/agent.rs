@@ -3,7 +3,10 @@ use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
-use std::{borrow::Cow, path::PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use crate::ExtendingVec;
 
@@ -31,6 +34,29 @@ pub enum SidebarDockPosition {
     Left,
     /// Always show the sidebar on the right side.
     Right,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct ThreadsSidebarSettingsContent {
+    /// Whether opening a folder in an existing window automatically opens the
+    /// Threads Sidebar. Applies when `default_open_behavior` or
+    /// `cli_default_open_behavior` is set to `existing_window`.
+    ///
+    /// Default: true
+    pub auto_open: Option<bool>,
+    /// Where to position the threads sidebar.
+    ///
+    /// Default: left
+    pub position: Option<SidebarDockPosition>,
+    /// Default width of the threads sidebar in pixels.
+    ///
+    /// Values range from 200 to 800, matching the widths the sidebar can be
+    /// dragged to. Values outside that range are clamped into it.
+    ///
+    /// Default: 300
+    #[schemars(range(min = 200, max = 800))]
+    pub default_width: Option<crate::PixelSetting>,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -203,24 +229,46 @@ pub struct AgentSettingsContent {
     ///
     /// Default: left (Agentic layout), right (Classic layout)
     pub dock: Option<DockPosition>,
-    /// Whether the agent panel should use flexible (proportional) sizing.
+    /// Whether the agent panel should use flexible (proportional) sizing when docked to the
+    /// left or right.
+    ///
+    /// When enabled, `default_width` does not control the panel width, and resetting the panel
+    /// restores the default proportion.
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the threads sidebar.
+    /// The deprecated version of `threads_sidebar.position`.
     ///
-    /// Default: left
+    /// Don't use this field.
+    #[schemars(skip)]
     pub sidebar_side: Option<SidebarDockPosition>,
-    /// Default width in pixels when the agent panel is docked to the left or right.
+    /// The deprecated version of `threads_sidebar.default_width`.
+    ///
+    /// Don't use this field.
+    #[schemars(skip)]
+    pub threads_sidebar_default_width: Option<crate::PixelSetting>,
+    /// The deprecated version of `threads_sidebar.auto_open`.
+    ///
+    /// Don't use this field.
+    #[schemars(skip)]
+    pub threads_sidebar_auto_open: Option<bool>,
+    /// Maximum number of idle threads with loadable sessions to retain in the
+    /// agent panel. Set to 0 to unload every eligible idle thread when it is
+    /// no longer active.
+    ///
+    /// Default: 5
+    pub max_idle_retained_threads: Option<usize>,
+    /// Settings for the threads sidebar.
+    pub threads_sidebar: Option<ThreadsSidebarSettingsContent>,
+    /// Default fixed width in pixels when the agent panel is docked to the left or right and
+    /// `flexible` is false.
     ///
     /// Default: 640
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<crate::PixelSetting>,
     /// Default height in pixels when the agent panel is docked to the bottom.
     ///
     /// Default: 320
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_height: Option<f32>,
+    pub default_height: Option<crate::PixelSetting>,
     /// Whether to limit the content width in the agent panel. When enabled,
     /// content will be constrained to `max_content_width` and centered when
     /// the panel is wider than that value, for optimal readability.
@@ -231,8 +279,7 @@ pub struct AgentSettingsContent {
     /// centered when the panel is wider than this value.
     ///
     /// Default: 850
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub max_content_width: Option<f32>,
+    pub max_content_width: Option<crate::PixelSetting>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
     /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
@@ -258,6 +305,11 @@ pub struct AgentSettingsContent {
     pub commit_message_instructions: Option<String>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
+    /// Model to use for context compaction (`/compact` and auto-compaction).
+    /// Falls back to the thread's currently selected model when not specified.
+    /// If the configured model is unavailable (provider not registered, model
+    /// not found), the thread's current model is used instead.
+    pub compaction_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     pub inline_alternatives: Option<Vec<LanguageModelSelection>>,
     /// The default profile to use in the Agent.
@@ -274,6 +326,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: never
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
+    /// Whether to keep the system awake while agent threads are running.
+    ///
+    /// Default: true
+    pub prevent_idle_sleep: Option<bool>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
     /// Default: false
@@ -359,8 +415,22 @@ impl AgentSettingsContent {
         self.dock = Some(dock);
     }
 
-    pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
-        self.sidebar_side = Some(position);
+    pub fn set_threads_sidebar_position(&mut self, position: Option<SidebarDockPosition>) {
+        self.sidebar_side = None;
+        self.threads_sidebar.get_or_insert_default().position = position;
+    }
+
+    pub fn set_threads_sidebar_default_width(
+        &mut self,
+        default_width: Option<crate::PixelSetting>,
+    ) {
+        self.threads_sidebar_default_width = None;
+        self.threads_sidebar.get_or_insert_default().default_width = default_width;
+    }
+
+    pub fn set_threads_sidebar_auto_open(&mut self, auto_open: Option<bool>) {
+        self.threads_sidebar_auto_open = None;
+        self.threads_sidebar.get_or_insert_default().auto_open = auto_open;
     }
 
     pub fn set_flexible_size(&mut self, flexible: bool) {
@@ -492,7 +562,7 @@ impl AgentSettingsContent {
             .allow_unsandboxed = Some(true);
     }
 
-    pub fn add_sandbox_write_path(&mut self, path: PathBuf) {
+    pub fn add_sandbox_write_path(&mut self, granted: GrantedWritePathContent) {
         let write_paths = &mut self
             .sandbox_permissions
             .get_or_insert_default()
@@ -500,7 +570,17 @@ impl AgentSettingsContent {
             .get_or_insert_default()
             .0;
 
-        util::paths::insert_subtree(write_paths, path);
+        // Mirror `util::paths::insert_subtree`, keeping the grant set minimal,
+        // but compare by each entry's canonical (resolved) grant path.
+        let canonical = granted.canonical_or_requested().to_path_buf();
+        if write_paths
+            .iter()
+            .any(|existing| canonical.starts_with(existing.canonical_or_requested()))
+        {
+            return;
+        }
+        write_paths.retain(|existing| !existing.canonical_or_requested().starts_with(&canonical));
+        write_paths.push(granted);
     }
 }
 
@@ -509,6 +589,7 @@ impl AgentSettingsContent {
 pub struct AgentProfileContent {
     pub name: Arc<str>,
     #[serde(default)]
+    #[schemars(schema_with = "agent_profile_tools_schema")]
     pub tools: IndexMap<Arc<str>, bool>,
     /// Whether all context servers are enabled by default.
     pub enable_all_context_servers: Option<bool>,
@@ -522,6 +603,44 @@ pub struct AgentProfileContent {
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
+}
+
+fn agent_profile_tools_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let tool_names = [
+        "apply_code_action",
+        "ask_user",
+        "copy_path",
+        "create_directory",
+        "create_thread",
+        "delete_path",
+        "diagnostics",
+        "edit_file",
+        "fetch",
+        "find_path",
+        "find_references",
+        "get_code_actions",
+        "go_to_definition",
+        "grep",
+        "list_agents_and_models",
+        "list_directory",
+        "move_path",
+        "read_file",
+        "rename_symbol",
+        "search_web",
+        "skill",
+        "spawn_agent",
+        "terminal",
+        "write_file",
+    ];
+    let properties = tool_names
+        .into_iter()
+        .map(|name| (name.to_string(), serde_json::json!({ "type": "boolean" })))
+        .collect::<serde_json::Map<_, _>>();
+    json_schema!({
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": false
+    })
 }
 
 #[derive(
@@ -620,10 +739,12 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "mistral",
                         "ollama",
                         "openai",
+                        "openai-subscribed",
                         "opencode",
                         "openrouter",
                         "vercel_ai_gateway",
                         "x_ai",
+                        "x_ai_subscribed",
                         "zed.dev"
                     ]
                 },
@@ -780,6 +901,113 @@ pub enum CustomAgentServerSettings {
     },
 }
 
+/// A persisted sandbox writable-path grant. Deserializes from either a bare
+/// path string (`"/tmp/x"`, a legacy/hand-authored entry with no resolved
+/// target) or an object (`{ "requested": "/tmp/x", "resolved": "/tmp/real" }`).
+/// Serializes back as a bare string when `resolved` is `None` and as an object
+/// otherwise, so hand-authored bare strings round-trip and Zed-written grants
+/// are objects.
+#[derive(Clone, Debug, Default, PartialEq, MergeFrom)]
+pub struct GrantedWritePathContent {
+    /// The path exactly as the user/model requested it.
+    pub requested: PathBuf,
+    /// The canonical, symlink-resolved target established when the grant was
+    /// approved. Absent for a bare-string entry.
+    pub resolved: Option<PathBuf>,
+    /// Windows/WSL only: whether the canonical target lives on a Windows-hosted
+    /// (DrvFs) filesystem, whose sandbox-integrity guarantees are weaker. Absent
+    /// (false) on other platforms and for bare-string entries.
+    pub on_windows_fs: bool,
+}
+
+impl GrantedWritePathContent {
+    /// The path used for lexical subtree/coverage/dedup logic: the resolved
+    /// canonical target when known, otherwise the requested path.
+    fn canonical_or_requested(&self) -> &Path {
+        self.resolved.as_deref().unwrap_or(&self.requested)
+    }
+}
+
+impl Serialize for GrantedWritePathContent {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.resolved {
+            None => self.requested.serialize(serializer),
+            Some(resolved) => {
+                use serde::ser::SerializeStruct as _;
+                let field_count = if self.on_windows_fs { 3 } else { 2 };
+                let mut state =
+                    serializer.serialize_struct("GrantedWritePathContent", field_count)?;
+                state.serialize_field("requested", &self.requested)?;
+                state.serialize_field("resolved", resolved)?;
+                if self.on_windows_fs {
+                    state.serialize_field("on_windows_fs", &self.on_windows_fs)?;
+                }
+                state.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for GrantedWritePathContent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Object {
+            requested: PathBuf,
+            #[serde(default)]
+            resolved: Option<PathBuf>,
+            #[serde(default)]
+            on_windows_fs: bool,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrObject {
+            String(PathBuf),
+            Object(Object),
+        }
+
+        Ok(match StringOrObject::deserialize(deserializer)? {
+            StringOrObject::String(requested) => Self {
+                requested,
+                resolved: None,
+                on_windows_fs: false,
+            },
+            StringOrObject::Object(Object {
+                requested,
+                resolved,
+                on_windows_fs,
+            }) => Self {
+                requested,
+                resolved,
+                on_windows_fs,
+            },
+        })
+    }
+}
+
+impl JsonSchema for GrantedWritePathContent {
+    fn schema_name() -> Cow<'static, str> {
+        "GrantedWritePathContent".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "oneOf": [
+                { "type": "string" },
+                {
+                    "type": "object",
+                        "properties": {
+                        "requested": { "type": "string" },
+                        "resolved": { "type": ["string", "null"] },
+                        "on_windows_fs": { "type": "boolean" }
+                    },
+                    "required": ["requested"]
+                }
+            ]
+        })
+    }
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SandboxPermissionsContent {
@@ -809,9 +1037,29 @@ pub struct SandboxPermissionsContent {
     pub allow_unsandboxed: Option<bool>,
 
     /// Directory subtrees that sandboxed terminal commands may always write
-    /// to without prompting. Paths written by Zed are absolute.
+    /// to without prompting. Each entry is either a bare path string or an
+    /// object `{requested, resolved}`; Zed writes objects (the canonical,
+    /// symlink-resolved target established at approval time), while
+    /// hand-authored entries may be bare path strings. Paths written by Zed
+    /// are absolute.
     /// Default: []
-    pub write_paths: Option<ExtendingVec<PathBuf>>,
+    pub write_paths: Option<ExtendingVec<GrantedWritePathContent>>,
+
+    /// Whether to warn when a sandbox escalation prompt requests a domain or
+    /// write path that contains potentially confusable Unicode characters
+    /// (homoglyphs, invisible characters, or bidirectional overrides). When
+    /// enabled, such prompts show a warning that must be acknowledged before
+    /// the request can be allowed.
+    /// Default: true
+    pub warn_confusable_unicode: Option<bool>,
+
+    /// Whether to warn (Windows/WSL only) when a sandbox grant targets a file on
+    /// a Windows-hosted (DrvFs) filesystem. Such grants are enforced inside WSL
+    /// via a translated path, and their sandbox-integrity guarantees are weaker
+    /// than a distro-native filesystem. When enabled, such grants show a warning
+    /// that must be acknowledged before the command runs.
+    /// Default: true
+    pub warn_ntfs_grants: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -1135,7 +1383,11 @@ mod tests {
         );
         settings.allow_sandbox_fs_write_all();
         settings.allow_sandbox_unsandboxed();
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build"),
+            resolved: None,
+            on_windows_fs: false,
+        });
 
         let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
         assert_eq!(sandbox_permissions.allow_all_hosts, Some(true));
@@ -1157,7 +1409,11 @@ mod tests {
                 .unwrap()
                 .0
                 .as_slice(),
-            &[PathBuf::from("/tmp/build")]
+            &[GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/build"),
+                resolved: None,
+                on_windows_fs: false,
+            }]
         );
     }
 
@@ -1165,9 +1421,21 @@ mod tests {
     fn test_add_sandbox_write_path_prunes_redundant_paths() {
         let mut settings = AgentSettingsContent::default();
 
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/cache"));
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/output"));
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build/cache"),
+            resolved: None,
+            on_windows_fs: false,
+        });
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build"),
+            resolved: None,
+            on_windows_fs: false,
+        });
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build/output"),
+            resolved: None,
+            on_windows_fs: false,
+        });
 
         let write_paths = settings
             .sandbox_permissions
@@ -1178,6 +1446,78 @@ mod tests {
             .unwrap()
             .0
             .as_slice();
-        assert_eq!(write_paths, &[PathBuf::from("/tmp/build")]);
+        assert_eq!(
+            write_paths,
+            &[GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/build"),
+                resolved: None,
+                on_windows_fs: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn test_granted_write_path_content_deserializes_string_or_object() {
+        let from_string: GrantedWritePathContent =
+            serde_json::from_value(serde_json::json!("/tmp/x")).unwrap();
+        assert_eq!(
+            from_string,
+            GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/x"),
+                resolved: None,
+                on_windows_fs: false,
+            }
+        );
+
+        let from_object: GrantedWritePathContent = serde_json::from_value(
+            serde_json::json!({ "requested": "/tmp/x", "resolved": "/tmp/real" }),
+        )
+        .unwrap();
+        assert_eq!(
+            from_object,
+            GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/x"),
+                resolved: Some(PathBuf::from("/tmp/real")),
+                on_windows_fs: false,
+            }
+        );
+
+        // `resolved` is optional in the object form.
+        let object_without_resolved: GrantedWritePathContent =
+            serde_json::from_value(serde_json::json!({ "requested": "/tmp/x" })).unwrap();
+        assert_eq!(
+            object_without_resolved,
+            GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/x"),
+                resolved: None,
+                on_windows_fs: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_granted_write_path_content_serializes_string_or_object() {
+        // No resolved target serializes as a bare string, so hand-authored
+        // bare strings round-trip.
+        let bare = GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/x"),
+            resolved: None,
+            on_windows_fs: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&bare).unwrap(),
+            serde_json::json!("/tmp/x")
+        );
+
+        // A resolved target serializes as an object.
+        let resolved = GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/x"),
+            resolved: Some(PathBuf::from("/tmp/real")),
+            on_windows_fs: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&resolved).unwrap(),
+            serde_json::json!({ "requested": "/tmp/x", "resolved": "/tmp/real" })
+        );
     }
 }

@@ -131,6 +131,11 @@ pub enum PredictEditsRequestTrigger {
     LSPCompletionAccepted,
     PredictionAccepted,
     PredictionPartiallyAccepted,
+    EditorCreated,
+    ProviderChanged,
+    UserInfoChanged,
+    VimModeChanged,
+    SettingsChanged,
     #[default]
     Other,
 }
@@ -198,6 +203,8 @@ pub enum EditPredictionRejectReason {
     InterpolatedEmpty,
     /// Edits returned, but could not be interpolated after buffer changes
     InterpolateFailed,
+    /// A patch was returned, but could not be applied to the buffer
+    PatchApplyFailed,
     /// The new prediction was preferred over the current one
     Replaced,
     /// The current prediction was preferred over the new one

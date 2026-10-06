@@ -104,6 +104,34 @@ impl EditPredictionResult {
             e2e_latency,
         }
     }
+
+    pub fn new_rejected(
+        id: EditPredictionId,
+        edited_buffer: &Entity<Buffer>,
+        edited_buffer_snapshot: &BufferSnapshot,
+        inputs: EditPredictionInputs,
+        model_version: Option<String>,
+        trigger: PredictEditsRequestTrigger,
+        e2e_latency: std::time::Duration,
+        reject_reason: EditPredictionRejectReason,
+    ) -> Self {
+        Self {
+            prediction: EditPrediction {
+                id,
+                edits: Arc::default(),
+                cursor_position: None,
+                editable_range: None,
+                snapshot: edited_buffer_snapshot.clone(),
+                edit_preview: EditPreview::unchanged(edited_buffer_snapshot),
+                inputs,
+                buffer: edited_buffer.clone(),
+                model_version,
+                trigger,
+            },
+            reject_reason: Some(reject_reason),
+            e2e_latency,
+        }
+    }
 }
 
 #[derive(Clone)]

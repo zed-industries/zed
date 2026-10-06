@@ -394,43 +394,43 @@ impl LspAdapter for GoLspAdapter {
     ) -> Option<CodeLabel> {
         let name = &symbol.name;
         let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+            language::SymbolKind::Method | language::SymbolKind::Function => {
                 let text = format!("func {} () {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::STRUCT => {
+            language::SymbolKind::Struct => {
                 let text = format!("type {} struct {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..text.len();
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::INTERFACE => {
+            language::SymbolKind::Interface => {
                 let text = format!("type {} interface {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..text.len();
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::CLASS => {
+            language::SymbolKind::Class => {
                 let text = format!("type {} T", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::CONSTANT => {
+            language::SymbolKind::Constant => {
                 let text = format!("const {} = nil", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::VARIABLE => {
+            language::SymbolKind::Variable => {
                 let text = format!("var {} = nil", name);
                 let filter_range = 4..4 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::MODULE => {
+            language::SymbolKind::Module => {
                 let text = format!("package {}", name);
                 let filter_range = 8..8 + name.len();
                 let display_range = 0..filter_range.end;

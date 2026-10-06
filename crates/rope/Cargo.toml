@@ -10,14 +10,15 @@ workspace = true
 
 [lib]
 path = "src/rope.rs"
+doctest = false
 
 [dependencies]
+gpui_util.workspace = true
 heapless.workspace = true
 log.workspace = true
 rayon.workspace = true
 sum_tree.workspace = true
 unicode-segmentation.workspace = true
-util.workspace = true
 ztracing.workspace = true
 tracing.workspace = true
 
@@ -33,5 +34,5 @@ zlog.workspace = true
 name = "rope_benchmark"
 harness = false
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

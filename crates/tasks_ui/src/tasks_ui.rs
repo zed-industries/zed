@@ -1,15 +1,102 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, LazyLock},
+};
 
+use anyhow::Context as _;
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, MultiBufferOffset, ToPoint as _};
 use gpui::{App, AppContext as _, Context, Entity, Task, TaskExt, Window};
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
+use tree_sitter::{Query, StreamingIterator as _};
 use workspace::Workspace;
 
 mod modal;
 
 pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
+
+/// Inserts `new_task` (pretty-printed JSON object text) at the end of the top-level JSON
+/// array in the editor's buffer, creating the array if the buffer has none, and moves the
+/// cursor to the inserted task. The edit is left unsaved so callers decide whether to persist it.
+pub fn insert_task_json_into_editor(
+    editor: &mut Editor,
+    new_task: String,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> anyhow::Result<()> {
+    static LAST_ITEM_QUERY: LazyLock<Query> = LazyLock::new(|| {
+        Query::new(
+            &tree_sitter_json::LANGUAGE.into(),
+            "(document (array (object) @object))", // TODO: use "." anchor to only match last object
+        )
+        .expect("Failed to create LAST_ITEM_QUERY")
+    });
+    static EMPTY_ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
+        Query::new(
+            &tree_sitter_json::LANGUAGE.into(),
+            "(document (array) @array)",
+        )
+        .expect("Failed to create EMPTY_ARRAY_QUERY")
+    });
+
+    let content = editor.text(cx);
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let syntax_tree = parser
+        .parse(&content, None)
+        .context("could not parse tasks file")?;
+    let mut matches = cursor.matches(
+        &LAST_ITEM_QUERY,
+        syntax_tree.root_node(),
+        content.as_bytes(),
+    );
+
+    let mut last_offset = None;
+    while let Some(mat) = matches.next() {
+        if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
+            last_offset = Some(MultiBufferOffset(pos))
+        }
+    }
+    let mut edits = Vec::new();
+    let mut cursor_position = MultiBufferOffset(0);
+
+    if let Some(pos) = last_offset {
+        edits.push((pos..pos, format!(",\n{new_task}")));
+        cursor_position = pos + ",\n  ".len();
+    } else {
+        let mut matches = cursor.matches(
+            &EMPTY_ARRAY_QUERY,
+            syntax_tree.root_node(),
+            content.as_bytes(),
+        );
+
+        if let Some(mat) = matches.next() {
+            if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end - 1) {
+                edits.push((
+                    MultiBufferOffset(pos)..MultiBufferOffset(pos),
+                    format!("\n{new_task}\n"),
+                ));
+                cursor_position = MultiBufferOffset(pos) + "\n  ".len();
+            }
+        } else {
+            edits.push((
+                MultiBufferOffset(0)..MultiBufferOffset(0),
+                format!("[\n{}\n]", new_task),
+            ));
+            cursor_position = MultiBufferOffset("[\n  ".len());
+        }
+    }
+    editor.transact(window, cx, |editor, window, cx| {
+        editor.edit(edits, cx);
+        let snapshot = editor.buffer().read(cx).read(cx);
+        let point = cursor_position.to_point(&snapshot);
+        drop(snapshot);
+        editor.go_to_singleton_buffer_point(point, window, cx);
+    });
+    Ok(())
+}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -274,7 +361,7 @@ pub fn task_contexts(
     cx: &mut App,
 ) -> Task<TaskContexts> {
     let active_item = workspace.active_item(cx);
-    let active_worktree = active_item
+    let active_item_worktree = active_item
         .as_ref()
         .and_then(|item| item.project_path(cx))
         .map(|project_path| project_path.worktree_id)
@@ -284,21 +371,25 @@ pub fn task_contexts(
                 .read(cx)
                 .worktree_for_id(*worktree_id, cx)
                 .is_some_and(|worktree| is_visible_directory(&worktree, cx))
-        })
-        .or_else(|| {
-            workspace
-                .visible_worktrees(cx)
-                .next()
-                .map(|tree| tree.read(cx).id())
         });
+    let active_worktree = active_item_worktree.or_else(|| {
+        workspace
+            .visible_worktrees(cx)
+            .next()
+            .map(|tree| tree.read(cx).id())
+    });
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
+    let active_project_editor = active_item_worktree
+        .is_some()
+        .then(|| active_editor.clone())
+        .flatten();
 
-    let editor_context_task = active_editor.as_ref().map(|active_editor| {
+    let editor_context_task = active_project_editor.as_ref().map(|active_editor| {
         active_editor.update(cx, |editor, cx| editor.task_context(window, cx))
     });
 
-    let location = active_editor.as_ref().and_then(|editor| {
+    let location = active_project_editor.as_ref().and_then(|editor| {
         editor.update(cx, |editor, cx| {
             let selection = editor.selections.newest_anchor();
             let multi_buffer = editor.buffer().clone();
@@ -314,14 +405,14 @@ pub fn task_contexts(
         })
     });
 
-    let lsp_task_sources = active_editor
+    let lsp_task_sources = active_project_editor
         .as_ref()
         .map(|active_editor| {
             active_editor.update(cx, |editor, cx| editor.lsp_task_sources(false, false, cx))
         })
         .unwrap_or_default();
 
-    let latest_selection = active_editor.as_ref().and_then(|active_editor| {
+    let latest_selection = active_project_editor.as_ref().and_then(|active_editor| {
         let snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
         snapshot
             .anchor_to_buffer_anchor(active_editor.read(cx).selections.newest_anchor().head())
@@ -346,7 +437,8 @@ pub fn task_contexts(
         if let Some(editor_context_task) = editor_context_task
             && let Some(editor_context) = editor_context_task.await
         {
-            task_contexts.active_item_context = Some((active_worktree, location, editor_context));
+            task_contexts.active_item_context =
+                Some((active_item_worktree, location, editor_context));
         }
 
         if let Some(active_worktree) = active_worktree {
@@ -403,6 +495,53 @@ mod tests {
     use workspace::{AppState, MultiWorkspace};
 
     use crate::task_contexts;
+
+    #[gpui::test]
+    async fn test_non_project_active_editor_uses_visible_worktree_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let worktree_root = path!("/worktrees/Godot Projects/sample-game");
+        fs.insert_tree(
+            worktree_root,
+            json!({
+                ".zed": {
+                    "tasks.json": "[]",
+                },
+                "scenes": {
+                    "main_menu.tscn": "",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [worktree_root.as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let global_tasks_editor = cx.new_window_entity(|window, cx| Editor::multi_line(window, cx));
+
+        let contexts = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.add_item_to_center(Box::new(global_tasks_editor), window, cx);
+                task_contexts(workspace, window, cx)
+            })
+            .await;
+
+        assert!(contexts.active_item_context.is_none());
+        assert_eq!(
+            contexts
+                .active_context()
+                .expect("visible worktree should provide an active task context"),
+            &TaskContext {
+                cwd: Some(worktree_root.into()),
+                task_variables: TaskVariables::from_iter([(
+                    VariableName::WorktreeRoot,
+                    worktree_root.into(),
+                )]),
+                project_env: HashMap::default(),
+            }
+        );
+    }
 
     #[gpui::test]
     async fn test_default_language_context(cx: &mut TestAppContext) {

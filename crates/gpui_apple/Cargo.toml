@@ -1,0 +1,50 @@
+[package]
+name = "gpui_apple"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_apple.rs"
+doctest = false
+
+[features]
+default = []
+bench-support = ["gpui/bench-support"]
+test-support = ["gpui/test-support"]
+runtime_shaders = []
+
+[dependencies]
+gpui.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+anyhow.workspace = true
+async-task.workspace = true
+block2.workspace = true
+core-foundation.workspace = true
+core-graphics.workspace = true
+core-video = { workspace = true, features = ["metal"] }
+derive_more.workspace = true
+dispatch2.workspace = true
+etagere.workspace = true
+foreign-types.workspace = true
+gpui_util.workspace = true
+image.workspace = true
+libc.workspace = true
+log.workspace = true
+mach2.workspace = true
+metal.workspace = true
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = ["NSThread"] }
+objc2-quartz-core.workspace = true
+parking_lot.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.build-dependencies]
+cbindgen.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

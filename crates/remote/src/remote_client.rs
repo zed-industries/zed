@@ -137,6 +137,7 @@ pub trait RemoteClientDelegate: Send + Sync {
         &self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        cancellation: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
     );
     fn get_download_url(
@@ -338,6 +339,7 @@ pub struct RemoteClient {
 #[derive(Debug)]
 pub enum RemoteClientEvent {
     Disconnected { server_not_running: bool },
+    Reconnected,
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
@@ -383,7 +385,7 @@ pub async fn connect(
 ) -> Result<Arc<dyn RemoteConnection>> {
     cx.update(|cx| {
         cx.update_default_global(|pool: &mut ConnectionPool, cx| {
-            pool.connect(connection_options.clone(), delegate.clone(), cx)
+            pool.connect(connection_options.clone(), None, delegate.clone(), cx)
         })
     })
     .await
@@ -682,7 +684,12 @@ impl RemoteClient {
             let (remote_connection, io_task) = match async {
                 let remote_connection = cx
                     .update_global(|pool: &mut ConnectionPool, cx| {
-                        pool.connect(connection_options, delegate.clone(), cx)
+                        pool.connect(
+                            connection_options,
+                            Some(remote_connection.remote_platform().os),
+                            delegate.clone(),
+                            cx,
+                        )
                     })
                     .await
                     .map_err(|error| error.cloned())?;
@@ -724,6 +731,8 @@ impl RemoteClient {
         cx.spawn(async move |this, cx| {
             let new_state = reconnect_task.await;
             this.update(cx, |this, cx| {
+                let reconnected = this.state_is(State::is_reconnecting)
+                    && matches!(&new_state, State::Connected { .. });
                 this.try_set_state(cx, |old_state| {
                     if old_state.is_reconnecting() {
                         match &new_state {
@@ -752,6 +761,10 @@ impl RemoteClient {
                         None
                     }
                 });
+
+                if reconnected {
+                    cx.emit(RemoteClientEvent::Reconnected);
+                }
 
                 if this.state_is(State::is_reconnect_failed) {
                     this.reconnect(cx)
@@ -921,7 +934,7 @@ impl RemoteClient {
     }
 
     fn set_state(&mut self, state: State, cx: &mut Context<Self>) {
-        log::info!("setting state to '{}'", &state);
+        log::info!("setting state to '{state}'");
 
         let is_reconnect_exhausted = state.is_reconnect_exhausted();
         let is_server_not_running = state.is_server_not_running();
@@ -1223,6 +1236,7 @@ impl ConnectionPool {
     fn connect(
         &mut self,
         opts: RemoteConnectionOptions,
+        known_os: Option<RemoteOs>,
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
@@ -1262,7 +1276,7 @@ impl ConnectionPool {
                 async move |cx| {
                     let connection = match opts.clone() {
                         RemoteConnectionOptions::Ssh(opts) => {
-                            SshRemoteConnection::new(opts, delegate, cx)
+                            SshRemoteConnection::new(opts, known_os, delegate, cx)
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
@@ -1362,6 +1376,16 @@ impl RemoteConnectionOptions {
             }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => "mock",
+        }
+    }
+
+    pub fn host(&self) -> String {
+        match self {
+            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
+            RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
     }
 }
@@ -1554,6 +1578,17 @@ mod tests {
             0,
             "stream channel should be removed once the consumer has dropped the stream"
         );
+    }
+
+    #[test]
+    fn test_ssh_host_ignores_nickname() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            nickname: Some("My Cool Project".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(options.host(), "1.2.3.4");
     }
 }
 

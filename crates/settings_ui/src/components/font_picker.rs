@@ -180,7 +180,7 @@ pub fn font_picker(
 
     Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
-        .initial_width(rems_from_px(210.))
+        .initial_width(rems_from_px(210_f32))
         .max_height(rems(18.))
         .popover()
 }

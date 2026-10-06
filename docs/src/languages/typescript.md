@@ -80,7 +80,7 @@ To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS lan
 
 ## Large projects
 
-`vtsls` may run out of memory on very large projects. We default the limit to 8092 (8 GiB) vs. the default of 3072 but this may not be sufficient for you:
+`vtsls` may run out of memory on very large projects. We default the limit to 8192 (8 GiB) vs. the default of 3072 but this may not be sufficient for you:
 
 ```json [settings]
 {
@@ -88,9 +88,9 @@ To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS lan
     "vtsls": {
       "settings": {
         // For TypeScript:
-        "typescript": { "tsserver": { "maxTsServerMemory": 16184 } },
+        "typescript": { "tsserver": { "maxTsServerMemory": 16384 } },
         // For JavaScript:
-        "javascript": { "tsserver": { "maxTsServerMemory": 16184 } }
+        "javascript": { "tsserver": { "maxTsServerMemory": 16384 } }
       }
     }
   }
@@ -242,7 +242,7 @@ The following can be debugged without writing additional configuration:
 - Tasks from `package.json`
 - Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine, Bun, Node)
 
-Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
+Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these [predefined debug tasks](../debugger.md).
 
 > **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
 
