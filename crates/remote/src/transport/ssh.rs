@@ -180,6 +180,57 @@ struct RemoteEnvironment {
 }
 
 impl RemoteEnvironment {
+    fn posix_script() -> String {
+        r#"
+            platform=$(uname -sm) || exit;
+            printf "\000%s\000%s\000" "$SHELL" "$platform";
+            status=0;
+            case "$platform" in
+                "Linux "*) cat /etc/os-release || status=$?;;
+                "Darwin "*) sw_vers -productVersion || status=$?;;
+            esac;
+            printf "\000%s" "$status";
+        "#
+        // Remove extra whitespaces
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join(" ")
+    }
+
+    fn windows_script() -> String {
+        r#"
+            $shell = "";
+            try {
+                $process = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop;
+                $shell = (Get-CimInstance Win32_Process -Filter "ProcessId=$($process.ParentProcessId)" -ErrorAction Stop).Name;
+            } catch {
+                [Console]::Error.WriteLine($_);
+            };
+
+            $architecture = cmd.exe /c echo %PROCESSOR_ARCHITECTURE%;
+            if ($LASTEXITCODE -ne 0) {
+                exit $LASTEXITCODE;
+            };
+
+            $version = "";
+            $status = 1;
+            try {
+                $version = cmd.exe /c ver;
+                $status = $LASTEXITCODE;
+            } catch {
+                [Console]::Error.WriteLine($_);
+            };
+
+            [Console]::Write([string]::Join([char]0, @("", $shell, ($architecture -join "`n"), ($version -join "`n"), $status)));
+        "#
+        // Remove extra whitespaces
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join(" ")
+    }
+
     fn parse_posix(output: &str) -> Result<Self> {
         let mut fields = output.splitn(5, '\0').skip(1);
 
@@ -1530,16 +1581,8 @@ impl SshSocket {
     }
 
     async fn environment_posix(&self) -> Result<RemoteEnvironment> {
-        let script = r#"
-            platform=$(uname -sm) || exit;
-            printf "%c%s%c%s%c" "" "$SHELL" "" "$platform" "";
-            case "$platform" in
-                "Linux "*) cat /etc/os-release;;
-                "Darwin "*) sw_vers -productVersion;;
-            esac;
-            printf "%c%s" "" "$?"
-        "#
-        .replace('\n', " ");
+        let script = RemoteEnvironment::posix_script();
+
         let output = self
             .run_command(ShellKind::Posix, "sh", &["-c", &script], false)
             .await
@@ -1604,32 +1647,7 @@ impl SshSocket {
     async fn environment_windows(&self) -> Result<RemoteEnvironment> {
         use base64::Engine as _;
 
-        let script = r#"
-            $shell = "";
-            try {
-                $process = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop;
-                $shell = (Get-CimInstance Win32_Process -Filter "ProcessId=$($process.ParentProcessId)" -ErrorAction Stop).Name;
-            } catch {
-                [Console]::Error.WriteLine($_);
-            };
-
-            $architecture = cmd.exe /c echo %PROCESSOR_ARCHITECTURE%;
-            if ($LASTEXITCODE -ne 0) {
-                exit $LASTEXITCODE;
-            };
-
-            $version = "";
-            $status = 1;
-            try {
-                $version = cmd.exe /c ver;
-                $status = $LASTEXITCODE;
-            } catch {
-                [Console]::Error.WriteLine($_);
-            };
-
-            [Console]::Write([string]::Join([char]0, @("", $shell, ($architecture -join "`n"), ($version -join "`n"), $status)));
-        "#
-        .replace('\n', " ");
+        let script = RemoteEnvironment::windows_script();
         // The SSH shell is still unknown, encode the script to avoid quoting issues.
         let encoded_script = base64::engine::general_purpose::STANDARD.encode(
             script
@@ -2155,6 +2173,92 @@ fn build_command_windows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_returns_parseable_environment() -> Result<()> {
+        #[cfg(windows)]
+        {
+            use base64::Engine as _;
+
+            let script = RemoteEnvironment::windows_script();
+            let encoded_script = base64::engine::general_purpose::STANDARD.encode(
+                script
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect::<Vec<_>>(),
+            );
+            let output = smol::block_on(
+                util::command::new_command("powershell.exe")
+                    .args(["-E", &encoded_script])
+                    .output(),
+            )?;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let environment =
+                RemoteEnvironment::parse_windows(&String::from_utf8_lossy(&output.stdout))?;
+            assert_eq!(environment.platform.os, RemoteOs::Windows);
+            assert_eq!(environment.platform.arch.as_str(), std::env::consts::ARCH);
+            assert!(!environment.shell.is_empty());
+            assert!(environment.os_version.is_some());
+        }
+
+        #[cfg(unix)]
+        {
+            let output = smol::block_on(
+                util::command::new_command("/bin/sh")
+                    .args(["-c", &RemoteEnvironment::posix_script()])
+                    .env("SHELL", "/bin/sh")
+                    .output(),
+            )?;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let environment = RemoteEnvironment::parse_posix(std::str::from_utf8(&output.stdout)?)?;
+            assert_eq!(environment.shell, "/bin/sh");
+            assert!(environment.os_version.is_some());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_query_failure_does_not_abort_probe() -> Result<()> {
+        let (command, version) = if cfg!(target_os = "macos") {
+            ("sw_vers", "15.6.1\n")
+        } else {
+            ("cat", "ID=ubuntu\nVERSION_ID=24.04\n")
+        };
+        // mock error
+        let script = format!(
+            r#"{command}() {{ printf "%s" "{version}"; return 7; }};
+            {}"#,
+            RemoteEnvironment::posix_script()
+        );
+        let output = smol::block_on(
+            util::command::new_command("/bin/bash")
+                .args(["--posix", "-c", &script])
+                .env("SHELLOPTS", "errexit")
+                .env("SHELL", "/bin/bash")
+                .output(),
+        )?;
+        assert!(
+            output.status.success(),
+            "{command}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let environment = RemoteEnvironment::parse_posix(std::str::from_utf8(&output.stdout)?)?;
+        assert_eq!(environment.shell, "/bin/bash");
+        assert_eq!(environment.os_version, None);
+        Ok(())
+    }
 
     #[test]
     fn parses_posix_environment_output() -> Result<()> {
