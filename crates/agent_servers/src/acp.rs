@@ -5463,7 +5463,7 @@ exit 7
             assert_eq!(notice.title, "A current advisory");
             assert_eq!(
                 notice.severity,
-                acp::NoticeSeverity::Other("_custom".into())
+                acp_v2::NoticeSeverity::Other("_custom".into())
             );
             assert_eq!(notice.description, None);
             assert_eq!(notice.meta, None);
