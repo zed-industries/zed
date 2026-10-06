@@ -2156,6 +2156,8 @@ impl LocalWorktree {
         if self.settings.is_path_excluded(&path) {
             return Task::ready(Ok(None));
         }
+        #[cfg(target_os = "macos")]
+        let path = path_with_entry_spelling(&self.snapshot, &path).unwrap_or(path);
         let paths = if let Some(old_path) = old_path.as_ref() {
             vec![old_path.clone(), path.clone()]
         } else {
@@ -5080,7 +5082,7 @@ impl BackgroundScanner {
 
             let mut ranges_to_drop = SmallVec::<[Range<usize>; 4]>::new();
 
-            for (ix, event) in events.iter().enumerate() {
+            for (ix, event) in events.iter_mut().enumerate() {
                 let abs_path = SanitizedPath::new(&event.path);
                 // TODO: this strips the root case-sensitively, so on a case-insensitive
                 // volume an event whose casing differs from the canonical root is
@@ -5136,8 +5138,20 @@ impl BackgroundScanner {
                     continue;
                 }
 
+                let relative_path = relative_path.into_arc();
+                #[cfg(target_os = "macos")]
+                let relative_path = match path_with_entry_spelling(snapshot, &relative_path) {
+                    Some(entry_path) => {
+                        if let Some(file_name) = entry_path.file_name() {
+                            event.path.set_file_name(file_name);
+                        }
+                        entry_path
+                    }
+                    None => relative_path,
+                };
+
                 relative_paths.push(EventRoot {
-                    path: relative_path.into_arc(),
+                    path: relative_path,
                     was_rescanned: matches!(event.kind, Some(fs::PathEventKind::Rescan)),
                 });
             }
@@ -7262,6 +7276,31 @@ impl fs::Watcher for NullWatcher {
 }
 
 const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
+
+/// Paths can reach the worktree in a different Unicode normalization form than the directory
+/// entry: callers may pass the NFC spelling of an NFD name, and after a file is replaced by
+/// renaming onto that NFC spelling, FSEvents reports it in NFC while APFS keeps the NFD entry.
+/// APFS treats both spellings as the same file, so map such a path onto the existing entry
+/// instead of treating it as a different one.
+#[cfg(target_os = "macos")]
+fn path_with_entry_spelling(snapshot: &Snapshot, path: &RelPath) -> Option<Arc<RelPath>> {
+    use unicode_normalization::UnicodeNormalization as _;
+
+    let file_name = path.file_name()?;
+    if file_name.is_ascii() || snapshot.entry_for_path(path).is_some() {
+        return None;
+    }
+    let file_name = file_name.nfc().collect::<String>();
+    snapshot
+        .child_entries(path.parent()?)
+        .find(|entry| {
+            entry
+                .path
+                .file_name()
+                .is_some_and(|name| name.nfc().eq(file_name.chars()))
+        })
+        .map(|entry| entry.path.clone())
+}
 
 /// Reads and decodes a file straight into a [`Rope`].
 /// The returned rope has already had its line endings normalized, the

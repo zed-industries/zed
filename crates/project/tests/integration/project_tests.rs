@@ -21736,3 +21736,48 @@ async fn code_action_project(
 
     (project, buffer, handle, fake_servers)
 }
+
+// #65142: APFS treats the NFC and NFD spellings of a name as the same file, but the worktree
+// stores entries under the on-disk (NFD) bytes.
+#[cfg(target_os = "macos")]
+#[gpui::test]
+async fn test_open_nfd_named_file_through_nfc_spelling(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let nfd = "zed-test-nfd-\u{30AB}\u{3099}.md";
+    let nfc = "zed-test-nfd-\u{30AC}.md";
+    let dir = TempTree::new(json!({ nfd: "# test\n" }));
+    let project = Project::test(RealFs::new(None, cx.executor()), [dir.path()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(dir.path().join(nfc), cx)
+        })
+        .await
+        .unwrap();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path(nfd));
+    });
+
+    let same_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(dir.path().join(nfd), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(buffer.entity_id(), same_buffer.entity_id());
+
+    std::fs::write(dir.path().join(nfd), "# test\n- changed\n").unwrap();
+    let mut reloaded = false;
+    for _ in 0..50 {
+        cx.executor()
+            .timer(std::time::Duration::from_millis(100))
+            .await;
+        cx.run_until_parked();
+        if buffer.read_with(cx, |buffer, _| buffer.text().contains("- changed")) {
+            reloaded = true;
+            break;
+        }
+    }
+    assert!(reloaded, "buffer was not reloaded after an external change");
+}

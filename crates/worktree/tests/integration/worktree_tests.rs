@@ -7751,3 +7751,58 @@ fn set_file_scan_depth(cx: &mut TestAppContext, depth: Option<u32>) {
         });
     });
 }
+
+// #65142: once a file is replaced through a rename onto the NFC spelling of
+// its NFD name, FSEvents reports it in NFC while the directory entry stays NFD.
+#[cfg(target_os = "macos")]
+#[gpui::test]
+async fn test_nfd_file_replaced_through_nfc_spelling(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let nfd = "zed-test-nfd-\u{30AB}\u{3099}.md";
+    let nfc = "zed-test-nfd-\u{30AC}.md";
+    let dir = TempTree::new(json!({ nfd: "# test\n" }));
+
+    let worktree = Worktree::local(
+        dir.path(),
+        true,
+        RealFs::new(None, cx.executor()),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    worktree.flush_fs_events(cx).await;
+
+    let size_before = worktree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path(nfd)).unwrap().size
+    });
+    std::fs::write(dir.path().join(".tmp"), "# test\n\n- replaced\n").unwrap();
+    std::fs::rename(dir.path().join(".tmp"), dir.path().join(nfc)).unwrap();
+
+    let mut picked_up = false;
+    for _ in 0..50 {
+        cx.executor()
+            .timer(std::time::Duration::from_millis(100))
+            .await;
+        cx.run_until_parked();
+        let size = worktree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path(nfd)).map(|entry| entry.size)
+        });
+        if size.is_some_and(|size| size != size_before) {
+            picked_up = true;
+            break;
+        }
+    }
+    assert!(picked_up, "worktree entry for {nfd:?} was not updated");
+    worktree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path(nfc)).is_none(),
+            "duplicate NFC entry"
+        );
+    });
+}

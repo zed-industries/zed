@@ -21972,6 +21972,7 @@ dependencies = [
  "sum_tree",
  "text",
  "tracing",
+ "unicode-normalization",
  "util",
  "worktree",
  "zlog",
