@@ -12744,6 +12744,81 @@ async fn test_file_drag_state_clears_on_render_after_drag_stops(cx: &mut TestApp
     .expect("window is open");
 }
 
+#[gpui::test]
+async fn test_drop_external_files_on_folded_directory_components(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a": { "b": { "c": {} } } }))
+        .await;
+
+    let temp_dir = tempfile::tempdir().expect("temporary directory is created");
+    let deepest_drop_path = temp_dir.path().join("deepest.txt");
+    let middle_drop_path = temp_dir.path().join("middle.txt");
+    let topmost_drop_path = temp_dir.path().join("topmost.txt");
+    for path in [&deepest_drop_path, &middle_drop_path, &topmost_drop_path] {
+        std::fs::write(path, "").expect("external file is written");
+    }
+    fs.insert_tree_from_real_fs(temp_dir.path(), temp_dir.path())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (window, panel) = create_drag_test_panel(&project, cx);
+    let cx = &mut VisualTestContext::from_window(window, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > a/b/c"]
+    );
+
+    for (selector, drop_path) in [
+        ("project_panel_path_component_c", &deepest_drop_path),
+        ("project_panel_path_component_b", &middle_drop_path),
+        ("project_panel_path_component_a", &topmost_drop_path),
+    ] {
+        let position = cx
+            .debug_bounds(selector)
+            .expect("folded path component is rendered")
+            .center();
+        cx.simulate_event(FileDropEvent::Entered {
+            position,
+            paths: ExternalPaths([drop_path.clone()].into_iter().collect()),
+        });
+        cx.simulate_event(FileDropEvent::Submit { position });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        panel.read_with(cx, |panel, _| assert_drag_state_cleared(panel));
+    }
+
+    assert!(
+        find_project_entry(&panel, "root/a/b/c/deepest.txt", cx).is_some(),
+        "dropping on `c` should create the file in root/a/b/c"
+    );
+    assert!(
+        find_project_entry(&panel, "root/a/b/middle.txt", cx).is_some(),
+        "dropping on `b` should create the file in root/a/b"
+    );
+    assert!(
+        find_project_entry(&panel, "root/a/topmost.txt", cx).is_some(),
+        "dropping on `a` should create the file in root/a"
+    );
+    assert!(
+        find_project_entry(&panel, "root/a/b/c/topmost.txt", cx).is_none(),
+        "dropping on `a` should not fall through to the deepest directory"
+    );
+}
+
 fn create_drag_test_panel(
     project: &Entity<Project>,
     cx: &mut TestAppContext,

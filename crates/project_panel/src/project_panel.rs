@@ -5020,6 +5020,27 @@ impl ProjectPanel {
         }
     }
 
+    fn update_folded_directory_drag_target(
+        &mut self,
+        is_hovered: bool,
+        target: FoldedDirectoryDragTarget,
+    ) {
+        if is_hovered {
+            self.folded_directory_drag_target = Some(target);
+            return;
+        }
+        let is_current_target = self
+            .folded_directory_drag_target
+            .is_some_and(|current_target| {
+                current_target.entry_id == target.entry_id
+                    && current_target.index == target.index
+                    && current_target.is_delimiter_target == target.is_delimiter_target
+            });
+        if is_current_target {
+            self.folded_directory_drag_target = None;
+        }
+    }
+
     fn clear_drag_state(&mut self, cx: &mut Context<Self>) {
         let had_drag_state = self.drag_target_entry.take().is_some()
             | self.folded_directory_drag_target.take().is_some()
@@ -6720,26 +6741,14 @@ impl ProjectPanel {
                                               event: &DragMoveEvent<DraggedSelection>,
                                               _,
                                               _| {
-                                            if event.bounds.contains(&event.event.position) {
-                                                this.folded_directory_drag_target =
-                                                    Some(FoldedDirectoryDragTarget {
-                                                        entry_id,
-                                                        index,
-                                                        is_delimiter_target: false,
-                                                    });
-                                            } else {
-                                                let is_current_target = this
-                                                    .folded_directory_drag_target
-                                                    .as_ref()
-                                                    .is_some_and(|target| {
-                                                        target.entry_id == entry_id
-                                                            && target.index == index
-                                                            && !target.is_delimiter_target
-                                                    });
-                                                if is_current_target {
-                                                    this.folded_directory_drag_target = None;
-                                                }
-                                            }
+                                            this.update_folded_directory_drag_target(
+                                                event.bounds.contains(&event.event.position),
+                                                FoldedDirectoryDragTarget {
+                                                    entry_id,
+                                                    index,
+                                                    is_delimiter_target: false,
+                                                },
+                                            );
                                         },
                                     ))
                                     .on_drop(cx.listener(
@@ -6750,6 +6759,31 @@ impl ProjectPanel {
                                                     selections,
                                                     target_entry_id,
                                                     is_file,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        },
+                                    ))
+                                    .on_drag_move(cx.listener(
+                                        move |this, event: &DragMoveEvent<ExternalPaths>, _, _| {
+                                            this.update_folded_directory_drag_target(
+                                                event.bounds.contains(&event.event.position),
+                                                FoldedDirectoryDragTarget {
+                                                    entry_id,
+                                                    index,
+                                                    is_delimiter_target: false,
+                                                },
+                                            );
+                                        },
+                                    ))
+                                    .on_drop(cx.listener(
+                                        move |this, external_paths: &ExternalPaths, window, cx| {
+                                            this.clear_drag_state(cx);
+                                            if let Some(target_entry_id) = target_entry_id {
+                                                this.drop_external_files(
+                                                    external_paths.paths(),
+                                                    target_entry_id,
                                                     window,
                                                     cx,
                                                 );
@@ -6785,6 +6819,7 @@ impl ProjectPanel {
                                 }
                             }),
                         )
+                        .debug_selector(|| format!("project_panel_path_component_{component}"))
                         .child(
                             Label::new(component)
                                 .single_line()
@@ -6849,24 +6884,39 @@ impl ProjectPanel {
                     ))
                     .on_drag_move(cx.listener(
                         move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
-                            if event.bounds.contains(&event.event.position) {
-                                this.folded_directory_drag_target =
-                                    Some(FoldedDirectoryDragTarget {
-                                        entry_id,
-                                        index: delimiter_target_index,
-                                        is_delimiter_target: true,
-                                    });
-                            } else {
-                                let is_current_target =
-                                    this.folded_directory_drag_target.is_some_and(|target| {
-                                        target.entry_id == entry_id
-                                            && target.index == delimiter_target_index
-                                            && target.is_delimiter_target
-                                    });
-                                if is_current_target {
-                                    this.folded_directory_drag_target = None;
-                                }
+                            this.update_folded_directory_drag_target(
+                                event.bounds.contains(&event.event.position),
+                                FoldedDirectoryDragTarget {
+                                    entry_id,
+                                    index: delimiter_target_index,
+                                    is_delimiter_target: true,
+                                },
+                            );
+                        },
+                    ))
+                    .on_drop(cx.listener(
+                        move |this, external_paths: &ExternalPaths, window, cx| {
+                            this.clear_drag_state(cx);
+                            if let Some(target_entry_id) = target_entry_id {
+                                this.drop_external_files(
+                                    external_paths.paths(),
+                                    target_entry_id,
+                                    window,
+                                    cx,
+                                );
                             }
+                        },
+                    ))
+                    .on_drag_move(cx.listener(
+                        move |this, event: &DragMoveEvent<ExternalPaths>, _, _| {
+                            this.update_folded_directory_drag_target(
+                                event.bounds.contains(&event.event.position),
+                                FoldedDirectoryDragTarget {
+                                    entry_id,
+                                    index: delimiter_target_index,
+                                    is_delimiter_target: true,
+                                },
+                            );
                         },
                     ))
                 })
