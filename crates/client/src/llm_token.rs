@@ -134,7 +134,8 @@ impl RefreshLlmTokenListener {
             }
             MessageToClient::NotificationsUpdated
             | MessageToClient::SettingsUpdated
-            | MessageToClient::SyncedSettingsChanged { .. } => {}
+            | MessageToClient::SyncedSettingsChanged { .. }
+            | MessageToClient::SyncedSettingsInvalidated => {}
         }
     }
 }

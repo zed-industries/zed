@@ -906,7 +906,8 @@ impl UserStore {
             MessageToClient::UserUpdated => {}
             MessageToClient::NotificationsUpdated
             | MessageToClient::SettingsUpdated
-            | MessageToClient::SyncedSettingsChanged { .. } => return,
+            | MessageToClient::SyncedSettingsChanged { .. }
+            | MessageToClient::SyncedSettingsInvalidated => return,
         }
 
         cx.spawn(async move |cx| {

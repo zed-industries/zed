@@ -89,6 +89,7 @@ clap.workspace = true
 cli.workspace = true
 client.workspace = true
 clock = { workspace = true, optional = true }
+cloud_api_client.workspace = true
 codestral.workspace = true
 collab_ui.workspace = true
 collections.workspace = true

@@ -8,7 +8,7 @@ pub use cloud_api_types::*;
 use futures::AsyncReadExt as _;
 use http_client::http::request;
 use http_client::{
-    AsyncBody, HttpClientWithUrl, HttpRequestExt, Json, Method, Request, Response, StatusCode,
+    AsyncBody, HttpClientWithUrl, HttpRequestExt, Json, Method, Request, Response, StatusCode, Url,
 };
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
@@ -90,6 +90,13 @@ impl CloudApiClient {
 
     pub fn has_credentials(&self) -> bool {
         self.credentials.read().is_some()
+    }
+
+    pub fn user_id(&self) -> Option<u32> {
+        self.credentials
+            .read()
+            .as_ref()
+            .map(|credentials| credentials.user_id)
     }
 
     pub fn set_credentials(&self, user_id: u32, access_token: String) {
@@ -180,7 +187,7 @@ impl CloudApiClient {
         body: impl Into<AsyncBody>,
     ) -> Result<T, ClientApiError> {
         let mut response = self
-            .send_authenticated_request(request_builder, body)
+            .send_authenticated_request(request_builder, body, None)
             .await?;
         Self::read_response_json(&mut response).await
     }
@@ -189,13 +196,19 @@ impl CloudApiClient {
         &self,
         request_builder: request::Builder,
         body: impl Into<AsyncBody>,
+        expected_user_id: Option<u32>,
     ) -> Result<Response<AsyncBody>, ClientApiError> {
         let request = if matches!(self.authentication, Authentication::Session) {
             build_request(request_builder, body, None)
                 .map_err(ClientApiError::RequestBuildFailed)?
         } else {
             let credentials = self.credentials.read();
-            let credentials = credentials.as_ref().ok_or(ClientApiError::NotSignedIn)?;
+            let credentials = credentials
+                .as_ref()
+                .filter(|credentials| {
+                    expected_user_id.is_none_or(|user_id| user_id == credentials.user_id)
+                })
+                .ok_or(ClientApiError::NotSignedIn)?;
             build_request(request_builder, body, Some(credentials))
                 .map_err(ClientApiError::RequestBuildFailed)?
         };
@@ -275,10 +288,9 @@ impl CloudApiClient {
         }
     }
 
-    // TODO kb cloud: the `/client/synced_settings` endpoints are not
-    // implemented server-side yet.
     pub async fn get_synced_settings(
         &self,
+        expected_user_id: u32,
         system_id: Option<String>,
         kind: &str,
     ) -> Result<GetSyncedSettingsResponse, ClientApiError> {
@@ -294,12 +306,19 @@ impl CloudApiClient {
                 builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
             });
 
-        self.send_authenticated_json_request(request_builder, AsyncBody::default())
-            .await
+        let mut response = self
+            .send_authenticated_request(
+                request_builder,
+                AsyncBody::default(),
+                Some(expected_user_id),
+            )
+            .await?;
+        Self::read_response_json(&mut response).await
     }
 
     pub async fn update_synced_settings(
         &self,
+        expected_user_id: u32,
         system_id: Option<String>,
         body: UpdateSyncedSettingsBody,
     ) -> Result<UpdateSyncedSettingsResult, ClientApiError> {
@@ -315,13 +334,16 @@ impl CloudApiClient {
                 builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
             });
 
-        match self
-            .send_authenticated_json_request::<UpdateSyncedSettingsResponse>(
-                request_builder,
-                Json(body),
-            )
+        let response = match self
+            .send_authenticated_request(request_builder, Json(body), Some(expected_user_id))
             .await
         {
+            Ok(mut response) => {
+                Self::read_response_json::<UpdateSyncedSettingsResponse>(&mut response).await
+            }
+            Err(error) => Err(error),
+        };
+        match response {
             Ok(response) => Ok(UpdateSyncedSettingsResult::Written(response)),
             Err(ClientApiError::ServerError { status, body, .. })
                 if status == StatusCode::CONFLICT =>
@@ -334,120 +356,171 @@ impl CloudApiClient {
         }
     }
 
-    pub async fn get_synced_settings_hosts(
+    pub async fn list_synced_settings_hosts(
         &self,
+        expected_user_id: u32,
         system_id: Option<String>,
-    ) -> Result<GetSyncedSettingsHostsResponse, ClientApiError> {
-        let request_builder = Request::builder()
-            .method(Method::GET)
-            .uri(
-                self.http_client
-                    .build_zed_cloud_url("/client/synced_settings/hosts")
-                    .map_err(ClientApiError::RequestBuildFailed)?
-                    .as_ref(),
-            )
-            .when_some(system_id, |builder, system_id| {
-                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
-            });
+    ) -> Result<ListSyncedSettingsHostsResponse, ClientApiError> {
+        let url = self
+            .http_client
+            .build_zed_cloud_url("/client/synced_settings/hosts")
+            .map_err(ClientApiError::RequestBuildFailed)?;
+        self.send_synced_settings_json_request(
+            Method::GET,
+            url,
+            expected_user_id,
+            system_id,
+            AsyncBody::default(),
+        )
+        .await
+    }
 
-        self.send_authenticated_json_request(request_builder, AsyncBody::default())
-            .await
+    pub async fn join_synced_settings_group(
+        &self,
+        expected_user_id: u32,
+        system_id: Option<String>,
+        body: JoinSyncedSettingsGroupBody,
+    ) -> Result<SyncedSettingsHost, ClientApiError> {
+        let url = self
+            .http_client
+            .build_zed_cloud_url("/client/synced_settings/hosts/current")
+            .map_err(ClientApiError::RequestBuildFailed)?;
+        self.send_synced_settings_json_request(
+            Method::PUT,
+            url,
+            expected_user_id,
+            system_id,
+            Json(body),
+        )
+        .await
     }
 
     pub async fn update_synced_settings_host(
         &self,
+        expected_user_id: u32,
         system_id: Option<String>,
         host_system_id: &str,
         body: UpdateSyncedSettingsHostBody,
     ) -> Result<SyncedSettingsHost, ClientApiError> {
-        let request_builder = Request::builder()
-            .method(Method::PATCH)
-            .uri(
-                self.http_client
-                    .build_zed_cloud_url(&format!("/client/synced_settings/hosts/{host_system_id}"))
-                    .map_err(ClientApiError::RequestBuildFailed)?
-                    .as_ref(),
-            )
-            .when_some(system_id, |builder, system_id| {
-                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
-            });
-
-        self.send_authenticated_json_request(request_builder, Json(body))
-            .await
+        let url = self.synced_settings_host_url(host_system_id)?;
+        self.send_synced_settings_json_request(
+            Method::PATCH,
+            url,
+            expected_user_id,
+            system_id,
+            Json(body),
+        )
+        .await
     }
 
     pub async fn delete_synced_settings_host(
         &self,
+        expected_user_id: u32,
         system_id: Option<String>,
         host_system_id: &str,
     ) -> Result<(), ClientApiError> {
-        let request_builder = Request::builder()
-            .method(Method::DELETE)
-            .uri(
-                self.http_client
-                    .build_zed_cloud_url(&format!("/client/synced_settings/hosts/{host_system_id}"))
-                    .map_err(ClientApiError::RequestBuildFailed)?
-                    .as_ref(),
-            )
-            .when_some(system_id, |builder, system_id| {
-                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
-            });
-
-        self.send_authenticated_request(request_builder, AsyncBody::default())
-            .await?;
-        Ok(())
-    }
-
-    pub async fn get_synced_settings_history(
-        &self,
-        system_id: Option<String>,
-        kind: &str,
-    ) -> Result<GetSyncedSettingsHistoryResponse, ClientApiError> {
-        let request_builder = Request::builder()
-            .method(Method::GET)
-            .uri(
-                self.http_client
-                    .build_zed_cloud_url_with_query(
-                        "/client/synced_settings/history",
-                        [("kind", kind)],
-                    )
-                    .map_err(ClientApiError::RequestBuildFailed)?
-                    .as_ref(),
-            )
-            .when_some(system_id, |builder, system_id| {
-                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
-            });
-
-        self.send_authenticated_json_request(request_builder, AsyncBody::default())
+        let url = self.synced_settings_host_url(host_system_id)?;
+        self.send_synced_settings_request(Method::DELETE, url, expected_user_id, system_id)
             .await
     }
 
-    // TODO kb cloud: erase is resurrection-prone — any still-enabled device in
-    // the group re-pushes its local settings on its next change; needs a server
-    // tombstone, or the docs must state that erase implies disabling the
-    // group's hosts first.
-    pub async fn delete_synced_settings(
+    pub async fn list_synced_settings_history(
         &self,
+        expected_user_id: u32,
         system_id: Option<String>,
-        all_groups: bool,
+        kind: &str,
+        limit: u32,
+    ) -> Result<ListSyncedSettingsHistoryResponse, ClientApiError> {
+        let url = self
+            .http_client
+            .build_zed_cloud_url_with_query(
+                "/client/synced_settings/history",
+                [("kind", kind.to_string()), ("limit", limit.to_string())],
+            )
+            .map_err(ClientApiError::RequestBuildFailed)?;
+        self.send_synced_settings_json_request(
+            Method::GET,
+            url,
+            expected_user_id,
+            system_id,
+            AsyncBody::default(),
+        )
+        .await
+    }
+
+    pub async fn erase_synced_settings(
+        &self,
+        expected_user_id: u32,
+        system_id: Option<String>,
+        scope: SyncedSettingsErasureScope,
+        expected_group_id: Option<String>,
     ) -> Result<(), ClientApiError> {
-        let url = if all_groups {
-            self.http_client
-                .build_zed_cloud_url_with_query("/client/synced_settings", [("all", "true")])
-        } else {
-            self.http_client
-                .build_zed_cloud_url("/client/synced_settings")
-        }
-        .map_err(ClientApiError::RequestBuildFailed)?;
+        let scope = match scope {
+            SyncedSettingsErasureScope::Group => "group",
+            SyncedSettingsErasureScope::Account => "account",
+        };
+        let mut query = Vec::from([("scope", scope.to_string())]);
+        query.extend(expected_group_id.map(|group_id| ("group_id", group_id)));
+        let url = self
+            .http_client
+            .build_zed_cloud_url_with_query("/client/synced_settings", query)
+            .map_err(ClientApiError::RequestBuildFailed)?;
+        self.send_synced_settings_request(Method::DELETE, url, expected_user_id, system_id)
+            .await
+    }
+
+    fn synced_settings_host_url(&self, host_system_id: &str) -> Result<Url, ClientApiError> {
+        let mut url = self
+            .http_client
+            .build_zed_cloud_url("/client/synced_settings/hosts")
+            .map_err(ClientApiError::RequestBuildFailed)?;
+        url.path_segments_mut()
+            .map_err(|()| {
+                ClientApiError::RequestBuildFailed(anyhow!("Zed Cloud URL cannot be a base"))
+            })?
+            .push(host_system_id);
+        Ok(url)
+    }
+
+    async fn send_synced_settings_json_request<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        url: Url,
+        expected_user_id: u32,
+        system_id: Option<String>,
+        body: impl Into<AsyncBody>,
+    ) -> Result<T, ClientApiError> {
         let request_builder = Request::builder()
-            .method(Method::DELETE)
+            .method(method)
             .uri(url.as_ref())
             .when_some(system_id, |builder, system_id| {
                 builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
             });
-
-        self.send_authenticated_request(request_builder, AsyncBody::default())
+        let mut response = self
+            .send_authenticated_request(request_builder, body, Some(expected_user_id))
             .await?;
+        Self::read_response_json(&mut response).await
+    }
+
+    async fn send_synced_settings_request(
+        &self,
+        method: Method,
+        url: Url,
+        expected_user_id: u32,
+        system_id: Option<String>,
+    ) -> Result<(), ClientApiError> {
+        let request_builder = Request::builder()
+            .method(method)
+            .uri(url.as_ref())
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+        self.send_authenticated_request(
+            request_builder,
+            AsyncBody::default(),
+            Some(expected_user_id),
+        )
+        .await?;
         Ok(())
     }
 
@@ -458,8 +531,12 @@ impl CloudApiClient {
                 .as_ref(),
         );
 
-        self.send_authenticated_request(request, AsyncBody::from(serde_json::to_string(&body)?))
-            .await?;
+        self.send_authenticated_request(
+            request,
+            AsyncBody::from(serde_json::to_string(&body)?),
+            None,
+        )
+        .await?;
         Ok(())
     }
 
@@ -473,8 +550,12 @@ impl CloudApiClient {
                 .as_ref(),
         );
 
-        self.send_authenticated_request(request, AsyncBody::from(serde_json::to_string(&body)?))
-            .await?;
+        self.send_authenticated_request(
+            request,
+            AsyncBody::from(serde_json::to_string(&body)?),
+            None,
+        )
+        .await?;
         Ok(())
     }
 
@@ -488,8 +569,12 @@ impl CloudApiClient {
                 .as_ref(),
         );
 
-        self.send_authenticated_request(request, AsyncBody::from(serde_json::to_string(&body)?))
-            .await?;
+        self.send_authenticated_request(
+            request,
+            AsyncBody::from(serde_json::to_string(&body)?),
+            None,
+        )
+        .await?;
         Ok(())
     }
 }

@@ -95,22 +95,31 @@ pub struct SystemSettings {
     pub selected_organization_id: Option<OrganizationId>,
 }
 
-// TODO kb cloud: these types describe the settings-sync endpoints that do not
-// exist server-side yet. Cloud consumes this crate by pinned rev.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SyncedSettings {
     pub group_id: String,
+    pub document_id: String,
     pub kind: String,
     pub version: u64,
     pub schema_epoch: u64,
     pub doc: serde_json::Value,
     pub updated_by_system_id: Option<String>,
+    #[serde(default)]
+    pub provenance: BTreeMap<String, SyncedSettingsPathProvenance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncedSettingsPathProvenance {
+    pub version: u64,
+    pub system_id: Option<String>,
 }
 
 pub const SYNCED_SETTINGS_KIND_SETTINGS: &str = "settings";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GetSyncedSettingsResponse {
+    #[serde(default)]
+    pub group_id: Option<String>,
     pub synced_settings: Option<SyncedSettings>,
 }
 
@@ -118,13 +127,19 @@ pub struct GetSyncedSettingsResponse {
 pub struct UpdateSyncedSettingsBody {
     pub kind: String,
     pub base_version: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_document_id: Option<String>,
     pub schema_epoch: u64,
     pub doc: serde_json::Value,
+    pub expected_group_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclusions: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpdateSyncedSettingsResponse {
     pub group_id: String,
+    pub document_id: String,
     pub version: u64,
 }
 
@@ -138,27 +153,52 @@ pub struct SyncedSettingsHost {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GetSyncedSettingsHostsResponse {
+pub struct ListSyncedSettingsHostsResponse {
     pub hosts: Vec<SyncedSettingsHost>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SyncedSettingsGroupTarget {
+    Existing { group_id: String },
+    New,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JoinSyncedSettingsGroupBody {
+    pub label: String,
+    pub group: SyncedSettingsGroupTarget,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UpdateSyncedSettingsHostBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    pub group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<SyncedSettingsGroupTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SyncedSettingsRevision {
     pub version: u64,
-    pub doc: serde_json::Value,
-    pub system_id: Option<String>,
     pub created_at: Timestamp,
+    pub system_id: Option<String>,
+    pub schema_epoch: u64,
+    pub doc: serde_json::Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GetSyncedSettingsHistoryResponse {
+pub struct ListSyncedSettingsHistoryResponse {
+    #[serde(default)]
+    pub group_id: Option<String>,
     pub revisions: Vec<SyncedSettingsRevision>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncedSettingsErasureScope {
+    Group,
+    Account,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]

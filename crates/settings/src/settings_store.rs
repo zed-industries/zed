@@ -41,9 +41,11 @@ use crate::{
     },
 };
 
-use settings_json::{infer_json_indent_size, update_value_in_json_text};
+use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
 
 pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/lsp/";
+
+const MAX_SETTINGS_FILE_WRITE_ATTEMPTS: usize = 3;
 
 pub trait SettingsKey: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
@@ -566,30 +568,52 @@ impl SettingsStore {
             .unbounded_send(Box::new(move |cx: AsyncApp| {
                 async move {
                     let res = async move {
-                        let old_text = Self::load_settings(&fs).await?;
-                        let new_text = update(old_text, cx.clone())?;
-
                         let settings_path = paths::settings_file().as_path();
-                        if fs.is_file(settings_path).await {
-                            let resolved_path =
-                                fs.canonicalize(settings_path).await.with_context(|| {
-                                    format!(
-                                        "Failed to canonicalize settings path {:?}",
-                                        settings_path
-                                    )
-                                })?;
+                        let (write_path, mut expected_text, old_text) =
+                            if fs.is_file(settings_path).await {
+                                let resolved_path =
+                                    fs.canonicalize(settings_path).await.with_context(|| {
+                                        format!(
+                                            "Failed to canonicalize settings path {:?}",
+                                            settings_path
+                                        )
+                                    })?;
+                                let text = fs.load(&resolved_path).await?;
+                                (resolved_path, text.clone(), text)
+                            } else {
+                                (
+                                    settings_path.to_path_buf(),
+                                    String::new(),
+                                    crate::initial_user_settings_content().to_string(),
+                                )
+                            };
+                        let updated_text = update(old_text.clone(), cx.clone())?;
+                        let mut new_text = updated_text.clone();
 
-                            fs.atomic_write(resolved_path.clone(), new_text.clone())
-                                .await
-                                .with_context(|| {
-                                    format!("Failed to write settings to file {:?}", resolved_path)
-                                })?;
-                        } else {
-                            fs.atomic_write(settings_path.to_path_buf(), new_text.clone())
-                                .await
-                                .with_context(|| {
-                                    format!("Failed to write settings to file {:?}", settings_path)
-                                })?;
+                        let mut attempts = 0;
+                        while !fs
+                            .atomic_write_if_unchanged(
+                                write_path.clone(),
+                                expected_text.clone(),
+                                new_text.clone(),
+                            )
+                            .await
+                            .with_context(|| {
+                                format!("Failed to write settings to file {write_path:?}")
+                            })?
+                        {
+                            attempts += 1;
+                            anyhow::ensure!(
+                                attempts < MAX_SETTINGS_FILE_WRITE_ATTEMPTS,
+                                "The settings file {write_path:?} kept changing while writing to it"
+                            );
+                            expected_text = match fs.load(&write_path).await {
+                                Ok(text) => text,
+                                Err(_) if !fs.is_file(&write_path).await => String::new(),
+                                Err(error) => return Err(error),
+                            };
+                            new_text =
+                                replay_settings_update(&old_text, &updated_text, &expected_text)?;
                         }
 
                         cx.update_global(|store: &mut SettingsStore, cx| {
@@ -611,6 +635,16 @@ impl SettingsStore {
             .map_err(|err| anyhow::format_err!("Failed to update settings file: {}", err))
             .log_with_level(log::Level::Warn);
         return rx;
+    }
+
+    pub fn enqueue_settings_file_job(
+        &self,
+        job: impl 'static + FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>,
+    ) {
+        self.setting_file_updates_tx
+            .unbounded_send(Box::new(job))
+            .map_err(|err| anyhow::format_err!("Failed to enqueue a settings file job: {err}"))
+            .log_with_level(log::Level::Warn);
     }
 
     pub fn update_settings_file(
@@ -1671,6 +1705,67 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
     }
 }
 
+fn replay_settings_update(old_text: &str, new_text: &str, current_text: &str) -> Result<String> {
+    let old_value = parse_settings_value(old_text)?;
+    let new_value = parse_settings_value(new_text)?;
+    let mut text = if current_text.trim().is_empty() {
+        crate::initial_user_settings_content().to_string()
+    } else {
+        current_text.to_string()
+    };
+    let current_value = parse_settings_value(&text)?;
+    let mut target_value = current_value.clone();
+    apply_value_change(&mut target_value, &old_value, &new_value);
+    let tab_size = infer_json_indent_size(&text);
+    update_value_in_json_text(
+        &mut text,
+        &mut Vec::new(),
+        tab_size,
+        &current_value,
+        &target_value,
+        &mut Vec::new(),
+    );
+    Ok(text)
+}
+
+fn parse_settings_value(text: &str) -> Result<Value> {
+    if text.trim().is_empty() {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+    parse_json_with_comments::<Value>(text)
+}
+
+fn apply_value_change(target: &mut Value, old_value: &Value, new_value: &Value) {
+    let (Value::Object(old_object), Value::Object(new_object)) = (old_value, new_value) else {
+        if old_value != new_value {
+            *target = new_value.clone();
+        }
+        return;
+    };
+    let Value::Object(target_object) = target else {
+        *target = new_value.clone();
+        return;
+    };
+    for key in old_object.keys().chain(new_object.keys()) {
+        match (old_object.get(key), new_object.get(key)) {
+            (Some(_), None) => {
+                target_object.remove(key);
+            }
+            (Some(old_child), Some(new_child)) => match target_object.get_mut(key) {
+                Some(target_child) => apply_value_change(target_child, old_child, new_child),
+                None if old_child != new_child => {
+                    target_object.insert(key.clone(), new_child.clone());
+                }
+                None => {}
+            },
+            (None, Some(new_child)) => {
+                target_object.insert(key.clone(), new_child.clone());
+            }
+            (None, None) => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, num::NonZeroU32};
@@ -1990,6 +2085,25 @@ mod tests {
             new_json.replace_range(range, &replacement);
         }
         pretty_assertions::assert_eq!(new_json, expected_new_json);
+    }
+
+    #[test]
+    fn test_replayed_settings_update_keeps_a_concurrent_edit() {
+        let old_text = r#"{ "buffer_font_size": 15, "tab_size": 2 }"#;
+        let updated_text = r#"{ "buffer_font_size": 15, "vim_mode": true }"#;
+        let concurrent_text = "{\n  // mine\n  \"buffer_font_size\": 18\n}";
+
+        pretty_assertions::assert_eq!(
+            replay_settings_update(old_text, updated_text, concurrent_text).unwrap(),
+            "{\n  \"vim_mode\": true,\n  // mine\n  \"buffer_font_size\": 18\n}"
+        );
+        pretty_assertions::assert_eq!(
+            parse_settings_value(
+                &replay_settings_update("", r#"{ "vim_mode": true }"#, "{}").unwrap()
+            )
+            .unwrap(),
+            serde_json::json!({ "vim_mode": true })
+        );
     }
 
     #[gpui::test]

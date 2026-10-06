@@ -508,6 +508,81 @@ async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor
 }
 
 #[gpui::test]
+async fn test_realfs_atomic_write_if_unchanged_existing_file(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("settings.json");
+    std::fs::write(&path, "old").unwrap();
+
+    let replaced = gpui::block_on(fs.atomic_write_if_unchanged(
+        path.clone(),
+        "old".to_owned(),
+        "new".to_owned(),
+    ))
+    .unwrap();
+    assert!(replaced);
+    assert_eq!(std::fs::read(&path).unwrap(), b"new");
+    assert_eq!(directory_entries(temp_dir.path()), vec![path.clone()]);
+
+    let foreign = b"{\"foreign\": true}\xff";
+    std::fs::write(&path, foreign).unwrap();
+    let replaced = gpui::block_on(fs.atomic_write_if_unchanged(
+        path.clone(),
+        "new".to_owned(),
+        "ours".to_owned(),
+    ))
+    .unwrap();
+    assert!(!replaced);
+    assert_eq!(std::fs::read(&path).unwrap(), foreign);
+    assert_eq!(directory_entries(temp_dir.path()), vec![path]);
+}
+
+#[gpui::test]
+async fn test_realfs_atomic_write_if_unchanged_missing_file(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("settings.json");
+
+    let replaced = gpui::block_on(fs.atomic_write_if_unchanged(
+        path.clone(),
+        "expected".to_owned(),
+        "ours".to_owned(),
+    ))
+    .unwrap();
+    assert!(!replaced);
+    assert_eq!(directory_entries(temp_dir.path()), Vec::<PathBuf>::new());
+
+    let replaced = gpui::block_on(fs.atomic_write_if_unchanged(
+        path.clone(),
+        String::new(),
+        "ours".to_owned(),
+    ))
+    .unwrap();
+    assert!(replaced);
+    assert_eq!(std::fs::read(&path).unwrap(), b"ours");
+    assert_eq!(directory_entries(temp_dir.path()), vec![path]);
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_atomic_write_if_unchanged_dangling_symlink(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("settings.json");
+    std::os::unix::fs::symlink("missing.json", &path).unwrap();
+
+    let replaced = gpui::block_on(fs.atomic_write_if_unchanged(
+        path.clone(),
+        String::new(),
+        "ours".to_owned(),
+    ))
+    .unwrap();
+    assert!(replaced);
+    assert_eq!(std::fs::read(&path).unwrap(), b"ours");
+    assert_eq!(directory_entries(temp_dir.path()), vec![path]);
+}
+
+#[gpui::test]
 #[cfg(target_os = "windows")]
 async fn test_realfs_canonicalize(executor: BackgroundExecutor) {
     use util::paths::SanitizedPath;
@@ -1471,4 +1546,13 @@ async fn restore_can_be_retried_after_collision(cx: &mut TestAppContext) {
         fs.restore(trash_id).await.unwrap_err(),
         TrashRestoreError::AlreadyRestored
     ));
+}
+
+fn directory_entries(path: &Path) -> Vec<PathBuf> {
+    let mut entries = std::fs::read_dir(path)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries
 }

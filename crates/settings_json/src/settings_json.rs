@@ -102,6 +102,16 @@ pub fn find_value_range_in_json_text<T: AsRef<str>>(
 
 #[cfg(feature = "editing")]
 fn insertion_point_before_line_comments(text: &str, key_start: usize) -> usize {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .is_err()
+    {
+        return key_start;
+    }
+    let Some(syntax_tree) = parser.parse(text, None) else {
+        return key_start;
+    };
     let mut point = key_start;
     loop {
         let before = &text[..point];
@@ -117,9 +127,17 @@ fn insertion_point_before_line_comments(text: &str, key_start: usize) -> usize {
             .map(|ix| ix + 1)
             .unwrap_or(0);
         let previous_line = &before[previous_line_start..line_start - 1];
-        if previous_line.trim_start().starts_with("//") {
-            let indent_len = previous_line.len() - previous_line.trim_start().len();
-            point = previous_line_start + indent_len;
+        let indent_len = previous_line.len() - previous_line.trim_start().len();
+        let comment_start = previous_line_start + indent_len;
+        let starts_line_comment = previous_line.trim_start().starts_with("//")
+            && syntax_tree
+                .root_node()
+                .descendant_for_byte_range(comment_start, comment_start + 2)
+                .is_some_and(|node| {
+                    node.kind() == TS_COMMENT_KIND && node.start_byte() == comment_start
+                });
+        if starts_line_comment {
+            point = comment_start;
         } else {
             break;
         }
@@ -135,6 +153,28 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
     tab_size: usize,
     new_value: Option<&Value>,
     replace_key: Option<&str>,
+) -> (Range<usize>, String) {
+    replace_value_in_json_text_inner(text, key_path, tab_size, new_value, replace_key, true)
+}
+
+#[cfg(feature = "editing")]
+pub fn replace_object_value_in_json_text<T: AsRef<str>>(
+    text: &str,
+    key_path: &[T],
+    tab_size: usize,
+    new_value: Option<&Value>,
+) -> (Range<usize>, String) {
+    replace_value_in_json_text_inner(text, key_path, tab_size, new_value, None, false)
+}
+
+#[cfg(feature = "editing")]
+fn replace_value_in_json_text_inner<T: AsRef<str>>(
+    text: &str,
+    key_path: &[T],
+    tab_size: usize,
+    new_value: Option<&Value>,
+    replace_key: Option<&str>,
+    array_indices: bool,
 ) -> (Range<usize>, String) {
     static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
         Query::new(
@@ -184,12 +224,10 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
         let found_key = text
             .get(key_range.clone())
             .zip(key_path.get(depth))
-            .and_then(|(key_text, key_path_value)| {
-                serde_json::to_string(key_path_value.as_ref())
-                    .ok()
-                    .map(|key_path| depth < key_path.len() && key_text == key_path)
-            })
-            .unwrap_or(false);
+            .is_some_and(|(key_text, key_path_value)| {
+                serde_json::from_str::<String>(key_text)
+                    .is_ok_and(|key| key == key_path_value.as_ref())
+            });
 
         if found_key {
             matched_key_start = Some(key_range.start);
@@ -202,15 +240,17 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
                 break;
             }
 
-            if let Some(array_replacement) = handle_possible_array_value(
-                &mat.captures[0].node,
-                &mat.captures[1].node,
-                text,
-                &key_path[depth..],
-                new_value,
-                replace_key,
-                tab_size,
-            ) {
+            if array_indices
+                && let Some(array_replacement) = handle_possible_array_value(
+                    &mat.captures[0].node,
+                    &mat.captures[1].node,
+                    text,
+                    &key_path[depth..],
+                    new_value,
+                    replace_key,
+                    tab_size,
+                )
+            {
                 return array_replacement;
             }
 
@@ -242,7 +282,12 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             let mut removed_comma = false;
             // Look backward for a preceding comma first
             let preceding_text = text.get(0..removal_start).unwrap_or("");
-            if let Some(comma_pos) = preceding_text.rfind(',') {
+            if let Some(comma_pos) = preceding_text.rfind(',')
+                && syntax_tree
+                    .root_node()
+                    .descendant_for_byte_range(comma_pos, comma_pos + 1)
+                    .is_none_or(|node| node.kind() != TS_COMMENT_KIND)
+            {
                 // Check if there are only whitespace characters between the comma and our key
                 let between_comma_and_key = text.get(comma_pos + 1..removal_start).unwrap_or("");
                 if between_comma_and_key.trim().is_empty() {
@@ -250,28 +295,34 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
                     removed_comma = true;
                 }
             }
+            let mut replacement = String::new();
             if let Some(remaining_text) = text.get(existing_value_range.end..)
                 && !removed_comma
             {
-                let mut chars = remaining_text.char_indices();
-                while let Some((offset, ch)) = chars.next() {
+                let mut kept_comments = Vec::<&str>::new();
+                let mut offset = 0;
+                while let Some(ch) = remaining_text[offset..].chars().next() {
                     if ch == ',' {
-                        removal_end = existing_value_range.end + offset + 1;
-                        // Also consume whitespace after the comma
-                        for (_, next_ch) in chars.by_ref() {
-                            if next_ch.is_whitespace() {
-                                removal_end += next_ch.len_utf8();
-                            } else {
-                                break;
-                            }
+                        offset += 1;
+                        offset += remaining_text[offset..].len()
+                            - remaining_text[offset..].trim_start().len();
+                        removal_end = existing_value_range.end + offset;
+                        for comment in kept_comments.iter().copied() {
+                            replacement.push_str(comment);
+                            replacement.push(if comment.starts_with("//") { '\n' } else { ' ' });
                         }
                         break;
-                    } else if !ch.is_whitespace() {
+                    } else if ch.is_whitespace() {
+                        offset += ch.len_utf8();
+                    } else if let Some(comment_len) = json_comment_len(&remaining_text[offset..]) {
+                        kept_comments.push(&remaining_text[offset..offset + comment_len]);
+                        offset += comment_len;
+                    } else {
                         break;
                     }
                 }
             }
-            (removal_start..removal_end, String::new())
+            (removal_start..removal_end, replacement)
         }
     } else {
         if let Some(first_key_start) = first_key_start {
@@ -279,7 +330,8 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             // We have key paths, construct the sub objects
             let new_key = serde_json::to_string(key_path[depth].as_ref()).unwrap();
             // We don't have the key, construct the nested objects
-            let new_value = construct_json_value(&key_path[(depth + 1)..], new_value);
+            let new_value =
+                construct_json_value(&key_path[(depth + 1)..], new_value, array_indices);
 
             let mut row = 0;
             let mut column = 0;
@@ -309,31 +361,30 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             }
         } else {
             // We don't have the key, construct the nested objects
-            let new_value = construct_json_value(&key_path[depth..], new_value);
+            let new_value = construct_json_value(&key_path[depth..], new_value, array_indices);
             let indent_prefix_len = tab_size * depth;
             let mut new_val = to_pretty_json(&new_value, tab_size, indent_prefix_len);
             if depth == 0 {
                 new_val.push('\n');
             }
             // best effort to keep comments with best effort indentation
-            let mut replace_text = &text[existing_value_range.clone()];
-            while let Some(comment_start) = replace_text.rfind("//") {
-                if let Some(comment_end) = replace_text[comment_start..].find('\n') {
-                    let mut comment_with_indent_start = replace_text[..comment_start]
+            let replace_text = &text[existing_value_range.clone()];
+            let kept_comments = json_comment_ranges(replace_text)
+                .into_iter()
+                .map(|comment_range| {
+                    let line_start = replace_text[..comment_range.start]
                         .rfind('\n')
-                        .unwrap_or(comment_start);
-                    if !replace_text[comment_with_indent_start..comment_start]
-                        .trim()
-                        .is_empty()
-                    {
-                        comment_with_indent_start = comment_start;
-                    }
-                    new_val.insert_str(
-                        1,
-                        &replace_text[comment_with_indent_start..comment_start + comment_end],
-                    );
-                }
-                replace_text = &replace_text[..comment_start];
+                        .filter(|line_start| {
+                            replace_text[*line_start..comment_range.start]
+                                .trim()
+                                .is_empty()
+                        })
+                        .unwrap_or(comment_range.start);
+                    &replace_text[line_start..comment_range.end]
+                })
+                .collect::<String>();
+            if new_val.starts_with('{') {
+                new_val.insert_str(1, &kept_comments);
             }
 
             (existing_value_range, new_val)
@@ -342,14 +393,61 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
 }
 
 #[cfg(feature = "editing")]
+fn json_comment_len(text: &str) -> Option<usize> {
+    if text.starts_with("//") {
+        Some(text.find('\n').unwrap_or(text.len()))
+    } else if let Some(rest) = text.strip_prefix("/*") {
+        rest.find("*/").map(|end| end + 4)
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "editing")]
+fn json_comment_ranges(text: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut offset = 0;
+    let mut in_string = false;
+    while let Some(ch) = text[offset..].chars().next() {
+        if in_string {
+            match ch {
+                '\\' => {
+                    offset += 1;
+                    if let Some(escaped) = text[offset..].chars().next() {
+                        offset += escaped.len_utf8();
+                    }
+                    continue;
+                }
+                '"' => in_string = false,
+                _ => {}
+            }
+            offset += ch.len_utf8();
+        } else if ch == '"' {
+            in_string = true;
+            offset += 1;
+        } else if let Some(comment_len) = json_comment_len(&text[offset..]) {
+            if text[offset..].starts_with("//") && offset + comment_len == text.len() {
+                break;
+            }
+            ranges.push(offset..offset + comment_len);
+            offset += comment_len;
+        } else {
+            offset += ch.len_utf8();
+        }
+    }
+    ranges
+}
+
+#[cfg(feature = "editing")]
 fn construct_json_value(
     key_path: &[impl AsRef<str>],
     new_value: Option<&serde_json::Value>,
+    array_indices: bool,
 ) -> serde_json::Value {
     let mut new_value =
         serde_json::to_value(new_value.unwrap_or(&serde_json::Value::Null)).unwrap();
     for key in key_path.iter().rev() {
-        if parse_index_key(key.as_ref()).is_some() {
+        if array_indices && parse_index_key(key.as_ref()).is_some() {
             new_value = serde_json::json!([new_value]);
         } else {
             new_value = serde_json::json!({ key.as_ref().to_string(): new_value });
@@ -462,7 +560,7 @@ pub fn replace_top_level_array_value_in_json_text(
 
     while cursor.node().kind() != TS_ARRAY_KIND {
         if !cursor.goto_next_sibling() {
-            let json_value = construct_json_value(key_path, new_value);
+            let json_value = construct_json_value(key_path, new_value, true);
             let json_value = serde_json::json!([json_value]);
             return (0..text.len(), to_pretty_json(&json_value, tab_size, 0));
         }
@@ -2676,6 +2774,94 @@ mod tests {
         renamed.replace_range(range, &replacement);
         let parsed: Value = serde_json::from_str(&renamed).expect("rename must leave valid JSON");
         pretty_assertions::assert_eq!(parsed, json!({ "plain": "V2", "theme": "One Dark" }));
+    }
+
+    #[test]
+    fn object_value_edits_match_decoded_literal_keys() {
+        #[track_caller]
+        fn check(input: &str, key_path: &[&str], value: Option<Value>, expected: Value) {
+            let (range, replacement) =
+                replace_object_value_in_json_text(input, key_path, 4, value.as_ref());
+            let mut text = input.to_string();
+            text.replace_range(range, &replacement);
+            let parsed = parse_json_with_comments::<Value>(&text).unwrap();
+            pretty_assertions::assert_eq!(parsed, expected, "edited text: {text}");
+        }
+
+        check(
+            r#"{"profiles":{"Work":{"settings":{"languages":{"C":{"tab_size":4}}}}}}"#,
+            &["profiles", "Work", "settings", "languages", "C", "tab_size"],
+            Some(json!(8)),
+            json!({"profiles":{"Work":{"settings":{"languages":{"C":{"tab_size":8}}}}}}),
+        );
+        check(
+            r#"{"a\/b":1}"#,
+            &["a/b"],
+            Some(json!(2)),
+            json!({ "a/b": 2 }),
+        );
+        check(r#"{"a\/b":1, "c": 3}"#, &["a/b"], None, json!({ "c": 3 }));
+        check(
+            r#"{"profiles":{"Work":{"settings":{"tab_size":4}}}}"#,
+            &["profiles", "#0", "settings", "tab_size"],
+            Some(json!(8)),
+            json!({
+                "profiles": {
+                    "#0": { "settings": { "tab_size": 8 } },
+                    "Work": { "settings": { "tab_size": 4 } }
+                }
+            }),
+        );
+        check(
+            "{}",
+            &["profiles", "#1", "settings"],
+            Some(json!({})),
+            json!({ "profiles": { "#1": { "settings": {} } } }),
+        );
+    }
+
+    #[test]
+    fn edits_keep_block_comments() {
+        #[track_caller]
+        fn check(input: &str, key_path: &[&str], value: Option<Value>, expected: &str) {
+            let (range, replacement) =
+                replace_value_in_json_text(input, key_path, 4, value.as_ref(), None);
+            let mut text = input.to_string();
+            text.replace_range(range, &replacement);
+            pretty_assertions::assert_eq!(text, expected);
+            parse_json_with_comments::<Value>(&text).unwrap();
+        }
+
+        check(
+            r#"{"tab_size":4 /* retained */, "theme":"x"}"#,
+            &["tab_size"],
+            None,
+            r#"{/* retained */ "theme":"x"}"#,
+        );
+        check(
+            "{\n    \"tab_size\": 4 // retained\n    , \"theme\": \"x\"\n}",
+            &["tab_size"],
+            None,
+            "{\n    // retained\n\"theme\": \"x\"\n}",
+        );
+        check(
+            "{/* retained */}",
+            &["tab_size"],
+            Some(json!(4)),
+            "{/* retained */\n    \"tab_size\": 4\n}\n",
+        );
+        check(
+            "{\n    // line\n    /* block */\n}",
+            &["tab_size"],
+            Some(json!(4)),
+            "{\n    // line\n    /* block */\n    \"tab_size\": 4\n}\n",
+        );
+        check(
+            "{\n    \"tab_size\": 4,\n    // keep,\n    \"ui_font_size\": 16, \"buffer_font_size\": 15\n}",
+            &["ui_font_size"],
+            None,
+            "{\n    \"tab_size\": 4,\n    // keep,\n    \"buffer_font_size\": 15\n}",
+        );
     }
 
     #[test]

@@ -18,23 +18,27 @@ test-support = ["gpui/test-support", "fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 client.workspace = true
 cloud_api_client.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http_client.workspace = true
 log.workspace = true
 migrator.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 rand.workspace = true
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 settings_content.workspace = true
 settings_json = { workspace = true, features = ["editing"] }
+sysinfo.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

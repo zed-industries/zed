@@ -24,6 +24,7 @@ use patterns::SETTINGS_NESTED_KEY_VALUE_PATTERN;
 
 mod migrations;
 mod patterns;
+mod settings_sync_exclusions;
 
 fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Option<String>> {
     let mut parser = tree_sitter::Parser::new();
@@ -157,7 +158,13 @@ enum MigrationType<'a> {
 }
 
 pub fn migrate_settings(text: &str) -> Result<Option<String>> {
-    run_migrations(text, &SETTINGS_MIGRATIONS)
+    let Some(migrated) = run_migrations(text, &SETTINGS_MIGRATIONS)? else {
+        return Ok(None);
+    };
+    settings_sync_exclusions::carry_exclusions(text, &migrated, |marked| {
+        run_migrations(marked, &SETTINGS_MIGRATIONS)
+    })
+    .map(Some)
 }
 
 pub fn settings_migrations_count() -> usize {
@@ -5444,6 +5451,184 @@ mod tests {
                             "position": "right",
                             "default_width": 420
                         }
+                    }
+                }
+            "#}),
+        );
+    }
+
+    #[test]
+    fn test_settings_sync_exclusions_follow_migrated_values() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": ["/context_servers/private/command/args"]
+                    },
+                    "context_servers": {
+                        "private": {
+                            "command": {
+                                "path": "server",
+                                "args": ["--token=SECRET"]
+                            }
+                        }
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": [
+                            "/context_servers/private/command/args",
+                            "/context_servers/private/args"
+                        ]
+                    },
+                    "context_servers": {
+                        "private": {
+                            "command": "server",
+                            "args": ["--token=SECRET"]
+                        }
+                    }
+                }
+            "#}),
+        );
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": ["/title_bar/show_branch_icon"]
+                    },
+                    "title_bar": {
+                        "show_branch_icon": true
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": [
+                            "/title_bar/show_branch_icon",
+                            "/title_bar/show_branch_status_icon"
+                        ]
+                    },
+                    "title_bar": {
+                        "show_branch_status_icon": true
+                    }
+                }
+            "#}),
+        );
+    }
+
+    #[test]
+    fn test_settings_sync_exclusions_follow_absent_values() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": ["/context_servers/private/command/args"]
+                    },
+                    "context_servers": {
+                        "private": {
+                            "command": {
+                                "path": "server"
+                            }
+                        }
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": [
+                            "/context_servers/private/command/args",
+                            "/context_servers/private/args"
+                        ]
+                    },
+                    "context_servers": {
+                        "private": {
+                            "command": "server"
+                        }
+                    }
+                }
+            "#}),
+        );
+    }
+
+    #[test]
+    fn test_settings_sync_any_depth_exclusions_follow_migrated_values() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": ["/context_servers/private/command/**"]
+                    },
+                    "context_servers": {
+                        "private": {
+                            "command": {
+                                "path": "server",
+                                "args": ["--token", "X"]
+                            }
+                        }
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": [
+                            "/context_servers/private/command/**",
+                            "/context_servers/private/args"
+                        ]
+                    },
+                    "context_servers": {
+                        "private": {
+                            "command": "server",
+                            "args": ["--token", "X"]
+                        }
+                    }
+                }
+            "#}),
+        );
+    }
+
+    #[test]
+    fn test_settings_sync_exclusions_survive_marker_migration_failures() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "auto_indent": true,
+                    "settings_sync": {
+                        "exclude": ["/auto_indent"]
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "auto_indent": "syntax_aware",
+                    "settings_sync": {
+                        "exclude": ["/auto_indent"]
+                    }
+                }
+            "#}),
+        );
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": ["/auto_indent"]
+                    },
+                    "title_bar": {
+                        "show_branch_icon": true
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "settings_sync": {
+                        "exclude": ["/auto_indent"]
+                    },
+                    "title_bar": {
+                        "show_branch_status_icon": true
                     }
                 }
             "#}),

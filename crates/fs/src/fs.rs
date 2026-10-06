@@ -30,6 +30,20 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 use std::mem::MaybeUninit;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use rustix::{
+    fs::{CWD, RenameFlags, renameat_with},
+    io::Errno,
+};
+#[cfg(target_os = "windows")]
+use windows::{
+    Win32::{
+        Foundation::{ERROR_FILE_NOT_FOUND, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2},
+        Storage::FileSystem::{REPLACE_FILE_FLAGS, ReplaceFileW},
+    },
+    core::{HRESULT, HSTRING},
+};
+
 use async_tar::Archive;
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
@@ -140,6 +154,18 @@ pub trait Fs: Send + Sync {
     }
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
+    async fn atomic_write_if_unchanged(
+        &self,
+        path: PathBuf,
+        expected_text: String,
+        text: String,
+    ) -> Result<bool> {
+        if self.load(&path).await.unwrap_or_default() != expected_text {
+            return Ok(false);
+        }
+        self.atomic_write(path, text).await?;
+        Ok(true)
+    }
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
@@ -989,6 +1015,18 @@ impl Fs for RealFs {
         .await?;
 
         Ok(())
+    }
+
+    async fn atomic_write_if_unchanged(
+        &self,
+        path: PathBuf,
+        expected_text: String,
+        data: String,
+    ) -> Result<bool> {
+        smol::unblock(move || {
+            compare_and_swap_file(&path, expected_text.as_bytes(), data.as_bytes())
+        })
+        .await
     }
 
     #[cfg(target_os = "windows")]
@@ -3288,6 +3326,29 @@ impl Fs for FakeFs {
         Ok(())
     }
 
+    async fn atomic_write_if_unchanged(
+        &self,
+        path: PathBuf,
+        expected_text: String,
+        data: String,
+    ) -> Result<bool> {
+        self.simulate_random_delay().await;
+        let path = normalize_path(path.as_path());
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
+        let current_text = self
+            .read_file_sync(&path)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default();
+        if current_text != expected_text {
+            return Ok(false);
+        }
+        self.write_file_internal(path, data.into_bytes(), true)?;
+        Ok(true)
+    }
+
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
@@ -3674,6 +3735,243 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
         Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
     })
     .await
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+const MAX_CONTENT_SWAPS: usize = 4;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn compare_and_swap_file(path: &Path, expected: &[u8], data: &[u8]) -> Result<bool> {
+    if read_bytes_or_empty(path)? != expected {
+        return Ok(false);
+    }
+    let mut temp_file =
+        tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
+    temp_file.write_all(data)?;
+    let mut temp_path = temp_file.into_temp_path();
+    for _ in 0..MAX_CONTENT_SWAPS {
+        if expected.is_empty() {
+            match renameat_with(CWD, &*temp_path, CWD, path, RenameFlags::NOREPLACE) {
+                Ok(()) => {
+                    temp_path.disable_cleanup(true);
+                    return Ok(true);
+                }
+                Err(error) if error == Errno::EXIST => {}
+                Err(error) if is_unsupported_rename_error(error) => {
+                    return compare_and_persist(temp_path, path, expected);
+                }
+                Err(error) => return Err(anyhow::Error::from(error)),
+            }
+        }
+        match renameat_with(CWD, &*temp_path, CWD, path, RenameFlags::EXCHANGE) {
+            Ok(()) => {
+                temp_path.disable_cleanup(true);
+                let mut holder = temp_path.to_path_buf();
+                let result = resolve_displaced_content(
+                    path,
+                    &mut holder,
+                    expected,
+                    data,
+                    |target, holder| {
+                        renameat_with(CWD, holder.as_path(), CWD, target, RenameFlags::EXCHANGE)?;
+                        Ok(())
+                    },
+                );
+                return result.with_context(|| {
+                    format!("displaced content of {path:?} is kept at {holder:?}")
+                });
+            }
+            Err(error) if error == Errno::NOENT && expected.is_empty() => {}
+            Err(error) if error == Errno::NOENT => return Ok(false),
+            Err(error) if is_unsupported_rename_error(error) => {
+                return compare_and_persist(temp_path, path, expected);
+            }
+            Err(error) => return Err(anyhow::Error::from(error)),
+        }
+    }
+    anyhow::bail!("{path:?} kept appearing and disappearing during a conditional write")
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+fn compare_and_swap_file(path: &Path, expected: &[u8], data: &[u8]) -> Result<bool> {
+    let mut temp_file =
+        tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
+    temp_file.write_all(data)?;
+    compare_and_persist(temp_file.into_temp_path(), path, expected)
+}
+
+#[cfg(target_os = "windows")]
+fn compare_and_swap_file(path: &Path, expected: &[u8], data: &[u8]) -> Result<bool> {
+    if read_bytes_or_empty(path)? != expected {
+        return Ok(false);
+    }
+    let mut temp_dir = TempDir::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
+    let replacement = temp_dir.path().join("temp_file");
+    let backup = temp_dir.path().join("backup");
+    std::fs::File::create_new(&replacement)?.write_all(data)?;
+    for _ in 0..MAX_CONTENT_SWAPS {
+        if expected.is_empty() {
+            match rename_without_replace(&replacement, path) {
+                Ok(()) => return Ok(true),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(anyhow::Error::from(error)),
+            }
+        }
+        match replace_file_with_backup(path, &replacement, &backup) {
+            Ok(()) => {
+                let temp_dir = temp_dir.keep();
+                let mut holder = backup.clone();
+                let result = resolve_displaced_content(
+                    path,
+                    &mut holder,
+                    expected,
+                    data,
+                    |target, holder| {
+                        let next = if *holder == replacement {
+                            &backup
+                        } else {
+                            &replacement
+                        };
+                        replace_file_with_backup(target, holder.as_path(), next)?;
+                        *holder = next.clone();
+                        Ok(())
+                    },
+                );
+                if result.is_ok()
+                    && let Err(error) = std::fs::remove_dir(&temp_dir)
+                {
+                    log::error!("failed to remove {temp_dir:?}: {error}");
+                }
+                return result.with_context(|| {
+                    format!("displaced content of {path:?} is kept at {holder:?}")
+                });
+            }
+            Err(error) if error.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0) => {
+                if !expected.is_empty() {
+                    return Ok(false);
+                }
+            }
+            Err(error)
+                if error.code() == HRESULT::from_win32(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2.0) =>
+            {
+                temp_dir.disable_cleanup(true);
+                return Err(anyhow::Error::from(error).context(format!(
+                    "failed to replace {path:?}, its original content is kept at {backup:?}"
+                )));
+            }
+            Err(error) => {
+                return Err(
+                    anyhow::Error::from(error).context(format!("failed to replace {path:?}"))
+                );
+            }
+        }
+    }
+    anyhow::bail!("{path:?} kept appearing and disappearing during a conditional write")
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+fn resolve_displaced_content(
+    target: &Path,
+    holder: &mut PathBuf,
+    expected: &[u8],
+    data: &[u8],
+    mut swap: impl FnMut(&Path, &mut PathBuf) -> Result<()>,
+) -> Result<bool> {
+    let displaced = read_displaced_content(holder)?;
+    if displaced == expected {
+        remove_displaced_file(holder);
+        return Ok(true);
+    }
+    let mut visible = data.to_vec();
+    let mut restoring = displaced;
+    for _ in 0..MAX_CONTENT_SWAPS {
+        swap(target, holder)?;
+        let displaced = read_displaced_content(holder)?;
+        if displaced == visible {
+            anyhow::ensure!(
+                displaced == data || displaced == expected,
+                "{target:?} was modified concurrently"
+            );
+            remove_displaced_file(holder);
+            return Ok(false);
+        }
+        visible = restoring;
+        restoring = displaced;
+    }
+    anyhow::bail!("{target:?} kept changing while restoring its content")
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+fn read_displaced_content(path: &Path) -> io::Result<Vec<u8>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(error)
+            if error.kind() == io::ErrorKind::NotFound
+                && std::fs::symlink_metadata(path)
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink()) =>
+        {
+            Ok(Vec::new())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+fn remove_displaced_file(path: &Path) {
+    if let Err(error) = std::fs::remove_file(path) {
+        log::error!("failed to remove {path:?}: {error}");
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn is_unsupported_rename_error(error: Errno) -> bool {
+    [
+        Errno::INVAL,
+        Errno::NOTSUP,
+        Errno::OPNOTSUPP,
+        Errno::NOSYS,
+        Errno::XDEV,
+    ]
+    .contains(&error)
+}
+
+#[cfg(unix)]
+fn compare_and_persist(
+    temp_path: tempfile::TempPath,
+    path: &Path,
+    expected: &[u8],
+) -> Result<bool> {
+    if read_bytes_or_empty(path)? != expected {
+        return Ok(false);
+    }
+    temp_path.persist(path)?;
+    Ok(true)
+}
+
+fn read_bytes_or_empty(path: &Path) -> io::Result<Vec<u8>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn replace_file_with_backup(
+    replaced_file: &Path,
+    replacement_file: &Path,
+    backup_file: &Path,
+) -> windows::core::Result<()> {
+    unsafe {
+        ReplaceFileW(
+            &HSTRING::from(replaced_file.as_os_str()),
+            &HSTRING::from(replacement_file.as_os_str()),
+            &HSTRING::from(backup_file.as_os_str()),
+            REPLACE_FILE_FLAGS::default(),
+            None,
+            None,
+        )
+    }
 }
 
 #[cfg(target_os = "windows")]

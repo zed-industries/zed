@@ -10,6 +10,7 @@ mod open_url_modal;
 mod quick_action_bar;
 pub mod remote_debug;
 pub mod settings_sync_notifications;
+mod settings_sync_ui;
 pub mod telemetry_log;
 #[cfg(all(target_os = "macos", feature = "visual-tests"))]
 pub mod visual_tests;
@@ -5961,6 +5962,7 @@ mod tests {
                 "search",
                 "settings_editor",
                 "settings_profile_selector",
+                "settings_sync",
                 "skill_creator",
                 "snippets",
                 "stash_picker",
