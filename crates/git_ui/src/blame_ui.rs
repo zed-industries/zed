@@ -1,6 +1,8 @@
 use crate::{
     commit_tooltip::{CommitAvatar, CommitTooltip, commit_tag_chips, shallow_boundary_notice},
-    commit_view::{CommitView, GitBlob, build_buffer, worktree_id_for_repo_path},
+    commit_view::{
+        CommitView, CommitViewOptions, GitBlob, build_buffer, worktree_id_for_repo_path,
+    },
 };
 use anyhow::Context as _;
 use editor::{BlameRenderer, Editor, GitBlame, MultiBuffer, hover_markdown_style};
@@ -24,7 +26,7 @@ use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{ContextMenu, CopyButton, Divider, prelude::*, tooltip_container};
-use util::paths::PathStyle;
+use util::{ResultExt as _, paths::PathStyle};
 use workspace::{Workspace, notifications::NotifyTaskExt as _};
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
@@ -250,7 +252,10 @@ impl BlameRenderer for GitBlameRenderer {
                                     blame_entry.sha.to_string(),
                                     repository.downgrade(),
                                     workspace.clone(),
-                                    Default::default(),
+                                    CommitViewOptions {
+                                        scroll_to: blame_entry_scroll_target(&blame_entry),
+                                        ..Default::default()
+                                    },
                                     window,
                                     cx,
                                 )
@@ -316,6 +321,7 @@ impl BlameRenderer for GitBlameRenderer {
             .unwrap_or(OffsetDateTime::now_utc());
 
         let sha = blame.sha.to_string().into();
+        let scroll_to = blame_entry_scroll_target(&blame);
         let author: SharedString = blame
             .author
             .clone()
@@ -490,7 +496,10 @@ impl BlameRenderer for GitBlameRenderer {
                                                         commit_summary.sha.clone().into(),
                                                         repository.downgrade(),
                                                         workspace.clone(),
-                                                        Default::default(),
+                                                        CommitViewOptions {
+                                                            scroll_to: scroll_to.clone(),
+                                                            ..Default::default()
+                                                        },
                                                         window,
                                                         cx,
                                                     );
@@ -522,7 +531,10 @@ impl BlameRenderer for GitBlameRenderer {
             blame_entry.sha.to_string(),
             repository.downgrade(),
             workspace,
-            Default::default(),
+            CommitViewOptions {
+                scroll_to: blame_entry_scroll_target(&blame_entry),
+                ..Default::default()
+            },
             window,
             cx,
         )
@@ -770,4 +782,9 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
         }
         Err(_) => "Error parsing date".to_string(),
     }
+}
+
+fn blame_entry_scroll_target(blame_entry: &BlameEntry) -> Option<(RepoPath, u32)> {
+    let path = RepoPath::new(&blame_entry.filename).log_err()?;
+    Some((path, blame_entry.original_line_number.saturating_sub(1)))
 }
