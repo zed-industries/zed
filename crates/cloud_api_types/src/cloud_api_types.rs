@@ -32,6 +32,9 @@ pub struct GetAuthenticatedUserResponse {
     #[serde(default)]
     pub configuration_by_organization: BTreeMap<OrganizationId, OrganizationConfiguration>,
     pub plan: PlanInfo,
+    /// Only sent to Delta clients.
+    #[serde(default)]
+    pub guest_organizations: Vec<GuestOrganization>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -57,6 +60,19 @@ pub struct Organization {
     pub name: Arc<str>,
     pub is_personal: bool,
 }
+
+/// An organization the user is not a member of, with the threads in it they can read on the
+/// client's release channel.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct GuestOrganization {
+    pub id: OrganizationId,
+    pub name: Arc<str>,
+    pub thread_ids: Vec<ThreadId>,
+}
+
+/// The ID of a Delta thread in Cloud.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct ThreadId(pub Arc<str>);
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct OrganizationConfiguration {
