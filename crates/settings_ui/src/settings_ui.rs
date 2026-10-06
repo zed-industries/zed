@@ -9,10 +9,11 @@ use editor::{Editor, EditorEvent};
 use futures::{StreamExt, channel::mpsc};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
-    Focusable, Global, KeyContext, ListState, ReadGlobal as _, Role, ScrollHandle, Stateful,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, WeakEntity, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
+    Action, App, AsyncApp, AvailableSpace, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div,
+    Entity, FocusHandle, Focusable, Global, KeyContext, ListState, ReadGlobal as _, Role,
+    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle,
+    WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, actions, container_query, div,
+    list, point, prelude::*, px, uniform_list,
 };
 
 use language::Buffer;
@@ -980,8 +981,6 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     bottom_spacer_height: Pixels,
-    pending_content_scroll: Option<usize>,
-    content_navigation_generation: usize,
     shown_errors: HashSet<String>,
     pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
@@ -2025,8 +2024,6 @@ impl SettingsWindow {
             sandbox_host_validation_error: None,
             list_state,
             bottom_spacer_height: px(0.),
-            pending_content_scroll: None,
-            content_navigation_generation: 0,
             last_copied_link_path: None,
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
@@ -2528,8 +2525,6 @@ impl SettingsWindow {
     }
 
     fn reset_list_state(&mut self) {
-        self.pending_content_scroll = None;
-        self.content_navigation_generation = self.content_navigation_generation.wrapping_add(1);
         let mut visible_items_count = self.visible_page_items().count();
 
         if visible_items_count > 0 {
@@ -2656,8 +2651,6 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
-        self.pending_content_scroll = None;
-        self.content_navigation_generation = self.content_navigation_generation.wrapping_add(1);
         // Navigating to another page dismisses the transient "copied share
         // link" checkmark shown on a Skills page row.
         self.last_copied_skill_directory_path = None;
@@ -3397,7 +3390,7 @@ impl SettingsWindow {
     }
 
     fn scroll_to_content_item(
-        &mut self,
+        &self,
         content_item_index: usize,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -3406,17 +3399,12 @@ impl SettingsWindow {
             .visible_page_items()
             .position(|(index, _)| index == content_item_index)
             .unwrap_or(0);
-        self.content_navigation_generation = self.content_navigation_generation.wrapping_add(1);
-        self.pending_content_scroll = Some(if index == 0 { 0 } else { index + 1 });
         if index == 0 {
             if let Some(scroll_handle) = self.current_sub_page_scroll_handle() {
                 scroll_handle.set_offset(point(px(0.), px(0.)));
             }
 
-            self.list_state.scroll_to(gpui::ListOffset {
-                item_ix: 0,
-                offset_in_item: px(0.),
-            });
+            self.list_state.scroll_to(gpui::ListOffset::default());
             return;
         }
         self.list_state.scroll_to(gpui::ListOffset {
@@ -3597,6 +3585,13 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         let current_page_index = self.current_page_index();
         let mut page_content = v_flex()
+            .on_children_prepainted(cx.processor(|settings_window, _, window, cx| {
+                let previous_entry = settings_window.navbar_entry;
+                settings_window.update_navbar_entry_from_scroll_position(window);
+                if settings_window.navbar_entry != previous_entry {
+                    cx.defer_in(window, |_, _, cx| cx.notify());
+                }
+            }))
             .id("settings-ui-page")
             .role(Role::Group)
             .aria_label("Settings Content")
@@ -3621,104 +3616,97 @@ impl SettingsWindow {
                 .find(|entry| entry.is_root && entry.page_index == self.current_page_index())
                 .map(|entry| entry.title);
 
-            let list_content = list(
-                self.list_state.clone(),
-                cx.processor(move |this, index, window, cx| {
-                    if index == 0 {
-                        return div()
-                            .px_8()
-                            .when(this.sub_page_stack.is_empty(), |this| {
-                                this.when_some(root_nav_label, |this, title| {
-                                    this.child(
-                                        Label::new(title).size(LabelSize::Large).mt_2().mb_3(),
-                                    )
-                                })
+            let render_item = cx.processor(move |settings_window, index, window, cx| {
+                if index == 0 {
+                    return div()
+                        .px_8()
+                        .when(settings_window.sub_page_stack.is_empty(), |element| {
+                            element.when_some(root_nav_label, |element, title| {
+                                element
+                                    .child(Label::new(title).size(LabelSize::Large).mt_2().mb_3())
                             })
-                            .into_any_element();
-                    }
+                        })
+                        .into_any_element();
+                }
 
-                    let mut visible_items = this.visible_page_items();
-                    let Some((actual_item_index, item)) = visible_items.nth(index - 1) else {
-                        return div().h(this.bottom_spacer_height).into_any_element();
-                    };
+                let mut visible_items = settings_window.visible_page_items();
+                let Some((actual_item_index, item)) = visible_items.nth(index - 1) else {
+                    return div()
+                        .h(settings_window.bottom_spacer_height)
+                        .into_any_element();
+                };
 
-                    let next_is_header = visible_items
-                        .next()
-                        .map(|(_, item)| matches!(item, SettingsPageItem::SectionHeader(_)))
-                        .unwrap_or(false);
+                let next_is_header = visible_items
+                    .next()
+                    .map(|(_, item)| matches!(item, SettingsPageItem::SectionHeader(_)))
+                    .unwrap_or(false);
 
-                    let is_last = Some(actual_item_index) == last_non_header_index;
-                    let is_last_in_section = next_is_header || is_last;
+                let is_last = Some(actual_item_index) == last_non_header_index;
+                let is_last_in_section = next_is_header || is_last;
 
-                    let bottom_border = !is_last_in_section;
-                    let extra_bottom_padding = is_last_in_section;
+                let bottom_border = !is_last_in_section;
+                let extra_bottom_padding = is_last_in_section;
 
-                    let item_focus_handle = this.content_handles[current_page_index]
-                        [actual_item_index]
-                        .focus_handle(cx);
+                let item_focus_handle = settings_window.content_handles[current_page_index]
+                    [actual_item_index]
+                    .focus_handle(cx);
 
-                    v_flex()
-                        .id(("settings-page-item", actual_item_index))
-                        .track_focus(&item_focus_handle)
-                        .w_full()
-                        .min_w_0()
-                        .child(item.render(
-                            this,
-                            actual_item_index,
-                            bottom_border,
-                            extra_bottom_padding,
-                            window,
-                            cx,
-                        ))
-                        .into_any_element()
-                }),
-            );
+                v_flex()
+                    .id(("settings-page-item", actual_item_index))
+                    .track_focus(&item_focus_handle)
+                    .w_full()
+                    .min_w_0()
+                    .child(item.render(
+                        settings_window,
+                        actual_item_index,
+                        bottom_border,
+                        extra_bottom_padding,
+                        window,
+                        cx,
+                    ))
+                    .into_any_element()
+            });
 
-            let settings_window = cx.entity().downgrade();
+            let settings_window = cx.entity();
             let list_state = self.list_state.clone();
-            let navigation_generation = self.content_navigation_generation;
-            page_content = page_content.child(list_content.size_full()).child(
-                gpui::canvas(
-                    move |bounds, _, cx| {
-                        let count = list_state.item_count();
-                        if count < 2 {
-                            return;
+            page_content = page_content.child(container_query(move |size, window, cx| {
+                let count = list_state.item_count();
+                let last_index = count.checked_sub(2);
+                let mut last_item = last_index.map(|index| render_item(index, window, cx));
+                if let Some(last_item) = last_item.as_mut() {
+                    let last_item_size = last_item.layout_as_root(
+                        gpui::size(
+                            AvailableSpace::Definite(size.width),
+                            AvailableSpace::MinContent,
+                        ),
+                        window,
+                        cx,
+                    );
+                    let spacer_height = (size.height - last_item_size.height).max(px(0.));
+                    settings_window.update(cx, |settings_window, _| {
+                        if list_state
+                            .bounds_for_item(count - 2)
+                            .is_some_and(|bounds| bounds.size != last_item_size)
+                        {
+                            list_state.remeasure_items(count - 2..count - 1);
                         }
-                        let Some(last_item) = list_state.bounds_for_item(count - 2) else {
-                            return;
-                        };
-                        let spacer_height =
-                            (bounds.size.height - last_item.size.height).max(px(0.));
-                        cx.defer(move |cx| {
-                            settings_window
-                                .update(cx, |this, cx| {
-                                    // Focus listeners can navigate after this layout but before its callback.
-                                    if this.content_navigation_generation != navigation_generation {
-                                        return;
-                                    }
-                                    if this.bottom_spacer_height != spacer_height {
-                                        this.bottom_spacer_height = spacer_height;
-                                        this.list_state.remeasure_items(count - 1..count);
-                                        // The first layout may clamp navigation before the spacer is measured.
-                                        if let Some(item_ix) = this.pending_content_scroll {
-                                            this.list_state.scroll_to(gpui::ListOffset {
-                                                item_ix,
-                                                offset_in_item: px(0.),
-                                            });
-                                        }
-                                        cx.notify();
-                                    } else if this.pending_content_scroll.take().is_some() {
-                                        cx.notify();
-                                    }
-                                })
-                                .log_err();
-                        });
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+                        if settings_window.bottom_spacer_height != spacer_height {
+                            settings_window.bottom_spacer_height = spacer_height;
+                            list_state.remeasure_items(count - 1..count);
+                        }
+                    });
+                }
+                list(list_state, move |index, window, cx| {
+                    if Some(index) == last_index
+                        && let Some(last_item) = last_item.take()
+                    {
+                        last_item
+                    } else {
+                        render_item(index, window, cx)
+                    }
+                })
+                .size_full()
+            }))
         }
         page_content
     }
@@ -4070,7 +4058,17 @@ impl SettingsWindow {
                     }
                     if handle.contains_focused(window, cx) {
                         let next_logical_index = logical_index + offset + 1;
-                        this.list_state.scroll_to_reveal_item(next_logical_index);
+                        let visible_item_count = this.visible_page_items().count();
+                        if next_logical_index <= visible_item_count {
+                            this.list_state.scroll_to_reveal_item(next_logical_index);
+                        } else if let Some(bounds) =
+                            this.list_state.bounds_for_item(visible_item_count)
+                        {
+                            this.list_state.scroll_by(
+                                (bounds.bottom() - this.list_state.viewport_bounds().bottom())
+                                    .max(px(0.)),
+                            );
+                        }
                         // We need to render the next item to ensure it's focus handle is in the element tree
                         cx.on_next_frame(window, |_, window, cx| {
                             cx.notify();
@@ -4118,18 +4116,6 @@ impl SettingsWindow {
                 }
                 window.focus_prev(cx);
             }))
-            .when(current_sub_page.is_none(), |this| {
-                this.vertical_scrollbar_for(&self.list_state, window, cx)
-            })
-            .when_some(current_sub_page, |this, current_sub_page| {
-                this.custom_scrollbars(
-                    Scrollbars::new(ui::ScrollAxes::Vertical)
-                        .tracked_scroll_handle(&current_sub_page.scroll_handle)
-                        .id((current_sub_page.link.title.clone(), 42)),
-                    window,
-                    cx,
-                )
-            })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .pt_6()
             .gap_4()
@@ -4153,6 +4139,18 @@ impl SettingsWindow {
                     .tab_index(CONTENT_GROUP_TAB_INDEX)
                     .child(page_content),
             )
+            .when(current_sub_page.is_none(), |element| {
+                element.vertical_scrollbar_for(&self.list_state, window, cx)
+            })
+            .when_some(current_sub_page, |element, current_sub_page| {
+                element.custom_scrollbars(
+                    Scrollbars::new(ui::ScrollAxes::Vertical)
+                        .tracked_scroll_handle(&current_sub_page.scroll_handle)
+                        .id((current_sub_page.link.title.clone(), 42)),
+                    window,
+                    cx,
+                )
+            })
     }
 
     /// This function will create a new settings file if one doesn't exist
@@ -4295,10 +4293,7 @@ impl SettingsWindow {
     }
 
     fn update_navbar_entry_from_scroll_position(&mut self, window: &Window) {
-        if self.pending_content_scroll.is_some()
-            || self.navbar_entries.get(self.navbar_entry).is_none()
-            || !self.sub_page_stack.is_empty()
-        {
+        if self.navbar_entries.get(self.navbar_entry).is_none() || !self.sub_page_stack.is_empty() {
             return;
         }
 
@@ -4314,6 +4309,7 @@ impl SettingsWindow {
             .logical_scroll_top()
             .item_ix
             .saturating_sub(1);
+        let viewport = self.list_state.viewport_bounds();
         let section_index = self
             .visible_page_items()
             .enumerate()
@@ -4326,8 +4322,8 @@ impl SettingsWindow {
                         .list_state
                         .bounds_for_item(position + 1)
                         .is_some_and(|bounds| {
-                            bounds.top()
-                                <= self.list_state.viewport_bounds().top() + window.rem_size() * 1.5
+                            bounds.intersects(&viewport)
+                                && bounds.top() <= viewport.top() + window.rem_size() * 1.5
                         });
                 near_top.then_some(index)
             })
@@ -4636,7 +4632,6 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.update_navbar_entry_from_scroll_position(window);
         let ui_font = theme_settings::setup_ui_font(window, cx);
 
         client_side_decorations(
@@ -5481,8 +5476,6 @@ pub mod test {
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 bottom_spacer_height: px(0.),
-                pending_content_scroll: None,
-                content_navigation_generation: 0,
                 shown_errors: HashSet::default(),
                 hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
@@ -5623,8 +5616,6 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             bottom_spacer_height: px(0.),
-            pending_content_scroll: None,
-            content_navigation_generation: 0,
             shown_errors: HashSet::default(),
             hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
@@ -5707,6 +5698,381 @@ pub mod test {
     }
 
     #[gpui::test]
+    fn scroll_selection_requires_a_visible_header(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let settings_window = cx.update(|window, cx| {
+            register_settings(cx);
+            cx.new(|cx| {
+                let mut settings_window = parse("v Test\n- First*\n- Last", window, cx);
+                settings_window.build_content_handles(window, cx);
+                settings_window.list_state =
+                    ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+                settings_window.reset_list_state();
+                settings_window
+            })
+        });
+        let list_state =
+            settings_window.read_with(cx, |settings_window, _| settings_window.list_state.clone());
+        let view = cx.update(|_, cx| cx.new(|_| TestSettingsPage(settings_window.clone())));
+        draw_settings_page(&view, px(400.), px(400.), cx);
+        let first_header_height = list_state.bounds_for_item(1).unwrap().size.height;
+        for (height, header_top, expected_entry) in [
+            (px(0.), px(22.), 1),
+            (px(20.), px(22.), 1),
+            (px(22.), px(22.), 1),
+            (px(23.), px(22.), 2),
+            (px(40.), px(24.), 2),
+            (px(40.), px(25.), 1),
+        ] {
+            list_state.scroll_to(gpui::ListOffset {
+                item_ix: 1,
+                offset_in_item: first_header_height - header_top,
+            });
+            draw_settings_page(&view, px(400.), height, cx);
+            let viewport = list_state.viewport_bounds();
+            let last_header = list_state.bounds_for_item(2).unwrap();
+            assert_eq!(viewport.size.height, height);
+            assert_eq!(last_header.top() - viewport.top(), header_top);
+            settings_window.read_with(cx, |settings_window, _| {
+                assert_eq!(settings_window.navbar_entry, expected_entry);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn scroll_selection_tracks_reflow_without_spacer_changes(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let setting = || {
+                test_action_link(
+                    "Setting",
+                    Some("A setting with a long description. ".repeat(100)),
+                )
+            };
+            settings_window_with_items(
+                vec![
+                    SettingsPageItem::SectionHeader("First"),
+                    setting(),
+                    SettingsPageItem::SectionHeader("Last"),
+                    setting(),
+                ],
+                window,
+                cx,
+            )
+        });
+        cx.simulate_resize(gpui::size(px(900.), px(500.)));
+        cx.run_until_parked();
+        let list_state =
+            settings_window.read_with(cx, |settings_window, _| settings_window.list_state.clone());
+        let first_setting_height = list_state.bounds_for_item(2).unwrap().size.height;
+        assert!(first_setting_height > list_state.viewport_bounds().size.height);
+        settings_window.update(cx, |settings_window, cx| {
+            assert_eq!(settings_window.bottom_spacer_height, px(0.));
+            list_state.scroll_to(gpui::ListOffset {
+                item_ix: 2,
+                offset_in_item: first_setting_height - px(22.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            list_state.bounds_for_item(3).unwrap().top() - list_state.viewport_bounds().top(),
+            px(22.)
+        );
+        settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(settings_window.navbar_entry, 2);
+        });
+
+        for (width, expected_entry) in [(px(600.), 1), (px(900.), 2)] {
+            cx.simulate_resize(gpui::size(width, px(500.)));
+            cx.run_until_parked();
+            let header_bounds = list_state.bounds_for_item(3).unwrap();
+            let viewport = list_state.viewport_bounds();
+            if width == px(600.) {
+                assert!(header_bounds.top() > viewport.bottom());
+            } else {
+                assert_eq!(header_bounds.top() - viewport.top(), px(22.));
+            }
+            settings_window.read_with(cx, |settings_window, _| {
+                assert_eq!(settings_window.bottom_spacer_height, px(0.));
+                assert_eq!(settings_window.navbar_entry, expected_entry);
+            });
+        }
+
+        let last_height = list_state.bounds_for_item(4).unwrap().size.height;
+        settings_window.update(cx, |_, cx| {
+            list_state.scroll_to(gpui::ListOffset {
+                item_ix: 4,
+                offset_in_item: last_height / 4.,
+            });
+            cx.notify();
+        });
+        assert_eq!(
+            list_state.logical_scroll_top().offset_in_item,
+            last_height / 4.
+        );
+        settings_window.update(cx, |settings_window, cx| {
+            settings_window.pages[0].items[3] = test_action_link(
+                "Setting",
+                Some("A setting with a long description. ".repeat(200)),
+            );
+            list_state.remeasure();
+            cx.notify();
+        });
+        let resized_height = list_state.bounds_for_item(4).unwrap().size.height;
+        assert!(resized_height > last_height);
+        assert_eq!(list_state.logical_scroll_top().item_ix, 4);
+        assert_eq!(
+            list_state.logical_scroll_top().offset_in_item,
+            resized_height / 4.
+        );
+    }
+
+    #[gpui::test]
+    fn tab_in_last_setting_keeps_focused_control_visible(cx: &mut gpui::TestAppContext) {
+        let control_handles = Rc::new(RefCell::new(HashMap::<&'static str, FocusHandle>::new()));
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state, cx);
+            cx.default_global::<SettingFieldRenderer>()
+                .add_basic_renderer::<bool>({
+                    let control_handles = control_handles.clone();
+                    move |field, file, metadata, title, description, window, cx| {
+                        let focus_handle = control_handles
+                            .borrow_mut()
+                            .entry(title)
+                            .or_insert_with(|| cx.focus_handle())
+                            .clone();
+                        div()
+                            .id("test-switch-bounds")
+                            .track_focus(&focus_handle)
+                            .debug_selector(move || title.to_string())
+                            .child(render_toggle_button(
+                                field,
+                                file,
+                                metadata,
+                                title,
+                                description,
+                                window,
+                                cx,
+                            ))
+                            .into_any_element()
+                    }
+                });
+            let git_integration = page_data::settings_data(cx)
+                .into_iter()
+                .flat_map(|page| Vec::from(page.items))
+                .find(|item| match item {
+                    SettingsPageItem::DynamicItem(item) => {
+                        item.discriminant.title == "Disable Git Integration"
+                    }
+                    _ => false,
+                })
+                .unwrap();
+            let mut settings_window = settings_window_with_items(
+                vec![
+                    SettingsPageItem::SectionHeader("First"),
+                    test_action_link(
+                        "Preceding setting",
+                        Some("A setting with a long description. ".repeat(100)),
+                    ),
+                    SettingsPageItem::SectionHeader("Last"),
+                    git_integration,
+                    SettingsPageItem::SectionHeader("Hidden"),
+                ],
+                window,
+                cx,
+            );
+            settings_window.filter_table[0][4] = false;
+            settings_window.reset_list_state();
+            settings_window.setup_navbar_focus_subscriptions(window, cx);
+            window.activate_window();
+            settings_window
+        });
+        let list_state = settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(settings_window.visible_page_items().count(), 4);
+            assert_eq!(settings_window.list_state.item_count(), 6);
+            settings_window.list_state.clone()
+        });
+        for (height, clipped) in [(500., false), (500., true), (260., true)] {
+            cx.simulate_resize(gpui::size(px(900.), px(height)));
+            cx.run_until_parked();
+            settings_window.update(cx, |_, cx| {
+                list_state.scroll_to_reveal_item(4);
+                cx.notify();
+            });
+            cx.run_until_parked();
+            let viewport = list_state.viewport_bounds();
+            if clipped {
+                let status_bounds = cx.debug_bounds("Enable Git Status").unwrap();
+                settings_window.update(cx, |_, cx| {
+                    list_state.scroll_by(status_bounds.bottom() - viewport.bottom() + px(1.));
+                    cx.notify();
+                });
+                cx.run_until_parked();
+            }
+            let status_handle = control_handles.borrow()["Enable Git Status"].clone();
+            let diff_handle = control_handles.borrow()["Enable Git Diff"].clone();
+            cx.update(|window, cx| {
+                status_handle.focus(window, cx);
+                window.focus_next(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| assert!(status_handle.contains_focused(window, cx)));
+            let status_bounds = cx.debug_bounds("Enable Git Status").unwrap();
+            let initial_row_bounds = list_state.bounds_for_item(4).unwrap();
+            let initial_offset = list_state.scroll_px_offset_for_scrollbar();
+            assert!(status_bounds.top() >= viewport.top());
+            assert!(status_bounds.bottom() <= viewport.bottom());
+            if clipped {
+                assert_eq!(status_bounds.bottom(), viewport.bottom() - px(1.));
+                assert!(cx.debug_bounds("Enable Git Diff").unwrap().top() > viewport.bottom());
+            } else {
+                assert!(initial_row_bounds.top() >= viewport.top());
+                assert_eq!(initial_row_bounds.bottom(), viewport.bottom());
+            }
+            if height == 260. {
+                assert!(initial_row_bounds.size.height > viewport.size.height);
+            }
+
+            cx.dispatch_action(menu::SelectNext);
+            if !clipped {
+                assert_eq!(list_state.scroll_px_offset_for_scrollbar(), initial_offset);
+            }
+            for _ in 0..2 {
+                cx.update(|window, cx| {
+                    window.simulate_next_frame(cx);
+                });
+                cx.run_until_parked();
+            }
+            cx.update(|window, cx| assert!(diff_handle.contains_focused(window, cx)));
+            let diff_bounds = cx.debug_bounds("Enable Git Diff").unwrap();
+            assert_eq!(
+                list_state.bounds_for_item(4).unwrap().bottom(),
+                viewport.bottom()
+            );
+            assert!(diff_bounds.top() >= viewport.top());
+            assert!(diff_bounds.bottom() <= viewport.bottom());
+            if !clipped {
+                assert_eq!(list_state.scroll_px_offset_for_scrollbar(), initial_offset);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn last_setting_preserves_focused_input_across_reflow(cx: &mut gpui::TestAppContext) {
+        let editors = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.observe_new({
+                let editors = editors.clone();
+                move |_: &mut Editor, _, cx| editors.borrow_mut().push(cx.weak_entity())
+            })
+        });
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state, cx);
+            cx.default_global::<SettingFieldRenderer>()
+                .add_basic_renderer::<String>(render_text_field);
+            let setting = page_data::settings_data(cx)
+                .into_iter()
+                .flat_map(|page| Vec::from(page.items))
+                .find(|item| match item {
+                    SettingsPageItem::SettingItem(item) => item.title == "Fallback Branch Name",
+                    _ => false,
+                })
+                .unwrap();
+            window.activate_window();
+            settings_window_with_items(
+                vec![SettingsPageItem::SectionHeader("Last"), setting],
+                window,
+                cx,
+            )
+        });
+        cx.simulate_resize(gpui::size(px(900.), px(500.)));
+        let search_bar =
+            settings_window.read_with(cx, |settings_window, _| settings_window.search_bar.clone());
+        let editor = editors
+            .borrow()
+            .iter()
+            .filter_map(WeakEntity::upgrade)
+            .find(|editor| editor != &search_bar)
+            .unwrap();
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+            editor.set_text("unsaved-branch-name", window, cx);
+        });
+        for (width, height) in [(600., 300.), (900., 600.), (600., 500.)] {
+            cx.simulate_resize(gpui::size(px(width), px(height)));
+            settings_window.update(cx, |settings_window, cx| {
+                settings_window.list_state.remeasure();
+                cx.notify();
+            });
+            cx.run_until_parked();
+            assert_eq!(editors.borrow().len(), 2);
+            editor.update_in(cx, |editor, window, cx| {
+                assert!(editor.is_focused(window));
+                assert_eq!(editor.text(cx), "unsaved-branch-name");
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn search_navigation_reaches_last_section(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let mut settings_window =
+                parse("v First*\n- One\nv Second\n- First\n- Last", window, cx);
+            let setting = |title, repetitions| {
+                test_action_link(
+                    title,
+                    Some("Tall content for the preceding section. ".repeat(repetitions)),
+                )
+            };
+            settings_window.pages[0].items = vec![
+                SettingsPageItem::SectionHeader("One"),
+                setting("Initial setting", 100),
+            ]
+            .into_boxed_slice();
+            settings_window.pages[1].items = vec![
+                SettingsPageItem::SectionHeader("First"),
+                setting("Last setting", 30),
+                SettingsPageItem::SectionHeader("Last"),
+                setting("Last setting", 0),
+            ]
+            .into_boxed_slice();
+            settings_window.build_filter_table();
+            settings_window.build_navbar(cx);
+            settings_window.navbar_entries[2].expanded = true;
+            settings_window.build_content_handles(window, cx);
+            settings_window.build_search_index();
+            settings_window.list_state =
+                ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+            settings_window.reset_list_state();
+            settings_window
+        });
+        cx.simulate_resize(gpui::size(px(900.), px(500.)));
+        cx.run_until_parked();
+        settings_window.update_in(cx, |settings_window, window, cx| {
+            settings_window
+                .search_bar
+                .update(cx, |editor, cx| editor.set_text("last", window, cx));
+            settings_window.update_matches(cx);
+        });
+        cx.run_until_parked();
+        settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(settings_window.navbar_entry, 4);
+            let header = settings_window.list_state.bounds_for_item(3).unwrap();
+            assert_eq!(
+                header.top(),
+                settings_window.list_state.viewport_bounds().top()
+            );
+        });
+    }
+
+    #[gpui::test]
     fn navbar_selection_follows_content_scroll(cx: &mut gpui::TestAppContext) {
         let window = cx.add_empty_window();
         window.update(|window, cx| {
@@ -5723,15 +6089,7 @@ pub mod test {
                 window,
                 cx,
             );
-            let setting = || {
-                SettingsPageItem::ActionLink(ActionLink {
-                    title: "Setting".into(),
-                    description: None,
-                    button_text: "Change".into(),
-                    on_click: Arc::new(|_, _, _| {}),
-                    files: USER,
-                })
-            };
+            let setting = || test_action_link("Setting", None);
             settings_window.pages[1].items = vec![
                 SettingsPageItem::SectionHeader("Status Bar"),
                 setting(),
@@ -5753,7 +6111,6 @@ pub mod test {
                 });
                 settings_window.update_navbar_entry_from_scroll_position(window);
                 assert_eq!(settings_window.navbar_entry, expected_entry);
-                assert_eq!(settings_window.current_page_index(), 1);
             }
 
             settings_window.filter_table[1][..2].fill(false);
@@ -5803,41 +6160,62 @@ pub mod test {
         let settings_window = cx.update(|window, cx| {
             register_settings(cx);
             cx.new(|cx| {
-                let mut this = parse("v Test*\n- First\n- Last", window, cx);
-                this.build_content_handles(window, cx);
-                this.list_state = ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
-                this.reset_list_state();
-                this
+                settings_window_with_items(
+                    vec![
+                        SettingsPageItem::SectionHeader("First"),
+                        SettingsPageItem::SectionHeader("Last"),
+                        test_action_link(
+                            "Last setting",
+                            Some(
+                                "A long setting description that wraps as the window narrows. "
+                                    .repeat(8),
+                            ),
+                        ),
+                    ],
+                    window,
+                    cx,
+                )
             })
         });
-        let list_state = settings_window.read_with(cx, |this, _| this.list_state.clone());
-        struct TestPage(Entity<SettingsWindow>);
-        impl Render for TestPage {
-            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-                v_flex()
-                    .size_full()
-                    .child(div().h(px(40.)).flex_shrink_0())
-                    .child(div().flex_1().min_h_0().size_full().child(self.0.update(
-                        cx,
-                        |this, cx| {
-                            this.render_current_page_items(window, cx)
-                                .into_any_element()
-                        },
-                    )))
-            }
-        }
-        let view = cx.update(|_, cx| cx.new(|_| TestPage(settings_window)));
-        for height in [px(400.), px(250.), px(600.)] {
-            for _ in 0..3 {
-                cx.draw(
-                    point(px(0.), px(0.)),
-                    gpui::size(px(400.), height),
-                    |_, _| view.clone().into_any_element(),
-                );
-                cx.run_until_parked();
-            }
+        let list_state =
+            settings_window.read_with(cx, |settings_window, _| settings_window.list_state.clone());
+        let view = cx.update(|_, cx| cx.new(|_| TestSettingsPage(settings_window.clone())));
+        draw_settings_page(&view, px(400.), px(700.), cx);
+        let last_height = list_state.bounds_for_item(3).unwrap().size.height;
+        draw_settings_page(&view, px(400.), px(600.) + last_height * 2., cx);
+        list_state.scroll_to(gpui::ListOffset {
+            item_ix: 3,
+            offset_in_item: px(0.),
+        });
+        draw_settings_page(&view, px(400.), px(600.) + last_height * 2., cx);
+        draw_settings_page(&view, px(400.), px(600.) + last_height, cx);
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(200.), px(100.)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), -last_height)),
+            ..gpui::ScrollWheelEvent::default()
+        });
+        draw_settings_page(&view, px(400.), px(600.), cx);
+        let viewport = list_state.viewport_bounds();
+        let last_item = list_state.bounds_for_item(3).unwrap();
+        assert_eq!(last_item.top(), viewport.top());
+        assert_eq!(last_item.size.height, last_height);
+        assert_eq!(
+            list_state.bounds_for_item(4).unwrap().bottom(),
+            viewport.bottom()
+        );
+        list_state.scroll_to(gpui::ListOffset::default());
+
+        for (width, height) in [
+            (px(400.), px(400.)),
+            (px(400.), px(250.)),
+            (px(400.), px(600.)),
+            (px(200.), px(250.)),
+            (px(900.), px(600.)),
+        ] {
+            draw_settings_page(&view, width, height, cx);
             let viewport = list_state.viewport_bounds();
-            assert_eq!(viewport.size.height, height - px(40.));
+            assert_eq!(viewport.top(), px(40.));
+            assert_eq!(viewport.size.height, height);
             let count = list_state.item_count();
             let last_item = list_state.bounds_for_item(count - 2).unwrap();
             let spacer = list_state.bounds_for_item(count - 1).unwrap();
@@ -5845,113 +6223,128 @@ pub mod test {
                 spacer.size.height,
                 (viewport.size.height - last_item.size.height).max(px(0.))
             );
+            if width == px(200.) {
+                assert_eq!(spacer.size.height, px(0.));
+            } else if width == px(900.) {
+                assert!(spacer.size.height > px(0.));
+            }
             list_state.scroll_to(gpui::ListOffset {
                 item_ix: count - 1,
                 offset_in_item: px(0.),
             });
-            cx.draw(
-                point(px(0.), px(0.)),
-                gpui::size(px(400.), height),
-                |_, _| view.clone().into_any_element(),
-            );
-            assert!(
-                list_state
-                    .bounds_for_item(count - 2)
-                    .is_some_and(|bounds| bounds.bottom() > viewport.top())
+            draw_settings_page(&view, width, height, cx);
+            assert_eq!(
+                list_state.bounds_for_item(count - 2).unwrap().bottom() + spacer.size.height,
+                viewport.bottom(),
             );
             list_state.scroll_to(gpui::ListOffset::default());
         }
+
+        draw_settings_page(&view, px(400.), px(1.), cx);
+        let last_item = list_state.bounds_for_item(3).unwrap();
+        assert!(last_item.top() > list_state.viewport_bounds().bottom());
+        settings_window.update(cx, |settings_window, _| {
+            settings_window.pages[0].items[2] = test_action_link(
+                "Last setting",
+                Some("A long setting description that wraps as the window narrows. ".repeat(16)),
+            );
+        });
+        draw_settings_page(&view, px(400.), px(1.), cx);
+        assert!(list_state.bounds_for_item(3).unwrap().size.height > last_item.size.height);
     }
+
     #[gpui::test]
-    fn navbar_navigation_survives_initial_spacer_correction(cx: &mut gpui::TestAppContext) {
+    fn navbar_navigation_reaches_last_section(cx: &mut gpui::TestAppContext) {
+        enum ScrollInput {
+            Wheel,
+            Scrollbar,
+            Keyboard,
+        }
+
         let cx = cx.add_empty_window();
         let settings_window = cx.update(|window, cx| {
             register_settings(cx);
             cx.new(|cx| {
-                let mut this = parse("v First*\n- One\nv Second\n- First\n- Last", window, cx);
-                this.build_content_handles(window, cx);
-                this.list_state = ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
-                this.reset_list_state();
-                this
+                let mut settings_window =
+                    parse("v First*\n- One\nv Second\n- First\n- Last", window, cx);
+                settings_window.build_content_handles(window, cx);
+                settings_window.list_state =
+                    ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+                settings_window.reset_list_state();
+                settings_window
             })
         });
-        struct TestPage(Entity<SettingsWindow>);
-        impl Render for TestPage {
-            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-                v_flex()
-                    .size_full()
-                    .child(div().h(px(40.)).flex_shrink_0())
-                    .child(div().flex_1().min_h_0().size_full().child(self.0.update(
-                        cx,
-                        |this, cx| {
-                            this.update_navbar_entry_from_scroll_position(window);
-                            this.render_current_page_items(window, cx)
-                                .into_any_element()
-                        },
-                    )))
-            }
-        }
-        let view = cx.update(|_, cx| cx.new(|_| TestPage(settings_window.clone())));
-        // Navigate before any layout has measured the spacer, then revisit the page.
+        let list_state =
+            settings_window.read_with(cx, |settings_window, _| settings_window.list_state.clone());
+        let view = cx.update(|_, cx| cx.new(|_| TestSettingsPage(settings_window.clone())));
         for target in [4, 1, 4] {
-            cx.update(|window, cx| {
-                settings_window.update(cx, |this, cx| {
-                    this.open_and_scroll_to_navbar_entry(target, None, false, window, cx);
-                });
+            settings_window.update_in(cx, |settings_window, window, cx| {
+                settings_window.open_and_scroll_to_navbar_entry(target, None, false, window, cx);
             });
-            for frame in 0..3 {
-                cx.draw(
-                    point(px(0.), px(0.)),
-                    gpui::size(px(400.), px(400.)),
-                    |_, _| view.clone().into_any_element(),
-                );
-                if target == 4 && frame == 0 {
-                    settings_window.read_with(cx, |this, _| {
-                        assert_eq!(this.navbar_entry, target);
-                    });
-                }
-                cx.run_until_parked();
-                settings_window.read_with(cx, |this, _| {
-                    assert_eq!(this.navbar_entry, target);
-                });
-            }
-            settings_window.read_with(cx, |this, _| {
-                assert!(this.pending_content_scroll.is_none());
+            draw_settings_page(&view, px(400.), px(400.), cx);
+            settings_window.read_with(cx, |settings_window, _| {
+                assert_eq!(settings_window.navbar_entry, target);
                 if target == 4 {
-                    let header = this.list_state.bounds_for_item(2).unwrap();
-                    assert_eq!(header.top(), this.list_state.viewport_bounds().top());
+                    let header = list_state.bounds_for_item(2).unwrap();
+                    assert_eq!(header.top(), list_state.viewport_bounds().top());
                 }
             });
         }
-        // Once explicit navigation settles, manual scrolling should drive selection again.
-        settings_window.read_with(cx, |this, _| {
-            this.list_state.scroll_to(gpui::ListOffset::default());
-        });
-        for _ in 0..2 {
-            cx.draw(
-                point(px(0.), px(0.)),
-                gpui::size(px(400.), px(400.)),
-                |_, _| view.clone().into_any_element(),
+        for input in [
+            ScrollInput::Wheel,
+            ScrollInput::Scrollbar,
+            ScrollInput::Keyboard,
+        ] {
+            list_state.scroll_to(gpui::ListOffset::default());
+            draw_settings_page(&view, px(400.), px(400.), cx);
+            settings_window.update_in(cx, |settings_window, window, cx| {
+                settings_window.scroll_to_content_item(1, window, cx);
+            });
+            let expected_offset = match input {
+                ScrollInput::Wheel => {
+                    cx.simulate_event(gpui::ScrollWheelEvent {
+                        position: point(px(200.), px(100.)),
+                        delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-32.))),
+                        ..gpui::ScrollWheelEvent::default()
+                    });
+                    px(-32.)
+                }
+                ScrollInput::Scrollbar => {
+                    list_state.set_offset_from_scrollbar(point(px(0.), px(-32.)));
+                    px(-32.)
+                }
+                ScrollInput::Keyboard => {
+                    list_state.scroll_to_reveal_item(0);
+                    px(0.)
+                }
+            };
+            assert_eq!(
+                list_state.scroll_px_offset_for_scrollbar().y,
+                expected_offset
             );
-            cx.run_until_parked();
+            draw_settings_page(&view, px(400.), px(500.), cx);
+            assert_eq!(
+                list_state.scroll_px_offset_for_scrollbar().y,
+                expected_offset
+            );
         }
-        settings_window.read_with(cx, |this, _| assert_eq!(this.navbar_entry, 3));
+        settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(settings_window.navbar_entry, 3)
+        });
     }
     #[gpui::test]
-    fn navbar_focus_navigation_survives_previous_layout_callback(cx: &mut gpui::TestAppContext) {
+    fn navbar_focus_navigation_reaches_last_section(cx: &mut gpui::TestAppContext) {
         let (settings_window, cx) = cx.add_window_view(|window, cx| {
             register_settings(cx);
             let mut this = parse("v First*\n- One\nv Second\n- First\n- Last", window, cx);
             this.pages[0].items = vec![
                 SettingsPageItem::SectionHeader("One"),
-                SettingsPageItem::ActionLink(ActionLink {
-                    title: "Tall final row".into(),
-                    description: Some("A longer settings description makes this page's final row taller than the next page's final row. It covers multiple lines so that navigating to the next page requires a larger spacer after its first layout. This deliberately exercises correction after a stale callback from the preceding page.".into()),
-                    button_text: "Action".into(),
-                    on_click: Arc::new(|_, _, _| {}),
-                    files: USER,
-                }),
-            ].into_boxed_slice();
+                test_action_link(
+                    "Tall final row",
+                    Some("A setting with a long description. ".repeat(8)),
+                ),
+            ]
+            .into_boxed_slice();
             this.build_filter_table();
             this.build_content_handles(window, cx);
             this.list_state = ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
@@ -5961,103 +6354,30 @@ pub mod test {
             this
         });
         cx.simulate_resize(gpui::size(px(900.), px(500.)));
-        for _ in 0..3 {
-            cx.update(|window, cx| {
-                window.simulate_next_frame(cx);
-                window.draw(cx).clear(cx);
-            });
-            cx.run_until_parked();
-        }
+        cx.run_until_parked();
         for target in [4, 1, 4] {
-            settings_window.update_in(cx, |this, window, cx| {
-                this.navbar_entries[target].focus_handle.focus(window, cx);
+            settings_window.update_in(cx, |settings_window, window, cx| {
+                settings_window.navbar_entries[target]
+                    .focus_handle
+                    .focus(window, cx);
             });
-            // Drawing A dispatches B's focus listener before A's deferred callback runs.
-            for _ in 0..4 {
+            for _ in 0..2 {
                 cx.update(|window, cx| {
                     window.simulate_next_frame(cx);
-                    window.draw(cx).clear(cx);
                 });
                 cx.run_until_parked();
-                settings_window.read_with(cx, |this, _| assert_eq!(this.navbar_entry, target));
             }
-            settings_window.read_with(cx, |this, _| {
-                assert!(this.pending_content_scroll.is_none());
+            settings_window.read_with(cx, |settings_window, _| {
+                assert_eq!(settings_window.navbar_entry, target);
                 if target == 4 {
-                    let header = this.list_state.bounds_for_item(2).unwrap();
-                    assert_eq!(header.top(), this.list_state.viewport_bounds().top());
+                    let header = settings_window.list_state.bounds_for_item(2).unwrap();
+                    assert_eq!(
+                        header.top(),
+                        settings_window.list_state.viewport_bounds().top()
+                    );
                 }
             });
         }
-    }
-    #[gpui::test]
-    fn navbar_selection_near_headers_and_at_page_end(cx: &mut gpui::TestAppContext) {
-        let cx = cx.add_empty_window();
-        let mut settings_window = cx.update(|window, cx| {
-            register_settings(cx);
-            parse(
-                "v Window & Layout*\n- Status Bar\n- Title Bar\n- Tab Bar",
-                window,
-                cx,
-            )
-        });
-        settings_window.reset_list_state();
-        let list_state = settings_window.list_state.clone();
-        struct TestList(ListState);
-        impl Render for TestList {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                v_flex().size_full().child(
-                    div().flex_1().min_h_0().size_full().child(
-                        v_flex().size_full().child(
-                            list(self.0.clone(), |index, window, _| {
-                                div()
-                                    .h(if index == 4 {
-                                        window.viewport_size().height
-                                    } else {
-                                        px(100.)
-                                    })
-                                    .into_any_element()
-                            })
-                            .size_full(),
-                        ),
-                    ),
-                )
-            }
-        }
-        let view = cx.update(|_, cx| cx.new(|_| TestList(list_state.clone())));
-
-        for (offset, expected_entry) in [(px(60.), 1), (px(80.), 2)] {
-            list_state.scroll_to(gpui::ListOffset {
-                item_ix: 1,
-                offset_in_item: offset,
-            });
-            cx.draw(
-                point(px(0.), px(0.)),
-                gpui::size(px(400.), px(400.)),
-                |_, _| view.clone().into_any_element(),
-            );
-            cx.update(|window, _| {
-                assert!(list_state.viewport_bounds().size.height > px(0.));
-                assert!(list_state.bounds_for_item(2).is_some());
-                settings_window.update_navbar_entry_from_scroll_position(window);
-                assert_eq!(settings_window.navbar_entry, expected_entry);
-            });
-        }
-
-        list_state.scroll_to(gpui::ListOffset {
-            item_ix: 3,
-            offset_in_item: px(0.),
-        });
-        cx.draw(
-            point(px(0.), px(0.)),
-            gpui::size(px(400.), px(400.)),
-            |_, _| view.clone().into_any_element(),
-        );
-        cx.update(|window, _| {
-            settings_window.update_navbar_entry_from_scroll_position(window);
-            assert_eq!(settings_window.navbar_entry, 3);
-            assert_eq!(list_state.logical_scroll_top().item_ix, 3);
-        });
     }
 
     check_navbar_toggle!(
@@ -6964,6 +7284,64 @@ pub mod test {
                 );
             })
             .unwrap();
+    }
+
+    fn settings_window_with_items(
+        items: Vec<SettingsPageItem>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> SettingsWindow {
+        let mut settings_window = SettingsWindow::test(window, cx);
+        settings_window.pages[0].items = items.into_boxed_slice();
+        settings_window.build_filter_table();
+        settings_window.build_navbar(cx);
+        settings_window.navbar_entries[0].expanded = true;
+        settings_window.build_content_handles(window, cx);
+        settings_window.list_state =
+            ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+        settings_window.reset_list_state();
+        settings_window
+    }
+
+    fn test_action_link(title: &'static str, description: Option<String>) -> SettingsPageItem {
+        SettingsPageItem::ActionLink(ActionLink {
+            title: SharedString::from(title),
+            description: description.map(SharedString::from),
+            button_text: SharedString::from("Change"),
+            on_click: Arc::new(|_, _, _| {}),
+            files: USER,
+        })
+    }
+
+    fn draw_settings_page(
+        view: &Entity<TestSettingsPage>,
+        width: Pixels,
+        content_height: Pixels,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(width, content_height + px(40.)),
+            |_, _| view.clone().into_any_element(),
+        );
+    }
+
+    struct TestSettingsPage(Entity<SettingsWindow>);
+
+    impl Render for TestSettingsPage {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .size_full()
+                .child(div().h(px(40.)).flex_shrink_0())
+                .child(div().flex_1().min_h_0().size_full().child(self.0.update(
+                    cx,
+                    |settings_window, cx| {
+                        settings_window
+                            .render_current_page_items(window, cx)
+                            .into_any_element()
+                    },
+                )))
+        }
     }
 }
 
