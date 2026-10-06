@@ -3056,7 +3056,7 @@ impl ThreadView {
                 elicitation_id.clone(),
                 matches!(elicitation.status, ElicitationStatus::Pending { .. }),
                 match &elicitation.request.mode {
-                    acp_v1::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    acp_v2::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
                     _ => None,
                 },
             )
@@ -3106,7 +3106,7 @@ impl ThreadView {
         };
 
         match mode {
-            acp_v1::ElicitationMode::Form(mode) => {
+            acp_v2::ElicitationMode::Form(mode) => {
                 let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) else {
                     return;
                 };
@@ -3136,9 +3136,9 @@ impl ThreadView {
                             Ok(content) => {
                                 this.respond_to_elicitation(
                                     elicitation_id,
-                                    acp_v1::CreateElicitationResponse::new(
-                                        acp_v1::ElicitationAction::Accept(
-                                            acp_v1::ElicitationAcceptAction::new().content(content),
+                                    acp_v2::CreateElicitationResponse::new(
+                                        acp_v2::ElicitationAction::Accept(
+                                            acp_v2::ElicitationAcceptAction::new().content(content),
                                         ),
                                     ),
                                     cx,
@@ -3158,11 +3158,11 @@ impl ThreadView {
                 })
                 .detach();
             }
-            acp_v1::ElicitationMode::Url(_) => {
+            acp_v2::ElicitationMode::Url(_) => {
                 self.respond_to_elicitation(
                     elicitation_id,
-                    acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                        acp_v1::ElicitationAcceptAction::new(),
+                    acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                        acp_v2::ElicitationAcceptAction::new(),
                     )),
                     cx,
                 );
@@ -3179,7 +3179,7 @@ impl ThreadView {
     ) {
         self.respond_to_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
             cx,
         );
     }
@@ -3192,7 +3192,7 @@ impl ThreadView {
     ) {
         self.respond_to_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Cancel),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Cancel),
             cx,
         );
     }
@@ -3213,7 +3213,7 @@ impl ThreadView {
     fn respond_to_elicitation(
         &mut self,
         elicitation_id: ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
         let session_id = self.session_id.clone();
@@ -7157,12 +7157,14 @@ impl ThreadView {
             .unwrap_or(!is_generating);
 
         let primary = if is_turn_end && !assistant_message_is_blank {
-            let user_message_index = thread
-                .read(cx)
-                .entries()
-                .iter()
-                .take(entry_ix)
-                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)));
+            let user_message_index = {
+                let thread = thread.read(cx);
+                thread
+                    .entries()
+                    .iter()
+                    .take(entry_ix)
+                    .rposition(|entry| thread.is_user_authored_scroll_target(entry))
+            };
 
             v_flex()
                 .w_full()
@@ -7627,7 +7629,8 @@ impl ThreadView {
         user_message_index: Option<usize>,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.thread.read(cx).entries();
+        let thread = self.thread.read(cx);
+        let entries = thread.entries();
         if entries.is_empty() {
             return;
         }
@@ -7637,7 +7640,7 @@ impl ThreadView {
         if let Some(ix) = user_message_index.or_else(|| {
             entries
                 .iter()
-                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+                .rposition(|entry| thread.is_user_authored_scroll_target(entry))
         }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: ix,
@@ -7742,12 +7745,14 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.thread.read(cx).entries();
+        let thread = self.thread.read(cx);
+        let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
-        if let Some(target_ix) = (0..current_ix)
-            .rev()
-            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
-        {
+        if let Some(target_ix) = (0..current_ix).rev().find(|&i| {
+            entries
+                .get(i)
+                .is_some_and(|entry| thread.is_user_authored_scroll_target(entry))
+        }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: target_ix,
                 offset_in_item: px(0.),
@@ -7762,11 +7767,14 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.thread.read(cx).entries();
+        let thread = self.thread.read(cx);
+        let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
-        if let Some(target_ix) = (current_ix + 1..entries.len())
-            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
-        {
+        if let Some(target_ix) = (current_ix + 1..entries.len()).find(|&i| {
+            entries
+                .get(i)
+                .is_some_and(|entry| thread.is_user_authored_scroll_target(entry))
+        }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: target_ix,
                 offset_in_item: px(0.),
@@ -8189,18 +8197,11 @@ impl ThreadView {
                                 ),
                         )
                         .when(is_constrained, |this| {
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .size_full()
-                                    .bg(linear_gradient(
-                                        180.,
-                                        linear_color_stop(panel_bg.opacity(0.8), 0.),
-                                        linear_color_stop(panel_bg.opacity(0.), 0.1),
-                                    ))
-                                    .block_mouse_except_scroll(),
-                            )
+                            this.child(div().absolute().inset_0().size_full().bg(linear_gradient(
+                                180.,
+                                linear_color_stop(panel_bg.opacity(0.8), 0.),
+                                linear_color_stop(panel_bg.opacity(0.), 0.1),
+                            )))
                         }),
                 )
             })

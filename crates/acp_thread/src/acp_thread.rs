@@ -4,7 +4,9 @@ pub mod config_options;
 mod connection;
 pub mod content;
 mod diff;
+pub mod elicitation;
 mod mention;
+pub mod notices;
 pub mod prompt_capabilities;
 mod submission;
 mod terminal;
@@ -494,14 +496,14 @@ pub struct ElicitationEntryId(pub Arc<str>);
 #[derive(Debug)]
 pub struct Elicitation {
     pub id: ElicitationEntryId,
-    pub request: acp_v1::CreateElicitationRequest,
+    pub request: acp_v2::CreateElicitationRequest,
     pub status: ElicitationStatus,
 }
 
 #[derive(Debug)]
 pub enum ElicitationStatus {
     Pending {
-        respond_tx: oneshot::Sender<acp_v1::CreateElicitationResponse>,
+        respond_tx: oneshot::Sender<acp_v2::CreateElicitationResponse>,
     },
     Accepted,
     Declined,
@@ -534,19 +536,19 @@ impl ElicitationStore {
         &self.elicitations
     }
 
-    fn validate_request(request: &acp_v1::CreateElicitationRequest) -> Result<(), acp_v1::Error> {
+    fn validate_request(request: &acp_v2::CreateElicitationRequest) -> Result<(), acp_v2::Error> {
         match &request.mode {
-            acp_v1::ElicitationMode::Form(_) => {}
-            acp_v1::ElicitationMode::Url(mode) => {
+            acp_v2::ElicitationMode::Form(_) => {}
+            acp_v2::ElicitationMode::Url(mode) => {
                 let url = url::Url::parse(&mode.url)
-                    .map_err(|_| acp_v1::Error::invalid_params().data("invalid elicitation URL"))?;
+                    .map_err(|_| acp_v2::Error::invalid_params().data("invalid elicitation URL"))?;
                 if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-                    return Err(acp_v1::Error::invalid_params()
+                    return Err(acp_v2::Error::invalid_params()
                         .data("elicitation URL must use HTTP or HTTPS and include a host"));
                 }
             }
             _ => {
-                return Err(acp_v1::Error::invalid_params().data("unsupported elicitation mode"));
+                return Err(acp_v2::Error::invalid_params().data("unsupported elicitation mode"));
             }
         }
 
@@ -555,10 +557,10 @@ impl ElicitationStore {
 
     fn insert_pending_elicitation(
         &mut self,
-        request: acp_v1::CreateElicitationRequest,
+        request: acp_v2::CreateElicitationRequest,
     ) -> (
         ElicitationEntryId,
-        oneshot::Receiver<acp_v1::CreateElicitationResponse>,
+        oneshot::Receiver<acp_v2::CreateElicitationResponse>,
     ) {
         let (respond_tx, response_rx) = oneshot::channel();
         let id = ElicitationEntryId(Uuid::new_v4().to_string().into());
@@ -571,12 +573,12 @@ impl ElicitationStore {
     }
 
     fn response_task(
-        response_rx: oneshot::Receiver<acp_v1::CreateElicitationResponse>,
+        response_rx: oneshot::Receiver<acp_v2::CreateElicitationResponse>,
         cx: &App,
-    ) -> Task<acp_v1::CreateElicitationResponse> {
+    ) -> Task<acp_v2::CreateElicitationResponse> {
         cx.foreground_executor().spawn(async move {
             response_rx.await.unwrap_or_else(|oneshot::Canceled| {
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Cancel)
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Cancel)
             })
         })
     }
@@ -590,7 +592,7 @@ impl ElicitationStore {
 
     fn respond_to_elicitation_entry(
         elicitation: &mut Elicitation,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
     ) -> bool {
         if !matches!(elicitation.status, ElicitationStatus::Pending { .. }) {
             return false;
@@ -625,8 +627,8 @@ impl ElicitationStore {
         match mem::replace(&mut elicitation.status, ElicitationStatus::Canceled) {
             ElicitationStatus::Pending { respond_tx } => {
                 if respond_tx
-                    .send(acp_v1::CreateElicitationResponse::new(
-                        acp_v1::ElicitationAction::Cancel,
+                    .send(acp_v2::CreateElicitationResponse::new(
+                        acp_v2::ElicitationAction::Cancel,
                     ))
                     .is_err()
                 {
@@ -635,7 +637,7 @@ impl ElicitationStore {
                 Some(ElicitationChange::Responded)
             }
             ElicitationStatus::Accepted
-                if matches!(&elicitation.request.mode, acp_v1::ElicitationMode::Url(_)) =>
+                if matches!(&elicitation.request.mode, acp_v2::ElicitationMode::Url(_)) =>
             {
                 Some(ElicitationChange::Updated)
             }
@@ -649,7 +651,7 @@ impl ElicitationStore {
     fn respond_to_elicitation_by_id(
         &mut self,
         id: &ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
     ) -> bool {
         let Some((_, elicitation)) = self.elicitation_mut(id) else {
             return false;
@@ -671,18 +673,18 @@ impl ElicitationStore {
 
     pub fn request_elicitation(
         &mut self,
-        request: acp_v1::CreateElicitationRequest,
+        request: acp_v2::CreateElicitationRequest,
         cx: &mut Context<Self>,
-    ) -> Result<Task<acp_v1::CreateElicitationResponse>, acp_v1::Error> {
+    ) -> Result<Task<acp_v2::CreateElicitationResponse>, acp_v2::Error> {
         self.request_elicitation_with_id(request, cx)
             .map(|(_, task)| task)
     }
 
     pub fn request_elicitation_with_id(
         &mut self,
-        request: acp_v1::CreateElicitationRequest,
+        request: acp_v2::CreateElicitationRequest,
         cx: &mut Context<Self>,
-    ) -> Result<(ElicitationEntryId, Task<acp_v1::CreateElicitationResponse>), acp_v1::Error> {
+    ) -> Result<(ElicitationEntryId, Task<acp_v2::CreateElicitationResponse>), acp_v2::Error> {
         Self::validate_request(&request)?;
         let (id, response_rx) = self.insert_pending_elicitation(request);
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
@@ -695,7 +697,7 @@ impl ElicitationStore {
     pub fn respond_to_elicitation(
         &mut self,
         id: &ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
         if !self.respond_to_elicitation_by_id(id, response) {
@@ -708,7 +710,7 @@ impl ElicitationStore {
 
     pub fn complete_url_elicitation(
         &mut self,
-        elicitation_id: &acp_v1::ElicitationId,
+        elicitation_id: &acp_v2::ElicitationId,
         cx: &mut Context<Self>,
     ) {
         let Some(entry_id) = self.entry_id_for_url_elicitation(elicitation_id) else {
@@ -753,7 +755,7 @@ impl ElicitationStore {
             let keep = matches!(
                 (&elicitation.status, &elicitation.request.mode),
                 (ElicitationStatus::Pending { .. }, _)
-                    | (ElicitationStatus::Accepted, acp_v1::ElicitationMode::Url(_))
+                    | (ElicitationStatus::Accepted, acp_v2::ElicitationMode::Url(_))
             );
             if !keep {
                 cleared_ids.push(elicitation.id.clone());
@@ -771,11 +773,11 @@ impl ElicitationStore {
         cleared_ids
     }
 
-    pub fn cancel_request(&mut self, request_id: &acp_v1::RequestId, cx: &mut Context<Self>) {
+    pub fn cancel_request(&mut self, request_id: &acp_v2::RequestId, cx: &mut Context<Self>) {
         let changes = self.cancel_pending(|elicitation| {
             matches!(
                 elicitation.request.scope(),
-                acp_v1::ElicitationScope::Request(scope) if &scope.request_id == request_id
+                acp_v2::ElicitationScope::Request(scope) if &scope.request_id == request_id
             )
         });
         for (id, change) in changes {
@@ -796,10 +798,10 @@ impl ElicitationStore {
 
     fn entry_id_for_url_elicitation(
         &self,
-        elicitation_id: &acp_v1::ElicitationId,
+        elicitation_id: &acp_v2::ElicitationId,
     ) -> Option<ElicitationEntryId> {
         self.elicitations.iter().rev().find_map(|elicitation| {
-            if let acp_v1::ElicitationMode::Url(mode) = &elicitation.request.mode
+            if let acp_v2::ElicitationMode::Url(mode) = &elicitation.request.mode
                 && &mode.elicitation_id == elicitation_id
             {
                 Some(elicitation.id.clone())
@@ -1906,12 +1908,12 @@ impl Display for ToolCallStatus {
 }
 
 fn elicitation_status_for_response(
-    response: &acp_v1::CreateElicitationResponse,
+    response: &acp_v2::CreateElicitationResponse,
 ) -> ElicitationStatus {
     match &response.action {
-        acp_v1::ElicitationAction::Accept(_) => ElicitationStatus::Accepted,
-        acp_v1::ElicitationAction::Decline => ElicitationStatus::Declined,
-        acp_v1::ElicitationAction::Cancel => ElicitationStatus::Canceled,
+        acp_v2::ElicitationAction::Accept(_) => ElicitationStatus::Accepted,
+        acp_v2::ElicitationAction::Decline => ElicitationStatus::Declined,
+        acp_v2::ElicitationAction::Cancel => ElicitationStatus::Canceled,
         _ => ElicitationStatus::Canceled,
     }
 }
@@ -3368,7 +3370,7 @@ pub struct AcpThread {
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     // Notices stay with the live session, but never enter conversation history or exports.
-    notices: Vec<(usize, acp_v1::Notice)>,
+    notices: Vec<(usize, acp_v2::Notice)>,
     next_notice_id: usize,
     elicitations: ElicitationStore,
     permission_requests: IndexMap<PermissionRequestId, PermissionRequest>,
@@ -3810,8 +3812,16 @@ impl AcpThread {
         &self.entries
     }
 
-    pub fn notices(&self) -> &[(usize, acp_v1::Notice)] {
+    pub fn notices(&self) -> &[(usize, acp_v2::Notice)] {
         &self.notices
+    }
+
+    pub fn push_notice(&mut self, notice: acp_v2::Notice, cx: &mut Context<Self>) {
+        let notice_id = self.next_notice_id;
+        self.next_notice_id += 1;
+        self.notices.push((notice_id, notice));
+        cx.emit(AcpThreadEvent::NoticesUpdated);
+        cx.notify();
     }
 
     pub fn dismiss_notice(&mut self, notice_id: usize, cx: &mut Context<Self>) {
@@ -3821,6 +3831,30 @@ impl AcpThread {
             cx.emit(AcpThreadEvent::NoticesUpdated);
             cx.notify();
         }
+    }
+
+    /// Form elicitations stop rendering after accept, so the associated tool
+    /// call is the scroll target for the user's answer.
+    pub fn is_user_authored_scroll_target(&self, entry: &AgentThreadEntry) -> bool {
+        match entry {
+            AgentThreadEntry::UserMessage(_) => true,
+            AgentThreadEntry::ToolCall(call) => self.tool_call_has_accepted_user_answer(&call.id),
+            _ => false,
+        }
+    }
+
+    fn tool_call_has_accepted_user_answer(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
+        self.elicitations.elicitations().iter().any(|elicitation| {
+            matches!(elicitation.status, ElicitationStatus::Accepted)
+                // Accepting a URL elicitation only consents to opening a link,
+                // so it isn't an answer.
+                && matches!(elicitation.request.mode, acp_v2::ElicitationMode::Form(_))
+                && matches!(
+                    elicitation.request.scope(),
+                    acp_v2::ElicitationScope::Session(scope)
+                        if scope.tool_call_id.as_ref().is_some_and(|id| id.0 == tool_call_id.0)
+                )
+        })
     }
 
     pub fn is_compacting(&self) -> bool {
@@ -4287,11 +4321,7 @@ impl AcpThread {
                 self.update_plan(plan, cx).map_err(acp_v1::Error::from)?;
             }
             acp_v1::SessionUpdate::Notice(notice) => {
-                let notice_id = self.next_notice_id;
-                self.next_notice_id += 1;
-                self.notices.push((notice_id, notice));
-                cx.emit(AcpThreadEvent::NoticesUpdated);
-                cx.notify();
+                self.push_notice(notices::from_v1(notice).map_err(acp_v1::Error::from)?, cx);
             }
             acp_v1::SessionUpdate::SessionInfoUpdate(info_update) => {
                 self.update_session_info(session_info_update_from_v1(info_update), cx);
@@ -5854,18 +5884,18 @@ impl AcpThread {
 
     pub fn request_elicitation(
         &mut self,
-        request: acp_v1::CreateElicitationRequest,
+        request: acp_v2::CreateElicitationRequest,
         cx: &mut Context<Self>,
-    ) -> Result<Task<acp_v1::CreateElicitationResponse>, acp_v1::Error> {
+    ) -> Result<Task<acp_v2::CreateElicitationResponse>, acp_v2::Error> {
         self.request_elicitation_with_id(request, cx)
             .map(|(_, task)| task)
     }
 
     pub fn request_elicitation_with_id(
         &mut self,
-        request: acp_v1::CreateElicitationRequest,
+        request: acp_v2::CreateElicitationRequest,
         cx: &mut Context<Self>,
-    ) -> Result<(ElicitationEntryId, Task<acp_v1::CreateElicitationResponse>), acp_v1::Error> {
+    ) -> Result<(ElicitationEntryId, Task<acp_v2::CreateElicitationResponse>), acp_v2::Error> {
         ElicitationStore::validate_request(&request)?;
 
         let (id, response_rx) = self.elicitations.insert_pending_elicitation(request);
@@ -5891,7 +5921,7 @@ impl AcpThread {
     pub fn respond_to_elicitation(
         &mut self,
         id: &ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
         let Some(ix) = self.elicitation_entry_ix(id) else {
@@ -5906,7 +5936,7 @@ impl AcpThread {
 
     pub fn complete_url_elicitation(
         &mut self,
-        elicitation_id: &acp_v1::ElicitationId,
+        elicitation_id: &acp_v2::ElicitationId,
         cx: &mut Context<Self>,
     ) {
         let Some(entry_id) = self
@@ -15694,10 +15724,10 @@ mod tests {
 
         let result = thread.update(cx, |thread, cx| {
             thread.request_elicitation(
-                acp_v1::CreateElicitationRequest::new(
-                    acp_v1::ElicitationFormMode::new(
-                        acp_v1::ElicitationSessionScope::new(session_id),
-                        acp_v1::ElicitationSchema::new().string("name", true),
+                acp_v2::CreateElicitationRequest::new(
+                    acp_v2::ElicitationFormMode::new(
+                        acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(session_id.0)),
+                        acp_v2::ElicitationSchema::new().string("name", true),
                     ),
                     "Provide a name",
                 ),
@@ -15720,16 +15750,18 @@ mod tests {
         enable_acp_beta(cx);
         let thread = new_test_thread(cx).await;
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let tool_call_id = acp_v1::ToolCallId::new("tool-1");
+        let tool_call_id = acp_v2::ToolCallId::new("tool-1");
 
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id.clone())
-                                .tool_call_id(tool_call_id.clone()),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0.clone(),
+                            ))
+                            .tool_call_id(tool_call_id.clone()),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -15740,7 +15772,7 @@ mod tests {
 
         let elicitation_id = thread.read_with(cx, |thread, _| {
             let (elicitation_id, elicitation) = only_thread_elicitation(thread);
-            let acp_v1::ElicitationScope::Session(scope) = elicitation.request.scope() else {
+            let acp_v2::ElicitationScope::Session(scope) = elicitation.request.scope() else {
                 panic!("expected session-scoped elicitation");
             };
             assert_eq!(scope.tool_call_id.as_ref(), Some(&tool_call_id));
@@ -15749,13 +15781,13 @@ mod tests {
 
         let expected_content = std::collections::BTreeMap::from([(
             "name".to_string(),
-            acp_v1::ElicitationContentValue::from("Ada"),
+            acp_v2::ElicitationContentValue::from("Ada"),
         )]);
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new().content(expected_content.clone()),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new().content(expected_content.clone()),
                 )),
                 cx,
             );
@@ -15764,8 +15796,8 @@ mod tests {
         let response = response_task.await;
         assert_eq!(
             response.action,
-            acp_v1::ElicitationAction::Accept(
-                acp_v1::ElicitationAcceptAction::new().content(expected_content)
+            acp_v2::ElicitationAction::Accept(
+                acp_v2::ElicitationAcceptAction::new().content(expected_content)
             )
         );
         thread.read_with(cx, |thread, _| {
@@ -15782,14 +15814,16 @@ mod tests {
         enable_acp_beta(cx);
         let thread = new_test_thread(cx).await;
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v2::ElicitationId::new("url-1");
 
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationUrlMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0,
+                            )),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -15820,15 +15854,15 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &entry_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Accept(_)
+            acp_v2::ElicitationAction::Accept(_)
         ));
         thread.update(cx, |thread, cx| {
             thread.complete_url_elicitation(&url_elicitation_id, cx);
@@ -15847,14 +15881,16 @@ mod tests {
         enable_acp_beta(cx);
         let thread = new_test_thread(cx).await;
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v2::ElicitationId::new("url-1");
 
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationUrlMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0,
+                            )),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -15873,15 +15909,15 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &entry_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Accept(_)
+            acp_v2::ElicitationAction::Accept(_)
         ));
 
         thread.update(cx, |thread, cx| {
@@ -15911,14 +15947,16 @@ mod tests {
         enable_acp_beta(cx);
         let thread = new_test_thread(cx).await;
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v2::ElicitationId::new("url-1");
 
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationUrlMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0,
+                            )),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -15937,15 +15975,15 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &entry_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Accept(_)
+            acp_v2::ElicitationAction::Accept(_)
         ));
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
@@ -16019,13 +16057,15 @@ mod tests {
         );
 
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v2::ElicitationId::new("url-1");
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationUrlMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0,
+                            )),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -16044,15 +16084,15 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &entry_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Accept(_)
+            acp_v2::ElicitationAction::Accept(_)
         ));
 
         let response = thread
@@ -16087,20 +16127,30 @@ mod tests {
         init_test(cx);
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let request: acp_v2::CreateElicitationRequest = serde_json::from_value(serde_json::json!({
+            "mode": "form",
+            "requestId": "0001",
+            "message": "Provide details",
+            "_meta": {"request": {"opaque": [1, null]}},
+            "requestedSchema": {
+                "type": "object",
+                "required": ["future"],
+                "_meta": {"schema": {}},
+                "properties": {
+                    "future": {"type": "_location", "nested": {"precision": "city"},
+                               "_meta": {"property": [null]}},
+                    "formatted": {"type": "string", "format": "_future",
+                                  "_meta": {"format": true}},
+                    "items": {"type": "array",
+                              "items": {"type": "_token", "values": ["b", "a"],
+                                        "_meta": {"items": {}}}}
+                }
+            }
+        }))
+        .unwrap();
 
         let response_task = store.update(cx, |store, cx| {
-            store
-                .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                            acp_v1::ElicitationSchema::new().string("name", true),
-                        ),
-                        "Provide a name",
-                    ),
-                    cx,
-                )
-                .unwrap()
+            store.request_elicitation(request.clone(), cx).unwrap()
         });
 
         let elicitation_id = store.read_with(cx, |store, _| {
@@ -16110,30 +16160,41 @@ mod tests {
                     store.elicitations()
                 );
             };
-            let acp_v1::ElicitationScope::Request(scope) = elicitation.request.scope() else {
+            let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
-            assert_eq!(scope.request_id, acp_v1::RequestId::Number(1));
+            assert_eq!(scope.request_id, acp_v2::RequestId::Str("0001".into()));
+            assert_eq!(elicitation.request, request);
             elicitation.id.clone()
         });
 
+        let response = acp_v2::CreateElicitationResponse::new(acp_v2::OtherElicitationAction::new(
+            "_defer",
+            std::collections::BTreeMap::from([(
+                "reason".to_string(),
+                serde_json::json!({"opaque": [1, null]}),
+            )]),
+        ))
+        .meta(serde_json::Map::from_iter([(
+            "response".to_string(),
+            serde_json::json!({"nested": {}}),
+        )]));
         store.update(cx, |store, cx| {
+            store.respond_to_elicitation(&elicitation_id, response.clone(), cx);
             store.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAcceptAction::new()),
                 cx,
             );
         });
 
-        assert_eq!(
-            response_task.await.action,
-            acp_v1::ElicitationAction::Decline
-        );
+        assert_eq!(response_task.await, response);
         store.read_with(cx, |store, _| {
             let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
             };
-            assert!(matches!(elicitation.status, ElicitationStatus::Declined));
+            assert_eq!(elicitation.request, request);
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });
     }
 
@@ -16155,10 +16216,10 @@ mod tests {
         let response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16180,13 +16241,13 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
                 cx,
             );
             store.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
@@ -16194,7 +16255,7 @@ mod tests {
 
         assert_eq!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Decline
+            acp_v2::ElicitationAction::Decline
         );
         assert_eq!(
             responded_ids.borrow().as_slice(),
@@ -16218,10 +16279,12 @@ mod tests {
         let (elicitation_id, response_task) = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation_with_id(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0,
+                            )),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16236,7 +16299,7 @@ mod tests {
 
         assert_eq!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Cancel
+            acp_v2::ElicitationAction::Cancel
         );
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
@@ -16256,10 +16319,12 @@ mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0,
+                            )),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16279,7 +16344,7 @@ mod tests {
 
         assert_eq!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Cancel
+            acp_v2::ElicitationAction::Cancel
         );
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
@@ -16293,15 +16358,14 @@ mod tests {
         thread: WeakEntity<AcpThread>,
         session_id: acp_v2::SessionId,
         cx: &mut AsyncApp,
-    ) -> Result<Task<acp_v1::CreateElicitationResponse>> {
-        let session_id = acp_v1::SessionId::new(session_id.0);
+    ) -> Result<Task<acp_v2::CreateElicitationResponse>> {
         thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(session_id),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16351,7 +16415,7 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             *elicitation_action.borrow(),
-            Some(acp_v1::ElicitationAction::Cancel)
+            Some(acp_v2::ElicitationAction::Cancel)
         );
         thread.read_with(cx, |thread, _| {
             let Some(elicitation) = thread.entries().iter().find_map(|entry| match entry {
@@ -16406,7 +16470,7 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             *elicitation_action.borrow(),
-            Some(acp_v1::ElicitationAction::Cancel)
+            Some(acp_v2::ElicitationAction::Cancel)
         );
         thread.read_with(cx, |thread, _| {
             let Some(elicitation) = thread.entries().iter().find_map(|entry| match entry {
@@ -16430,10 +16494,10 @@ mod tests {
         let (elicitation_id, response_task) = store.update(cx, |store, cx| {
             store
                 .request_elicitation_with_id(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16448,7 +16512,7 @@ mod tests {
 
         assert_eq!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Cancel
+            acp_v2::ElicitationAction::Cancel
         );
         store.read_with(cx, |store, _| {
             let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
@@ -16478,10 +16542,10 @@ mod tests {
         let (elicitation_id, response_task) = store.update(cx, |store, cx| {
             store
                 .request_elicitation_with_id(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationRequestScope::new(request_id.clone()),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationRequestScope::new(request_id.clone()),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16514,10 +16578,10 @@ mod tests {
         let response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16532,7 +16596,7 @@ mod tests {
 
         assert_eq!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Cancel
+            acp_v2::ElicitationAction::Cancel
         );
     }
 
@@ -16547,10 +16611,10 @@ mod tests {
         let first_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16561,10 +16625,10 @@ mod tests {
         let second_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
-                            acp_v1::ElicitationSchema::new().string("account", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
+                            acp_v2::ElicitationSchema::new().string("account", true),
                         ),
                         "Provide an account",
                     ),
@@ -16583,7 +16647,7 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &first_elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
                 cx,
             );
             store.clear(cx);
@@ -16591,11 +16655,11 @@ mod tests {
 
         assert_eq!(
             first_response_task.await.action,
-            acp_v1::ElicitationAction::Decline
+            acp_v2::ElicitationAction::Decline
         );
         assert_eq!(
             second_response_task.await.action,
-            acp_v1::ElicitationAction::Cancel
+            acp_v2::ElicitationAction::Cancel
         );
         store.read_with(cx, |store, _| assert!(store.elicitations().is_empty()));
     }
@@ -16607,15 +16671,15 @@ mod tests {
         init_test(cx);
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
-        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v2::ElicitationId::new("url-1");
 
         let accepted_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16626,10 +16690,10 @@ mod tests {
         let pending_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
-                            acp_v1::ElicitationSchema::new().string("account", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
+                            acp_v2::ElicitationSchema::new().string("account", true),
                         ),
                         "Provide an account",
                     ),
@@ -16640,9 +16704,9 @@ mod tests {
         let accepted_url_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationUrlMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(3)),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(3)),
                             url_elicitation_id,
                             "https://example.com/complete",
                         ),
@@ -16670,26 +16734,26 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &accepted_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
             store.respond_to_elicitation(
                 &accepted_url_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             accepted_response_task.await.action,
-            acp_v1::ElicitationAction::Accept(_)
+            acp_v2::ElicitationAction::Accept(_)
         ));
         assert!(matches!(
             accepted_url_response_task.await.action,
-            acp_v1::ElicitationAction::Accept(_)
+            acp_v2::ElicitationAction::Accept(_)
         ));
 
         let cleared_ids = store.update(cx, |store, cx| store.clear_resolved(cx));
@@ -16710,7 +16774,7 @@ mod tests {
         store.update(cx, |store, cx| store.clear(cx));
         assert_eq!(
             pending_response_task.await.action,
-            acp_v1::ElicitationAction::Cancel
+            acp_v2::ElicitationAction::Cancel
         );
     }
 
@@ -16719,14 +16783,14 @@ mod tests {
         init_test(cx);
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
-        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v2::ElicitationId::new("url-1");
 
         let response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationUrlMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -16762,15 +16826,15 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &entry_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Accept(_)
+            acp_v2::ElicitationAction::Accept(_)
         ));
         store.update(cx, |store, cx| {
             store.complete_url_elicitation(&url_elicitation_id, cx);
@@ -16790,7 +16854,7 @@ mod tests {
         init_test(cx);
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
-        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v2::ElicitationId::new("url-1");
         let responded_ids = Rc::new(RefCell::new(Vec::new()));
         let _subscription = cx.update(|cx| {
             let responded_ids = responded_ids.clone();
@@ -16804,9 +16868,9 @@ mod tests {
         let response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationUrlMode::new(
-                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -16830,15 +16894,15 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &entry_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Accept(_)
+            acp_v2::ElicitationAction::Accept(_)
         ));
         assert_eq!(
             responded_ids.borrow().as_slice(),
@@ -16881,10 +16945,12 @@ mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0,
+                            )),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16901,7 +16967,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
                 cx,
             );
             thread.cancel(cx).detach();
@@ -16909,7 +16975,7 @@ mod tests {
 
         assert_eq!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Decline
+            acp_v2::ElicitationAction::Decline
         );
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
@@ -16929,10 +16995,12 @@ mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0,
+                            )),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -16949,13 +17017,13 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
                 cx,
             );
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
@@ -16963,7 +17031,7 @@ mod tests {
 
         assert_eq!(
             response_task.await.action,
-            acp_v1::ElicitationAction::Decline
+            acp_v2::ElicitationAction::Decline
         );
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
@@ -16989,9 +17057,11 @@ mod tests {
         ] {
             let result = thread.update(cx, |thread, cx| {
                 thread.request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationUrlMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id.clone()),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0.clone(),
+                            )),
                             "url-1",
                             invalid_url,
                         ),
@@ -17004,7 +17074,7 @@ mod tests {
             let Err(error) = result else {
                 panic!("{invalid_url} should not be accepted for URL elicitation");
             };
-            assert_eq!(error.code, acp_v1::ErrorCode::InvalidParams);
+            assert_eq!(error.code, acp_v2::ErrorCode::InvalidParams);
         }
         thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
     }
@@ -17017,10 +17087,10 @@ mod tests {
 
         let result = thread.update(cx, |thread, cx| {
             thread.request_elicitation(
-                acp_v1::CreateElicitationRequest::new(
-                    acp_v1::OtherElicitationMode::new(
+                acp_v2::CreateElicitationRequest::new(
+                    acp_v2::OtherElicitationMode::new(
                         "future",
-                        acp_v1::ElicitationSessionScope::new(session_id),
+                        acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(session_id.0)),
                         std::collections::BTreeMap::new(),
                     ),
                     "Use a future input mode",
@@ -17032,7 +17102,7 @@ mod tests {
         let Err(error) = result else {
             panic!("unadvertised elicitation mode should be rejected");
         };
-        assert_eq!(error.code, acp_v1::ErrorCode::InvalidParams);
+        assert_eq!(error.code, acp_v2::ErrorCode::InvalidParams);
         thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
     }
 
@@ -17043,10 +17113,10 @@ mod tests {
 
         let result = store.update(cx, |store, cx| {
             store.request_elicitation(
-                acp_v1::CreateElicitationRequest::new(
-                    acp_v1::OtherElicitationMode::new(
+                acp_v2::CreateElicitationRequest::new(
+                    acp_v2::OtherElicitationMode::new(
                         "future",
-                        acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                        acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
                         std::collections::BTreeMap::new(),
                     ),
                     "Use a future input mode",
@@ -17058,7 +17128,7 @@ mod tests {
         let Err(error) = result else {
             panic!("unadvertised elicitation mode should be rejected");
         };
-        assert_eq!(error.code, acp_v1::ErrorCode::InvalidParams);
+        assert_eq!(error.code, acp_v2::ErrorCode::InvalidParams);
         store.read_with(cx, |store, _| assert!(store.elicitations().is_empty()));
     }
 
@@ -18463,29 +18533,32 @@ mod tests {
         });
 
         let warning =
-            acp_v1::Notice::new(acp_v1::NoticeSeverity::Warning, "MCP server unavailable")
+            acp_v2::Notice::new(acp_v2::NoticeSeverity::Warning, "MCP server unavailable")
                 .description("Continuing without it.");
         let notices = vec![
-            acp_v1::Notice::new(acp_v1::NoticeSeverity::Info, "Using default configuration"),
+            acp_v2::Notice::new(acp_v2::NoticeSeverity::Info, "Using default configuration"),
             warning.clone(),
             warning.clone(),
-            acp_v1::Notice::new(acp_v1::NoticeSeverity::Error, "Optional integration failed"),
-            acp_v1::Notice::new(
-                acp_v1::NoticeSeverity::Other("critical".into()),
+            acp_v2::Notice::new(acp_v2::NoticeSeverity::Error, "Optional integration failed")
+                .description("")
+                .meta(acp_v2::Meta::new()),
+            acp_v2::Notice::new(
+                acp_v2::NoticeSeverity::Other("critical".into()),
                 "Future severity",
             ),
-            acp_v1::Notice::new(
-                acp_v1::NoticeSeverity::Other("_custom".into()),
+            acp_v2::Notice::new(
+                acp_v2::NoticeSeverity::Other("_custom".into()),
                 "**Plain text**, not Markdown",
             )
-            .meta(acp_v1::Meta::from_iter([("source".into(), "test".into())])),
+            .meta(acp_v2::Meta::from_iter([(
+                "extension".into(),
+                serde_json::json!({"nested": [null, true, {"value": "retained"}]}),
+            )])),
         ];
 
         thread.update(cx, |thread, cx| {
             for notice in &notices {
-                thread
-                    .handle_session_update(acp_v1::SessionUpdate::Notice(notice.clone()), cx)
-                    .expect("notice should be accepted");
+                thread.push_notice(notice.clone(), cx);
             }
             assert_eq!(
                 thread.notices(),
@@ -18523,9 +18596,7 @@ mod tests {
                 thread.dismiss_notice(notice_id, cx);
             }
             assert!(thread.notices().is_empty());
-            thread
-                .handle_session_update(acp_v1::SessionUpdate::Notice(warning.clone()), cx)
-                .expect("a repeated notice is a new live event");
+            thread.push_notice(warning.clone(), cx);
             thread.dismiss_notice(1, cx);
             assert_eq!(thread.notices(), &[(notices.len(), warning)]);
             assert!(thread.entries().is_empty());
@@ -19425,13 +19496,13 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
                 cx,
             );
         });
         assert_eq!(
             elicitation_response.await.action,
-            acp_v1::ElicitationAction::Decline
+            acp_v2::ElicitationAction::Decline
         );
         cx.run_until_parked();
         assert!(thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
@@ -19612,9 +19683,9 @@ mod tests {
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         for action in [
-            acp_v1::ElicitationAction::Accept(acp_v1::ElicitationAcceptAction::new()),
-            acp_v1::ElicitationAction::Decline,
-            acp_v1::ElicitationAction::Cancel,
+            acp_v2::ElicitationAction::Accept(acp_v2::ElicitationAcceptAction::new()),
+            acp_v2::ElicitationAction::Decline,
+            acp_v2::ElicitationAction::Cancel,
         ] {
             let (elicitation_id, response) = request_test_form_elicitation(&thread, cx);
             cx.run_until_parked();
@@ -19627,7 +19698,7 @@ mod tests {
             thread.update(cx, |thread, cx| {
                 thread.respond_to_elicitation(
                     &elicitation_id,
-                    acp_v1::CreateElicitationResponse::new(action.clone()),
+                    acp_v2::CreateElicitationResponse::new(action.clone()),
                     cx,
                 );
             });
@@ -19639,7 +19710,7 @@ mod tests {
             thread.update(cx, |thread, cx| {
                 thread.respond_to_elicitation(
                     &elicitation_id,
-                    acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Cancel),
+                    acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Cancel),
                     cx,
                 );
             });
@@ -19663,13 +19734,15 @@ mod tests {
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         for (url_id, accept) in [("accepted", true), ("canceled", false)] {
-            let url_id = acp_v1::ElicitationId::new(url_id);
+            let url_id = acp_v2::ElicitationId::new(url_id);
             let (entry_id, response) = thread.update(cx, |thread, cx| {
                 thread
                     .request_elicitation_with_id(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationUrlMode::new(
-                                acp_v1::ElicitationSessionScope::new(thread.session_id().clone()),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationUrlMode::new(
+                                acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                    thread.session_id().0.clone(),
+                                )),
                                 url_id.clone(),
                                 "https://example.com/complete",
                             ),
@@ -19688,15 +19761,15 @@ mod tests {
             assert_eq!(cx.active_idle_sleep_preventions(), 0);
 
             let expected_action = if accept {
-                acp_v1::ElicitationAction::Accept(acp_v1::ElicitationAcceptAction::new())
+                acp_v2::ElicitationAction::Accept(acp_v2::ElicitationAcceptAction::new())
             } else {
-                acp_v1::ElicitationAction::Cancel
+                acp_v2::ElicitationAction::Cancel
             };
             thread.update(cx, |thread, cx| {
                 if accept {
                     thread.respond_to_elicitation(
                         &entry_id,
-                        acp_v1::CreateElicitationResponse::new(expected_action.clone()),
+                        acp_v2::CreateElicitationResponse::new(expected_action.clone()),
                         cx,
                     );
                 } else {
@@ -19758,7 +19831,7 @@ mod tests {
         ));
         assert_eq!(
             elicitation_response.await.action,
-            acp_v1::ElicitationAction::Cancel
+            acp_v2::ElicitationAction::Cancel
         );
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(
@@ -19771,8 +19844,8 @@ mod tests {
             );
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
@@ -21442,14 +21515,16 @@ mod tests {
     fn request_test_form_elicitation(
         thread: &Entity<AcpThread>,
         cx: &mut TestAppContext,
-    ) -> (ElicitationEntryId, Task<acp_v1::CreateElicitationResponse>) {
+    ) -> (ElicitationEntryId, Task<acp_v2::CreateElicitationResponse>) {
         thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation_with_id(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(thread.session_id().clone()),
-                            acp_v1::ElicitationSchema::new().string("name", false),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                thread.session_id().0.clone(),
+                            )),
+                            acp_v2::ElicitationSchema::new().string("name", false),
                         ),
                         "Provide a name",
                     ),
