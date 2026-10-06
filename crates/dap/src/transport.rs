@@ -375,7 +375,20 @@ impl TransportDelegate {
                 .body
                 .clone()
                 .and_then(|body| serde_json::from_value::<ErrorResponse>(body).ok())
-                .and_then(|response| response.error.map(|msg| msg.format))
+                .and_then(|response| {
+                    response.error.map(|msg| {
+                        let Some(variables) = msg
+                            .variables
+                            .as_ref()
+                            .and_then(serde_json::Value::as_object)
+                            .filter(|variables| !variables.is_empty())
+                        else {
+                            return msg.format;
+                        };
+
+                        interpolate_message(msg.format, variables)
+                    })
+                })
                 .or_else(|| response.message.clone())
             {
                 anyhow::bail!(error_message);
@@ -467,6 +480,44 @@ impl TransportDelegate {
         let mut log_handlers = self.log_handlers.lock();
         log_handlers.push((kind, Box::new(f)));
     }
+}
+
+fn interpolate_message(
+    format: String,
+    variables: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    let mut out = String::with_capacity(format.len());
+    let mut rest = format.as_str();
+
+    loop {
+        let Some(start) = rest.find('{') else {
+            out.push_str(rest);
+            break;
+        };
+
+        out.push_str(&rest[..start]);
+        let placeholder = &rest[start..];
+
+        let Some(end) = placeholder.find('}') else {
+            out.push_str(placeholder);
+            break;
+        };
+
+        let name = &placeholder[1..end];
+        if name.is_empty() || name.contains('{') {
+            out.push_str(&placeholder[..=end]);
+        } else {
+            match variables.get(name) {
+                Some(serde_json::Value::String(value)) => out.push_str(value),
+                Some(value) => out.push_str(&value.to_string()),
+                None => out.push_str(&placeholder[..=end]),
+            }
+        }
+
+        rest = &placeholder[end + 1..];
+    }
+
+    out
 }
 
 pub struct TcpTransport {
@@ -1016,5 +1067,96 @@ impl Transport for FakeTransport {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeTransport {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_interpolate_message() {
+        let variables = serde_json::Map::from_iter([
+            ("".into(), json!("wrong")),
+            ("{name".into(), json!("wrong")),
+            ("msg".into(), json!("boom")),
+            ("name".into(), json!("zed")),
+            ("number".into(), json!(42)),
+            ("enabled".into(), json!(true)),
+        ]);
+
+        assert_eq!(interpolate_message("{msg}".into(), &variables), "boom");
+        assert_eq!(
+            interpolate_message("{name} says {msg}, {name}".into(), &variables),
+            "zed says boom, zed"
+        );
+        assert_eq!(
+            interpolate_message("{number} {enabled}".into(), &variables),
+            "42 true"
+        );
+
+        // and the unknown ones are left as is here
+        assert_eq!(
+            interpolate_message("hi {nope}".into(), &variables),
+            "hi {nope}"
+        );
+        assert_eq!(
+            interpolate_message("oops {msg".into(), &variables),
+            "oops {msg"
+        );
+        assert_eq!(
+            interpolate_message("stray } {name}".into(), &variables),
+            "stray } zed"
+        );
+        assert_eq!(
+            interpolate_message("nested {{name}}".into(), &variables),
+            "nested {{name}}"
+        );
+        assert_eq!(
+            interpolate_message("empty {}".into(), &variables),
+            "empty {}"
+        );
+    }
+
+    #[test]
+    fn test_process_response_interpolates_error_variables() {
+        let response = Response {
+            seq: 1,
+            request_seq: 1,
+            success: false,
+            command: "launch".into(),
+            body: Some(json!({
+                "error": {
+                    "id": 1,
+                    "format": "{response_message}",
+                    "variables": { "response_message": "use binary option" }
+                }
+            })),
+            message: Some("cancelled".into()),
+        };
+
+        let error = TransportDelegate::process_response(response).unwrap_err();
+        assert_eq!(error.to_string(), "use binary option");
+    }
+
+    #[test]
+    fn test_process_response_preserves_error_without_variables() {
+        let response = Response {
+            seq: 1,
+            request_seq: 1,
+            success: false,
+            command: "launch".into(),
+            body: Some(json!({
+                "error": {
+                    "id": 1,
+                    "format": "plain error"
+                }
+            })),
+            message: Some("cancelled".into()),
+        };
+
+        let error = TransportDelegate::process_response(response).unwrap_err();
+        assert_eq!(error.to_string(), "plain error");
     }
 }

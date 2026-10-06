@@ -1,9 +1,9 @@
 use crate::{OffsetUtf16, Point, PointUtf16, TextSummary, Unclipped};
+use gpui_util::{debug_panic, is_utf8_char_boundary};
 use heapless::String as ArrayString;
 use std::{cmp, ops::Range};
 use sum_tree::Bias;
 use unicode_segmentation::GraphemeCursor;
-use util::debug_panic;
 
 #[cfg(not(all(test, not(rust_analyzer))))]
 pub(crate) type Bitmap = u128;
@@ -73,7 +73,7 @@ impl Chunk {
             let mut chars_utf16 = 0;
 
             for (ix, &b) in chunk.iter().enumerate() {
-                chars |= (util::is_utf8_char_boundary(b) as u8) << ix;
+                chars |= (is_utf8_char_boundary(b) as u8) << ix;
                 newlines |= ((b == b'\n') as u8) << ix;
                 tabs |= ((b == b'\t') as u8) << ix;
                 // b >= 240 when we are at the first byte of the 4 byte encoded
@@ -189,7 +189,7 @@ impl Chunk {
         } else {
             let mut i = index;
             while i > 0 {
-                if util::is_utf8_char_boundary(self.text.as_bytes()[i]) {
+                if is_utf8_char_boundary(self.text.as_bytes()[i]) {
                     break;
                 }
                 i -= 1;

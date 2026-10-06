@@ -1536,7 +1536,7 @@ mod tests {
     use super::*;
     use gpui::{EmptyView, TestAppContext};
     use indoc::indoc;
-    use language::{Language, LanguageConfig, markdown_lang};
+    use language::{Language, LanguageConfig, LanguageMatcher, markdown_lang};
     use settings::SettingsStore;
 
     #[gpui::test]
@@ -1590,6 +1590,68 @@ mod tests {
                  Markdown-Inline grammar, but the buffer parsed with layers {layers:?}",
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_git_blob_language_detection_ignores_display_name(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store
+                .set_user_settings(r#"{"file_types":{"JSONC":["tsconfig*.json"]}}"#, cx)
+                .expect("valid file type settings");
+            cx.set_global(store);
+        });
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.register_test_language(LanguageConfig {
+            name: "JSON".into(),
+            matcher: Arc::new(LanguageMatcher {
+                path_suffixes: vec!["json".into(), "flake.lock".into()],
+                ..LanguageMatcher::default()
+            }),
+            ..LanguageConfig::default()
+        });
+        language_registry.register_test_language(LanguageConfig {
+            name: "JSONC".into(),
+            ..LanguageConfig::default()
+        });
+
+        let languages = cx.update(|cx| {
+            [
+                ("flake.lock", "abc1234 - flake.lock"),
+                ("flake.lock", "flake.lock @ abc1234"),
+                ("nix/flake.lock", "abc1234 - flake.lock"),
+                ("nix/flake.lock", "flake.lock @ abc1234"),
+                ("web/tsconfig.json", "abc1234 - tsconfig.json"),
+                ("web/tsconfig.json", "tsconfig.json @ abc1234"),
+            ]
+            .map(|(path, display_name)| {
+                let blob = Arc::new(GitBlob {
+                    path: RepoPath::new(path).expect("valid repository path"),
+                    worktree_id: WorktreeId::from_usize(0),
+                    is_deleted: false,
+                    is_binary: false,
+                    display_name: display_name.to_string(),
+                }) as Arc<dyn File>;
+                assert_eq!(blob.file_system_abs_path(cx), None);
+                language_registry
+                    .language_for_file(&blob, None, cx)
+                    .and_then(|id| language_registry.language_name_for_id(id))
+                    .map(|name| name.to_string())
+            })
+        });
+
+        assert_eq!(
+            languages.each_ref().map(|name| name.as_deref()),
+            [
+                Some("JSON"),
+                Some("JSON"),
+                Some("JSON"),
+                Some("JSON"),
+                Some("JSONC"),
+                Some("JSONC"),
+            ]
+        );
     }
 
     fn markdown_inline_lang() -> Language {

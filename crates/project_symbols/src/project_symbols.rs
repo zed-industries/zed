@@ -366,7 +366,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -520,7 +520,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..Default::default()
                 })
                 .into(),

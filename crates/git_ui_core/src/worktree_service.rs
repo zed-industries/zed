@@ -456,7 +456,7 @@ async fn fetch_remote_for_worktree_base(
 /// Multiple entries in `git_repos` can be linked worktrees of the *same*
 /// underlying repository (e.g. a project that has both the main checkout and
 /// one of its linked worktrees open as separate Zed worktrees). Those entries
-/// resolve to the same target path via [`Repository::path_for_new_linked_worktree`],
+/// resolve to the same target path via [`project::git_store::RepositorySnapshot::path_for_new_linked_worktree`],
 /// so we create the new worktree only once and remap every contributing
 /// work directory onto it. Without this dedup, the second `git worktree add`
 /// fails with "already exists".

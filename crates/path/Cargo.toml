@@ -15,7 +15,10 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 dunce.workspace = true
-serde = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+tendril.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

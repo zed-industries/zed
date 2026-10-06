@@ -1,6 +1,7 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::ClientUserMessageId;
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -76,7 +77,7 @@ pub struct DbThread {
     #[serde(default)]
     pub thinking_effort: Option<String>,
     #[serde(default)]
-    pub draft_prompt: Option<Vec<acp::ContentBlock>>,
+    pub draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
     #[serde(default)]
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
@@ -926,6 +927,58 @@ mod tests {
         assert!(
             db_thread.draft_prompt.is_none(),
             "Legacy threads without draft_prompt field should default to None"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_draft_prompt_preserves_legacy_and_v2_content(cx: &mut TestAppContext) {
+        let legacy_draft = serde_json::to_value(vec![
+            acp::ContentBlock::Text(acp::TextContent::new("legacy draft")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new("file", "file:///a.md")),
+        ])
+        .expect("serialize v1 draft");
+        let mut thread: DbThread = serde_json::from_value(serde_json::json!({
+            "title": "Draft Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z",
+            "draft_prompt": legacy_draft,
+        }))
+        .expect("decode legacy thread with v2 draft blocks");
+        assert_eq!(
+            serde_json::to_value(&thread.draft_prompt).expect("serialize decoded draft"),
+            legacy_draft
+        );
+
+        let extension = serde_json::json!({
+            "type": "_draft_card",
+            "payload": {"items": [1, {"enabled": true}], "optional": null},
+            "_meta": {"source": "draft", "nested": {"version": 2}},
+        });
+        let extension_block: acp_v2::ContentBlock =
+            serde_json::from_value(extension.clone()).expect("decode v2-only draft block");
+        assert!(matches!(extension_block, acp_v2::ContentBlock::Other(_)));
+        thread
+            .draft_prompt
+            .as_mut()
+            .expect("legacy draft exists")
+            .push(extension_block);
+        let mut expected = legacy_draft.as_array().expect("draft is an array").clone();
+        expected.push(extension);
+
+        let database = ThreadsDatabase::new(cx.executor()).expect("create database");
+        let thread_id = session_id("draft-thread");
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .expect("save mixed-version draft");
+        let restored = database
+            .load_thread(thread_id)
+            .await
+            .expect("load draft")
+            .expect("saved thread exists");
+        assert_eq!(
+            serde_json::to_value(restored.draft_prompt).expect("serialize restored draft"),
+            serde_json::Value::Array(expected)
         );
     }
 

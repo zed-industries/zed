@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
-clap = { workspace = true, features = ["derive"] }
+clap.workspace = true
 collections.workspace = true
 gpui.workspace = true
 indexmap.workspace = true
@@ -19,8 +19,8 @@ palette.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
-simplelog.workspace= true
-strum = { workspace = true, features = ["derive"] }
+simplelog = { workspace = true, features = ["termcolor"] }
+strum.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 vscode_theme = "0.2.0"

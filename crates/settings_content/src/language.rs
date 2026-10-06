@@ -601,7 +601,7 @@ pub struct LanguageSettingsContent {
     pub indent_guides: Option<IndentGuideSettingsContent>,
     /// Whether or not to perform a buffer format before saving.
     ///
-    /// Default: on
+    /// Default: off
     pub format_on_save: Option<FormatOnSave>,
     /// Whether or not to remove any trailing whitespace from lines of a buffer
     /// before saving it.

@@ -4,6 +4,7 @@ use acp_thread::{
     PermissionOptions, ThreadStatus,
 };
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::{AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT};
 use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore};
@@ -4500,7 +4501,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 &connection,
                 acp_thread::ClientUserMessageId::new(),
-                acp::PromptRequest::new(session_id.clone(), vec!["ghi".into()]),
+                acp_v2::PromptRequest::new(session_id.0.clone(), vec!["ghi".into()]),
                 cx,
             )
         })

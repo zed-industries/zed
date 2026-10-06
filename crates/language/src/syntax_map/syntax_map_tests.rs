@@ -950,7 +950,7 @@ fn test_combined_injection_with_leading_content_layer_ordering(cx: &mut App) {
             LanguageConfig {
                 name: LanguageName::new_static("Elixir"),
                 matcher: Arc::new(LanguageMatcher {
-                    path_suffixes: vec![String::from("ex")],
+                    path_suffixes: vec!["ex".into()],
                     ..Default::default()
                 }),
                 ..LanguageConfig::default()
@@ -1625,7 +1625,7 @@ fn html_lang() -> Language {
         LanguageConfig {
             name: "HTML".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["html".to_string()],
+                path_suffixes: vec!["html".into()],
                 ..Default::default()
             })
             .into(),
@@ -1648,7 +1648,7 @@ fn ruby_lang() -> Language {
         LanguageConfig {
             name: "Ruby".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rb".to_string()],
+                path_suffixes: vec!["rb".into()],
                 ..Default::default()
             })
             .into(),
@@ -1671,7 +1671,7 @@ fn erb_lang() -> Language {
         LanguageConfig {
             name: "ERB".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["erb".to_string()],
+                path_suffixes: vec!["erb".into()],
                 ..Default::default()
             })
             .into(),
@@ -1762,7 +1762,7 @@ fn python_lang() -> Language {
         LanguageConfig {
             name: "Python".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["py".to_string()],
+                path_suffixes: vec!["py".into()],
                 ..Default::default()
             })
             .into(),

@@ -29,7 +29,7 @@ pub fn run_package_conformity(_args: PackageConformityArgs) -> Result<()> {
         if !is_using_workspace_lints {
             eprintln!(
                 "{package:?} is not using workspace lints",
-                package = package.name
+                package = package.name.as_str()
             );
         }
 

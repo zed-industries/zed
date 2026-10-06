@@ -1,6 +1,7 @@
 use super::*;
 use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentSettings;
 use agent_ui::{
     ThreadId,
@@ -2952,7 +2953,7 @@ async fn test_terminal_close_event_keeps_linked_worktree_workspace_with_live_edi
     assert!(
         matches!(
             live_blocks.as_deref(),
-            Some([acp::ContentBlock::Text(text)]) if text.text == "keep this draft"
+            Some([acp_v2::ContentBlock::Text(text)]) if text.text == "keep this draft"
         ),
         "edited draft should still be readable from the panel after opening the terminal"
     );
@@ -3110,7 +3111,7 @@ async fn test_archive_selected_draft_archives_linked_worktree_after_last_draft(
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             first_draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "first draft",
             ))],
             cx,
@@ -3121,7 +3122,7 @@ async fn test_archive_selected_draft_archives_linked_worktree_after_last_draft(
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             second_draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "second draft",
             ))],
             cx,
@@ -3314,7 +3315,7 @@ async fn test_archive_selected_draft_archives_closed_linked_worktree(cx: &mut Te
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "closed draft",
             ))],
             cx,
@@ -14871,7 +14872,7 @@ async fn test_discard_mixed_workspace_draft_closes_only_archived_worktree_items(
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "mixed workspace draft",
             ))],
             cx,

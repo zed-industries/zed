@@ -1037,6 +1037,7 @@ impl VsCodeSettings {
             agent_buffer_font_family: None,
             agent_buffer_font_size: None,
             git_commit_buffer_font_size: None,
+            mermaid_font_family: None,
             theme: None,
             icon_theme: None,
             ui_density: None,

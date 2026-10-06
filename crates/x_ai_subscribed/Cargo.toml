@@ -18,6 +18,7 @@ base64.workspace = true
 credentials_provider.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_util.workspace = true
 http_client.workspace = true
 language_model.workspace = true
 log.workspace = true
@@ -29,7 +30,6 @@ serde_json.workspace = true
 sha2.workspace = true
 smol.workspace = true
 url.workspace = true
-util.workspace = true
 x_ai.workspace = true
 
 [dev-dependencies]

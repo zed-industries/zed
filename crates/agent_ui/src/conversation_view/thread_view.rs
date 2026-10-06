@@ -579,6 +579,7 @@ pub struct ThreadView {
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
     pub title_editor: Entity<Editor>,
+    title_editor_sync_version: Option<(gpui::EntityId, clock::Global)>,
     pub config_options_view: Option<Entity<ConfigOptionsView>>,
     pub mode_selector: Option<Entity<ModeSelector>>,
     pub model_selector: Option<Entity<ModelSelectorPopover>>,
@@ -827,33 +828,42 @@ impl ThreadView {
                 window,
                 cx,
             );
-            if let Some(content) = initial_content {
+            let content_blocks = if let Some(content) = initial_content {
                 match content {
                     AgentInitialContent::ThreadSummary { session_id, title } => {
                         editor.insert_thread_summary(session_id, title, window, cx);
+                        None
                     }
                     AgentInitialContent::ContentBlock {
                         blocks,
                         auto_submit,
                     } => {
                         should_auto_submit = auto_submit;
-                        editor.set_message(blocks, window, cx);
+                        Some(blocks)
                     }
                     AgentInitialContent::FromExternalSource(prompt) => {
                         show_external_source_prompt_warning = true;
                         // SECURITY: Be explicit about not auto submitting prompt from external source.
                         should_auto_submit = false;
-                        editor.set_message(
-                            vec![acp_v1::ContentBlock::Text(acp_v1::TextContent::new(
-                                prompt.into_string(),
-                            ))],
-                            window,
-                            cx,
-                        );
+                        Some(vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                            prompt.into_string(),
+                        ))])
                     }
                 }
-            } else if let Some(draft) = thread.read(cx).draft_prompt() {
-                editor.set_message(draft.to_vec(), window, cx);
+            } else {
+                thread.read(cx).draft_prompt().map(|draft| draft.to_vec())
+            };
+            if let Some(blocks) = content_blocks {
+                if blocks.iter().all(acp_thread::content::can_convert_to_v1) {
+                    editor.set_message(blocks, window, cx);
+                } else {
+                    should_auto_submit = false;
+                    thread.update(cx, |thread, cx| {
+                        thread.set_draft_prompt(Some(blocks.clone()), cx);
+                    });
+                    editor.set_read_only(true, cx);
+                    editor.set_source_message(blocks, window, cx);
+                }
             }
             editor
         });
@@ -879,22 +889,26 @@ impl ThreadView {
             }));
         }
 
-        let title_editor = {
+        let (title_editor, title_editor_sync_version) = {
             let metadata = ThreadMetadataStore::try_global(cx)
                 .and_then(|store| store.read(cx).entry(root_thread_id).cloned());
             let initial_title = if parent_session_id.is_none() {
-                metadata.as_ref().and_then(|m| m.title())
+                metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.title_override.clone())
             } else {
-                thread.read(cx).title()
+                None
             }
+            .or_else(|| thread.read(cx).title())
             .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_text(initial_title, window, cx);
                 editor
             });
+            let version = Self::title_editor_version(editor.read(cx), cx);
             subscriptions.push(cx.subscribe_in(&editor, window, Self::handle_title_editor_event));
-            editor
+            (editor, version)
         };
 
         subscriptions.push(cx.subscribe_in(
@@ -960,6 +974,10 @@ impl ThreadView {
         }
 
         subscriptions.push(cx.observe(&message_editor, |this, editor, cx| {
+            if editor.read(cx).editor().read(cx).read_only(cx) {
+                this._draft_resolve_task.take();
+                return;
+            }
             let is_empty = editor.read(cx).text(cx).is_empty();
             let draft_contents_task = if is_empty {
                 None
@@ -974,6 +992,9 @@ impl ThreadView {
                     None
                 };
                 this.update(cx, |this, cx| {
+                    if this.message_editor.read(cx).editor().read(cx).read_only(cx) {
+                        return;
+                    }
                     this.thread.update(cx, |thread, cx| {
                         thread.set_draft_prompt(draft, cx);
                     });
@@ -999,6 +1020,7 @@ impl ThreadView {
             workspace,
             entry_view_state,
             title_editor,
+            title_editor_sync_version,
             config_options_view,
             mode_selector,
             model_selector,
@@ -1209,7 +1231,12 @@ impl ThreadView {
         &self,
         message_editor: &Entity<MessageEditor>,
         cx: &mut App,
-    ) -> Task<Result<(Vec<acp_v1::ContentBlock>, Vec<Entity<Buffer>>)>> {
+    ) -> Task<Result<(Vec<acp_v2::ContentBlock>, Vec<Entity<Buffer>>)>> {
+        if message_editor.read(cx).editor().read(cx).read_only(cx) {
+            return Task::ready(Err(anyhow!(
+                "This draft contains unsupported content and cannot be edited or sent. Discard the draft to write a new message."
+            )));
+        }
         let expand = self.as_native_thread(cx).is_some_and(|thread| {
             let thread = thread.read(cx);
             AgentSettings::get_global(cx)
@@ -1504,27 +1531,27 @@ impl ThreadView {
         }
     }
 
-    pub(crate) fn in_flight_prompt(&self, cx: &App) -> Option<Arc<[acp_v1::ContentBlock]>> {
+    pub(crate) fn in_flight_prompt(&self, cx: &App) -> Option<Arc<[acp_v2::ContentBlock]>> {
         let record = self.thread.read(cx);
         let record = record.submission(self.current_submission?)?;
         (!matches!(record.state, SubmissionState::Completed)).then(|| record.content.clone())
     }
 
-    fn submission_text_parts(content: &[acp_v1::ContentBlock]) -> impl Iterator<Item = &str> {
+    fn submission_text_parts(content: &[acp_v2::ContentBlock]) -> impl Iterator<Item = &str> {
         content.iter().map(|block| match block {
-            acp_v1::ContentBlock::Text(text) => text.text.as_str(),
-            acp_v1::ContentBlock::ResourceLink(link) => link.name.as_str(),
-            acp_v1::ContentBlock::Resource(resource) => match &resource.resource {
-                acp_v1::EmbeddedResourceResource::TextResourceContents(resource) => {
+            acp_v2::ContentBlock::Text(text) => text.text.as_str(),
+            acp_v2::ContentBlock::ResourceLink(link) => link.name.as_str(),
+            acp_v2::ContentBlock::Resource(resource) => match &resource.resource {
+                acp_v2::EmbeddedResourceResource::TextResourceContents(resource) => {
                     resource.uri.as_str()
                 }
-                acp_v1::EmbeddedResourceResource::BlobResourceContents(resource) => {
+                acp_v2::EmbeddedResourceResource::BlobResourceContents(resource) => {
                     resource.uri.as_str()
                 }
                 _ => "[Resource attachment]",
             },
-            acp_v1::ContentBlock::Image(_) => "[Image attachment]",
-            acp_v1::ContentBlock::Audio(_) => "[Audio attachment]",
+            acp_v2::ContentBlock::Image(_) => "[Image attachment]",
+            acp_v2::ContentBlock::Audio(_) => "[Audio attachment]",
             _ => "[Unsupported attachment]",
         })
     }
@@ -1550,6 +1577,15 @@ impl ThreadView {
                 .then(|| record.content.to_vec())
             });
         if let Some(content) = content {
+            if !content.iter().all(acp_thread::content::can_convert_to_v1) {
+                self.handle_thread_error(
+                    anyhow!(
+                        "This saved submission contains unsupported content and cannot be restored. The original submission has been kept."
+                    ),
+                    cx,
+                );
+                return;
+            }
             self.message_editor.update(cx, |editor, cx| {
                 editor.set_message(content, window, cx);
             });
@@ -1737,6 +1773,15 @@ impl ThreadView {
     }
 
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.message_editor.read(cx).editor().read(cx).read_only(cx) {
+            self.handle_thread_error(
+                anyhow!(
+                    "This draft contains unsupported content and cannot be edited or sent. Discard the draft to write a new message."
+                ),
+                cx,
+            );
+            return;
+        }
         let thread = &self.thread;
 
         if self.is_loading_contents {
@@ -1749,6 +1794,12 @@ impl ThreadView {
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
         if is_editor_empty {
+            if self.message_queue.can_fast_track()
+                && let Some(id) = self.message_queue.first_id()
+                && !self.validate_queued_entry(id, cx)
+            {
+                return;
+            }
             if let Some(entry) = self.message_queue.try_fast_track(is_generating) {
                 self.dispatch_queued_entry(entry, window, cx);
             }
@@ -1765,7 +1816,10 @@ impl ThreadView {
         let text = text.trim();
         if text == "/login" || text == "/logout" {
             let connection = thread.read(cx).connection().clone();
-            let can_login = !connection.auth_methods().is_empty();
+            let can_login = connection
+                .auth_methods()
+                .iter()
+                .any(acp_thread::auth_methods::is_supported);
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
                 && self
@@ -1841,18 +1895,18 @@ impl ThreadView {
             // Strip the leading `/command` from the first text block; whatever
             // remains (including any later mention blocks) becomes the queued
             // follow-up message.
-            if let Some(acp_v1::ContentBlock::Text(text_content)) = content.first_mut() {
+            if let Some(acp_v2::ContentBlock::Text(text_content)) = content.first_mut() {
                 text_content.text = strip_leading_command(&text_content.text, &command_name);
             }
             if matches!(
                 content.first(),
-                Some(acp_v1::ContentBlock::Text(text)) if text.text.trim().is_empty()
+                Some(acp_v2::ContentBlock::Text(text)) if text.text.trim().is_empty()
             ) {
                 content.remove(0);
             }
 
             let command_block =
-                acp_v1::ContentBlock::Text(acp_v1::TextContent::new(format!("/{command_name}")));
+                acp_v2::ContentBlock::Text(acp_v2::TextContent::new(format!("/{command_name}")));
 
             this.update_in(cx, |this, window, cx| {
                 // Queue the remainder first, then start the command turn; the
@@ -1917,7 +1971,7 @@ impl ThreadView {
     pub fn send_content(
         &mut self,
         contents_task: Task<
-            anyhow::Result<Option<(Vec<acp_v1::ContentBlock>, Vec<Entity<Buffer>>)>>,
+            anyhow::Result<Option<(Vec<acp_v2::ContentBlock>, Vec<Entity<Buffer>>)>>,
         >,
         is_native_command: bool,
         window: &mut Window,
@@ -1981,8 +2035,8 @@ impl ThreadView {
                 let text: String = contents
                     .iter()
                     .filter_map(|block| match block {
-                        acp_v1::ContentBlock::Text(text_content) => Some(text_content.text.clone()),
-                        acp_v1::ContentBlock::ResourceLink(resource_link) => {
+                        acp_v2::ContentBlock::Text(text_content) => Some(text_content.text.clone()),
+                        acp_v2::ContentBlock::ResourceLink(resource_link) => {
                             Some(format!("@{}", resource_link.name))
                         }
                         _ => None,
@@ -2089,6 +2143,15 @@ impl ThreadView {
     }
 
     pub fn interrupt_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.message_editor.read(cx).editor().read(cx).read_only(cx) {
+            self.handle_thread_error(
+                anyhow!(
+                    "This draft contains unsupported content and cannot be edited or sent. Discard the draft to write a new message."
+                ),
+                cx,
+            );
+            return;
+        }
         let thread = &self.thread;
 
         if self.is_loading_contents {
@@ -2403,7 +2466,7 @@ impl ThreadView {
 
     pub fn add_to_queue(
         &mut self,
-        content: Vec<acp_v1::ContentBlock>,
+        content: Vec<acp_v2::ContentBlock>,
         tracked_buffers: Vec<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2428,7 +2491,7 @@ impl ThreadView {
                 cx,
             );
             editor.set_read_only(true, cx);
-            editor.set_message(content.clone(), window, cx);
+            editor.set_source_message(content.clone(), window, cx);
             editor
         });
 
@@ -2486,6 +2549,13 @@ impl ThreadView {
         let Some(entry) = self.message_queue.entry_by_id(id) else {
             return;
         };
+        if !entry
+            .content
+            .iter()
+            .all(acp_thread::content::can_convert_to_v1)
+        {
+            return;
+        }
         let contents_task = entry
             .editor
             .update(cx, |editor, cx| editor.contents(false, cx));
@@ -2495,6 +2565,13 @@ impl ThreadView {
 
             this.update(cx, |this, cx| {
                 if let Some(entry) = this.message_queue.entry_by_id_mut(id) {
+                    if !entry
+                        .content
+                        .iter()
+                        .all(acp_thread::content::can_convert_to_v1)
+                    {
+                        return;
+                    }
                     entry.content = content;
                     entry.tracked_buffers = tracked_buffers;
                 }
@@ -2528,10 +2605,52 @@ impl ThreadView {
         if let Some(native_thread) = self.as_native_thread(cx) {
             // By default queued messages wait for the turn to fully complete.
             // Only a "steering" front message ends the turn at the next boundary.
-            let end_at_boundary = self.message_queue.front_wants_steer();
+            let end_at_boundary = self.message_queue.front_wants_steer()
+                && self.message_queue.first().is_some_and(|entry| {
+                    self.thread
+                        .read(cx)
+                        .validate_prompt_content(&entry.content)
+                        .is_ok()
+                });
             native_thread.update(cx, |thread, _| {
                 thread.set_end_turn_at_next_boundary(end_at_boundary);
             });
+        }
+    }
+
+    fn validate_queued_entry(&mut self, id: QueueEntryId, cx: &mut Context<Self>) -> bool {
+        let Some(entry) = self.message_queue.entry_by_id(id) else {
+            return false;
+        };
+        if let Err(error) = self.thread.read(cx).validate_prompt_content(&entry.content) {
+            self.handle_thread_error(error, cx);
+            return false;
+        }
+        true
+    }
+
+    pub fn send_queued_message_after_generation_stopped(
+        &mut self,
+        is_first_editor_focused: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if let Some(id) = self
+            .message_queue
+            .auto_send_candidate(is_first_editor_focused)
+            .map(|entry| entry.id)
+            && !self.validate_queued_entry(id, cx)
+        {
+            self.message_queue.pause();
+        }
+        if let Some(entry) = self
+            .message_queue
+            .on_generation_stopped(is_first_editor_focused)
+        {
+            self.dispatch_queued_entry(entry, window, cx);
+            true
+        } else {
+            false
         }
     }
 
@@ -2541,6 +2660,9 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.validate_queued_entry(id, cx) {
+            return;
+        }
         let is_generating = self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
         if let Some(entry) = self.message_queue.send_now(id, is_generating) {
             self.dispatch_queued_entry(entry, window, cx);
@@ -2550,7 +2672,7 @@ impl ThreadView {
     /// The shared "actually send this entry" path, used by fast-track,
     /// auto-processing on Stopped, and "Send Now". The entry must already have
     /// been removed from the queue.
-    pub fn dispatch_queued_entry(
+    fn dispatch_queued_entry(
         &mut self,
         entry: QueueEntry,
         window: &mut Window,
@@ -2572,7 +2694,7 @@ impl ThreadView {
         let is_native_command = content
             .first()
             .and_then(|block| match block {
-                acp_v1::ContentBlock::Text(text) => Some(text.text.as_str()),
+                acp_v2::ContentBlock::Text(text) => Some(text.text.as_str()),
                 _ => None,
             })
             .and_then(|text| {
@@ -2609,6 +2731,25 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.message_editor.read(cx).editor().read(cx).read_only(cx) {
+            self.handle_thread_error(
+                anyhow!("Discard the unsupported draft before moving a queued message into the composer."),
+                cx,
+            );
+            return false;
+        }
+        if self.message_queue.entry_by_id(id).is_some_and(|entry| {
+            !entry
+                .content
+                .iter()
+                .all(acp_thread::content::can_convert_to_v1)
+        }) {
+            self.handle_thread_error(
+                anyhow!("This queued message contains unsupported content and cannot be edited."),
+                cx,
+            );
+            return false;
+        }
         let Some(queued_message) = self.remove_from_queue(id, cx) else {
             return false;
         };
@@ -2689,6 +2830,29 @@ impl ThreadView {
         cx.notify();
     }
 
+    fn title_editor_version(editor: &Editor, cx: &App) -> Option<(gpui::EntityId, clock::Global)> {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .map(|buffer| (buffer.entity_id(), buffer.read(cx).version()))
+    }
+
+    pub(super) fn sync_title_editor(
+        &mut self,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.title_editor.read(cx).text(cx) == title {
+            return;
+        }
+        self.title_editor_sync_version = self.title_editor.update(cx, |editor, cx| {
+            editor.set_text(title, window, cx);
+            Self::title_editor_version(editor, cx)
+        });
+    }
+
     pub fn handle_title_editor_event(
         &mut self,
         title_editor: &Entity<Editor>,
@@ -2698,13 +2862,15 @@ impl ThreadView {
     ) {
         match event {
             EditorEvent::BufferEdited => {
-                // We only want to set the title if the user has actively edited
-                // it. If the title editor is not focused, we programmatically
-                // changed the text, so we don't want to set the title again.
                 if !title_editor.read(cx).is_focused(window) {
                     return;
                 }
 
+                // BufferEdited has no origin; equal text can still be an explicit user rename.
+                let version = Self::title_editor_version(title_editor.read(cx), cx);
+                if version.is_some() && version == self.title_editor_sync_version {
+                    return;
+                }
                 let new_title = title_editor.read(cx).text(cx);
                 if new_title.is_empty() {
                     return;
@@ -2713,9 +2879,7 @@ impl ThreadView {
             }
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
-                    title_editor.update(cx, |editor, cx| {
-                        editor.set_text(DEFAULT_THREAD_TITLE, window, cx);
-                    });
+                    self.sync_title_editor(DEFAULT_THREAD_TITLE.into(), window, cx);
                 }
             }
             _ => {}
@@ -2727,11 +2891,7 @@ impl ThreadView {
     /// inline rename) so that they go through the same persistence path as
     /// the in-thread title editor.
     pub fn rename(&mut self, title: SharedString, window: &mut Window, cx: &mut Context<Self>) {
-        if self.title_editor.read(cx).text(cx) != title.as_ref() {
-            self.title_editor.update(cx, |editor, cx| {
-                editor.set_text(title.clone(), window, cx);
-            });
-        }
+        self.sync_title_editor(title.clone(), window, cx);
         self.apply_renamed_title(title, cx);
     }
 
@@ -4788,6 +4948,23 @@ impl ThreadView {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let has_messages = self.list_state.item_count() > 0;
         let fills_container = !has_messages || editor_expanded;
+        let composer_is_read_only = self.message_editor.read(cx).editor().read(cx).read_only(cx);
+        let discard_draft_button = composer_is_read_only.then(|| {
+            div()
+                .debug_selector(|| "discard-protected-draft".into())
+                .child(
+                    Button::new("discard-protected-draft", "Discard draft")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this._draft_resolve_task.take();
+                            this.message_editor.update(cx, |editor, cx| {
+                                editor.set_read_only(false, cx);
+                                editor.set_message(Vec::new(), window, cx);
+                            });
+                            this.clear_thread_error(cx);
+                        })),
+                )
+        });
 
         h_flex()
             .py_2()
@@ -4879,6 +5056,7 @@ impl ThreadView {
                                     .min_w_0()
                                     .flex_wrap()
                                     .gap_1()
+                                    .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
                                     .children(self.profile_selector.clone())
                                     .map(|this| match self.config_options_view.clone() {
@@ -11999,6 +12177,17 @@ impl ThreadView {
 
                     this.clear_thread_error(cx);
                     if let Some(message) = this.in_flight_prompt(cx) {
+                        if !message.iter().all(acp_thread::content::can_convert_to_v1)
+                            || this.message_editor.read(cx).editor().read(cx).read_only(cx)
+                        {
+                            this.handle_thread_error(
+                                anyhow!(
+                                    "This saved submission cannot be restored into the composer. The original submission and draft have been kept."
+                                ),
+                                cx,
+                            );
+                            return;
+                        }
                         if !this.thread.read(cx).uses_reported_activity()
                             && let Some(submission_id) = this.current_submission
                             && this.thread.read(cx).submission(submission_id).is_some_and(
@@ -13334,7 +13523,7 @@ pub(crate) fn open_link(
 /// command is never echoed as a user message (see `send_command_queueing_remainder`).
 fn leading_native_command(
     text: &str,
-    available_commands: &[acp_v1::AvailableCommand],
+    available_commands: &[acp_v2::AvailableCommand],
 ) -> Option<String> {
     let rest = text.trim_start().strip_prefix('/')?;
     let name_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
@@ -13413,14 +13602,14 @@ mod tests {
         }
     }
 
-    fn native_command(name: &str) -> acp_v1::AvailableCommand {
-        acp_v1::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
+    fn native_command(name: &str) -> acp_v2::AvailableCommand {
+        acp_v2::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Native,
         ))
     }
 
-    fn mcp_command(name: &str) -> acp_v1::AvailableCommand {
-        acp_v1::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
+    fn mcp_command(name: &str) -> acp_v2::AvailableCommand {
+        acp_v2::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Mcp,
         ))
     }

@@ -26,7 +26,7 @@ release_channel.workspace = true
 sqlez.workspace = true
 sqlez_macros.workspace = true
 util.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v5", "v7"] }
 zed_env_vars.workspace = true
 
 [dev-dependencies]

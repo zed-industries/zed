@@ -1,6 +1,25 @@
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use anyhow::{Result, bail};
 
+pub fn validate_prompt_content_for_v1(content: &[acp_v2::ContentBlock]) -> Result<()> {
+    if !content.iter().all(can_convert_to_v1) {
+        bail!("This prompt contains content not supported by ACP v1");
+    }
+    Ok(())
+}
+
+pub fn prompt_to_v1(request: acp_v2::PromptRequest) -> Result<acp_v1::PromptRequest> {
+    let prompt = request
+        .prompt
+        .into_iter()
+        .map(to_v1)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(
+        acp_v1::PromptRequest::new(acp_v1::SessionId::new(request.session_id.0), prompt)
+            .meta(request.meta),
+    )
+}
+
 pub fn from_v1(block: acp_v1::ContentBlock) -> Result<acp_v2::ContentBlock> {
     Ok(match block {
         acp_v1::ContentBlock::Text(content) => acp_v2::ContentBlock::Text(
@@ -245,6 +264,47 @@ mod tests {
     fn rejects(block: acp_v2::ContentBlock) {
         assert!(!can_convert_to_v1(&block));
         assert!(to_v1(block).is_err());
+    }
+
+    #[test]
+    fn legacy_prompt_conversion_preserves_envelope_and_rejects_unsupported_content() -> Result<()> {
+        let request = acp_v2::PromptRequest::new(
+            "opaque-session",
+            vec![acp_v2::ContentBlock::Text(
+                acp_v2::TextContent::new("prompt").meta(acp_v2::Meta::from_iter([(
+                    "block".into(),
+                    json!({"value": 1}),
+                )])),
+            )],
+        )
+        .meta(acp_v2::Meta::from_iter([(
+            "request".into(),
+            json!([null, true]),
+        )]));
+        validate_prompt_content_for_v1(&request.prompt)?;
+        assert_eq!(
+            serde_json::to_value(prompt_to_v1(request)?)?,
+            json!({
+                "sessionId": "opaque-session",
+                "prompt": [{"type": "text", "text": "prompt", "_meta": {"block": {"value": 1}}}],
+                "_meta": {"request": [null, true]}
+            })
+        );
+
+        let request = acp_v2::PromptRequest::new(
+            "opaque-session",
+            vec![
+                "visible text".into(),
+                acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+                    "_future",
+                    BTreeMap::from([("payload".into(), json!("private-payload"))]),
+                )),
+            ],
+        );
+        assert!(validate_prompt_content_for_v1(&request.prompt).is_err());
+        let error = prompt_to_v1(request).expect_err("the entire prompt must be representable");
+        assert!(!error.to_string().contains("private-payload"));
+        Ok(())
     }
 
     #[test]

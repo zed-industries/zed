@@ -1,6 +1,6 @@
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCallStatus};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::{v1 as acp, v2 as acp_v2};
 use client::RefreshLlmTokenListener;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::AppContext;
@@ -72,7 +72,9 @@ where
             thread.send(
                 vec![
                     "Read the file ".into(),
-                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new("foo.rs", "foo.rs")),
+                    acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new(
+                        "foo.rs", "foo.rs",
+                    )),
                     " and tell me what the content of the println! is".into(),
                 ],
                 cx,

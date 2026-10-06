@@ -535,6 +535,7 @@ impl Render for RenameBranchModal {
 
 struct CreateTagModal {
     commit: Oid,
+    at_head: bool,
     editor: Entity<Editor>,
     repo: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
@@ -543,6 +544,7 @@ struct CreateTagModal {
 impl CreateTagModal {
     fn new(
         commit: Oid,
+        at_head: bool,
         repo: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -555,10 +557,21 @@ impl CreateTagModal {
         });
         Self {
             commit,
+            at_head,
             editor,
             repo,
             workspace,
         }
+    }
+
+    fn tag_target_commit_label(&self) -> String {
+        let short_sha = self.commit.display_short();
+
+        if self.at_head {
+            return format!("{short_sha} (HEAD)");
+        }
+
+        short_sha
     }
 
     fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
@@ -574,7 +587,10 @@ impl CreateTagModal {
         let repo = self.repo.clone();
         let commit = self.commit.to_string();
         let workspace = self.workspace.clone();
-        let success_message = format!("Created tag {tag_name} at HEAD");
+        let success_message = format!(
+            "Created tag \"{tag_name}\" at {}",
+            self.tag_target_commit_label()
+        );
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| repo.create_tag(tag_name, commit))
                 .await??;
@@ -604,6 +620,7 @@ impl Focusable for CreateTagModal {
 
 impl Render for CreateTagModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let title = format!("Create Tag at {}", self.tag_target_commit_label());
         v_flex()
             .key_context("CreateTagModal")
             .on_action(cx.listener(Self::cancel))
@@ -618,13 +635,7 @@ impl Render for CreateTagModal {
                     .w_full()
                     .gap_1p5()
                     .child(Icon::new(IconName::GitCommit).size(IconSize::XSmall))
-                    .child(
-                        Headline::new(format!(
-                            "Create Tag at HEAD ({})",
-                            self.commit.display_short()
-                        ))
-                        .size(HeadlineSize::XSmall),
-                    ),
+                    .child(Headline::new(title).size(HeadlineSize::XSmall)),
             )
             .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
     }
@@ -670,10 +681,20 @@ fn create_tag_at_head(workspace: &mut Workspace, window: &mut Window, cx: &mut C
     else {
         return;
     };
-    let workspace_handle = cx.weak_entity();
+    create_tag_at_commit(commit, true, repo, workspace, window, cx);
+}
 
+pub(crate) fn create_tag_at_commit(
+    commit: Oid,
+    at_head: bool,
+    repo: Entity<Repository>,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let workspace_handle = cx.weak_entity();
     workspace.toggle_modal(window, cx, |window, cx| {
-        CreateTagModal::new(commit, repo, workspace_handle, window, cx)
+        CreateTagModal::new(commit, at_head, repo, workspace_handle, window, cx)
     });
 }
 
@@ -1598,6 +1619,7 @@ mod view_commit_tests {
             .expect("workspace should exist")
             .expect("create tag modal should be open");
         assert_eq!(modal.read_with(cx, |modal, _| modal.commit), commit);
+        assert!(modal.read_with(cx, |modal, _| modal.at_head));
 
         modal.update_in(cx, |modal, window, cx| {
             modal.editor.update(cx, |editor, cx| {
@@ -1613,5 +1635,79 @@ mod view_commit_tests {
             })
             .expect("fake git state should exist");
         assert_eq!(tagged_commit, Some(commit.to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_create_tag_from_commit_context_menu(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = setup_git_repo(cx).await;
+        let head = Oid::try_from("abcdef1234567890abcdef1234567890abcdef12")
+            .expect("HEAD SHA should be valid");
+        let selected_commit = Oid::try_from("1234567890abcdef1234567890abcdef12345678")
+            .expect("selected commit SHA should be valid");
+        fs.set_head_for_repo(Path::new("/root/project/.git"), &[], head.to_string());
+        let (_project, workspace) = create_test_workspace(fs.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        cx.executor().run_until_parked();
+
+        let (repository, focus_handle, workspace_handle) = workspace
+            .update(cx, |workspace, _, cx| {
+                let repository = workspace
+                    .project()
+                    .read(cx)
+                    .active_repository(cx)
+                    .expect("active repository should exist");
+                (repository, workspace.focus_handle(cx), cx.weak_entity())
+            })
+            .expect("workspace should exist");
+        let context_menu = cx.update(|window, cx| {
+            commit_context_menu::commit_context_menu(
+                commit_context_menu::CommitContextMenuData {
+                    sha: selected_commit,
+                    tag_names: Vec::new(),
+                },
+                commit_context_menu::CommitContextMenuSource::GitPanel,
+                None,
+                focus_handle,
+                Some(repository.downgrade()),
+                workspace_handle,
+                window,
+                cx,
+            )
+        });
+
+        context_menu.update_in(cx, |menu, window, cx| {
+            menu.select_first(&menu::SelectFirst, window, cx);
+            menu.select_next(&menu::SelectNext, window, cx);
+            menu.select_next(&menu::SelectNext, window, cx);
+            menu.confirm(&Confirm, window, cx);
+        });
+
+        let modal = workspace
+            .update(cx, |workspace, _, cx| {
+                workspace.active_modal::<CreateTagModal>(cx)
+            })
+            .expect("workspace should exist")
+            .expect("create tag modal should be open");
+        assert_eq!(
+            modal.read_with(cx, |modal, _| modal.commit),
+            selected_commit
+        );
+        assert!(!modal.read_with(cx, |modal, _| modal.at_head));
+
+        modal.update_in(cx, |modal, window, cx| {
+            modal.editor.update(cx, |editor, cx| {
+                editor.set_text("v1.0.0", window, cx);
+            });
+            modal.confirm(&Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        let tagged_commit = fs
+            .with_git_state(Path::new("/root/project/.git"), false, |state| {
+                state.refs.get("refs/tags/v1.0.0").cloned()
+            })
+            .expect("fake git state should exist");
+        assert_eq!(tagged_commit, Some(selected_commit.to_string()));
     }
 }

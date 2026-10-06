@@ -448,11 +448,18 @@ impl WritePipeline {
 
 impl EditPipeline {
     fn ensure_resolving_old_text(&mut self, buffer: &Entity<Buffer>, cx: &mut AsyncApp) {
-        if self.current_edit.is_none() {
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
-            self.current_edit = Some(EditPipelineEntry::ResolvingOldText {
-                matcher: StreamingFuzzyMatcher::new(snapshot),
-            });
+        match &mut self.current_edit {
+            None => {
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
+                self.current_edit = Some(EditPipelineEntry::ResolvingOldText {
+                    matcher: StreamingFuzzyMatcher::new(snapshot),
+                });
+            }
+            Some(EditPipelineEntry::ResolvingOldText { matcher }) => {
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
+                matcher.refresh(snapshot);
+            }
+            Some(EditPipelineEntry::StreamingNewText { .. }) => {}
         }
     }
 

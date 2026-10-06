@@ -15,6 +15,7 @@ use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
+use gpui_util::debug_panic;
 use locator::Locator;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
@@ -40,7 +41,6 @@ pub use subscription::*;
 pub use sum_tree::Bias;
 use sum_tree::{Dimensions, FilterCursor, SumTree, Summary, TreeMap, TreeSet};
 use undo_map::UndoMap;
-use util::debug_panic;
 
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
