@@ -531,16 +531,6 @@ pub struct ElicitationStore {
 
 impl EventEmitter<ElicitationStoreEvent> for ElicitationStore {}
 
-fn elicitation_targets_tool_call(
-    request: &acp_v1::CreateElicitationRequest,
-    tool_call_id: &acp_v1::ToolCallId,
-) -> bool {
-    match request.scope() {
-        acp_v1::ElicitationScope::Session(scope) => scope.tool_call_id.as_ref() == Some(tool_call_id),
-        _ => false,
-    }
-}
-
 impl ElicitationStore {
     pub fn elicitations(&self) -> &[Elicitation] {
         &self.elicitations
@@ -3844,8 +3834,7 @@ impl AcpThread {
     }
 
     /// Form elicitations stop rendering after accept, so the associated tool
-    /// call is the scroll target for the user's answer. Accepting a URL
-    /// elicitation only consents to opening a link, so it isn't an answer.
+    /// call is the scroll target for the user's answer.
     pub fn is_user_authored_scroll_target(&self, entry: &AgentThreadEntry) -> bool {
         match entry {
             AgentThreadEntry::UserMessage(_) => true,
@@ -3857,8 +3846,14 @@ impl AcpThread {
     fn tool_call_has_accepted_user_answer(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
         self.elicitations.elicitations().iter().any(|elicitation| {
             matches!(elicitation.status, ElicitationStatus::Accepted)
+                // Accepting a URL elicitation only consents to opening a link,
+                // so it isn't an answer.
                 && matches!(elicitation.request.mode, acp_v1::ElicitationMode::Form(_))
-                && elicitation_targets_tool_call(&elicitation.request, tool_call_id)
+                && matches!(
+                    elicitation.request.scope(),
+                    acp_v1::ElicitationScope::Session(scope)
+                        if scope.tool_call_id.as_ref() == Some(tool_call_id)
+                )
         })
     }
 
