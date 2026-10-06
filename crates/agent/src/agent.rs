@@ -235,6 +235,8 @@ struct Session {
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
     pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
+    /// The thread's message count as of the last enqueued save.
+    saved_message_count: Option<usize>,
     save_wake: watch::Sender<()>,
     save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
@@ -894,6 +896,7 @@ impl NativeAgent {
                 subagents: Vec::new(),
                 project_id,
                 pending_save,
+                saved_message_count: None,
                 save_wake,
                 save_worker,
                 _subscriptions: subscriptions,
@@ -1804,6 +1807,15 @@ impl NativeAgent {
         let Some(session) = self.sessions.get(&id) else {
             return;
         };
+        // The thread notifies on every streamed chunk, but streamed content
+        // stays in the pending message, which isn't persisted until the
+        // message completes. Saving then would rewrite identical content.
+        let thread = thread.read(cx);
+        if thread.has_pending_message()
+            && session.saved_message_count == Some(thread.message_count())
+        {
+            return;
+        }
         let draft_prompt = session.draft_prompt(cx);
         self.enqueue_save(&id, draft_prompt, cx);
     }
@@ -1826,6 +1838,7 @@ impl NativeAgent {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
+        session.saved_message_count = Some(session.thread.read(cx).message_count());
         *session.pending_save.lock() = Some(PendingThreadSave {
             folder_paths,
             db_thread,
@@ -7667,6 +7680,142 @@ mod internal_tests {
             Some(third_draft),
             "the save worker must persist the latest snapshot of a burst"
         );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_chunks_do_not_save_thread(cx: &mut TestAppContext) {
+        let (fake, model, acp_thread, session_id) = init_streaming_session(cx).await;
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        let saves_before_stream = database.save_count();
+
+        for chunk in ["one ", "two ", "three"] {
+            fake.send_last_text(&model, chunk);
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            database.save_count(),
+            saves_before_stream,
+            "streamed chunks must not save the thread"
+        );
+
+        fake.end_last(&model);
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert!(database.save_count() > saves_before_stream);
+        assert_eq!(
+            saved_markdown(&database, &session_id).await,
+            "## User\n\nhello\n\n## Assistant\n\none two three\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_completed_message_saved_while_next_message_streams(cx: &mut TestAppContext) {
+        let (fake, model, acp_thread, session_id) = init_streaming_session(cx).await;
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::StartMessage {
+                message_id: "first".into(),
+            },
+        );
+        fake.send_last_text(&model, "first message");
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::StartMessage {
+                message_id: "second".into(),
+            },
+        );
+        fake.send_last_text(&model, "second mess");
+        cx.run_until_parked();
+        assert_eq!(
+            saved_markdown(&database, &session_id).await,
+            "## User\n\nhello\n\n## Assistant\n\nfirst message\n",
+            "a completed message must be saved even while the next one streams"
+        );
+
+        fake.send_last_text(&model, "age");
+        fake.end_last(&model);
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            saved_markdown(&database, &session_id).await,
+            "## User\n\nhello\n\n## Assistant\n\nfirst message\n\n## Assistant\n\nsecond message\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cancelling_stream_saves_partial_message(cx: &mut TestAppContext) {
+        let (fake, model, acp_thread, session_id) = init_streaming_session(cx).await;
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        fake.send_last_text(&model, "partial");
+        cx.run_until_parked();
+        acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            saved_markdown(&database, &session_id).await,
+            "## User\n\nhello\n\n## Assistant\n\npartial\n"
+        );
+    }
+
+    async fn init_streaming_session(
+        cx: &mut TestAppContext,
+    ) -> (
+        Arc<FakeLanguageModelProvider>,
+        LanguageModel,
+        Entity<AcpThread>,
+        acp_v1::SessionId,
+    ) {
+        let fake = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+        });
+        (fake, model, acp_thread, session_id)
+    }
+
+    async fn saved_markdown(database: &ThreadsDatabase, session_id: &acp_v1::SessionId) -> String {
+        let db_thread = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        crate::thread::messages_to_markdown(&db_thread.messages)
     }
 
     #[gpui::test]

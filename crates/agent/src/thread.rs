@@ -4069,6 +4069,14 @@ impl Thread {
             })
     }
 
+    pub(crate) fn has_pending_message(&self) -> bool {
+        self.pending_message.is_some()
+    }
+
+    pub(crate) fn message_count(&self) -> usize {
+        self.messages.len()
+    }
+
     fn pending_message(&mut self) -> &mut AgentMessage {
         self.pending_message.get_or_insert_default()
     }
