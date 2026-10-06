@@ -1452,7 +1452,7 @@ impl ConversationView {
             .map(|native_connection| native_available_skills(&native_connection, &session_id, cx))
             .unwrap_or_default();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
-            thread.read(cx).prompt_capabilities(),
+            thread.read(cx).prompt_capabilities().clone(),
             thread.read(cx).available_commands().to_vec(),
             available_skills,
         )));
@@ -2058,15 +2058,13 @@ impl ConversationView {
                 );
             }
             AcpThreadEvent::TitleUpdated => {
-                let title = self.title_override(cx).or_else(|| thread.read(cx).title());
-                if let Some(title) = title
-                    && let Some(active_thread) = self.thread_view(&session_id)
-                {
-                    let title_editor = active_thread.read(cx).title_editor.clone();
-                    title_editor.update(cx, |editor, cx| {
-                        if editor.text(cx) != title {
-                            editor.set_text(title, window, cx);
-                        }
+                let title = self
+                    .title_override(cx)
+                    .or_else(|| thread.read(cx).title())
+                    .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
+                if let Some(active_thread) = self.thread_view(&session_id) {
+                    active_thread.update(cx, |active_thread, cx| {
+                        active_thread.sync_title_editor(title, window, cx);
                     });
                 }
                 cx.notify();
@@ -2074,10 +2072,9 @@ impl ConversationView {
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, _cx| {
-                        active
-                            .session_capabilities
-                            .write()
-                            .set_prompt_capabilities(thread.read(_cx).prompt_capabilities());
+                        active.session_capabilities.write().set_prompt_capabilities(
+                            thread.read(_cx).prompt_capabilities().clone(),
+                        );
                     });
                 }
             }
@@ -5678,8 +5675,11 @@ pub(crate) mod tests {
         });
     }
 
-    #[derive(Clone)]
-    struct RestoredAvailableCommandsConnection;
+    #[derive(Clone, Default)]
+    struct RestoredAvailableCommandsConnection {
+        session_info_update: Option<acp_v1::SessionInfoUpdate>,
+        load_response: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
+    }
 
     impl AgentConnection for RestoredAvailableCommandsConnection {
         fn agent_id(&self) -> AgentId {
@@ -5715,9 +5715,11 @@ pub(crate) mod tests {
             session_id: acp_v1::SessionId,
             project: Entity<Project>,
             _work_dirs: PathList,
-            _title: Option<SharedString>,
+            title: Option<SharedString>,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let session_info_update = self.session_info_update.clone();
+            let load_response = self.load_response.lock().take();
             let thread = build_test_thread(
                 self,
                 project,
@@ -5739,7 +5741,28 @@ pub(crate) mod tests {
                 })
                 .expect("available commands update should succeed");
 
-            Task::ready(Ok(thread))
+            thread.update(cx, |thread, cx| {
+                if let Some(title) = title {
+                    thread.update_session_info(
+                        acp_v2::SessionInfoUpdate::new().title(title.to_string()),
+                        cx,
+                    );
+                }
+                if let Some(update) = session_info_update {
+                    thread
+                        .handle_session_update(acp_v1::SessionUpdate::SessionInfoUpdate(update), cx)
+                        .expect("session info update should succeed");
+                }
+            });
+
+            if let Some(load_response) = load_response {
+                cx.spawn(async move |_| {
+                    load_response.await?;
+                    Ok(thread)
+                })
+            } else {
+                Task::ready(Ok(thread))
+            }
         }
 
         fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
@@ -5786,7 +5809,9 @@ pub(crate) mod tests {
         let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConversationView::new(
-                    Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
+                    Rc::new(StubAgentServer::new(
+                        RestoredAvailableCommandsConnection::default(),
+                    )),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
                     Some(acp_v1::SessionId::new("restored-session")),
@@ -5908,6 +5933,124 @@ pub(crate) mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[gpui::test]
+    async fn test_restored_title_uses_updates_received_before_load_completes(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::thread_metadata_store::ThreadMetadata;
+        use chrono::Utc;
+        use project::WorktreePaths;
+
+        init_test(cx);
+        for (index, (title, title_override)) in [
+            (None, None),
+            (Some("Current agent title"), None),
+            (None, Some("User title")),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fs = FakeFs::new(cx.executor());
+            let project = Project::test(fs, [], cx).await;
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+            let thread_id = ThreadId::new();
+            let session_id = acp_v1::SessionId::new(format!("early-title-{index}"));
+            cx.update(|_, cx| {
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    store.save(
+                        ThreadMetadata {
+                            thread_id,
+                            session_id: Some(session_id.clone()),
+                            agent_id: AgentId::new("Test"),
+                            title: Some("Old cached title".into()),
+                            title_override: title_override.map(SharedString::from),
+                            updated_at: Utc::now(),
+                            created_at: Some(Utc::now()),
+                            interacted_at: None,
+                            worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+                            remote_connection: None,
+                            archived: false,
+                        },
+                        cx,
+                    );
+                });
+            });
+
+            let (finish_load, load_response) = futures::channel::oneshot::channel();
+            let load_response = Arc::new(Mutex::new(Some(load_response)));
+            let connection = RestoredAvailableCommandsConnection {
+                session_info_update: Some(
+                    acp_v1::SessionInfoUpdate::new().title(title.map(str::to_owned)),
+                ),
+                load_response: load_response.clone(),
+            };
+            let thread_store = cx.update(|_, cx| cx.new(|cx| ThreadStore::new(cx)));
+            let connection_store =
+                cx.update(|_, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+            let conversation_view = cx.update(|window, cx| {
+                cx.new(|cx| {
+                    ConversationView::new(
+                        Rc::new(StubAgentServer::new(connection)),
+                        connection_store,
+                        Agent::Custom { id: "Test".into() },
+                        Some(session_id),
+                        Some(thread_id),
+                        None,
+                        Some("Old cached title".into()),
+                        None,
+                        workspace.downgrade(),
+                        project,
+                        Some(thread_store),
+                        AgentThreadSource::AgentPanel,
+                        window,
+                        cx,
+                    )
+                })
+            });
+            add_to_workspace(conversation_view.clone(), cx);
+            cx.run_until_parked();
+            assert!(
+                load_response.lock().is_none(),
+                "load operation should have started"
+            );
+            conversation_view.read_with(cx, |view, _| {
+                assert!(view.is_loading());
+                assert!(view.root_thread_view().is_none());
+            });
+            cx.read(|cx| {
+                assert_eq!(
+                    ThreadMetadataStore::global(cx)
+                        .read(cx)
+                        .entry(thread_id)
+                        .expect("cached metadata")
+                        .title
+                        .as_deref(),
+                    Some("Old cached title")
+                );
+            });
+
+            finish_load.send(()).expect("load should still be pending");
+            cx.run_until_parked();
+            let active = active_thread(&conversation_view, cx);
+            active.read_with(cx, |view, cx| {
+                assert_eq!(view.thread.read(cx).title().as_deref(), title);
+                assert_eq!(
+                    view.title_editor.read(cx).text(cx),
+                    title_override.or(title).unwrap_or(DEFAULT_THREAD_TITLE)
+                );
+            });
+            cx.read(|cx| {
+                let store = ThreadMetadataStore::global(cx);
+                let metadata = store.read(cx).entry(thread_id).expect("live metadata");
+                assert_eq!(metadata.title.as_deref(), title);
+                assert_eq!(metadata.title_override.as_deref(), title_override);
+            });
+        }
     }
 
     #[gpui::test]
@@ -6866,7 +7009,9 @@ pub(crate) mod tests {
 
         panel.update_in(cx, |panel, window, cx| {
             panel.open_external_thread_with_server(
-                Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
+                Rc::new(StubAgentServer::new(
+                    RestoredAvailableCommandsConnection::default(),
+                )),
                 window,
                 cx,
             );
@@ -6889,7 +7034,9 @@ pub(crate) mod tests {
         let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConversationView::new(
-                    Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
+                    Rc::new(StubAgentServer::new(
+                        RestoredAvailableCommandsConnection::default(),
+                    )),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
                     None,
@@ -7756,10 +7903,10 @@ pub(crate) mod tests {
                 action_log,
                 session_id,
                 watch::Receiver::constant(
-                    acp_v1::PromptCapabilities::new()
-                        .image(true)
-                        .audio(true)
-                        .embedded_context(true),
+                    acp_v2::PromptCapabilities::new()
+                        .image(acp_v2::PromptImageCapabilities::new())
+                        .audio(acp_v2::PromptAudioCapabilities::new())
+                        .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                 ),
                 cx,
             )
@@ -8220,10 +8367,10 @@ pub(crate) mod tests {
                     action_log,
                     session_id,
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -8303,10 +8450,10 @@ pub(crate) mod tests {
                     action_log,
                     acp_v1::SessionId::new("test"),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -8382,10 +8529,10 @@ pub(crate) mod tests {
                     action_log,
                     acp_v1::SessionId::new("new-session"),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -8417,10 +8564,10 @@ pub(crate) mod tests {
                     action_log,
                     session_id,
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )
@@ -14104,15 +14251,113 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_manually_editing_title_updates_acp_thread_title(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::MaybeUndefined;
+
         init_test(cx);
 
+        let connection = StubAgentConnection::new();
         let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
 
         let active = active_thread(&conversation_view, cx);
         let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
         let thread = cx.read(|cx| active.read(cx).thread.clone());
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let thread_id = conversation_view.read_with(cx, |view, _cx| view.thread_id);
+        let assert_title =
+            |title: Option<&str>, title_override: Option<&str>, cx: &VisualTestContext| {
+                let display_title = title_override.or(title).unwrap_or(DEFAULT_THREAD_TITLE);
+                title_editor.read_with(cx, |editor, cx| {
+                    assert_eq!(editor.text(cx), display_title);
+                });
+                thread.read_with(cx, |thread, _cx| {
+                    assert_eq!(thread.title().as_deref(), title);
+                });
+                cx.read(|cx| {
+                    let store = ThreadMetadataStore::global(cx);
+                    let metadata = store
+                        .read(cx)
+                        .entry(thread_id)
+                        .expect("RootThreadUpdated should save the thread metadata");
+                    assert_eq!(metadata.title.as_deref(), title);
+                    assert_eq!(metadata.title_override.as_deref(), title_override);
+                    assert_eq!(metadata.display_title().as_ref(), display_title);
+                    let session_info = acp_thread::AgentSessionInfo::from(metadata);
+                    assert_eq!(session_info.title.as_deref(), title_override.or(title));
+                });
+            };
+
+        cx.focus(&title_editor);
+        for title in [Some("Agent Title"), Some("Replacement Title"), None] {
+            thread.update(cx, |thread, cx| {
+                let title = title
+                    .map(|title| MaybeUndefined::Value(title.into()))
+                    .unwrap_or(MaybeUndefined::Null);
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(title), cx);
+            });
+            cx.run_until_parked();
+            assert_title(title, None, cx);
+            assert!(connection.take_set_title_calls().is_empty());
+        }
+
+        cx.dispatch_action(editor::actions::DeleteLine);
+        cx.run_until_parked();
+        cx.write_to_clipboard(ClipboardItem::new_string(DEFAULT_THREAD_TITLE.into()));
+        cx.dispatch_action(Paste);
+        cx.run_until_parked();
+        assert_title(Some(DEFAULT_THREAD_TITLE), Some(DEFAULT_THREAD_TITLE), cx);
+        assert_eq!(
+            connection.take_set_title_calls(),
+            vec![(session_id.clone(), DEFAULT_THREAD_TITLE.into())]
+        );
+        for title in [Some("Agent replacement after chosen default"), None] {
+            thread.update(cx, |thread, cx| {
+                let title = title
+                    .map(|title| MaybeUndefined::Value(title.into()))
+                    .unwrap_or(MaybeUndefined::Null);
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(title), cx);
+            });
+            cx.run_until_parked();
+            assert_title(title, Some(DEFAULT_THREAD_TITLE), cx);
+            assert!(connection.take_set_title_calls().is_empty());
+        }
+
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                let mut metadata = store.entry(thread_id).expect("thread metadata").clone();
+                metadata.title_override = None;
+                store.save(metadata, cx);
+            });
+        });
+        thread.update(cx, |thread, cx| {
+            thread.update_session_info(
+                acp_v2::SessionInfoUpdate::new().title("Agent title to keep"),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_title(Some("Agent title to keep"), None, cx);
+        assert!(connection.take_set_title_calls().is_empty());
+        cx.dispatch_action(editor::actions::DeleteLine);
+        cx.run_until_parked();
+        cx.write_to_clipboard(ClipboardItem::new_string("Agent title to keep".into()));
+        cx.dispatch_action(Paste);
+        cx.run_until_parked();
+        assert_title(Some("Agent title to keep"), Some("Agent title to keep"), cx);
+        assert!(connection.take_set_title_calls().is_empty());
+        for title in [Some("Agent replacement after explicit choice"), None] {
+            thread.update(cx, |thread, cx| {
+                let title = title
+                    .map(|title| MaybeUndefined::Value(title.into()))
+                    .unwrap_or(MaybeUndefined::Null);
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(title), cx);
+            });
+            cx.run_until_parked();
+            assert_title(title, Some("Agent title to keep"), cx);
+            assert!(connection.take_set_title_calls().is_empty());
+        }
 
         title_editor.read_with(cx, |editor, cx| {
             assert!(!editor.read_only(cx));
@@ -14132,6 +14377,28 @@ pub(crate) mod tests {
         thread.read_with(cx, |thread, _cx| {
             assert_eq!(thread.title(), Some("My Custom Title".into()));
         });
+        assert_title(Some("My Custom Title"), Some("My Custom Title"), cx);
+        let title_calls = connection.take_set_title_calls();
+        assert_eq!(
+            title_calls.last(),
+            Some(&(session_id.clone(), "My Custom Title".into()))
+        );
+        assert!(title_calls.iter().all(|(id, title)| {
+            id == &session_id && "My Custom Title".starts_with(title.as_ref())
+        }));
+
+        cx.focus(&conversation_view);
+        for title in [Some("Subsequent Agent Title"), None] {
+            thread.update(cx, |thread, cx| {
+                let title = title
+                    .map(|title| MaybeUndefined::Value(title.into()))
+                    .unwrap_or(MaybeUndefined::Null);
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(title), cx);
+            });
+            cx.run_until_parked();
+            assert_title(title, Some("My Custom Title"), cx);
+            assert!(connection.take_set_title_calls().is_empty());
+        }
     }
 
     #[gpui::test]
@@ -14196,7 +14463,7 @@ pub(crate) mod tests {
                 project,
                 action_log,
                 acp_v1::SessionId::new(session_id),
-                watch::Receiver::constant(acp_v1::PromptCapabilities::new()),
+                watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
                 cx,
             )
         })
@@ -16487,8 +16754,14 @@ pub(crate) mod tests {
     async fn test_paste_text_into_queued_message_promotes_to_main_editor(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (conversation_view, cx) =
-            paste_into_queued_message(cx, ClipboardItem::new_string("PASTED".to_string())).await;
+        let (conversation_view, cx) = paste_into_queued_message(
+            cx,
+            ClipboardItem::new_string("PASTED".to_string()),
+            watch::Receiver::constant(
+                acp_v2::PromptCapabilities::new().image(acp_v2::PromptImageCapabilities::new()),
+            ),
+        )
+        .await;
 
         let queue_len = active_thread(&conversation_view, cx)
             .read_with(cx, |thread, _cx| thread.message_queue.len());
@@ -16510,15 +16783,22 @@ pub(crate) mod tests {
         let mut image_file = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
         image_file.write_all(&png_bytes).unwrap();
 
-        let (conversation_view, cx) = paste_into_queued_message(
-            cx,
-            ClipboardItem {
-                entries: vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
-                    vec![image_file.path().to_path_buf()].into(),
-                ))],
-            },
-        )
-        .await;
+        let initial_capabilities: acp_v2::PromptCapabilities = serde_json::from_value(json!({
+            "image": {},
+            "audio": {},
+            "embeddedContext": {},
+            "_meta": { "initial": ["preserved"] }
+        }))
+        .expect("valid advertised prompt capabilities");
+        let (mut capabilities_sender, capabilities_receiver) =
+            watch::channel(initial_capabilities.clone());
+        let image_clipboard = ClipboardItem {
+            entries: vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                vec![image_file.path().to_path_buf()].into(),
+            ))],
+        };
+        let (conversation_view, cx) =
+            paste_into_queued_message(cx, image_clipboard.clone(), capabilities_receiver).await;
 
         let queue_len = active_thread(&conversation_view, cx)
             .read_with(cx, |thread, _cx| thread.message_queue.len());
@@ -16535,21 +16815,95 @@ pub(crate) mod tests {
             text,
             format!("queued [@{image_name}]({expected_uri}) message"),
         );
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.read_with(cx, |view, cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(capabilities.supports_images());
+            assert!(capabilities.supports_embedded_context());
+            assert_eq!(capabilities.prompt_capabilities(), &initial_capabilities);
+            assert_eq!(
+                view.thread.read(cx).prompt_capabilities(),
+                &initial_capabilities
+            );
+        });
+
+        let replacement_payload = json!({
+            "image": { "_meta": { "image": ["opaque", 1] } },
+            "audio": { "_meta": { "audio": { "opaque": true } } },
+            "embeddedContext": { "_meta": { "context": ["opaque", null] } },
+            "_meta": { "replacement": { "opaque": [false, 2] } }
+        });
+        let replacement: acp_v2::PromptCapabilities =
+            serde_json::from_value(replacement_payload.clone())
+                .expect("valid replacement prompt capabilities");
+        capabilities_sender
+            .send(replacement)
+            .expect("thread is observing prompt capabilities");
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(capabilities.supports_images());
+            assert!(capabilities.supports_embedded_context());
+            assert_eq!(
+                serde_json::to_value(capabilities.prompt_capabilities())
+                    .expect("serialize retained prompt capabilities"),
+                replacement_payload
+            );
+            assert_eq!(
+                capabilities.prompt_capabilities(),
+                view.thread.read(cx).prompt_capabilities()
+            );
+        });
+
+        let disabled_capabilities: acp_v2::PromptCapabilities = serde_json::from_value(json!({
+            "image": null,
+            "audio": null,
+            "embeddedContext": null,
+            "_meta": { "disabled": ["preserved"] }
+        }))
+        .expect("valid unadvertised prompt capabilities");
+        capabilities_sender
+            .send(disabled_capabilities.clone())
+            .expect("thread is still observing prompt capabilities");
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(!capabilities.supports_images());
+            assert!(!capabilities.supports_embedded_context());
+            assert_eq!(capabilities.prompt_capabilities(), &disabled_capabilities);
+            assert_eq!(
+                view.thread.read(cx).prompt_capabilities(),
+                &disabled_capabilities
+            );
+        });
+
+        let editor = message_editor(&conversation_view, cx);
+        cx.write_to_clipboard(image_clipboard);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.clear(window, cx);
+            editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.is_empty(cx),
+                "disabled image support must prevent paste"
+            );
+        });
     }
 
     async fn paste_into_queued_message(
         cx: &mut TestAppContext,
         clipboard: ClipboardItem,
+        prompt_capabilities: watch::Receiver<acp_v2::PromptCapabilities>,
     ) -> (Entity<ConversationView>, &mut VisualTestContext) {
+        let connection = StubAgentConnection::new().with_prompt_capabilities(prompt_capabilities);
         let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
 
         active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
-            thread
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().image(true));
             thread.add_to_queue(
                 vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                     "queued message".to_string(),
@@ -16761,10 +17115,10 @@ pub(crate) mod tests {
                     action_log,
                     acp_v1::SessionId::new("close-capable-session"),
                     watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
+                        acp_v2::PromptCapabilities::new()
+                            .image(acp_v2::PromptImageCapabilities::new())
+                            .audio(acp_v2::PromptAudioCapabilities::new())
+                            .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                     ),
                     cx,
                 )

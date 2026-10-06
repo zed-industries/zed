@@ -1693,9 +1693,6 @@ impl GitStore {
         let task = cx
             .spawn(async move |this, cx| {
                 let result: Result<Entity<BufferDiff>> = async {
-                    let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-                    let language_registry =
-                        buffer.update(cx, |buffer, _| buffer.language_registry());
                     let content: Option<Arc<str>> = match oid {
                         None => None,
                         Some(oid) => Some({
@@ -1706,6 +1703,10 @@ impl GitStore {
                             content.into()
                         }),
                     };
+                    let (buffer_snapshot, language_registry) = buffer.read_with(cx, |buffer, _| {
+                        (buffer.snapshot(), buffer.language_registry())
+                    });
+                    let buffer_version = buffer_snapshot.version.clone();
                     let buffer_diff = cx.new(|cx| {
                         BufferDiff::new(
                             &buffer_snapshot,
@@ -1727,7 +1728,7 @@ impl GitStore {
                         buffer_diff.set_secondary_diff(unstaged_diff);
                     });
 
-                    this.update(cx, |this, cx| {
+                    let recalculation = this.update(cx, |this, cx| {
                         this.loading_diffs.remove(&(buffer_id, diff_kind));
 
                         let git_store = cx.weak_entity();
@@ -1736,15 +1737,23 @@ impl GitStore {
                             .entry(buffer_id)
                             .or_insert_with(|| cx.new(|cx| BufferGitState::new(git_store, cx)));
 
-                        diff_state.update(cx, |state, _| {
+                        diff_state.update(cx, |state, cx| {
                             if let Some(oid) = oid {
                                 if let Some(content) = content {
                                     state.oid_texts.insert(oid, content);
                                 }
                             }
                             state.oid_diffs.insert(oid, buffer_diff.downgrade());
-                        });
+                            let buffer = buffer.read(cx);
+                            if buffer.version() != buffer_version {
+                                state.recalculate_diffs(buffer.text_snapshot(), cx);
+                            }
+                            state.wait_for_recalculation()
+                        })
                     })?;
+                    if let Some(recalculation) = recalculation {
+                        recalculation.await;
+                    }
 
                     Ok(buffer_diff)
                 }
@@ -5909,6 +5918,31 @@ impl BufferGitState {
             // for a bit
             yield_now().await;
 
+            for (oid, oid_diff, base_text_buffer, base_text) in oid_diffs {
+                let base_text_snapshot =
+                    base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                let new_oid_diff = cx
+                    .update(|cx| {
+                        oid_diff.read(cx).update_diff(
+                            buffer.clone(),
+                            &base_text_snapshot,
+                            base_text.clone(),
+                            cx,
+                        )
+                    })
+                    .await;
+
+                oid_diff.update(cx, |diff, cx| diff.set_snapshot(new_oid_diff, cx));
+
+                log::debug!(
+                    "finished recalculating oid diff for buffer {} oid {:?}",
+                    buffer.remote_id(),
+                    oid
+                );
+
+                yield_now().await;
+            }
+
             let cancel = this.update(cx, |this, _| {
                 // This checks whether all pending stage/unstage operations
                 // have quiesced (i.e. both the corresponding write and the
@@ -5998,31 +6032,6 @@ impl BufferGitState {
             })?;
 
             yield_now().await;
-
-            for (oid, oid_diff, base_text_buffer, base_text) in oid_diffs {
-                let base_text_snapshot =
-                    base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                let new_oid_diff = cx
-                    .update(|cx| {
-                        oid_diff.read(cx).update_diff(
-                            buffer.clone(),
-                            &base_text_snapshot,
-                            base_text.clone(),
-                            cx,
-                        )
-                    })
-                    .await;
-
-                oid_diff.update(cx, |diff, cx| diff.set_snapshot(new_oid_diff, cx));
-
-                log::debug!(
-                    "finished recalculating oid diff for buffer {} oid {:?}",
-                    buffer.remote_id(),
-                    oid
-                );
-
-                yield_now().await;
-            }
 
             log::debug!(
                 "finished recalculating diffs for buffer {}",
@@ -12032,6 +12041,116 @@ mod tests {
         let repository =
             project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
         (gate, repository, oids)
+    }
+
+    #[gpui::test]
+    async fn test_open_diff_since_after_buffer_edit(cx: &mut TestAppContext) {
+        init_test(cx);
+        for (has_base, fail_index_write) in
+            [(true, false), (false, false), (true, true), (false, true)]
+        {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                util::path!("/project"),
+                json!({ ".git": {}, "file.txt": "old\n" }),
+            )
+            .await;
+            let oids = fs.set_merge_base_content_for_repo(
+                util::path!("/project/.git").as_ref(),
+                &[("file.txt", "old\n".to_owned())],
+            );
+            let oid = *oids.first().expect("base blob");
+            let gate = fs.install_blob_read_gate_for_repo(util::path!("/project/.git").as_ref());
+            let project = Project::test(fs.clone(), [util::path!("/project").as_ref()], cx).await;
+            project
+                .update(cx, |project, cx| project.git_scans_complete(cx))
+                .await;
+            let repository = project.read_with(cx, |project, cx| {
+                project.active_repository(cx).expect("repository")
+            });
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(util::path!("/project/file.txt"), cx)
+                })
+                .await
+                .expect("open buffer");
+            let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+            let _staged_diff = if fail_index_write {
+                fs.with_git_state(util::path!("/project/.git").as_ref(), false, |state| {
+                    state.simulated_index_write_error_message =
+                        Some("index write failed".to_owned());
+                })
+                .expect("configure index write failure");
+                Some(
+                    git_store
+                        .update(cx, |git_store, cx| {
+                            git_store.open_staged_diff(buffer.clone(), cx)
+                        })
+                        .await
+                        .expect("open staged diff"),
+                )
+            } else {
+                None
+            };
+            let (index_error_sender, index_error_receiver) = std::sync::mpsc::channel();
+            let _subscription = cx.update(|cx| {
+                cx.subscribe(&git_store, move |_, event, _| {
+                    if let GitStoreEvent::IndexWriteError(error) = event {
+                        index_error_sender
+                            .send(error.to_string())
+                            .expect("record index error");
+                    }
+                })
+            });
+            let (release_sender, release_receiver) = oneshot::channel::<()>();
+            let held_job = repository.update(cx, |repository, _| {
+                repository.send_job("hold", None, move |_, _| async move {
+                    release_receiver.await.expect("release job queue");
+                })
+            });
+            let mut diff_task = git_store.update(cx, |git_store, cx| {
+                git_store.open_diff_since(has_base.then_some(oid), buffer.clone(), repository, cx)
+            });
+            cx.run_until_parked();
+            assert_eq!(gate.waiting(), usize::from(has_base));
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text("new\nextra\n", cx);
+            });
+            cx.run_until_parked();
+            gate.open();
+            cx.run_until_parked();
+            assert!((&mut diff_task).now_or_never().is_none());
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text("latest\nextra\nthird\n", cx);
+            });
+            cx.run_until_parked();
+            if fail_index_write {
+                git_store.update(cx, |git_store, cx| {
+                    git_store.write_index_text_for_buffer_id(
+                        buffer.read(cx).remote_id(),
+                        Some("latest\nextra\nthird\n".to_owned()),
+                        cx,
+                    );
+                });
+            }
+            release_sender.send(()).expect("release job queue");
+            held_job.await.expect("held job");
+            let diff = diff_task.await.expect("open diff");
+            diff.read_with(cx, |diff, cx| {
+                assert_eq!(diff.changed_row_counts(), (3, u32::from(has_base)));
+                assert_eq!(
+                    diff.snapshot(cx).buffer_version(),
+                    &buffer.read(cx).version()
+                );
+            });
+            cx.run_until_parked();
+            if fail_index_write {
+                assert_eq!(
+                    index_error_receiver.try_recv().expect("index write failed"),
+                    "index write failed",
+                );
+            }
+        }
     }
 
     #[gpui::test]
