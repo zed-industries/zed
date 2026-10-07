@@ -2819,10 +2819,26 @@ impl Element for MarkdownElement {
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
                                     // This is a parent container that we can position the copy button inside.
-                                    let parent_container =
-                                        div().group("code_block").relative().w_full();
+                                    let mut parent_container = div()
+                                        .group("code_block")
+                                        .relative()
+                                        .w_full()
+                                        .when(scroll_handle.is_some(), |this| this.rounded_lg());
 
-                                    let mut parent_container: AnyDiv = if let Some(scroll_handle) =
+                                    if let CodeBlockRenderer::Default { border: true, .. } =
+                                        &self.code_block_renderer
+                                    {
+                                        parent_container = parent_container
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border_variant);
+                                    }
+
+                                    // Styles must be final before `custom_scrollbars`, which reads the
+                                    // corner radii and borders to round the scrollbar track.
+                                    parent_container.style().refine(&self.style.code_block);
+
+                                    let parent_container: AnyDiv = if let Some(scroll_handle) =
                                         scroll_handle.as_ref()
                                     {
                                         let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
@@ -2834,24 +2850,18 @@ impl Element for MarkdownElement {
                                             )
                                             .notify_content();
 
+                                        let mut parent_container = parent_container
+                                            .custom_scrollbars(scrollbars, window, cx);
+                                        // Keep the code block's padding over the space reserved for the scrollbar track.
                                         parent_container
-                                            .rounded_lg()
-                                            .custom_scrollbars(scrollbars, window, cx)
-                                            .into()
+                                            .style()
+                                            .padding
+                                            .refine(&self.style.code_block.padding);
+                                        parent_container.into()
                                     } else {
                                         parent_container.into()
                                     };
 
-                                    if let CodeBlockRenderer::Default { border: true, .. } =
-                                        &self.code_block_renderer
-                                    {
-                                        parent_container = parent_container
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(cx.theme().colors().border_variant);
-                                    }
-
-                                    parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
                                     let code_block = div()
