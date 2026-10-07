@@ -248,7 +248,7 @@ impl AudioStack {
             executor
                 .spawn_with_priority(Priority::RealtimeAudio, async move {
                     let output_stream = output_device.build_output_stream(
-                        &output_config.config(),
+                        output_config.config(),
                         {
                             move |mut data, _info| {
                                 while data.len() > 0 {
@@ -340,7 +340,7 @@ impl AudioStack {
 
                         let stream = device
                             .build_input_stream_raw(
-                                &config.config(),
+                                config.config(),
                                 config.sample_format(),
                                 move |data, _: &_| {
                                     let captured_at = Instant::now();
