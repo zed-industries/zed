@@ -141,7 +141,14 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     };
 
                     let editor = workspace.open_project_item::<Editor>(
-                        pane, buffer, true, true, true, true, window, cx,
+                        secondary.then_some(pane),
+                        buffer,
+                        true,
+                        true,
+                        true,
+                        true,
+                        window,
+                        cx,
                     );
 
                     editor.update(cx, |editor, cx| {
@@ -359,7 +366,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -513,7 +520,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..Default::default()
                 })
                 .into(),

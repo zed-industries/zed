@@ -6,12 +6,20 @@ use git::{
     Oid,
     repository::{InitialGraphCommitData, LogSource, RepoPath},
 };
-use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
+use gpui::{
+    AnyWindowHandle, Empty, Entity, InputEvent as _, KeyDownEvent, Keystroke, Size, TestAppContext,
+    VisualTestContext,
+};
+use itertools::iproduct;
+use language::{
+    Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, LanguageServerId,
+    PointUtf16, Unclipped,
+};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::{FakeFs, ProjectPath};
 use serde_json::json;
-use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
+use settings::{FolderIndicator, ProjectPanelAutoOpenSettings, SettingsStore, SplicingVec};
 use smallvec::smallvec;
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
@@ -170,6 +178,66 @@ async fn test_opening_file(cx: &mut gpui::TestAppContext) {
         ]
     );
     ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
+
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(pane.items_len(), 1);
+        let active_item = pane.active_item();
+        assert!(active_item.is_some());
+        assert_eq!(
+            pane.preview_item_id(),
+            active_item.map(|item| item.item_id())
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_opening_file_with_project_panel_previews_disabled(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .preview_tabs
+                    .get_or_insert_default()
+                    .enable_preview_from_project_panel = Some(false);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/src"),
+        json!({
+            "test": {
+                "first.rs": "// First Rust file",
+                "second.rs": "// Second Rust file",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/src").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "src/test", cx);
+    for path in ["src/test/first.rs", "src/test/second.rs"] {
+        select_path(&panel, path, cx);
+        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+        cx.run_until_parked();
+    }
+
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(pane.preview_item_id(), None);
+    });
 }
 
 #[gpui::test]
@@ -426,8 +494,10 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "**/.git".to_string(),
+                    "**/4/**".to_string(),
+                ]));
             });
         });
     });
@@ -1101,7 +1171,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 
     // Dismiss the rename editor when it loses focus.
-    workspace.update_in(cx, |_, window, _| window.blur());
+    workspace.update_in(cx, |_, window, cx| window.blur(cx));
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -3931,6 +4001,382 @@ async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_collapse_selected_entry_scrolls_into_view(cx: &mut TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "docs": {
+                "api.md": "",
+                "guide.md": "",
+                "setup.md": "",
+            },
+            "src": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+            },
+            "tests": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+            }
+        }),
+        size(px(800.), px(160.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+    toggle_expand_dir(&panel, "root/docs", cx);
+    toggle_expand_dir(&panel, "root/tests", cx);
+    let parent_id = find_project_entry(&panel, "root/src", cx).expect("src exists");
+
+    for sticky_scroll in [false, true] {
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    sticky_scroll,
+                    ..settings
+                },
+                cx,
+            );
+        });
+        toggle_expand_dir(&panel, "root/src", cx);
+        select_path(&panel, "root/src/f.rs", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.scroll_cursor_center(&ScrollCursorCenter, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+            &[
+                "v root",
+                "    v docs",
+                "          api.md",
+                "          guide.md",
+                "          setup.md",
+                "    v src",
+                "          a.rs",
+                "          b.rs",
+                "          c.rs",
+                "          d.rs",
+                "          e.rs",
+                "          f.rs  <== selected",
+                "    v tests",
+                "          a.rs",
+                "          b.rs",
+                "          c.rs",
+                "          d.rs",
+                "          e.rs",
+                "          f.rs",
+            ]
+        );
+        let sticky_height = panel.read_with(cx, |panel, _| {
+            let parent_bounds = entry_row_bounds(panel, parent_id);
+            let viewport = panel.scroll_handle.viewport();
+            assert!(
+                parent_bounds.bottom() < viewport.top(),
+                "src must start above the viewport: {parent_bounds:?}, {viewport:?}"
+            );
+            parent_bounds.size.height * panel.sticky_items_count
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+            &[
+                "v root",
+                "    v docs",
+                "          api.md",
+                "          guide.md",
+                "          setup.md",
+                "    > src  <== selected",
+                "    v tests",
+                "          a.rs",
+                "          b.rs",
+                "          c.rs",
+                "          d.rs",
+                "          e.rs",
+                "          f.rs",
+            ]
+        );
+        panel.read_with(cx, |panel, _| {
+            let parent_bounds = entry_row_bounds(panel, parent_id);
+            let viewport = panel.scroll_handle.viewport();
+            assert!(
+                parent_bounds.top() >= viewport.top() + sticky_height,
+                "src must be below the sticky rows: {parent_bounds:?}, {sticky_height:?}"
+            );
+            assert!(
+                parent_bounds.bottom() <= viewport.bottom(),
+                "src must fit in the viewport: {parent_bounds:?}, {viewport:?}"
+            );
+            assert_eq!(
+                parent_bounds.center().y,
+                viewport.center().y + sticky_height / 2.,
+                "src should be centered below the sticky rows (sticky_scroll={sticky_scroll})"
+            );
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_collapse_opened_file_scrolls_to_parent(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "src": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+                "g.rs": "",
+                "h.rs": "",
+            },
+            "tests": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+                "g.rs": "",
+                "h.rs": "",
+            }
+        }),
+        size(px(800.), px(160.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/tests", cx);
+    select_path(&panel, "root/src/h.rs", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.run_until_parked();
+
+    let workspace = panel.read_with(cx, |panel, _| {
+        panel.workspace.upgrade().expect("workspace is open")
+    });
+    ensure_single_file_is_opened(&workspace, "src/h.rs", cx);
+    let parent_id = find_project_entry(&panel, "root/src", cx).expect("src exists");
+    let opened_entry = panel.read_with(cx, |panel, _| panel.selection.expect("file is selected"));
+    let mut expected_expanded_dir_ids = ["root", "root/src", "root/tests"]
+        .map(|path| find_project_entry(&panel, path, cx).expect("directory exists"));
+    expected_expanded_dir_ids.sort_unstable();
+    for expand_children in [false, true] {
+        if expand_children {
+            toggle_expand_dir(&panel, "root/src", cx);
+            select_path(&panel, "root/src/h.rs", cx);
+            panel.update_in(cx, |panel, window, cx| {
+                panel.expand_selected_entry_and_children(
+                    &ExpandSelectedEntryAndChildren,
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+        }
+        panel.update_in(cx, |panel, window, cx| {
+            panel.scroll_cursor_center(&ScrollCursorCenter, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(
+                panel.state.expanded_dir_ids[&opened_entry.worktree_id], expected_expanded_dir_ids,
+                "expand_children={expand_children}"
+            );
+            assert!(
+                entry_row_bounds(panel, parent_id).bottom() < panel.scroll_handle.viewport().top()
+            );
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+            &[
+                "v root",
+                "    > src  <== selected",
+                "    v tests",
+                "          a.rs",
+                "          b.rs",
+                "          c.rs",
+                "          d.rs",
+                "          e.rs",
+                "          f.rs",
+                "          g.rs",
+                "          h.rs",
+            ],
+            "expand_children={expand_children}"
+        );
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.marked_entries, [opened_entry]);
+            let parent_bounds = entry_row_bounds(panel, parent_id);
+            let viewport = panel.scroll_handle.viewport();
+            let sticky_height = parent_bounds.size.height * panel.sticky_items_count;
+            assert!(parent_bounds.top() >= viewport.top() + sticky_height);
+            assert!(parent_bounds.bottom() <= viewport.bottom());
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_collapse_selected_entry_does_not_scroll_visible_parent(cx: &mut TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "docs": {
+                "api.md": "",
+                "guide.md": "",
+                "setup.md": "",
+            },
+            "src": {
+                "main.rs": "",
+            },
+            "tests": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+            }
+        }),
+        size(px(800.), px(160.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+    toggle_expand_dir(&panel, "root/docs", cx);
+    toggle_expand_dir(&panel, "root/tests", cx);
+    toggle_expand_dir(&panel, "root/src", cx);
+    let parent_id = find_project_entry(&panel, "root/src", cx).expect("src exists");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.scroll_cursor_bottom(&ScrollCursorBottom, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+        &[
+            "v root",
+            "    v docs",
+            "          api.md",
+            "          guide.md",
+            "          setup.md",
+            "    v src  <== selected",
+            "          main.rs",
+            "    v tests",
+            "          a.rs",
+            "          b.rs",
+            "          c.rs",
+            "          d.rs",
+            "          e.rs",
+            "          f.rs",
+        ]
+    );
+    let offset_before = panel.read_with(cx, |panel, _| {
+        let parent_bounds = entry_row_bounds(panel, parent_id);
+        let viewport = panel.scroll_handle.viewport();
+        assert_eq!(
+            parent_bounds.bottom(),
+            viewport.bottom(),
+            "src should start at the bottom of the viewport"
+        );
+        assert_ne!(
+            panel.scroll_handle.offset().y,
+            Pixels::ZERO,
+            "the list must be scrolled so that recentering src would move it"
+        );
+        panel.scroll_handle.offset()
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+        &[
+            "v root",
+            "    v docs",
+            "          api.md",
+            "          guide.md",
+            "          setup.md",
+            "    > src  <== selected",
+            "    v tests",
+            "          a.rs",
+            "          b.rs",
+            "          c.rs",
+            "          d.rs",
+            "          e.rs",
+            "          f.rs",
+        ]
+    );
+    panel.read_with(cx, |panel, _| {
+        assert_eq!(
+            panel.scroll_handle.offset(),
+            offset_before,
+            "collapsing the already-visible src must not scroll the list"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_collapse_selected_entry_preserves_selection_during_refresh(cx: &mut TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "src": {
+                "main.rs": "",
+            }
+        }),
+        size(px(800.), px(600.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+    toggle_expand_dir(&panel, "root/src", cx);
+    select_path(&panel, "root/src/main.rs", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..usize::MAX, cx).join("\n"),
+        "v root
+    v src
+          main.rs  <== selected"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..usize::MAX, cx).join("\n"),
+        "v root
+    > src  <== selected"
+    );
+}
+
+#[gpui::test]
 async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
@@ -4281,7 +4727,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
         &["v root1  <== selected", "    v dir1", "          file1.txt",],
     );
 
-    // Rename root1 to new_root1
+    // Rename root1 to match the name of its child directory.
     panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
 
     assert_eq!(
@@ -4296,30 +4742,25 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
     let confirm = panel.update_in(cx, |panel, window, cx| {
         panel
             .filename_editor
-            .update(cx, |editor, cx| editor.set_text("new_root1", window, cx));
-        panel.confirm_edit(true, window, cx).unwrap()
+            .update(cx, |editor, cx| editor.set_text("dir1", window, cx));
+
+        panel
+            .confirm_edit(true, window, cx)
+            .expect("should be able to rename `root1` to `dir1`")
     });
     confirm.await.unwrap();
     cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v new_root1  <== selected",
-            "    v dir1",
-            "          file1.txt",
-        ],
+        &["v dir1  <== selected", "    v dir1", "          file1.txt",],
         "Should update worktree name"
     );
 
     // Ensure internal paths have been updated
-    select_path(&panel, "new_root1/dir1/file1.txt", cx);
+    select_path(&panel, "dir1/dir1/file1.txt", cx);
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v new_root1",
-            "    v dir1",
-            "          file1.txt  <== selected",
-        ],
+        &["v dir1", "    v dir1", "          file1.txt  <== selected",],
         "Files in renamed worktree are selectable"
     );
 }
@@ -4577,15 +5018,26 @@ async fn test_rename_survives_window_deactivation(cx: &mut gpui::TestAppContext)
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
     cx.run_until_parked();
 
     select_path(&panel, "root/file1.txt", cx);
     panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    cx.run_until_parked();
     assert!(
         panel.read_with(cx, |panel, _| panel.state.edit_state.is_some()),
         "Rename should have started"
     );
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.filename_editor.read(cx).is_focused(window),
+            "The filename editor must be focused, otherwise deactivating the window blurs nothing"
+        );
+    });
 
     cx.deactivate_window();
 
@@ -4904,7 +5356,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             "v project_root",
             "    v dir_1",
             "        v nested_dir",
-            "              file_a.py",
+            "              file_a.py  <== marked",
             "      file_1.py  <== selected  <== marked",
         ]
     );
@@ -5019,6 +5471,77 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             "v project_root",
             "    v dir_1",
             "        v nested_dir  <== selected",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_shift_arrow_marks_starting_entry(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {},
+            "b": {},
+            "c.txt": "",
+            "d.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/b", cx);
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        shift: true,
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&SelectNext, window, cx);
+            panel.select_next(&SelectNext, window, cx);
+        })
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a",
+            "    > b  <== marked",
+            "      c.txt  <== marked",
+            "      d.txt  <== selected  <== marked",
+        ]
+    );
+
+    cx.simulate_modifiers_change(Default::default());
+    cx.update(|window, cx| panel.update(cx, |panel, cx| panel.cancel(&menu::Cancel, window, cx)));
+    select_path(&panel, "root/c.txt", cx);
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        shift: true,
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.select_previous(&SelectPrevious, window, cx);
+            panel.select_previous(&SelectPrevious, window, cx);
+        })
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a  <== selected  <== marked",
+            "    > b  <== marked",
+            "      c.txt  <== marked",
+            "      d.txt",
         ]
     );
 }
@@ -5270,6 +5793,172 @@ async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppCo
         ],
         "Should move 'b/c' and 'f/g' to target, leaving 'a' and 'e'"
     );
+}
+
+#[gpui::test]
+async fn test_range_selection_drag_moves_entire_folded_directories(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    // Cmd/ctrl-clicking the source keeps the folded rows marked with their inner
+    // directory, which the range selection must still widen to the whole row.
+    for (range_selection, source_click_modifiers, copy, (source_path, target_path)) in iproduct!(
+        [RangeSelection::ShiftClick, RangeSelection::ShiftArrows],
+        [Modifiers::none(), Modifiers::secondary_key()],
+        [false, true],
+        [
+            ("project/root/a", "project/root/other"),
+            ("project/root/other", "project/root/a"),
+        ]
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "root": {
+                    "a": { "sample.txt": "sample" },
+                    "c": { "d": { "sample2.txt": "sample2" } },
+                    "e": { "f": {} },
+                    "other": {}
+                }
+            }),
+        )
+        .await;
+        let original_paths = fs.paths(false);
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (window, panel) = create_drag_test_panel(&project, cx);
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        toggle_expand_dir(&panel, "project/root", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project",
+                "    v root  <== selected",
+                "        > a",
+                "        > c/d",
+                "        > e/f",
+                "        > other",
+            ]
+        );
+
+        select_folded_path_with_mark(&panel, "project/root/c/d", "project/root/c/d", cx);
+        select_folded_path_with_mark(&panel, "project/root/e/f", "project/root/e/f", cx);
+        click_project_entry(&panel, source_path, source_click_modifiers, cx);
+        extend_range_selection_to(&panel, range_selection, target_path, cx);
+
+        cx.simulate_modifiers_change(Modifiers {
+            alt: copy && cfg!(target_os = "macos"),
+            control: copy && cfg!(not(target_os = "macos")),
+            ..Modifiers::none()
+        });
+        drag_selection_to(&panel, "project", false, cx);
+
+        let mut expected_paths = [
+            path!("/"),
+            path!("/project"),
+            path!("/project/a"),
+            path!("/project/a/sample.txt"),
+            path!("/project/c"),
+            path!("/project/c/d"),
+            path!("/project/c/d/sample2.txt"),
+            path!("/project/e"),
+            path!("/project/e/f"),
+            path!("/project/other"),
+            path!("/project/root"),
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<BTreeSet<_>>();
+        if copy {
+            expected_paths.extend(original_paths);
+        }
+        assert_eq!(
+            fs.paths(false).into_iter().collect::<BTreeSet<_>>(),
+            expected_paths,
+            "dragging the range {source_path} to {target_path} with {range_selection:?}, source click {source_click_modifiers:?} and copy={copy} should include the entire folded directories"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_range_selection_folded_endpoints(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    // (leaf, segment clicked before selecting, outermost directory)
+    let folded_rows = [
+        ("root/a/b/c", "root/a/b", "root/a"),
+        ("root/d/e/f", "root/d/e/f", "root/d"),
+        ("root/g/h/i", "root/g/h", "root/g"),
+    ];
+
+    for (range_selection, (source_path, target_path)) in iproduct!(
+        [RangeSelection::ShiftClick, RangeSelection::ShiftArrows],
+        [("root/a/b/c", "root/g/h/i"), ("root/g/h/i", "root/a/b/c")]
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "a": { "b": { "c": {} } },
+                "d": { "e": { "f": {} } },
+                "g": { "h": { "i": {} } }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (window, panel) = create_drag_test_panel(&project, cx);
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        for (leaf_path, clicked_path, _) in folded_rows {
+            select_folded_path_with_mark(&panel, leaf_path, clicked_path, cx);
+        }
+        click_project_entry(&panel, source_path, Modifiers::none(), cx);
+        extend_range_selection_to(&panel, range_selection, target_path, cx);
+
+        for (leaf_path, clicked_path, outermost_path) in folded_rows {
+            // A click points at an exact segment, so shift-click keeps both endpoints'
+            // segments. Shift-arrows only keep the segment of the row they started from.
+            let keeps_clicked_segment = leaf_path == source_path
+                || (leaf_path == target_path
+                    && matches!(range_selection, RangeSelection::ShiftClick));
+            let expected_path = if keeps_clicked_segment {
+                clicked_path
+            } else {
+                outermost_path
+            };
+            let leaf_entry =
+                find_project_entry(&panel, leaf_path, cx).expect("folded directory should exist");
+            let expected_entry = find_project_entry(&panel, expected_path, cx)
+                .expect("expected directory should exist");
+            panel.read_with(cx, |panel, _| {
+                assert_eq!(
+                    panel.resolve_entry(leaf_entry),
+                    expected_entry,
+                    "range {source_path} to {target_path} with {range_selection:?} should select {expected_path}"
+                );
+            });
+        }
+    }
 }
 
 #[gpui::test]
@@ -5551,7 +6240,8 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
                 settings
                     .project_panel
                     .get_or_insert_default()
@@ -5853,9 +6543,11 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
-                settings.project.worktree.file_scan_inclusions =
-                    Some(vec!["always_included_but_ignored_dir/*".to_string()]);
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![
+                    "always_included_but_ignored_dir/*".to_string(),
+                ]));
                 settings
                     .project_panel
                     .get_or_insert_default()
@@ -5977,7 +6669,8 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
                 settings
                     .project_panel
                     .get_or_insert_default()
@@ -6392,6 +7085,21 @@ async fn test_autoreveal_follows_multibuffer_selection(cx: &mut gpui::TestAppCon
         "Moving the cursor into a different excerpt buffer should reveal that buffer's entry"
     );
 
+    cx.dispatch_action(workspace::RevealInProjectPanel::default());
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_2.py  <== selected  <== marked",
+        ],
+        "Explicit reveal should use the project path for the excerpt under the cursor"
+    );
+
     // Wrappers re-emit inner-editor events through `to_item_events`, so a
     // benign `TitleChanged` (e.g. diagnostic summary updates) ultimately
     // reaches `Workspace::active_item_path_changed`. The active path should be
@@ -6574,8 +7282,10 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "excluded_dir".to_string(),
+                    "**/.git".to_string(),
+                ]));
             });
         });
     });
@@ -6851,7 +7561,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
             "    > test"
         ]
     );
-    workspace.update_in(cx, |_, window, _| window.blur());
+    workspace.update_in(cx, |_, window, cx| window.blur(cx));
     cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -9175,7 +9885,7 @@ async fn test_context_menu_new_file_in_empty_hidden_root(cx: &mut gpui::TestAppC
             .last_worktree_root_id
             .expect("hidden root should be available for background context menu actions");
         panel.deploy_context_menu(
-            gpui::point(gpui::px(1.), gpui::px(1.)),
+            ContextMenuPlacement::AtMouse(point(px(1.), px(1.))),
             root_entry_id,
             window,
             cx,
@@ -10344,6 +11054,110 @@ pub(crate) fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Vis
     cx.run_until_parked();
 }
 
+#[derive(Debug, Clone, Copy)]
+enum RangeSelection {
+    ShiftClick,
+    ShiftArrows,
+}
+
+fn extend_range_selection_to(
+    panel: &Entity<ProjectPanel>,
+    range_selection: RangeSelection,
+    target_path: &str,
+    cx: &mut VisualTestContext,
+) {
+    match range_selection {
+        RangeSelection::ShiftClick => click_project_entry(
+            panel,
+            target_path,
+            Modifiers {
+                shift: true,
+                ..Modifiers::none()
+            },
+            cx,
+        ),
+        RangeSelection::ShiftArrows => shift_select_with_keyboard_to(panel, target_path, cx),
+    }
+}
+
+fn shift_select_with_keyboard_to(
+    panel: &Entity<ProjectPanel>,
+    target_path: &str,
+    cx: &mut VisualTestContext,
+) {
+    let target_entry_id =
+        find_project_entry(panel, target_path, cx).expect("target entry should exist");
+    cx.simulate_modifiers_change(Modifiers {
+        shift: true,
+        ..Modifiers::none()
+    });
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            let selection = panel
+                .selection
+                .expect("a selection is required before extending it");
+            let (_, _, target_index) = panel
+                .index_for_selection(SelectedEntry {
+                    worktree_id: selection.worktree_id,
+                    entry_id: target_entry_id,
+                })
+                .expect("target entry should be visible");
+            while let Some(selection) = panel.selection
+                && selection.entry_id != target_entry_id
+            {
+                let (_, _, index) = panel
+                    .index_for_selection(selection)
+                    .expect("selected entry should be visible");
+                if index < target_index {
+                    panel.select_next(&SelectNext, window, cx);
+                } else {
+                    panel.select_previous(&SelectPrevious, window, cx);
+                }
+            }
+        })
+    });
+    cx.simulate_modifiers_change(Modifiers::none());
+}
+
+fn click_project_entry(
+    panel: &Entity<ProjectPanel>,
+    path: &str,
+    modifiers: Modifiers,
+    cx: &mut VisualTestContext,
+) {
+    let entry_id = find_project_entry(panel, path, cx).expect("clicked entry should exist");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let position = panel.read_with(cx, |panel, cx| {
+        let worktree_id = panel
+            .project
+            .read(cx)
+            .worktree_id_for_entry(entry_id, cx)
+            .expect("clicked entry should belong to a worktree");
+        let (_, _, index) = panel
+            .index_for_entry(entry_id, worktree_id)
+            .expect("clicked entry should be visible");
+        let item_count = panel
+            .state
+            .visible_entries
+            .iter()
+            .map(|worktree| worktree.entries.len())
+            .sum::<usize>();
+        let scroll = panel.scroll_handle.0.borrow();
+        let bounds = scroll.base_handle.bounds();
+        let item_height = scroll
+            .last_item_size
+            .expect("project entries should be rendered")
+            .contents
+            .height
+            / item_count as f32;
+        bounds.origin
+            + scroll.base_handle.offset()
+            + point(bounds.size.width / 2., item_height * (index as f32 + 0.5))
+    });
+    cx.simulate_click(position, modifiers);
+    cx.run_until_parked();
+}
+
 pub(crate) fn select_path_with_mark(
     panel: &Entity<ProjectPanel>,
     path: &str,
@@ -10518,6 +11332,90 @@ pub(crate) fn find_project_entry(
         }
         panic!("no worktree for path {path:?}");
     })
+}
+
+/// Each visible entry as `(filename, chevron, icon)`, with the icon-theme paths reduced
+/// to their file names so assertions read clearly.
+fn visible_entry_indicators(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, Option<String>, Option<String>)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            let indicator_name = |indicator: Option<SharedString>| {
+                indicator.map(|indicator| {
+                    indicator
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(indicator.as_ref())
+                        .to_string()
+                })
+            };
+
+            result.push((
+                details.filename.clone(),
+                indicator_name(details.chevron.clone()),
+                indicator_name(details.icon),
+            ));
+        });
+    });
+
+    result
+}
+
+fn set_folder_indicator(indicator: FolderIndicator, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .folder_indicator = Some(indicator);
+            });
+        });
+    });
+}
+
+fn visible_entry_chevron_slots(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, bool)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            result.push((details.filename.clone(), details.reserves_chevron_slot));
+        });
+    });
+
+    result
+}
+
+fn visible_entry_diagnostic_marks(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, Option<DiagnosticMark>)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            result.push((details.filename.clone(), details.diagnostic_mark));
+        });
+    });
+
+    result
+}
+
+fn mark_for(marks: &[(String, Option<DiagnosticMark>)], filename: &str) -> Option<DiagnosticMark> {
+    marks
+        .iter()
+        .find(|(name, _)| name == filename)
+        .and_then(|(_, mark)| *mark)
 }
 
 fn visible_entries_as_strings(
@@ -11002,7 +11900,7 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
 
     panel.update_in(cx, |panel, window, cx| {
         panel.deploy_context_menu(
-            gpui::point(gpui::px(1.), gpui::px(1.)),
+            ContextMenuPlacement::AtMouse(point(px(1.), px(1.))),
             child_entry_id,
             window,
             cx,
@@ -11019,7 +11917,7 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
 
     panel.update_in(cx, |panel, window, cx| {
         panel.deploy_context_menu(
-            gpui::point(gpui::px(2.), gpui::px(2.)),
+            ContextMenuPlacement::AtMouse(point(px(2.), px(2.))),
             subdir_entry_id,
             window,
             cx,
@@ -11097,6 +11995,260 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
             .await,
         "file should not be created under subdir when parent is the active ancestor"
     );
+}
+
+#[gpui::test]
+async fn test_context_menu_opens_at_mouse_position(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(3, DockSide::Left, cx).await;
+    let cx = &mut cx;
+
+    let mouse_position = point(px(37.), px(83.));
+    let entry_id =
+        find_project_entry(&panel, "root/file_2.txt", cx).expect("file should exist for this test");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(
+            ContextMenuPlacement::AtMouse(mouse_position),
+            entry_id,
+            window,
+            cx,
+        );
+    });
+
+    panel.update(cx, |panel, _| {
+        let context_menu = panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+        assert_eq!(context_menu.position, mouse_position);
+        assert_eq!(
+            context_menu.anchor, None,
+            "mouse-deployed menus should not force an anchor"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_context_menu_for_entry_in_upper_half_opens_downwards(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(3, DockSide::Left, cx).await;
+    let cx = &mut cx;
+
+    let entry_id =
+        find_project_entry(&panel, "root/file_1.txt", cx).expect("file should exist for this test");
+    let offset_before = panel.read_with(cx, |panel, _| panel.scroll_handle.offset());
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(ContextMenuPlacement::AtEntry, entry_id, window, cx);
+    });
+
+    panel.update_in(cx, |panel, window, _| {
+        let context_menu = panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+        let selection = panel.selection.expect("deploying should select the entry");
+        assert_eq!(selection.entry_id, entry_id);
+
+        let (_, _, index) = panel
+            .index_for_selection(selection)
+            .expect("selected entry should be visible");
+        let row_height = panel
+            .entry_row_height()
+            .expect("the entries list should have been laid out");
+        let viewport = panel.scroll_handle.viewport();
+        assert!(
+            viewport.right() < window.viewport_size().center().x,
+            "the panel should be docked on the left side of the window"
+        );
+        assert_eq!(
+            panel.scroll_handle.offset(),
+            offset_before,
+            "an entry that is already visible should not cause scrolling"
+        );
+
+        let expected_entry_bottom = viewport.top() + offset_before.y + row_height * (index + 1);
+        assert!(
+            expected_entry_bottom < window.viewport_size().height / 2.,
+            "test entry should be in the upper half of the window"
+        );
+        assert_eq!(
+            context_menu.position,
+            point(viewport.left(), expected_entry_bottom) + CONTEXT_MENU_KEYBOARD_OFFSET,
+            "menu should hang off the bottom left corner of the entry"
+        );
+        assert_eq!(context_menu.anchor, Some(Anchor::TopLeft));
+    });
+}
+
+#[gpui::test]
+async fn test_context_menu_for_entry_in_right_docked_panel_opens_leftwards(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(3, DockSide::Right, cx).await;
+    let cx = &mut cx;
+
+    let entry_id =
+        find_project_entry(&panel, "root/file_1.txt", cx).expect("file should exist for this test");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(ContextMenuPlacement::AtEntry, entry_id, window, cx);
+    });
+
+    panel.update_in(cx, |panel, window, _| {
+        let context_menu = panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+        let selection = panel.selection.expect("deploying should select the entry");
+        let (_, _, index) = panel
+            .index_for_selection(selection)
+            .expect("selected entry should be visible");
+        let row_height = panel
+            .entry_row_height()
+            .expect("the entries list should have been laid out");
+        let viewport = panel.scroll_handle.viewport();
+        assert!(
+            viewport.left() > window.viewport_size().center().x,
+            "the panel should be docked on the right side of the window"
+        );
+
+        let expected_entry_bottom =
+            viewport.top() + panel.scroll_handle.offset().y + row_height * (index + 1);
+        assert_eq!(
+            context_menu.position,
+            point(viewport.right(), expected_entry_bottom) + CONTEXT_MENU_KEYBOARD_OFFSET,
+            "menu should hang off the bottom right corner of the entry"
+        );
+        assert_eq!(context_menu.anchor, Some(Anchor::TopRight));
+    });
+}
+
+#[gpui::test]
+async fn test_context_menu_for_entry_in_lower_half_scrolls_into_view_and_opens_upwards(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(200, DockSide::Left, cx).await;
+    let cx = &mut cx;
+
+    let entry_id = find_project_entry(&panel, "root/file_199.txt", cx)
+        .expect("file should exist for this test");
+    panel.read_with(cx, |panel, _| {
+        assert!(
+            panel.scroll_handle.is_scrollable(),
+            "the entries list should overflow the panel for this test"
+        );
+        assert_eq!(panel.scroll_handle.offset().y, Pixels::ZERO);
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(ContextMenuPlacement::AtEntry, entry_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, _| {
+        let context_menu = panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+        let selection = panel.selection.expect("deploying should select the entry");
+        let (_, _, index) = panel
+            .index_for_selection(selection)
+            .expect("selected entry should be visible");
+        let row_height = panel
+            .entry_row_height()
+            .expect("the entries list should have been laid out");
+        let viewport = panel.scroll_handle.viewport();
+        let offset = panel.scroll_handle.offset();
+
+        assert!(
+            offset.y < Pixels::ZERO,
+            "the list should have scrolled to reveal the entry"
+        );
+        let entry_top = viewport.top() + offset.y + row_height * index;
+        let entry_bottom = entry_top + row_height;
+        assert!(
+            entry_top >= viewport.top() && entry_bottom <= viewport.bottom() + px(0.01),
+            "the entry should be scrolled into view, got {entry_top}..{entry_bottom} in {viewport:?}"
+        );
+        assert!(
+            entry_top > window.viewport_size().height / 2.,
+            "test entry should be in the lower half of the window"
+        );
+        assert_eq!(
+            context_menu.position,
+            point(viewport.left(), entry_top) - CONTEXT_MENU_KEYBOARD_OFFSET,
+            "menu should hang off the top left corner of the entry"
+        );
+        assert_eq!(context_menu.anchor, Some(Anchor::BottomLeft));
+    });
+}
+
+#[gpui::test]
+async fn test_panel_keeps_focus_highlight_while_context_menu_is_deployed(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(3, DockSide::Left, cx).await;
+    let cx = &mut cx;
+
+    let entry_id =
+        find_project_entry(&panel, "root/file_1.txt", cx).expect("file should exist for this test");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.focus_handle.focus(window, cx);
+        assert!(panel.contains_focus(window, cx));
+
+        panel.deploy_context_menu(ContextMenuPlacement::AtEntry, entry_id, window, cx);
+        // No frame has been drawn since the menu took focus, so the rendered element tree does
+        // not know about the menu yet. The panel must still consider itself focused so the
+        // selected entry keeps its focus border on this frame.
+        assert!(
+            panel
+                .context_menu
+                .as_ref()
+                .is_some_and(|context_menu| context_menu.menu.focus_handle(cx).is_focused(window)),
+            "deploying should focus the context menu"
+        );
+        assert!(panel.contains_focus(window, cx));
+    });
+
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.contains_focus(window, cx));
+    });
+}
+
+async fn open_panel_with_files(
+    file_count: usize,
+    dock: DockSide,
+    cx: &mut gpui::TestAppContext,
+) -> (Entity<ProjectPanel>, VisualTestContext) {
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(ProjectPanelSettings { dock, ..settings }, cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let files = (0..file_count)
+        .map(|index| (format!("file_{index}.txt"), json!("")))
+        .collect::<serde_json::Map<_, _>>();
+    fs.insert_tree(path!("/root"), serde_json::Value::Object(files))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        panel
+    });
+    cx.run_until_parked();
+    (panel, cx)
 }
 
 async fn run_create_file_in_folded_path_case(
@@ -11314,7 +12466,9 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
                     .project_panel
                     .get_or_insert_default()
                     .auto_fold_dirs = Some(false);
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
+                settings.project.worktree.file_scan_depth = Some(0);
             });
         });
     });
@@ -11334,7 +12488,9 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
                     .project_panel
                     .get_or_insert_default()
                     .auto_fold_dirs = Some(false);
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new())
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
+                settings.project.worktree.file_scan_depth = Some(0);
             });
         });
     });
@@ -11355,7 +12511,9 @@ fn init_test_with_git_ui(cx: &mut TestAppContext) {
                     .project_panel
                     .get_or_insert_default()
                     .auto_fold_dirs = Some(false);
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new())
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
+                settings.project.worktree.file_scan_depth = Some(0);
             });
         });
     });
@@ -11596,4 +12754,541 @@ async fn test_restore_file_prompt_escapes_markdown_in_file_name(cx: &mut gpui::T
         .expect("restore should show a confirmation prompt");
 
     assert_eq!(message, "Discard changes to `__init__.py`?");
+}
+
+#[gpui::test]
+async fn test_folder_indicator_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir": { "nested.rs": "" },
+            "file.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_folder_indicator(FolderIndicator::Icon, cx);
+    cx.run_until_parked();
+    let indicators = visible_entry_indicators(&panel, 0..50, cx);
+    assert_eq!(
+        indicators
+            .iter()
+            .map(|(name, chevron, _)| (name.as_str(), chevron.as_deref()))
+            .collect::<Vec<_>>(),
+        vec![("root", None), ("dir", None), ("file.rs", None)],
+        "`icon` must not produce a chevron on any row"
+    );
+    assert_eq!(
+        indicators
+            .iter()
+            .find(|(name, _, _)| name == "dir")
+            .and_then(|(_, _, icon)| icon.as_deref()),
+        Some("folder.svg"),
+        "a collapsed directory shows the collapsed folder icon"
+    );
+
+    set_folder_indicator(FolderIndicator::Chevron, cx);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entry_indicators(&panel, 0..50, cx)
+            .into_iter()
+            .find(|(name, _, _)| name == "dir"),
+        Some((
+            "dir".to_string(),
+            Some("chevron_right.svg".to_string()),
+            None
+        )),
+        "`chevron` swaps the folder icon out rather than adding to it"
+    );
+
+    set_folder_indicator(FolderIndicator::Both, cx);
+    cx.run_until_parked();
+    let indicators = visible_entry_indicators(&panel, 0..50, cx);
+    assert_eq!(
+        indicators.iter().find(|(name, _, _)| name == "dir"),
+        Some(&(
+            "dir".to_string(),
+            Some("chevron_right.svg".to_string()),
+            Some("folder.svg".to_string())
+        )),
+        "`both` shows the chevron and the folder icon together"
+    );
+    assert_eq!(
+        indicators
+            .iter()
+            .find(|(name, _, _)| name == "file.rs")
+            .map(|(_, chevron, _)| chevron.as_deref()),
+        Some(None),
+        "files never take a chevron, so they stay flush in `both`"
+    );
+
+    // Expanding must flip the chevron and the icon, not just the icon.
+    toggle_expand_dir(&panel, "root/dir", cx);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entry_indicators(&panel, 0..50, cx)
+            .into_iter()
+            .find(|(name, _, _)| name == "dir"),
+        Some((
+            "dir".to_string(),
+            Some("chevron_down.svg".to_string()),
+            Some("folder_open.svg".to_string())
+        )),
+    );
+}
+
+#[gpui::test]
+async fn test_diagnostic_mark_decorates_the_row_glyph(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir": { "nested.rs": "" },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostic_entries(
+                LanguageServerId(0),
+                PathBuf::from(path!("/root/dir/nested.rs")),
+                None,
+                None,
+                vec![DiagnosticEntry::new(
+                    Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 0)),
+                    Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: DiagnosticMessage::from("an error"),
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        is_primary: true,
+                        ..Default::default()
+                    },
+                )],
+                cx,
+            )
+            .unwrap();
+    });
+    // The panel debounces diagnostic summary updates before rebuilding its entries.
+    cx.executor().advance_clock(Duration::from_millis(50));
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/dir", cx);
+    cx.run_until_parked();
+
+    for (indicator, expected_dir_mark, expected_file_mark) in [
+        (
+            FolderIndicator::Icon,
+            DiagnosticMark::OnIcon(IconDecorationKind::Dot),
+            DiagnosticMark::OnIcon(IconDecorationKind::X),
+        ),
+        (
+            FolderIndicator::Chevron,
+            DiagnosticMark::OnChevron(IconDecorationKind::Dot),
+            DiagnosticMark::OnIcon(IconDecorationKind::X),
+        ),
+        (
+            FolderIndicator::Both,
+            DiagnosticMark::OnIcon(IconDecorationKind::Dot),
+            DiagnosticMark::OnIcon(IconDecorationKind::X),
+        ),
+    ] {
+        set_folder_indicator(indicator, cx);
+        cx.run_until_parked();
+
+        let marks = visible_entry_diagnostic_marks(&panel, 0..50, cx);
+        assert_eq!(
+            mark_for(&marks, "dir"),
+            Some(expected_dir_mark),
+            "{indicator:?}: a directory carrying diagnostics marks the glyph its mode renders"
+        );
+        assert_eq!(
+            mark_for(&marks, "nested.rs"),
+            Some(expected_file_mark),
+            "{indicator:?}: a file always marks its own icon"
+        );
+        assert_eq!(
+            mark_for(&marks, "root"),
+            Some(expected_dir_mark),
+            "{indicator:?}: the worktree root rolls its children's diagnostics up"
+        );
+    }
+
+    // With no icon and no chevron there is no glyph to decorate, so the mark stands alone.
+    set_folder_indicator(FolderIndicator::Chevron, cx);
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().file_icons = Some(false);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    let marks = visible_entry_diagnostic_marks(&panel, 0..50, cx);
+    assert_eq!(
+        mark_for(&marks, "nested.rs"),
+        Some(DiagnosticMark::Standalone(IconName::Close)),
+        "a file with no icon has nothing to decorate"
+    );
+    assert_eq!(
+        mark_for(&marks, "dir"),
+        Some(DiagnosticMark::OnChevron(IconDecorationKind::Dot)),
+        "`file_icons` must not disturb how a directory is marked"
+    );
+}
+
+#[gpui::test]
+async fn test_file_rows_reserve_the_chevron_slot(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir": { "nested.rs": "" },
+            "file.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    for (indicator, expected) in [
+        (FolderIndicator::Icon, false),
+        (FolderIndicator::Chevron, false),
+        (FolderIndicator::Both, true),
+    ] {
+        set_folder_indicator(indicator, cx);
+        cx.run_until_parked();
+
+        let slots = visible_entry_chevron_slots(&panel, 0..50, cx);
+        assert_eq!(
+            slots
+                .iter()
+                .find(|(name, _)| name == "file.rs")
+                .map(|(_, reserved)| *reserved),
+            Some(expected),
+            "{indicator:?}: a file reserves the chevron's width only when directories draw one \
+             alongside their icon"
+        );
+        assert_eq!(
+            slots
+                .iter()
+                .find(|(name, _)| name == "dir")
+                .map(|(_, reserved)| *reserved),
+            Some(false),
+            "{indicator:?}: a directory draws its own chevron, so it reserves nothing"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_file_drag_state_clears_before_window_handoff(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "" }))
+        .await;
+    let first_project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let second_project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (first_window, first_panel) = create_drag_test_panel(&first_project, cx);
+    let (second_window, second_panel) = create_drag_test_panel(&second_project, cx);
+
+    cx.update(|cx| {
+        cx.update_window(first_window, |_, window, cx| {
+            window.dispatch_event(
+                KeyDownEvent {
+                    keystroke: Keystroke::parse("down").expect("valid keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            enter_file_drag_over_root(&first_panel, window, cx);
+            window.draw(cx).clear(cx);
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+        })
+        .expect("first window is open");
+        cx.update_window(second_window, |_, window, cx| {
+            enter_file_drag_over_root(&second_panel, window, cx);
+        })
+        .expect("second window is open");
+
+        assert!(cx.has_active_drag());
+        assert_drag_state_cleared(first_panel.read(cx));
+        cx.update_window(first_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert_drag_state_cleared(first_panel.read(cx));
+        })
+        .expect("first window is open");
+        assert!(second_panel.read(cx).drag_target_entry.is_some());
+        assert!(cx.has_active_drag());
+
+        cx.update_window(second_window, |_, window, cx| {
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert_drag_state_cleared(second_panel.read(cx));
+        })
+        .expect("second window is open");
+        assert!(!cx.has_active_drag());
+    });
+}
+
+#[gpui::test]
+async fn test_file_drag_state_clears_on_render_after_drag_stops(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (window, panel) = create_drag_test_panel(&project, cx);
+
+    cx.update_window(window, |_, window, cx| {
+        enter_file_drag_over_root(&panel, window, cx);
+        window.draw(cx).clear(cx);
+        assert!(cx.stop_active_drag(window));
+        assert!(panel.read(cx).drag_target_entry.is_some());
+
+        window.draw(cx).clear(cx);
+        assert_drag_state_cleared(panel.read(cx));
+    })
+    .expect("window is open");
+}
+
+#[gpui::test]
+async fn test_drop_external_files_on_folded_directory_components(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a": { "b": { "c": {} } } }))
+        .await;
+
+    let temp_dir = tempfile::tempdir().expect("temporary directory is created");
+    let deepest_drop_path = temp_dir.path().join("deepest.txt");
+    let middle_drop_path = temp_dir.path().join("middle.txt");
+    let topmost_drop_path = temp_dir.path().join("topmost.txt");
+    for path in [&deepest_drop_path, &middle_drop_path, &topmost_drop_path] {
+        std::fs::write(path, "").expect("external file is written");
+    }
+    fs.insert_tree_from_real_fs(temp_dir.path(), temp_dir.path())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (window, panel) = create_drag_test_panel(&project, cx);
+    let cx = &mut VisualTestContext::from_window(window, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > a/b/c"]
+    );
+
+    for (selector, drop_path) in [
+        ("project_panel_path_component_c", &deepest_drop_path),
+        ("project_panel_path_component_b", &middle_drop_path),
+        ("project_panel_path_component_a", &topmost_drop_path),
+    ] {
+        let position = cx
+            .debug_bounds(selector)
+            .expect("folded path component is rendered")
+            .center();
+        cx.simulate_event(FileDropEvent::Entered {
+            position,
+            paths: ExternalPaths([drop_path.clone()].into_iter().collect()),
+        });
+        cx.simulate_event(FileDropEvent::Submit { position });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        panel.read_with(cx, |panel, _| assert_drag_state_cleared(panel));
+    }
+
+    assert!(
+        find_project_entry(&panel, "root/a/b/c/deepest.txt", cx).is_some(),
+        "dropping on `c` should create the file in root/a/b/c"
+    );
+    assert!(
+        find_project_entry(&panel, "root/a/b/middle.txt", cx).is_some(),
+        "dropping on `b` should create the file in root/a/b"
+    );
+    assert!(
+        find_project_entry(&panel, "root/a/topmost.txt", cx).is_some(),
+        "dropping on `a` should create the file in root/a"
+    );
+    assert!(
+        find_project_entry(&panel, "root/a/b/c/topmost.txt", cx).is_none(),
+        "dropping on `a` should not fall through to the deepest directory"
+    );
+}
+
+fn create_drag_test_panel(
+    project: &Entity<Project>,
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<ProjectPanel>) {
+    let window = cx.open_window(size(px(800.), px(600.)), |window, cx| {
+        MultiWorkspace::test_new(project.clone(), window, cx)
+    });
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("window is open");
+    let window = AnyWindowHandle::from(window);
+    let panel = cx
+        .update_window(window, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let panel = ProjectPanel::new(workspace, window, cx);
+                workspace.add_panel(panel.clone(), window, cx);
+                workspace.open_panel::<ProjectPanel>(window, cx);
+                panel
+            })
+        })
+        .expect("window is open");
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+        .expect("window is open");
+    (window, panel)
+}
+
+fn enter_file_drag_over_root(panel: &Entity<ProjectPanel>, window: &mut Window, cx: &mut App) {
+    let (position, root_entry_id) = {
+        let panel = panel.read(cx);
+        let scroll = panel.scroll_handle.0.borrow();
+        let bounds = scroll.base_handle.bounds();
+        let item_size = scroll
+            .last_item_size
+            .expect("project entries were rendered");
+        let item_count = panel
+            .state
+            .visible_entries
+            .iter()
+            .map(|worktree| worktree.entries.len())
+            .sum::<usize>();
+        assert_eq!(item_count, 2);
+        let item_height = item_size.contents.height / item_count as f32;
+        let position = bounds.origin + point(bounds.size.width / 2., item_height / 2.);
+        let worktree = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .expect("project has a worktree")
+            .read(cx);
+        let root_entry_id = worktree.root_entry().expect("worktree has a root").id;
+        (position, root_entry_id)
+    };
+    window.dispatch_event(
+        FileDropEvent::Entered {
+            position,
+            paths: ExternalPaths(
+                [PathBuf::from(path!("/outside/file.txt"))]
+                    .into_iter()
+                    .collect(),
+            ),
+        }
+        .to_platform_input(),
+        cx,
+    );
+    let panel = panel.read(cx);
+    let target_entry_ids = panel
+        .drag_target_entry
+        .as_ref()
+        .and_then(|target| match target {
+            DragTarget::Entry {
+                entry_id,
+                highlight_entry_id,
+            } => Some((*entry_id, *highlight_entry_id)),
+            DragTarget::Background => None,
+        });
+    assert_eq!(target_entry_ids, Some((root_entry_id, root_entry_id)));
+    assert_eq!(panel.previous_drag_position, Some(position));
+    assert!(panel.hover_scroll_task.is_some());
+}
+
+fn assert_drag_state_cleared(panel: &ProjectPanel) {
+    assert!(panel.drag_target_entry.is_none());
+    assert!(panel.folded_directory_drag_target.is_none());
+    assert!(panel.hover_scroll_task.is_none());
+    assert!(panel.hover_expand_task.is_none());
+    assert_eq!(panel.previous_drag_position, None);
+}
+
+async fn open_panel_with_tree(
+    tree: serde_json::Value,
+    window_size: Size<Pixels>,
+    cx: &mut TestAppContext,
+) -> (Entity<ProjectPanel>, VisualTestContext) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), tree).await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let window = cx.open_window(window_size, |window, cx| {
+        MultiWorkspace::test_new(project.clone(), window, cx)
+    });
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("window is open");
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        panel
+    });
+    cx.run_until_parked();
+    (panel, cx)
+}
+
+fn entry_row_bounds(panel: &ProjectPanel, entry_id: ProjectEntryId) -> Bounds<Pixels> {
+    let row_index = panel
+        .state
+        .visible_entries
+        .iter()
+        .flat_map(|worktree| &worktree.entries)
+        .position(|entry| entry.id == entry_id)
+        .expect("entry has a row in the list");
+    let row_height = panel.entry_row_height().expect("list is laid out");
+    let viewport = panel.scroll_handle.viewport();
+    let row_top = viewport.top() + panel.scroll_handle.offset().y + row_height * row_index;
+    Bounds::new(
+        point(viewport.left(), row_top),
+        size(viewport.size.width, row_height),
+    )
 }

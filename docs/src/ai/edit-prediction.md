@@ -35,13 +35,13 @@ The Z icon in the status bar also indicates Zeta is active.
 
 ### Pricing and Plans
 
-The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../account/plans-and-pricing.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
+Zeta predictions are included with [Zed Pro](../account/plans-and-pricing.md#pro), the [Pro trial](../account/plans-and-pricing.md#trials), and the [Student](../account/plans-and-pricing.md#student) and [Business](../account/plans-and-pricing.md#business) plans. On the Free plan, you can use [other providers](#other-providers), like GitHub Copilot or a [local model](#local-and-self-hosted-models). See [Zed's pricing page](https://zed.dev/pricing) for details.
 
 ### Switching Modes {#switching-modes}
 
 Edit Prediction has two display modes:
 
-1. `eager` (default): predictions are displayed inline as long as they don't conflict with language server completions
+1. `eager` (default): predictions are displayed inline as long as they don't conflict with [language server completions](../completions.md)
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
 
 Toggle between them via the `mode` key:
@@ -73,7 +73,7 @@ In `eager` mode, you can also use the `tab` key to accept edit predictions, unle
 
 To always use `tab` for accepting edit predictions, regardless of whether the LSP completions menu is open, you can add the following to your keymap:
 
-Open the keymap editor with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and hit `edit`. Then change the context the binding is active in to just `Editor && edit_prediction` and save it.
+Open the [keymap editor](../key-bindings.md) with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and hit `edit`. Then change the context the binding is active in to just `Editor && edit_prediction` and save it.
 
 Alternatively, you can put the following in your `keymap.json`:
 
@@ -145,6 +145,34 @@ If you configured edit prediction keybindings before Zed `v0.229.0`, your `keyma
 **Old tab workaround**: Before `unbind` existed, the only way to prevent `tab` from accepting edit predictions was to copy all the default non-edit-prediction `tab` bindings into your keymap alongside a custom `AcceptEditPrediction` binding. If your keymap still contains those copy-pasted entries, delete them and use a single `"unbind"` entry as shown in the examples above.
 
 **Renamed context**: The `edit_prediction_conflict` context has been replaced by `edit_prediction && (showing_completions || in_leading_whitespace)`. Zed automatically migrates any bindings that used `edit_prediction_conflict`, so no changes are required on your end.
+
+## Configuring the Prediction Debounce
+
+The prediction debounce controls how long Zed waits after you stop typing before automatically requesting an edit prediction. Configure it in milliseconds under the settings for your selected provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "open_ai_compatible_api",
+    "open_ai_compatible_api": {
+      "prediction_debounce": 500
+    }
+  }
+}
+```
+
+The default debounce depends on the provider:
+
+| Provider              | Default |
+| --------------------- | ------: |
+| GitHub Copilot        |   75 ms |
+| Codestral             |  150 ms |
+| Zed                   |    0 ms |
+| Mercury               |    0 ms |
+| Ollama                |    0 ms |
+| OpenAI-compatible API |    0 ms |
+
+Set `prediction_debounce` to `0` to disable the additional delay. Normal request throttling can still apply. Explicitly requesting a prediction with {#action editor::ShowEditPrediction} bypasses the configured debounce.
 
 ## Disabling Automatic Edit Prediction
 
@@ -227,16 +255,15 @@ If your organization uses GitHub Copilot Enterprise, you can configure Zed to us
 
 ```json [settings]
 {
-  "edit_predictions": {
-    "copilot": {
-      "enterprise_uri": "https://your.enterprise.domain"
-    }
+  "copilot": {
+    "enterprise_uri": "https://your.enterprise.domain"
   }
 }
 ```
 
 Replace `"https://your.enterprise.domain"` with the URL provided by your GitHub Enterprise administrator (e.g., `https://foo.ghe.com`).
 
+This setting applies to both Copilot edit predictions and Copilot Chat.
 Once set, Zed routes Copilot requests through your enterprise endpoint.
 When you sign in by clicking the Copilot icon in the status bar, you are redirected to your configured enterprise URL to complete authentication.
 All other Copilot features and usage remain the same.

@@ -41,7 +41,7 @@ use workspace::{
     item::{ItemBufferKind, ItemHandle},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItemHandle,
-        WeakSearchableItemHandle,
+        SelectSearchOptions, WeakSearchableItemHandle,
     },
 };
 
@@ -528,11 +528,13 @@ impl ToolbarItemView for BufferSearchBar {
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_searchable_item_subscriptions.take();
-        self.active_searchable_item.take();
         self.splittable_editor = None;
         self._splittable_editor_subscription = None;
-
         self.pending_search.take();
+
+        if let Some(item) = self.active_searchable_item.take() {
+            item.set_select_search_options(None, cx);
+        }
 
         if let Some(splittable_editor) = item
             .and_then(|item| item.act_as_type(TypeId::of::<SplittableEditor>(), cx))
@@ -608,6 +610,7 @@ impl ToolbarItemView for BufferSearchBar {
 
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
+            self.sync_select_search_options(cx);
             drop(self.update_matches(true, false, window, cx));
             if self.needs_expand_collapse_option(cx) && self.is_dismissed() {
                 return ToolbarItemLocation::PrimaryLeft;
@@ -823,7 +826,7 @@ impl BufferSearchBar {
         self.dismissed = true;
         cx.emit(Event::Dismissed);
         self.query_error = None;
-        self.sync_select_next_case_sensitivity(cx);
+        self.sync_select_search_options(cx);
 
         for searchable_item in self.searchable_items_with_matches.keys() {
             if let Some(searchable_item) =
@@ -877,7 +880,6 @@ impl BufferSearchBar {
             }
             self.search_suggested(seed_query_override, window, cx);
             self.smartcase(window, cx);
-            self.sync_select_next_case_sensitivity(cx);
             self.replace_enabled |= deploy.replace_enabled;
             self.selection_search_enabled =
                 self.selection_search_enabled
@@ -940,6 +942,7 @@ impl BufferSearchBar {
         self.search_options.remove(SearchOptions::BACKWARDS);
 
         self.dismissed = false;
+        self.sync_select_search_options(cx);
         self.adjust_query_regex_language(cx);
         handle.search_bar_visibility_changed(true, window, cx);
         cx.notify();
@@ -1210,7 +1213,7 @@ impl BufferSearchBar {
         self.default_options = self.search_options;
         drop(self.update_matches(false, false, window, cx));
         self.adjust_query_regex_language(cx);
-        self.sync_select_next_case_sensitivity(cx);
+        self.sync_select_search_options(cx);
         cx.notify();
     }
 
@@ -1245,7 +1248,7 @@ impl BufferSearchBar {
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
         self.search_options = search_options;
         self.adjust_query_regex_language(cx);
-        self.sync_select_next_case_sensitivity(cx);
+        self.sync_select_search_options(cx);
         cx.notify();
     }
 
@@ -1849,21 +1852,24 @@ impl BufferSearchBar {
         }
     }
 
-    /// Updates the searchable item's case sensitivity option to match the
-    /// search bar's current case sensitivity setting. This ensures that
+    /// Updates the searchable item's search options to match the
+    /// search bar's current settings. This ensures that
     /// editor's `select_next`/ `select_previous` operations respect the buffer
     /// search bar's search options.
     ///
-    /// Clears the case sensitivity when the search bar is dismissed so that
+    /// Clears them when the search bar is dismissed so that
     /// only the editor's settings are respected.
-    fn sync_select_next_case_sensitivity(&self, cx: &mut Context<Self>) {
-        let case_sensitive = match self.dismissed {
+    fn sync_select_search_options(&self, cx: &mut Context<Self>) {
+        let search_options = match self.dismissed {
             true => None,
-            false => Some(self.search_options.contains(SearchOptions::CASE_SENSITIVE)),
+            false => Some(SelectSearchOptions {
+                case_sensitive: self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                whole_word: self.search_options.contains(SearchOptions::WHOLE_WORD),
+            }),
         };
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
-            active_searchable_item.set_search_is_case_sensitive(case_sensitive, cx);
+            active_searchable_item.set_select_search_options(search_options, cx);
         }
     }
 }
@@ -3177,6 +3183,83 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_replace_with_lookaround(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("316227766016837933199\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"(\d)(?=(\d{4})+$)",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "$1,",
+            replace_all: true,
+            expected_text: "3,1622,7766,0168,3793,3199\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Xfoo\nbar\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"foo\n(?<=Xfoo\n)bar",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "BAZ",
+            replace_all: true,
+            expected_text: "Xfoo\nbar\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("food: bar\nfoo: bar\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"(?<=foo: )bar",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "BAZ",
+            replace_all: false,
+            expected_text: "food: bar\nfoo: BAZ\n".to_string(),
+        })
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_lookaround_in_multibuffer(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"\w+(?= expression)",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "SOME",
+            replace_all: true,
+            expected_text: r#"
+            A SOME expression (shortened as regex or regexp;[1] also referred to as
+            SOME expression[2][3]) is a sequence of characters that specifies a search
+            pattern in text. Usually such patterns are used by string-searching algorithms
+            for "find" or "find and replace" operations on strings, or for input validation.
+            Some Additional text with the term SOME expression in it.
+            There two lines."#
+                .unindent(),
+        })
+        .await;
+    }
+
+    #[gpui::test]
     async fn test_deploy_replace_focuses_replacement_editor(cx: &mut TestAppContext) {
         init_globals(cx);
         let (editor, search_bar, cx) = init_test(cx);
@@ -3899,6 +3982,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                search_on_type: false,
             },
             cx,
         );
@@ -3962,6 +4046,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                search_on_type: false,
             },
             cx,
         );
@@ -4000,6 +4085,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                search_on_type: false,
             },
             cx,
         );
@@ -4217,6 +4303,307 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_set_active_pane_item_syncs_select_search_options(cx: &mut TestAppContext) {
+        init_globals(cx);
+
+        // Set up 2 editors, with both buffers containing a lowercase and
+        // uppercase version of the same word, so we can confirm whether case
+        // sensitivity is affecting `editor: select next` .
+        let cx = cx.add_empty_window();
+        let buffer_a = cx.new(|cx| Buffer::local("zed\nZED\n", cx));
+        let buffer_b = cx.new(|cx| Buffer::local("zed\nZED\n", cx));
+        let editor_a = cx
+            .new_window_entity(|window, cx| Editor::for_buffer(buffer_a.clone(), None, window, cx));
+        let editor_b = cx
+            .new_window_entity(|window, cx| Editor::for_buffer(buffer_b.clone(), None, window, cx));
+
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor_a), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.set_search_options(SearchOptions::CASE_SENSITIVE, cx)
+        });
+
+        // Editor A should use the search bar's case sensitivity option.
+        editor_a.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("selecting next should succeed, even if selections are not changed");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)]
+            );
+        });
+
+        // Switching the active item should move the search bar's options to
+        // Editor B.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor_b), window, cx)
+        });
+
+        editor_b.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("selecting next should succeed, even if selections are not changed");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)]
+            );
+        });
+
+        // Editor A should now fall back to the default case insensitive search
+        // setting.
+        editor_a.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("selecting next should succeed, even if selections are not changed");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 3)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_option_change_during_selections(cx: &mut TestAppContext) {
+        init_globals(cx);
+
+        let cx = cx.add_empty_window();
+        let buffer = cx.new(|cx| Buffer::local("abc\ndefabc\nghiabc\nabc", cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("should be able to select next");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
+                    DisplayPoint::new(DisplayRow(1), 3)..DisplayPoint::new(DisplayRow(1), 6)
+                ]
+            );
+        });
+
+        // Toggle the "Whole Word" search option, so we can later check that
+        // only the last line is now going to be selected.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_whole_word(&Default::default(), window, cx)
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("should be able to select next");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
+                    DisplayPoint::new(DisplayRow(1), 3)..DisplayPoint::new(DisplayRow(1), 6),
+                    DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 3)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_show_syncs_select_search_options(cx: &mut TestAppContext) {
+        init_globals(cx);
+
+        let cx = cx.add_empty_window();
+        let buffer = cx.new(|cx| Buffer::local("zed\nzedfoo\nzed", cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_search_options(SearchOptions::WHOLE_WORD, cx);
+
+            // Reopening the search bar with the same options should sync them
+            // back to the editor after dismissing cleared them from the editor.
+            search_bar.dismiss(&Default::default(), window, cx);
+            search_bar.show(window, cx)
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("should be able to select next");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
+                    DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 3)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_shift_enter_selects_previous_match_with_jetbrains_keymap(
+        cx: &mut TestAppContext,
+    ) {
+        init_globals(cx);
+        let buffer = cx.new(|cx| Buffer::local("zed\nzed\nzed\n", cx));
+        let mut editor = None;
+        let window = cx.add_window(|window, cx| {
+            // Load the keymaps in the same order (and with the same sources) as
+            // `load_default_keymap` does, so precedence matches a real session
+            // with `base_keymap: JetBrains`.
+            let mut default_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                settings::DEFAULT_KEYMAP_PATH,
+                cx,
+            )
+            .unwrap();
+            for binding in &mut default_bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            cx.bind_keys(default_bindings);
+
+            let jetbrains_keymap_path = settings::BaseKeymap::JetBrains
+                .asset_path()
+                .expect("JetBrains base keymap should have an asset path");
+            let mut jetbrains_bindings =
+                settings::KeymapFile::load_asset_allow_partial_failure(jetbrains_keymap_path, cx)
+                    .unwrap();
+            for binding in &mut jetbrains_bindings {
+                binding.set_meta(settings::KeybindSource::Base.meta());
+            }
+            cx.bind_keys(jetbrains_bindings);
+
+            editor = Some(cx.new(|cx| Editor::for_buffer(buffer.clone(), None, window, cx)));
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor.clone().unwrap()), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+        let search_bar = window.root(cx).unwrap();
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("zed", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let match_count = search_bar
+            .read_with(cx, |search_bar, _| {
+                search_bar
+                    .searchable_items_with_matches
+                    .values()
+                    .next()
+                    .map(|(matches, _)| matches.len())
+            })
+            .expect("search should have populated matches");
+        assert!(
+            match_count >= 2,
+            "test precondition: need at least 2 matches, got {match_count}"
+        );
+        assert_eq!(
+            search_bar.read_with(cx, |search_bar, _| search_bar.active_match_index),
+            Some(0),
+            "the first match should be active after searching"
+        );
+
+        let query_focus = search_bar.read_with(cx, |search_bar, cx| {
+            search_bar.query_editor.focus_handle(cx)
+        });
+        cx.update(|window, cx| window.focus(&query_focus, cx));
+        cx.update(|window, cx| {
+            assert!(
+                query_focus.contains_focused(window, cx),
+                "query editor must be focused before simulating shift-enter"
+            );
+        });
+
+        cx.simulate_keystrokes("shift-enter");
+        cx.run_until_parked();
+
+        let query_text = search_bar.read_with(cx, |search_bar, cx| {
+            search_bar.query_editor.read(cx).text(cx)
+        });
+        assert!(
+            !query_text.contains('\n'),
+            "shift-enter must not insert a newline into the query; got {query_text:?}"
+        );
+        assert_eq!(
+            search_bar.read_with(cx, |search_bar, _| search_bar.active_match_index),
+            Some(match_count - 1),
+            "shift-enter should wrap from the first to the last match"
+        );
+    }
+
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -4228,6 +4615,7 @@ mod tests {
                         include_ignored: Some(search_settings.include_ignored),
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
+                        search_on_type: Some(search_settings.search_on_type),
                     });
                 });
             });

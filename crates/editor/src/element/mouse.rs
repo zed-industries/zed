@@ -4,18 +4,17 @@ use std::time::{Duration, Instant};
 use collections::HashMap;
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    AnyElement, App, AvailableSpace, ClickEvent, Context, DefiniteLength, DispatchPhase, Element,
-    MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollWheelEvent, TextStyleRefinement,
-    Window, anchored, deferred, point, px,
+    AnyElement, App, AvailableSpace, ClickEvent, Context, DispatchPhase, Element, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
+    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollWheelEvent, Window, anchored,
+    deferred, point, px,
 };
 use multi_buffer::MultiBufferRow;
 use project::DisableAiSettings;
 use settings::Settings;
 use sum_tree::Bias;
 use text::SelectionGoal;
-use theme_settings::BufferLineHeight;
-use util::{RangeExt, debug_panic, post_inc};
+use util::{RangeExt, debug_panic};
 
 use super::{EditorElement, EditorLayout, LineNumberLayout, PositionMap, SplitSide};
 use crate::{
@@ -23,7 +22,8 @@ use crate::{
     EditorSettings, EditorSnapshot, GutterHoverButton, HoveredCursor, JumpData,
     PhantomDiffReviewIndicator, SelectPhase, Selection, SelectionDragState,
     display_map::ToDisplayPoint, editor_settings::DoubleClickInMultibuffer,
-    hover_popover::hover_at, mouse_context_menu, scroll::ScrollPixelOffset,
+    hover_popover::hover_at, inlays::inlay_hints::HintTarget, mouse_context_menu,
+    scroll::ScrollPixelOffset,
 };
 
 impl EditorElement {
@@ -241,8 +241,10 @@ impl EditorElement {
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hovered {
+            let hint_glyph = position_map.inlay_hint_glyph_for_position(event.position);
             editor.update_hovered_link(
                 point_for_position,
+                hint_glyph,
                 Some(event.position),
                 &position_map.snapshot,
                 modifiers,
@@ -250,7 +252,9 @@ impl EditorElement {
                 cx,
             );
 
-            if let Some(point) = point_for_position.as_valid() {
+            if hint_glyph.is_none()
+                && let Some(point) = point_for_position.as_valid()
+            {
                 let anchor = position_map
                     .snapshot
                     .buffer_snapshot()
@@ -260,7 +264,7 @@ impl EditorElement {
             } else {
                 editor.update_inlay_link_and_hover_points(
                     &position_map.snapshot,
-                    point_for_position,
+                    hint_glyph,
                     Some(event.position),
                     modifiers.secondary(),
                     modifiers.shift,
@@ -322,33 +326,25 @@ impl EditorElement {
             }
         })?;
 
-        let text_style = TextStyleRefinement {
-            line_height: Some(DefiniteLength::Fraction(
-                BufferLineHeight::Comfortable.value(),
-            )),
-            ..Default::default()
-        };
-        window.with_text_style(Some(text_style), |window| {
-            let mut element = self.editor.read_with(cx, |editor, _| {
-                let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
-                let context_menu = mouse_context_menu.context_menu.clone();
+        let mut element = self.editor.read_with(cx, |editor, _| {
+            let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
+            let context_menu = mouse_context_menu.context_menu.clone();
 
-                Some(
-                    deferred(
-                        anchored()
-                            .position(position)
-                            .child(context_menu)
-                            .anchor(gpui::Anchor::TopLeft)
-                            .snap_to_window_with_margin(px(8.)),
-                    )
-                    .with_priority(1)
-                    .into_any(),
+            Some(
+                deferred(
+                    anchored()
+                        .position(position)
+                        .child(context_menu)
+                        .anchor(gpui::Anchor::TopLeft)
+                        .snap_to_window_with_margin(px(8.)),
                 )
-            })?;
+                .with_priority(1)
+                .into_any(),
+            )
+        })?;
 
-            element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
-            Some(element)
-        })
+        element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
+        Some(element)
     }
 
     pub(super) fn paint_mouse_listeners(
@@ -622,6 +618,52 @@ impl EditorElement {
             return;
         }
 
+        let hint_glyph = text_hitbox
+            .is_hovered(window)
+            .then(|| position_map.inlay_hint_glyph_for_position(event.position))
+            .flatten();
+        if !event.modifiers.modified()
+            && editor
+                .hovered_inlay_hint_command()
+                .is_some_and(|command| command.contains_glyph(&position_map.snapshot, hint_glyph))
+        {
+            cx.stop_propagation();
+            return;
+        }
+
+        let is_singleton = editor.buffer().read(cx).is_singleton();
+        let double_click_selects = is_singleton
+            || EditorSettings::get_global(cx).double_click_in_multibuffer
+                == DoubleClickInMultibuffer::Select;
+
+        if click_count == 2
+            && double_click_selects
+            && !modifiers.modified()
+            && let Some((hint, offset_in_hint)) =
+                hint_glyph.and_then(|glyph| position_map.snapshot.inlay_hint_at(glyph))
+            && let Some(buffer_id) = hint
+                .position
+                .raw_text_anchor()
+                .map(|anchor| anchor.buffer_id)
+        {
+            let resolved = editor.is_inlay_hint_resolved(buffer_id, hint.id, cx);
+            let accepting = editor.apply_inlay_hint_text_edits(
+                [HintTarget {
+                    buffer_id,
+                    hint_id: hint.id,
+                    position: hint.position,
+                }]
+                .into_iter(),
+                Some(offset_in_hint),
+                window,
+                cx,
+            );
+            if accepting && resolved {
+                cx.stop_propagation();
+                return;
+            }
+        }
+
         if EditorSettings::get_global(cx)
             .drag_and_drop_selection
             .enabled
@@ -633,7 +675,7 @@ impl EditorElement {
             let selection = newest_anchor.map(|anchor| anchor.to_display_point(&snapshot));
             if point_for_position.intersects_selection(&selection) {
                 editor.selection_drag_state = SelectionDragState::ReadyToDrag {
-                    selection: newest_anchor.clone(),
+                    selection: *newest_anchor,
                     click_position: event.position,
                     mouse_down_time: Instant::now(),
                 };
@@ -641,8 +683,6 @@ impl EditorElement {
                 return;
             }
         }
-
-        let is_singleton = editor.buffer().read(cx).is_singleton();
 
         if click_count == 2 && !is_singleton {
             match EditorSettings::get_global(cx).double_click_in_multibuffer {
@@ -952,8 +992,6 @@ impl EditorElement {
 
         if let Some(mouse_position) = event.mouse_position()
             && !pending_nonempty_selections
-            && hovered_link_modifier
-            && mouse_down_hovered_link_modifier
             && text_hitbox.is_hovered(window)
             && !matches!(
                 editor.selection_drag_state,
@@ -961,10 +999,27 @@ impl EditorElement {
             )
         {
             let point = position_map.point_for_position(mouse_position);
-            editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
-            editor.selection_drag_state = SelectionDragState::None;
+            if let ClickEvent::Mouse(mouse_event) = event
+                && mouse_event.up.click_count == 1
+                && !mouse_event.down.modifiers.modified()
+                && !mouse_event.up.modifiers.modified()
+                && editor.activate_hovered_inlay_hint_command(
+                    &position_map.snapshot,
+                    position_map.inlay_hint_glyph_for_position(mouse_event.down.position),
+                    position_map.inlay_hint_glyph_for_position(mouse_position),
+                    cx,
+                )
+            {
+                editor.selection_drag_state = SelectionDragState::None;
+                cx.stop_propagation();
+                return;
+            }
 
-            cx.stop_propagation();
+            if hovered_link_modifier && mouse_down_hovered_link_modifier {
+                editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
+                editor.selection_drag_state = SelectionDragState::None;
+                cx.stop_propagation();
+            }
         }
     }
 
@@ -1074,14 +1129,14 @@ impl EditorElement {
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         let drop_cursor = Selection {
-                            id: post_inc(&mut editor.selections.next_selection_id()),
+                            id: editor.selections.next_selection_id(),
                             start: drop_anchor,
                             end: drop_anchor,
                             reversed: false,
                             goal: SelectionGoal::None,
                         };
                         editor.selection_drag_state = SelectionDragState::Dragging {
-                            selection: selection.clone(),
+                            selection: *selection,
                             drop_cursor,
                             hide_drop_cursor: false,
                         };

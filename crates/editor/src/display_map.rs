@@ -89,6 +89,7 @@ pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
 pub use inlay_map::{InlayOffset, InlayPoint};
+use invisibles::is_standalone_grapheme;
 pub use invisibles::{is_invisible, replacement};
 pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
@@ -99,7 +100,7 @@ use gpui::{
 };
 use language::{
     LanguageAwareStyling, Point, Subscription as BufferSubscription,
-    language_settings::{AllLanguageSettings, LanguageSettings},
+    language_settings::{AllLanguageSettings, LanguageSettings, SoftWrapIndent},
 };
 
 use multi_buffer::{
@@ -126,7 +127,8 @@ use std::{
     fmt::Debug,
     iter,
     num::NonZeroU32,
-    ops::{self, Add, Range, Sub},
+    ops::{self, Add, Range, RangeInclusive, Sub},
+    slice,
     sync::Arc,
 };
 
@@ -136,7 +138,8 @@ use crate::{
 use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
 use fold_map::{FoldPointCursor, FoldSnapshot};
 use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
-use tab_map::{TabPoint, TabPointCursor, TabSnapshot};
+pub(crate) use tab_map::TabPoint;
+use tab_map::{TabPointCursor, TabSnapshot};
 use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1247,6 +1250,11 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub fn set_soft_wrap_indent(&self, indent: SoftWrapIndent, cx: &mut Context<Self>) -> bool {
+        self.wrap_map
+            .update(cx, |map, cx| map.set_soft_wrap_indent(indent, cx))
+    }
+
     #[instrument(skip_all)]
     pub fn update_fold_widths(
         &mut self,
@@ -1278,7 +1286,7 @@ impl DisplayMap {
         widths_changed
     }
 
-    pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> + Default {
+    pub(crate) fn current_inlays(&self) -> slice::Iter<'_, Inlay> {
         self.inlay_map.current_inlays()
     }
 
@@ -1370,7 +1378,6 @@ impl DisplayMap {
         }
     }
 
-    #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
     }
@@ -1409,6 +1416,7 @@ pub enum ChunkReplacement {
 pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
+    pub(crate) diagnostic_underline_severity: Option<lsp::DiagnosticSeverity>,
     pub is_tab: bool,
     pub is_inlay: bool,
     pub replacement: Option<ChunkReplacement>,
@@ -1420,97 +1428,76 @@ impl<'a> HighlightedChunk<'a> {
         self,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = Self> + 'a {
-        let mut chunks = self.text.graphemes(true).peekable();
         let mut text = self.text;
         let style = self.style;
+        let diagnostic_underline_severity = self.diagnostic_underline_severity;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
         let is_inlay = self.is_inlay;
         iter::from_fn(move || {
-            let mut prefix_len = 0;
-            while let Some(&chunk) = chunks.peek() {
-                let mut chars = chunk.chars();
-                let Some(ch) = chars.next() else { break };
-                if chunk.len() != ch.len_utf8() || !is_invisible(ch) {
-                    prefix_len += chunk.len();
-                    chunks.next();
+            if text.is_empty() {
+                return None;
+            }
+            for (offset, ch) in text.char_indices() {
+                if !is_invisible(ch) {
                     continue;
                 }
-                if prefix_len > 0 {
-                    let (prefix, suffix) = text.split_at(prefix_len);
+                let ch_end = offset + ch.len_utf8();
+                if !is_standalone_grapheme(text, offset, ch_end) {
+                    continue;
+                }
+                if offset > 0 {
+                    let (prefix, suffix) = text.split_at(offset);
                     text = suffix;
                     return Some(HighlightedChunk {
                         text: prefix,
                         style,
+                        diagnostic_underline_severity,
                         is_tab,
                         is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
-                chunks.next();
-                let (prefix, suffix) = text.split_at(chunk.len());
+                let (invisible_text, suffix) = text.split_at(ch_end);
                 text = suffix;
-                if let Some(replacement) = replacement(ch) {
-                    let invisible_highlight = HighlightStyle {
-                        background_color: Some(editor_style.status.hint_background),
-                        underline: Some(UnderlineStyle {
-                            color: Some(editor_style.status.hint),
-                            thickness: px(1.),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    };
-                    let invisible_style = if let Some(style) = style {
-                        style.highlight(invisible_highlight)
-                    } else {
-                        invisible_highlight
-                    };
-                    return Some(HighlightedChunk {
-                        text: prefix,
-                        style: Some(invisible_style),
-                        is_tab: false,
-                        is_inlay,
-                        replacement: Some(ChunkReplacement::Str(replacement.into())),
-                    });
+                let invisible_highlight = HighlightStyle {
+                    background_color: Some(editor_style.status.hint_background),
+                    underline: Some(UnderlineStyle {
+                        color: Some(editor_style.status.hint),
+                        thickness: px(1.),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                };
+                let invisible_style = if let Some(style) = style {
+                    style.highlight(invisible_highlight)
                 } else {
-                    let invisible_highlight = HighlightStyle {
-                        background_color: Some(editor_style.status.hint_background),
-                        underline: Some(UnderlineStyle {
-                            color: Some(editor_style.status.hint),
-                            thickness: px(1.),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    };
-                    let invisible_style = if let Some(style) = style {
-                        style.highlight(invisible_highlight)
-                    } else {
-                        invisible_highlight
-                    };
-
-                    return Some(HighlightedChunk {
-                        text: prefix,
-                        style: Some(invisible_style),
-                        is_tab: false,
-                        is_inlay,
-                        replacement: renderer.clone(),
-                    });
-                }
-            }
-
-            if !text.is_empty() {
-                let remainder = text;
-                text = "";
-                Some(HighlightedChunk {
-                    text: remainder,
-                    style,
-                    is_tab,
+                    invisible_highlight
+                };
+                return Some(HighlightedChunk {
+                    text: invisible_text,
+                    style: Some(invisible_style),
+                    diagnostic_underline_severity: None,
+                    is_tab: false,
                     is_inlay,
-                    replacement: renderer.clone(),
-                })
-            } else {
-                None
+                    replacement: match replacement(ch) {
+                        Some(replacement) => {
+                            Some(ChunkReplacement::Str(SharedString::from(replacement)))
+                        }
+                        None => renderer.clone(),
+                    },
+                });
             }
+            let remainder = text;
+            text = "";
+            Some(HighlightedChunk {
+                text: remainder,
+                style,
+                diagnostic_underline_severity,
+                is_tab,
+                is_inlay,
+                replacement: renderer.clone(),
+            })
         })
     }
 }
@@ -1538,39 +1525,95 @@ impl DisplaySnapshot {
         self.companion_display_snapshot.as_deref()
     }
 
+    pub fn inlay_hint_at(&self, point: DisplayPoint) -> Option<(&Inlay, usize)> {
+        if point.row() > self.max_point().row()
+            || self.is_block_line(point.row())
+            || point.column() >= self.line_len(point.row())
+        {
+            return None;
+        }
+        let wrap_row = self
+            .block_snapshot
+            .to_wrap_point(BlockPoint::new(BlockRow(point.row().0), 0), Bias::Left)
+            .row();
+        let wrap_indent = wrap_row
+            .0
+            .checked_sub(1)
+            .and_then(|previous_row| self.wrap_snapshot().soft_wrap_indent(WrapRow(previous_row)));
+        if wrap_indent.is_some_and(|indent| point.column() < indent) {
+            return None;
+        }
+        let fold_point = self.display_point_to_fold_point(point, Bias::Left);
+        if self
+            .fold_snapshot()
+            .placeholder_range_at(fold_point)
+            .is_some()
+        {
+            return None;
+        }
+        let inlay_offset = self
+            .inlay_snapshot()
+            .to_offset(fold_point.to_inlay_point(self.fold_snapshot()));
+        if self.fold_snapshot().is_inlay_offset_folded(inlay_offset) {
+            return None;
+        }
+        self.inlay_snapshot().inlay_hint_at_offset(inlay_offset)
+    }
+
+    pub fn is_inlay_visible(&self, inlay_id: InlayId, position: Anchor) -> bool {
+        if !position.is_valid(self.buffer_snapshot()) {
+            return false;
+        }
+        let Some(rendered_range) = self.inlay_snapshot().inlay_offset_range(inlay_id, position)
+        else {
+            return false;
+        };
+        let start = self.inlay_offset_to_display_point(rendered_range.start, Bias::Right);
+        let end = self.inlay_offset_to_display_point(rendered_range.end, Bias::Left);
+        (start.row().0..=end.row().0).any(|row| {
+            let row = DisplayRow(row);
+            if self.is_block_line(row) {
+                return false;
+            }
+            let point = if row == start.row() {
+                start
+            } else {
+                DisplayPoint::new(row, 0)
+            };
+            let offset = self.display_point_to_inlay_offset(point, Bias::Left);
+            rendered_range.contains(&offset) && !self.fold_snapshot().is_inlay_offset_folded(offset)
+        })
+    }
+
+    fn diagnostic_severity_is_visible(&self, severity: lsp::DiagnosticSeverity) -> bool {
+        self.diagnostics_max_severity
+            .into_lsp()
+            .is_some_and(|max_severity| severity <= max_severity)
+    }
+
+    pub(crate) fn diagnostic_underline_style(
+        &self,
+        severity: lsp::DiagnosticSeverity,
+        underline: bool,
+        is_unnecessary: bool,
+        editor_style: &EditorStyle,
+    ) -> Option<UnderlineStyle> {
+        (underline
+            && editor_style.show_underlines
+            && self.diagnostic_severity_is_visible(severity)
+            && !(is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
+            .then(|| UnderlineStyle {
+                color: Some(diagnostic_style(severity, &editor_style.status)),
+                thickness: 1.0.into(),
+                wavy: true,
+            })
+    }
+
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
     }
     pub fn tab_snapshot(&self) -> &TabSnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot
-    }
-
-    /// The column `point` sits at once tabs are expanded, which is where it appears
-    /// on screen when the line isn't soft-wrapped. Unlike a display column this is
-    /// counted from the start of the buffer row rather than the wrapped segment.
-    pub(crate) fn tab_expanded_column(&self, point: Point) -> u32 {
-        self.tab_snapshot()
-            .point_to_tab_point(point, Bias::Left)
-            .0
-            .column
-    }
-
-    /// Inverse of [`Self::tab_expanded_column`], clamped to the end of the row.
-    pub(crate) fn point_for_tab_expanded_column(
-        &self,
-        buffer_row: MultiBufferRow,
-        column: u32,
-    ) -> Point {
-        let tab_snapshot = self.tab_snapshot();
-        let tab_row = tab_snapshot.buffer_row_to_tab_row(buffer_row);
-        let column = column.min(tab_snapshot.line_len(tab_row));
-        tab_snapshot.tab_point_to_point(TabPoint(Point::new(tab_row, column)), Bias::Left)
-    }
-
-    /// The length of `buffer_row` once tabs are expanded.
-    pub(crate) fn tab_expanded_line_len(&self, buffer_row: MultiBufferRow) -> u32 {
-        let tab_snapshot = self.tab_snapshot();
-        tab_snapshot.line_len(tab_snapshot.buffer_row_to_tab_row(buffer_row))
     }
 
     pub fn fold_snapshot(&self) -> &FoldSnapshot {
@@ -1885,6 +1928,7 @@ impl DisplaySnapshot {
             // track the current underline style so that we can apply it to
             // inlay hints within the diagnostic's span
             let mut current_diagnostic_underline: Option<UnderlineStyle> = None;
+            let mut current_diagnostic_severity: Option<lsp::DiagnosticSeverity> = None;
 
             move |chunk| {
                 let syntax_highlight_style = chunk
@@ -1909,41 +1953,35 @@ impl DisplaySnapshot {
                     }
                 });
 
-                let diagnostic_highlight = if chunk.is_inlay {
-                    current_diagnostic_underline.map(|underline| HighlightStyle {
-                        underline: Some(underline),
-                        ..Default::default()
-                    })
-                } else {
-                    let highlight = chunk
-                        .diagnostic_severity
-                        .filter(|severity| {
-                            self.diagnostics_max_severity
-                                .into_lsp()
-                                .is_some_and(|max_severity| severity <= &max_severity)
-                        })
-                        .map(|severity| HighlightStyle {
-                            fade_out: chunk
-                                .is_unnecessary
-                                .then_some(editor_style.unnecessary_code_fade),
-                            underline: (chunk.underline
-                                && editor_style.show_underlines
-                                && !(chunk.is_unnecessary
-                                    && severity > lsp::DiagnosticSeverity::WARNING))
-                                .then(|| {
-                                    let diagnostic_color =
-                                        diagnostic_style(severity, &editor_style.status);
-                                    UnderlineStyle {
-                                        color: Some(diagnostic_color),
-                                        thickness: 1.0.into(),
-                                        wavy: true,
-                                    }
-                                }),
+                let (diagnostic_highlight, diagnostic_severity) = if chunk.is_inlay {
+                    (
+                        current_diagnostic_underline.map(|underline| HighlightStyle {
+                            underline: Some(underline),
                             ..Default::default()
-                        });
+                        }),
+                        current_diagnostic_severity,
+                    )
+                } else {
+                    let severity = chunk
+                        .diagnostic_severity
+                        .filter(|severity| self.diagnostic_severity_is_visible(*severity));
+                    let highlight = severity.map(|severity| HighlightStyle {
+                        fade_out: chunk
+                            .is_unnecessary
+                            .then_some(editor_style.unnecessary_code_fade),
+                        underline: self.diagnostic_underline_style(
+                            severity,
+                            chunk.underline,
+                            chunk.is_unnecessary,
+                            editor_style,
+                        ),
+                        ..Default::default()
+                    });
 
                     current_diagnostic_underline = highlight.as_ref().and_then(|h| h.underline);
-                    highlight
+                    current_diagnostic_severity =
+                        current_diagnostic_underline.and_then(|_| severity);
+                    (highlight, current_diagnostic_severity)
                 };
 
                 let style = [
@@ -1958,6 +1996,7 @@ impl DisplaySnapshot {
                 HighlightedChunk {
                     text: chunk.text,
                     style,
+                    diagnostic_underline_severity: diagnostic_severity,
                     is_tab: chunk.is_tab,
                     is_inlay: chunk.is_inlay,
                     replacement: chunk.renderer.map(ChunkReplacement::Renderer),
@@ -2110,7 +2149,7 @@ impl DisplaySnapshot {
             });
         chars.collect::<String>().graphemes(true).next().map(|s| {
             if let Some(invisible) = s.chars().next().filter(|&c| is_invisible(c)) {
-                replacement(invisible).unwrap_or(s).to_owned().into()
+                replacement(invisible).map_or_else(|| s.to_owned().into(), SharedString::from)
             } else if s == "\n" {
                 " ".into()
             } else {
@@ -2500,6 +2539,37 @@ impl DisplaySnapshot {
             Bias::Right,
         )
     }
+
+    pub(crate) fn fully_replaced_tab_rows(&self, row: u32) -> Option<RangeInclusive<u32>> {
+        if !self.block_snapshot.has_replacement_blocks()
+            || row > self.tab_snapshot().max_point().row()
+        {
+            return None;
+        }
+        let wraps = self.wrap_snapshot();
+        let wrap_point = wraps.tab_point_to_wrap_point(TabPoint::new(row, 0));
+        let input_range = self
+            .block_snapshot
+            .replacement_block_input_range(wrap_point.row())?;
+        let start = wraps.to_tab_point(WrapPoint::new(input_range.start, 0));
+        let start_row = start.row().checked_add(u32::from(start.column() > 0))?;
+        let end_row = if input_range.end > wraps.max_point().row() {
+            self.tab_snapshot().max_point().row()
+        } else {
+            wraps
+                .to_tab_point(WrapPoint::new(input_range.end, 0))
+                .row()
+                .checked_sub(1)?
+        };
+        let rows = start_row..=end_row;
+        rows.contains(&row).then_some(rows)
+    }
+
+    fn inlay_offset_to_display_point(&self, offset: InlayOffset, bias: Bias) -> DisplayPoint {
+        let inlay_point = self.inlay_snapshot().to_point(offset);
+        let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
+        self.fold_point_to_display_point(fold_point)
+    }
 }
 
 fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {
@@ -2732,6 +2802,7 @@ pub mod tests {
     use lsp::LanguageServerId;
 
     use futures::stream::StreamExt;
+    use multi_buffer::PathKey;
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
     use std::{env, sync::Arc};
@@ -3197,6 +3268,310 @@ pub mod tests {
     }
 
     #[gpui::test]
+    fn test_inlay_hint_at(cx: &mut App) {
+        init_test(cx, &|_| {});
+        for tab_size in [1, 4, 16] {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.tab_size = NonZeroU32::new(tab_size);
+                });
+            });
+            let buffer = MultiBuffer::build_simple("ab\ncd", cx);
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let position = buffer_snapshot.anchor_after(MultiBufferOffset(1));
+            let end_position = buffer_snapshot.anchor_after(buffer_snapshot.len());
+            let map = inlay_test_map(buffer.clone(), test_font(), px(14.0), None, cx);
+            let snapshot = map.update(cx, |map, cx| {
+                map.splice_inlays(
+                    &[],
+                    vec![
+                        Inlay::mock_hint(0, position, " é界🙂 "),
+                        Inlay::mock_hint(1, position, "λ"),
+                        Inlay::edit_prediction(0, position, "P"),
+                        Inlay::mock_hint(2, end_position, "z"),
+                    ],
+                    cx,
+                );
+                map.snapshot(cx)
+            });
+            assert_eq!(snapshot.text(), "a é界🙂 λPb\ncdz");
+            for (row, column, expected) in [
+                (0, 0, None),
+                (0, 1, Some((InlayId::Hint(0), 0))),
+                (0, 2, Some((InlayId::Hint(0), 1))),
+                (0, 4, Some((InlayId::Hint(0), 3))),
+                (0, 7, Some((InlayId::Hint(0), 6))),
+                (0, 11, Some((InlayId::Hint(0), 10))),
+                (0, 12, Some((InlayId::Hint(1), 0))),
+                (0, 14, None),
+                (0, 15, None),
+                (0, 16, None),
+                (1, 0, None),
+                (1, 1, None),
+                (1, 2, Some((InlayId::Hint(2), 0))),
+                (1, 3, None),
+            ] {
+                let point = DisplayPoint::new(DisplayRow(row), column);
+                assert_eq!(
+                    snapshot
+                        .inlay_hint_at(point)
+                        .map(|(hint, offset)| (hint.id, offset)),
+                    expected,
+                    "point {point:?}"
+                );
+            }
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(Point::new(1, 0)..Point::new(1, 2), "\t")], None, cx);
+            });
+            let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+            let expected_line = " ".repeat(tab_size as usize) + "z";
+            assert_eq!(snapshot.line(DisplayRow(1)), expected_line);
+            for column in 0..=tab_size + 1 {
+                let point = DisplayPoint::new(DisplayRow(1), column);
+                assert_eq!(
+                    snapshot
+                        .inlay_hint_at(point)
+                        .map(|(hint, offset)| (hint.id, offset)),
+                    (column == tab_size).then_some((InlayId::Hint(2), 0)),
+                    "tab size {tab_size}, point {point:?}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_inlay_hint_at_soft_wrap_indent(cx: &mut App) {
+        init_test(cx, &|_| {});
+        let buffer = MultiBuffer::build_simple("  ab", cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let position = buffer_snapshot.anchor_after(MultiBufferOffset(3));
+        let map = inlay_test_map(buffer, font("Courier"), px(16.0), Some(px(40.0)), cx);
+        let snapshot = map.update(cx, |map, cx| {
+            map.splice_inlays(&[], vec![Inlay::mock_hint(0, position, "wxyz")], cx);
+            map.snapshot(cx)
+        });
+        assert_eq!(snapshot.text(), "  aw\n  xy\n  zb");
+        for (row, column, expected) in [
+            (0, 2, None),
+            (0, 3, Some(0)),
+            (0, 4, None),
+            (1, 0, None),
+            (1, 1, None),
+            (1, 2, Some(1)),
+            (1, 3, Some(2)),
+            (1, 4, None),
+            (2, 0, None),
+            (2, 1, None),
+            (2, 2, Some(3)),
+            (2, 3, None),
+            (2, 4, None),
+        ] {
+            let point = DisplayPoint::new(DisplayRow(row), column);
+            assert_eq!(
+                snapshot.inlay_hint_at(point).map(|(_, offset)| offset),
+                expected,
+                "point {point:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_inlay_hint_at_fold_placeholder(cx: &mut App) {
+        init_test(cx, &|_| {});
+        for (text, fold_range, hints, expected_text, visible_hint) in [
+            (
+                "ab\ncd\nef",
+                MultiBufferPoint::new(0, 1)..MultiBufferPoint::new(2, 1),
+                vec![(1, "X"), (8, "Y")],
+                "a⋯fY",
+                (5, InlayId::Hint(1)),
+            ),
+            (
+                "ab",
+                MultiBufferPoint::new(0, 0)..MultiBufferPoint::new(0, 1),
+                vec![(1, "H")],
+                "⋯Hb",
+                (3, InlayId::Hint(0)),
+            ),
+        ] {
+            let buffer = MultiBuffer::build_simple(text, cx);
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let map = inlay_test_map(buffer, test_font(), px(14.0), None, cx);
+            let snapshot = map.update(cx, |map, cx| {
+                map.splice_inlays(
+                    &[],
+                    hints
+                        .into_iter()
+                        .enumerate()
+                        .map(|(id, (offset, text))| {
+                            Inlay::mock_hint(
+                                id,
+                                buffer_snapshot.anchor_after(MultiBufferOffset(offset)),
+                                text,
+                            )
+                        })
+                        .collect(),
+                    cx,
+                );
+                map.fold(
+                    vec![Crease::simple(fold_range, FoldPlaceholder::test())],
+                    cx,
+                );
+                map.snapshot(cx)
+            });
+            assert_eq!(snapshot.text(), expected_text);
+            for column in 0..=expected_text.len() as u32 {
+                let point = DisplayPoint::new(DisplayRow(0), column);
+                let expected = (column == visible_hint.0).then_some((visible_hint.1, 0));
+                assert_eq!(
+                    snapshot
+                        .inlay_hint_at(point)
+                        .map(|(hint, offset)| (hint.id, offset)),
+                    expected,
+                    "point {point:?} in {expected_text:?}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_is_inlay_visible(cx: &mut App) {
+        init_test(cx, &|_| {});
+        let buffer = MultiBuffer::build_simple("abcd\nef\nz", cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let hint = Inlay::mock_hint(0, buffer_snapshot.anchor_after(MultiBufferOffset(2)), "X");
+        let newline =
+            Inlay::edit_prediction(1, buffer_snapshot.anchor_after(MultiBufferOffset(1)), "\n");
+        let map = inlay_test_map(buffer, test_font(), px(14.0), None, cx);
+        let snapshot = map.update(cx, |map, cx| {
+            map.splice_inlays(&[], vec![hint.clone(), newline], cx);
+            map.snapshot(cx)
+        });
+        assert_eq!(snapshot.text(), "a\nbXcd\nef\nz");
+        assert!(snapshot.is_inlay_visible(hint.id, hint.position));
+
+        let snapshot = map.update(cx, |map, cx| {
+            map.fold(
+                vec![Crease::simple(
+                    MultiBufferPoint::new(0, 3)..MultiBufferPoint::new(1, 1),
+                    FoldPlaceholder::test(),
+                )],
+                cx,
+            );
+            map.snapshot(cx)
+        });
+        assert_eq!(snapshot.text(), "a\nbXc⋯f\nz");
+        assert!(snapshot.is_inlay_visible(hint.id, hint.position));
+
+        let snapshot = map.update(cx, |map, cx| {
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Replace(
+                        buffer_snapshot.anchor_before(Point::new(1, 0))
+                            ..=buffer_snapshot.anchor_after(Point::new(1, 2)),
+                    ),
+                    height: Some(1),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                cx,
+            );
+            map.snapshot(cx)
+        });
+        assert_eq!(snapshot.text(), "a\n\nz");
+        assert!(!snapshot.is_inlay_visible(hint.id, hint.position));
+
+        for (hint_text, wrap_width, end_bias, expected_text) in [
+            ("X\nY", None, Bias::Right, "\nY\ncd"),
+            ("WXYZ", Some(px(40.0)), Bias::Left, "\nYZ\ncd"),
+        ] {
+            let buffer = MultiBuffer::build_simple("ab\ncd", cx);
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let hint = Inlay::mock_hint(
+                0,
+                buffer_snapshot.anchor_after(MultiBufferOffset(2)),
+                hint_text,
+            );
+            let map = inlay_test_map(buffer, font("Courier"), px(16.0), wrap_width, cx);
+            let snapshot = map.update(cx, |map, cx| {
+                map.splice_inlays(&[], vec![hint.clone()], cx);
+                map.insert_blocks(
+                    [BlockProperties {
+                        placement: BlockPlacement::Replace(
+                            buffer_snapshot.anchor_before(Point::new(0, 0))
+                                ..=buffer_snapshot.anchor_at(Point::new(0, 2), end_bias),
+                        ),
+                        height: Some(1),
+                        style: BlockStyle::Fixed,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    }],
+                    cx,
+                );
+                map.snapshot(cx)
+            });
+            assert_eq!(snapshot.text(), expected_text);
+            assert!(snapshot.is_inlay_visible(hint.id, hint.position));
+            assert_eq!(
+                snapshot
+                    .inlay_hint_at(DisplayPoint::new(DisplayRow(1), 0))
+                    .map(|(hint, offset)| (hint.id, offset)),
+                Some((InlayId::Hint(0), 2))
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_inlay_hint_at_after_replace_block(cx: &mut App) {
+        init_test(cx, &|_| {});
+        let buffer = MultiBuffer::build_simple("  abcd\nz", cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let map = inlay_test_map(buffer, font("Courier"), px(16.0), Some(px(40.0)), cx);
+        let snapshot = map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[],
+                vec![Inlay::mock_hint(
+                    0,
+                    buffer_snapshot.anchor_before(Point::new(1, 0)),
+                    "XY",
+                )],
+                cx,
+            );
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Replace(
+                        buffer_snapshot.anchor_before(Point::new(0, 0))
+                            ..=buffer_snapshot.anchor_after(Point::new(0, 6)),
+                    ),
+                    height: Some(1),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                cx,
+            );
+            map.snapshot(cx)
+        });
+        assert_eq!(snapshot.text(), "\nXYz");
+        for (row, column, expected) in [
+            (0, 0, None),
+            (1, 0, Some(0)),
+            (1, 1, Some(1)),
+            (1, 2, None),
+            (1, 3, None),
+        ] {
+            let point = DisplayPoint::new(DisplayRow(row), column);
+            assert_eq!(
+                snapshot.inlay_hint_at(point).map(|(_, offset)| offset),
+                expected,
+                "point {point:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
     fn test_inlays_with_newlines_after_blocks(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, &|_| {}));
 
@@ -3277,7 +3652,7 @@ pub mod tests {
                 LanguageConfig {
                     name: "Test".into(),
                     matcher: (LanguageMatcher {
-                        path_suffixes: vec![".test".to_string()],
+                        path_suffixes: vec![".test".into()],
                         ..Default::default()
                     })
                     .into(),
@@ -3494,15 +3869,15 @@ pub mod tests {
             buffer.update_diagnostics(
                 LanguageServerId(0),
                 DiagnosticSet::new(
-                    [DiagnosticEntry {
-                        range: PointUtf16::new(0, 0)..PointUtf16::new(2, 1),
-                        diagnostic: Diagnostic {
+                    [DiagnosticEntry::new(
+                        PointUtf16::new(0, 0)..PointUtf16::new(2, 1),
+                        Diagnostic {
                             severity: lsp::DiagnosticSeverity::ERROR,
                             group_id: 1,
                             message: "hi".into(),
                             ..Default::default()
                         },
-                    }],
+                    )],
                     buffer,
                 ),
                 cx,
@@ -3726,7 +4101,7 @@ pub mod tests {
                 LanguageConfig {
                     name: "Test".into(),
                     matcher: (LanguageMatcher {
-                        path_suffixes: vec![".test".to_string()],
+                        path_suffixes: vec![".test".into()],
                         ..Default::default()
                     })
                     .into(),
@@ -3814,7 +4189,7 @@ pub mod tests {
                 LanguageConfig {
                     name: "Test".into(),
                     matcher: (LanguageMatcher {
-                        path_suffixes: vec![".test".to_string()],
+                        path_suffixes: vec![".test".into()],
                         ..Default::default()
                     })
                     .into(),
@@ -4145,6 +4520,197 @@ pub mod tests {
         chunks
     }
 
+    /// Asserts that every header-like block in the snapshot references a
+    /// buffer that is still present in the multibuffer: the invariant whose
+    /// violation panics at render time with "buffer snapshot not found for
+    /// excerpt boundary" (ZED-7G6).
+    #[track_caller]
+    fn assert_headers_resolve(snapshot: &DisplaySnapshot) {
+        let end_row = DisplayRow(snapshot.max_point().row().0 + 1);
+        for (row, block) in snapshot.blocks_in_range(DisplayRow(0)..end_row) {
+            let excerpt = match block {
+                Block::BufferHeader { excerpt, .. } | Block::ExcerptBoundary { excerpt, .. } => {
+                    excerpt
+                }
+                Block::FoldedBuffer { first_excerpt, .. } => first_excerpt,
+                _ => continue,
+            };
+            assert!(
+                snapshot
+                    .buffer_snapshot()
+                    .buffer_for_id(excerpt.buffer_id())
+                    .is_some(),
+                "stale header block {:?} at {row:?} references buffer {:?}, \
+                 which is no longer in the multibuffer",
+                block.id(),
+                excerpt.buffer_id(),
+            );
+        }
+    }
+
+    /// Deterministic end-to-end regression test for ZED-7G6 ("buffer snapshot
+    /// not found for excerpt boundary"), driving a real `DisplayMap` with
+    /// ordinary operations. In a diff-backed multibuffer with all hunks
+    /// expanded, two folds inside an expanded deleted hunk are ordered only by
+    /// their diff base anchors. Replacing the diff's base text used to invert
+    /// that order (comparison filtered diff base anchors on validity, which
+    /// the base edit revoked for one anchor of the pair), silently unsorting
+    /// the fold map's persistent fold tree; subsequent syncs walked it with
+    /// forward-only cursors and emitted edits that misdescribed the changed
+    /// rows, until removing a buffer left its header block referencing a
+    /// buffer absent from the snapshot -- the state whose render-time
+    /// resolution panics.
+    ///
+    /// On pre-fix code this fails in the display map layers' internal
+    /// checks; in production builds, where those checks don't run, the same
+    /// corruption propagated to the stale header instead.
+    #[gpui::test]
+    async fn test_removing_buffer_removes_header_after_diff_base_changes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        fn excerpt_buffer(
+            multibuffer: &Entity<MultiBuffer>,
+            path: u64,
+            buffer: &Entity<Buffer>,
+            cx: &mut gpui::TestAppContext,
+        ) {
+            multibuffer.update(cx, |multibuffer, cx| {
+                let max_point = buffer.read(cx).max_point();
+                multibuffer.set_excerpts_for_path(
+                    PathKey::sorted(path),
+                    buffer.clone(),
+                    [Point::zero()..max_point],
+                    0,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+        }
+
+        async fn set_base_text(
+            diff: &Entity<buffer_diff::BufferDiff>,
+            buffer: &Entity<Buffer>,
+            base_text: &str,
+            cx: &mut gpui::TestAppContext,
+        ) {
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            diff.update(cx, |diff, cx| {
+                diff.set_base_text(Some(base_text.to_string().into()), snapshot, cx)
+            })
+            .await;
+            cx.run_until_parked();
+        }
+
+        #[track_caller]
+        fn assert_headers(display_map: &Entity<DisplayMap>, cx: &mut gpui::TestAppContext) {
+            cx.run_until_parked();
+            let snapshot = display_map.update(cx, |display_map, cx| display_map.snapshot(cx));
+            assert_headers_resolve(&snapshot);
+        }
+
+        let buffer_a = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
+        let diff_a = cx.new(|cx| {
+            buffer_diff::BufferDiff::new_with_base_text(
+                "DEL1\nDEL2\nbbb\nccc\nddd\n",
+                &buffer_a.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+        let buffer_b = cx.new(|cx| Buffer::local("xxx\nyyy\n", cx));
+        let buffer_b_id = buffer_b.read_with(cx, |buffer, _| buffer.remote_id());
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+        excerpt_buffer(&multibuffer, 0, &buffer_a, cx);
+        excerpt_buffer(&multibuffer, 1, &buffer_b, cx);
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.add_diff(diff_a.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                multibuffer.clone(),
+                test_font(),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        assert_headers(&display_map, cx);
+
+        // Two folds inside the expanded deleted hunk (rows 0 and 1 are
+        // materialized from the base text), sharing a buffer position and
+        // ordered only by their diff base anchors: a narrow fold within
+        // "DEL1", then a wider fold from "DEL2" into the buffer's own rows.
+        display_map.update(cx, |display_map, cx| {
+            display_map.fold(
+                vec![
+                    Crease::simple(Point::new(0, 1)..Point::new(1, 0), FoldPlaceholder::test()),
+                    Crease::simple(Point::new(1, 1)..Point::new(2, 2), FoldPlaceholder::test()),
+                ],
+                cx,
+            );
+        });
+        assert_headers(&display_map, cx);
+
+        // Keep "DEL1" (the first fold's base anchors survive) but delete
+        // "DEL2" (the second fold's start anchor is tombstoned): the folds'
+        // relative order must not change.
+        set_base_text(&diff_a, &buffer_a, "DEL1\nbbb\nccc\nddd\n", cx).await;
+        assert_headers(&display_map, cx);
+
+        // Churn the buffers, the diff base, and buffer B's excerpts the way
+        // the original fuzz sequence did, syncing the display map after each
+        // group of operations.
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_b_id, cx);
+        });
+        buffer_a.update(cx, |buffer, cx| {
+            buffer.edit([(4..5, "")], None, cx);
+        });
+        assert_headers(&display_map, cx);
+
+        excerpt_buffer(&multibuffer, 1, &buffer_b, cx);
+        set_base_text(&diff_a, &buffer_a, "DEL1\nbbb\nccc\nddd\n", cx).await;
+        buffer_a.update(cx, |buffer, cx| {
+            buffer.edit([(1..1, "Q\n")], None, cx);
+        });
+        assert_headers(&display_map, cx);
+
+        set_base_text(&diff_a, &buffer_a, "DEL1\nbbb\nccc\nddd\n", cx).await;
+        assert_headers(&display_map, cx);
+
+        set_base_text(&diff_a, &buffer_a, "DEL2\nbbb\nccc\nddd\n", cx).await;
+        buffer_a.update(cx, |buffer, cx| {
+            buffer.edit([(2..2, "Q\n")], None, cx);
+        });
+        assert_headers(&display_map, cx);
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_b_id, cx);
+        });
+        excerpt_buffer(&multibuffer, 1, &buffer_b, cx);
+        assert_headers(&display_map, cx);
+
+        // Removing B must remove its header block: with the fold tree
+        // corrupted, the removal edit's rows were misdescribed by the time
+        // they reached the block map, B's header row went uncovered, and the
+        // header survived pointing at a buffer absent from the snapshot.
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_b_id, cx);
+        });
+        assert_headers(&display_map, cx);
+    }
+
     fn init_test(cx: &mut App, f: &dyn Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
@@ -4303,6 +4869,7 @@ pub mod tests {
         let chunk = HighlightedChunk {
             text: pilot_emoji,
             style: None,
+            diagnostic_underline_severity: None,
             is_tab: false,
             is_inlay: false,
             replacement: None,
@@ -4384,5 +4951,27 @@ pub mod tests {
         //   would produce an offset exceeding the buffer length
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(snapshot.text(), "prefix more initial");
+    }
+
+    fn inlay_test_map(
+        buffer: Entity<MultiBuffer>,
+        font: Font,
+        font_size: Pixels,
+        wrap_width: Option<Pixels>,
+        cx: &mut App,
+    ) -> Entity<DisplayMap> {
+        cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font,
+                font_size,
+                wrap_width,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        })
     }
 }

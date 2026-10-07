@@ -435,7 +435,7 @@ impl Vim {
             self.update_editor(cx, |_, editor, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
-                        let mut mut_selection = selection.clone();
+                        let mut mut_selection = *selection;
 
                         // all our motions assume that the current character is
                         // after the cursor; however in the case of a visual selection
@@ -463,7 +463,7 @@ impl Vim {
                                         && object.always_expands_both_ways()
                                     {
                                         if let Some(range) =
-                                            object.range(map, selection.clone(), around, count)
+                                            object.range(map, *selection, around, count)
                                         {
                                             selection.start = range.start;
                                             selection.end = range.end;
@@ -782,7 +782,7 @@ impl Vim {
 
                 let mut edits = Vec::new();
                 for selection in selections.iter() {
-                    let selection = selection.clone();
+                    let selection = *selection;
                     for row_range in
                         movement::split_display_range_by_lines(&display_map, selection.range())
                     {

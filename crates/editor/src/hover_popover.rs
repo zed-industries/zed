@@ -1,7 +1,7 @@
 use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     GlobalDiagnosticRenderer, HighlightKey, Hover,
-    display_map::{InlayOffset, ToDisplayPoint, is_invisible},
+    display_map::{ToDisplayPoint, is_invisible},
     editor_settings::EditorSettingsScrollbarProxy,
     hover_links::{InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
@@ -14,7 +14,6 @@ use gpui::{
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TaskExt,
     TextStyleRefinement, Window, canvas, div, px,
 };
-use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
@@ -37,6 +36,7 @@ pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const POPOVER_RIGHT_OFFSET: Pixels = px(8.0);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
+const MAX_HOVER_BYTES: usize = 100_000;
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Context<Editor>) {
@@ -53,6 +53,7 @@ pub fn hover_at(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    editor.hover_state.hint_hover_task = None;
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if show_keyboard_hover(editor, window, cx) {
             return;
@@ -86,7 +87,7 @@ pub fn hover_at(
             let task = cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(delay).await;
                 this.update(cx, |editor, cx| {
-                    hide_hover(editor, cx);
+                    hide_popovers(editor, cx);
                 })
                 .ok();
             });
@@ -137,22 +138,15 @@ pub struct InlayHover {
 
 pub fn find_hovered_hint_part(
     label_parts: Vec<InlayHintLabelPart>,
-    hint_start: InlayOffset,
-    hovered_offset: InlayOffset,
-) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
-    if hovered_offset >= hint_start {
-        let mut offset_in_hint = hovered_offset - hint_start;
-        let mut part_start = hint_start;
-        for part in label_parts {
-            let part_len = part.value.len();
-            if offset_in_hint >= part_len {
-                offset_in_hint -= part_len;
-                part_start.0 += part_len;
-            } else {
-                let part_end = InlayOffset(part_start.0 + part_len);
-                return Some((part, part_start..part_end));
-            }
+    offset_in_label: usize,
+) -> Option<(InlayHintLabelPart, Range<usize>)> {
+    let mut part_start = 0;
+    for part in label_parts {
+        let part_end = part_start + part.value.len();
+        if (part_start..part_end).contains(&offset_in_label) {
+            return Some((part, part_start..part_end));
         }
+        part_start = part_end;
     }
     None
 }
@@ -162,107 +156,64 @@ pub fn hover_at_inlay(
     inlay_hover: InlayHover,
     window: &mut Window,
     cx: &mut Context<Editor>,
-) {
-    if EditorSettings::get_global(cx).hover_popover_enabled {
-        if editor.pending_rename.is_some() {
-            return;
-        }
+) -> Option<Task<()>> {
+    if !EditorSettings::get_global(cx).hover_popover_enabled || editor.pending_rename.is_some() {
+        return None;
+    }
+    let project = editor.project.clone()?;
 
-        let Some(project) = editor.project.clone() else {
-            return;
-        };
-
-        if editor
-            .hover_state
-            .info_popovers
-            .iter()
-            .any(|InfoPopover { symbol_range, .. }| {
-                if let RangeInEditor::Inlay(range) = symbol_range
-                    && range == &inlay_hover.range
-                {
-                    // Hover triggered from same location as last time. Don't show again.
-                    return true;
-                }
-                false
-            })
-        {
-            return;
-        }
-
-        let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
-
+    let symbol_range = RangeInEditor::Inlay(inlay_hover.range);
+    if editor
+        .hover_state
+        .info_popovers
+        .iter()
+        .any(|popover| popover.symbol_range == symbol_range)
+    {
         editor.hover_state.hiding_delay_task = None;
-        editor.hover_state.closest_mouse_distance = None;
+        return Some(Task::ready(()));
+    }
 
-        let task = cx.spawn_in(window, async move |this, cx| {
-            async move {
-                cx.background_executor()
-                    .timer(Duration::from_millis(hover_popover_delay))
-                    .await;
-                this.update(cx, |this, _| {
-                    this.hover_state.diagnostic_popover = None;
-                })?;
+    let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
 
-                let language_registry = project.read_with(cx, |p, _| p.languages().clone());
-                let blocks = vec![inlay_hover.tooltip];
-                let parsed_content = parse_blocks(&blocks, Some(&language_registry), None, cx);
+    editor.hover_state.info_task = None;
+    editor.hover_state.hiding_delay_task = None;
+    editor.hover_state.closest_mouse_distance = None;
 
-                let scroll_handle = ScrollHandle::new();
+    Some(cx.spawn_in(window, async move |editor, cx| {
+        cx.background_executor()
+            .timer(Duration::from_millis(hover_popover_delay))
+            .await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let parsed_content =
+            parse_blocks(&[inlay_hover.tooltip], Some(&language_registry), None, cx);
 
-                let subscription = this
-                    .update(cx, |_, cx| {
-                        parsed_content.as_ref().map(|parsed_content| {
-                            cx.observe(parsed_content, |_, _, cx| cx.notify())
-                        })
-                    })
-                    .ok()
-                    .flatten();
-
-                let hover_popover = InfoPopover {
-                    symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
+        editor
+            .update(cx, |editor, cx| {
+                let subscription = parsed_content
+                    .as_ref()
+                    .map(|parsed_content| cx.observe(parsed_content, |_, _, cx| cx.notify()));
+                editor.hover_state.diagnostic_popover = None;
+                editor.hover_state.info_popovers = vec![InfoPopover {
+                    symbol_range,
                     parsed_content,
-                    scroll_handle,
+                    scroll_handle: ScrollHandle::new(),
                     keyboard_grace: Rc::new(RefCell::new(false)),
                     anchor: None,
                     last_bounds: Rc::new(Cell::new(None)),
                     _subscription: subscription,
-                };
-
-                this.update(cx, |this, cx| {
-                    // TODO: no background highlights happen for inlays currently
-                    this.hover_state.info_popovers = vec![hover_popover];
-                    cx.notify();
-                })?;
-
-                anyhow::Ok(())
-            }
-            .log_err()
-            .await
-        });
-
-        editor.hover_state.info_task = Some(task);
-    }
+                }];
+                cx.notify();
+            })
+            .ok();
+    }))
 }
 
 /// Hides the type information popup.
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
 pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
-    let info_popovers = editor.hover_state.info_popovers.drain(..);
-    let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
-    let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
-
-    editor.hover_state.info_task = None;
-    editor.hover_state.hiding_delay_task = None;
-    editor.hover_state.closest_mouse_distance = None;
-
-    editor.clear_background_highlights(HighlightKey::HoverState, cx);
-
-    if did_hide {
-        cx.notify();
-    }
-
-    did_hide
+    editor.hover_state.hint_hover_task = None;
+    hide_popovers(editor, cx)
 }
 
 /// Queries the LSP and shows type info and documentation
@@ -275,6 +226,7 @@ fn show_hover(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<()> {
+    editor.hover_state.hint_hover_task = None;
     if editor.pending_rename.is_some() {
         return None;
     }
@@ -407,15 +359,15 @@ fn show_hover(
                 let subscription =
                     this.update(cx, |_, cx| cx.observe(&markdown, |_, _, cx| cx.notify()))?;
 
-                let local_diagnostic = DiagnosticEntry {
-                    diagnostic: local_diagnostic.diagnostic.to_owned(),
-                    range: snapshot
+                let local_diagnostic = DiagnosticEntry::new(
+                    snapshot
                         .buffer_snapshot()
                         .anchor_before(local_diagnostic.range.start)
                         ..snapshot
                             .buffer_snapshot()
                             .anchor_after(local_diagnostic.range.end),
-                };
+                    local_diagnostic.diagnostic.to_owned(),
+                );
 
                 let scroll_handle = ScrollHandle::new();
 
@@ -660,18 +612,7 @@ fn parse_blocks(
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
-    let combined_text = blocks
-        .iter()
-        .map(|block| match &block.kind {
-            project::HoverBlockKind::PlainText | project::HoverBlockKind::Markdown => {
-                Cow::Borrowed(block.text.trim())
-            }
-            project::HoverBlockKind::Code { language } => {
-                Cow::Owned(format!("```{}\n{}\n```", language, block.text.trim()))
-            }
-        })
-        .join("\n\n");
-
+    let combined_text = combine_hover_blocks(blocks);
     cx.new_window_entity(|_window, cx| {
         Markdown::new(
             combined_text.into(),
@@ -681,6 +622,221 @@ fn parse_blocks(
         )
     })
     .ok()
+}
+
+fn combine_hover_blocks(blocks: &[HoverBlock]) -> String {
+    let mut combined = String::new();
+    let mut budget = MAX_HOVER_BYTES;
+    let mut dropped_blocks = false;
+    let last_block_index = blocks
+        .iter()
+        .rposition(|block| !block.text.trim().is_empty());
+    for (index, block) in blocks.iter().enumerate() {
+        let text = block.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let separator = if combined.is_empty() { "" } else { "\n\n" };
+        let is_last_block = Some(index) == last_block_index;
+        let reserved_for_dropped_marker = if is_last_block { 0 } else { "\n\n…".len() };
+        let mut truncated_inline = false;
+        let piece = match &block.kind {
+            project::HoverBlockKind::PlainText | project::HoverBlockKind::Markdown => {
+                let Some(block_budget) =
+                    budget.checked_sub(separator.len() + reserved_for_dropped_marker)
+                else {
+                    dropped_blocks = true;
+                    break;
+                };
+                match fit_in_budget(text.len(), block_budget) {
+                    BudgetFit::Fits => Cow::Borrowed(text),
+                    BudgetFit::TooSmall => {
+                        dropped_blocks = true;
+                        break;
+                    }
+                    BudgetFit::NeedsTruncation => {
+                        truncated_inline = true;
+                        Cow::Owned(truncate_hover_markdown(text, block_budget))
+                    }
+                }
+            }
+            project::HoverBlockKind::Code { language } => {
+                let language = language.replace(['`', '\r', '\n'], "");
+                let fence = wrapping_code_fence(text);
+                let overhead = separator.len()
+                    + reserved_for_dropped_marker
+                    + fence.len() * 2
+                    + language.len()
+                    + "\n\n".len();
+                let Some(block_budget) = budget.checked_sub(overhead) else {
+                    dropped_blocks = true;
+                    break;
+                };
+                let text = match fit_in_budget(text.len(), block_budget) {
+                    BudgetFit::Fits => Cow::Borrowed(text),
+                    BudgetFit::TooSmall => {
+                        dropped_blocks = true;
+                        break;
+                    }
+                    BudgetFit::NeedsTruncation => {
+                        truncated_inline = true;
+                        Cow::Owned(format!(
+                            "{}…",
+                            truncated_to_byte_budget(text, block_budget.saturating_sub("…".len()))
+                        ))
+                    }
+                };
+                Cow::Owned(format!("{fence}{language}\n{text}\n{fence}"))
+            }
+        };
+        budget = budget.saturating_sub(separator.len() + piece.len());
+        combined.push_str(separator);
+        combined.push_str(&piece);
+        if truncated_inline {
+            dropped_blocks = !is_last_block;
+            break;
+        }
+    }
+    if dropped_blocks {
+        if !combined.is_empty() {
+            combined.push_str("\n\n");
+        }
+        combined.push('…');
+    }
+    combined
+}
+
+enum BudgetFit {
+    Fits,
+    NeedsTruncation,
+    TooSmall,
+}
+
+fn fit_in_budget(len: usize, budget: usize) -> BudgetFit {
+    if len <= budget {
+        BudgetFit::Fits
+    } else if budget <= "…".len() {
+        BudgetFit::TooSmall
+    } else {
+        BudgetFit::NeedsTruncation
+    }
+}
+
+fn truncated_to_byte_budget(text: &str, budget: usize) -> &str {
+    let mut end = budget.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+fn wrapping_code_fence(text: &str) -> String {
+    let mut longest_run = 0;
+    let mut current_run = 0;
+    for byte in text.bytes() {
+        if byte == b'`' {
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    "`".repeat((longest_run + 1).max(3))
+}
+
+fn truncate_hover_markdown(text: &str, max_len: usize) -> String {
+    let mut cut = max_len.saturating_sub("…".len()).min(text.len());
+    loop {
+        let mut truncated = truncated_to_byte_budget(text, cut);
+        if let Some(&split_byte) = text.as_bytes().get(truncated.len())
+            && (split_byte == b'`' || split_byte == b'~')
+        {
+            let mut end = truncated.len();
+            while end > 0 && text.as_bytes()[end - 1] == split_byte {
+                end -= 1;
+            }
+            truncated = &text[..end];
+        }
+        if let Some(&next_byte) = text.as_bytes().get(truncated.len())
+            && next_byte != b'\n'
+            && !truncated.ends_with('\n')
+            && ends_with_code_fence_line(truncated)
+        {
+            let line_start = truncated.rfind('\n').map_or(0, |index| index + 1);
+            truncated = &text[..line_start];
+        }
+        let ellipsis = if ends_with_code_fence_line(truncated) {
+            "\n…"
+        } else {
+            "…"
+        };
+        let closing_fence = unclosed_code_fence(truncated);
+        let total_len = truncated.len()
+            + ellipsis.len()
+            + closing_fence
+                .as_ref()
+                .map_or(0, |fence| "\n".len() + fence.len());
+        if total_len <= max_len || truncated.is_empty() {
+            return match closing_fence {
+                Some(fence) => format!("{truncated}{ellipsis}\n{fence}"),
+                None => format!("{truncated}{ellipsis}"),
+            };
+        }
+        cut = truncated.len().saturating_sub(total_len - max_len);
+    }
+}
+
+fn ends_with_code_fence_line(text: &str) -> bool {
+    text.lines()
+        .next_back()
+        .is_some_and(|line| parse_code_fence(line).is_some())
+}
+
+struct CodeFence {
+    fence_char: char,
+    len: usize,
+    has_info: bool,
+}
+
+fn parse_code_fence(line: &str) -> Option<CodeFence> {
+    let trimmed = line.trim_start_matches(' ');
+    if line.len() - trimmed.len() > 3 {
+        return None;
+    }
+    let first_char @ ('`' | '~') = trimmed.chars().next()? else {
+        return None;
+    };
+    let len = trimmed.chars().take_while(|&c| c == first_char).count();
+    if len < 3 {
+        return None;
+    }
+    let info = trimmed[len..].trim();
+    if first_char == '`' && info.contains('`') {
+        return None;
+    }
+    Some(CodeFence {
+        fence_char: first_char,
+        len,
+        has_info: !info.is_empty(),
+    })
+}
+
+fn unclosed_code_fence(markdown: &str) -> Option<String> {
+    let mut open_fence: Option<CodeFence> = None;
+    for line in markdown.lines() {
+        let Some(fence) = parse_code_fence(line) else {
+            continue;
+        };
+        match &open_fence {
+            None => open_fence = Some(fence),
+            Some(open) => {
+                if fence.fence_char == open.fence_char && fence.len >= open.len && !fence.has_info {
+                    open_fence = None;
+                }
+            }
+        }
+    }
+    open_fence.map(|fence| fence.fence_char.to_string().repeat(fence.len))
 }
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -883,6 +1039,7 @@ pub struct HoverState {
     pub info_task: Option<Task<Option<()>>>,
     pub closest_mouse_distance: Option<Pixels>,
     pub hiding_delay_task: Option<Task<()>>,
+    pub(crate) hint_hover_task: Option<Task<()>>,
 }
 
 impl HoverState {
@@ -1084,6 +1241,7 @@ impl InfoPopover {
                     this.update(cx, |editor, _| {
                         editor.hover_state.closest_mouse_distance = Some(px(0.0));
                         editor.hover_state.hiding_delay_task = None;
+                        editor.hover_state.hint_hover_task = None;
                     })
                     .ok();
                     cx.stop_propagation()
@@ -1196,6 +1354,7 @@ impl DiagnosticPopover {
                     this.update(cx, |editor, _| {
                         editor.hover_state.closest_mouse_distance = Some(px(0.0));
                         editor.hover_state.hiding_delay_task = None;
+                        editor.hover_state.hint_hover_task = None;
                     })
                     .ok();
                     cx.stop_propagation()
@@ -1249,7 +1408,12 @@ impl DiagnosticPopover {
                             ),
                     )
                     .child(div().absolute().top_1().right_1().child({
-                        let message = self.local_diagnostic.diagnostic.message.clone();
+                        let message = self
+                            .local_diagnostic
+                            .diagnostic
+                            .message
+                            .as_shared_string()
+                            .clone();
                         CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
                     }))
                     .custom_scrollbars(
@@ -1263,21 +1427,40 @@ impl DiagnosticPopover {
     }
 }
 
+fn hide_popovers(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
+    let info_popovers = editor.hover_state.info_popovers.drain(..);
+    let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
+    let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
+
+    editor.hover_state.info_task = None;
+    editor.hover_state.hiding_delay_task = None;
+    editor.hover_state.closest_mouse_distance = None;
+
+    editor.clear_background_highlights(HighlightKey::HoverState, cx);
+
+    if did_hide {
+        cx.notify();
+    }
+
+    did_hide
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        PointForPosition,
-        actions::ConfirmCompletion,
+        actions::{Cancel, ConfirmCompletion},
         editor_tests::{handle_completion_request, init_test},
         inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
-    use futures::stream::StreamExt;
-    use gpui::App;
+    use futures::{channel::oneshot, stream::StreamExt};
+    use gpui::{App, Modifiers};
     use indoc::indoc;
+    use language::{FakeLspAdapter, rust_lang};
     use markdown::parser::MarkdownEvent;
+    use parking_lot::Mutex;
     use project::InlayId;
     use settings::InlayHintSettingsContent;
     use settings::{DelayMs, SettingsStore};
@@ -1810,6 +1993,355 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_oversized_hover_truncated(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fˇn test() { println!(); }
+        "});
+        cx.update_editor(|editor, window, cx| hover(editor, &Hover, window, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            «fn» test() { println!(); }
+        "});
+
+        let oversized_content = "a".repeat(MAX_HOVER_BYTES + 1234);
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
+            let contents = oversized_content.clone();
+            async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: contents,
+                    }),
+                    range: Some(symbol_range),
+                }))
+            }
+        })
+        .next()
+        .await;
+        cx.dispatch_action(Hover);
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
+        cx.editor(|editor, _, cx| {
+            let rendered_text = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .unwrap()
+                .get_rendered_text(cx);
+
+            assert_eq!(
+                rendered_text,
+                "a".repeat(MAX_HOVER_BYTES - "…".len()) + "…",
+                "Oversized hover contents should be truncated before display"
+            );
+        });
+    }
+
+    #[test]
+    fn test_truncate_hover_markdown_closes_open_code_fence() {
+        let text = "intro\n```rust\nlet aaa = 1;";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 1 + "…\n```".len()),
+            "intro\n```rust\nlet aaa = 1…\n```",
+            "Truncating inside a code block should close its fence"
+        );
+
+        let text = "~~~~\ncode\nmore code";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 5 + "…\n~~~~".len()),
+            "~~~~\ncode\nmore…\n~~~~",
+            "The closing fence should match the opening fence's character and length"
+        );
+
+        let text = "```rust\ncode\n```\nafter text";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 5 + "…".len()),
+            "```rust\ncode\n```\nafter…",
+            "Truncating after a closed code block should not add a fence"
+        );
+    }
+
+    #[test]
+    fn test_truncate_hover_markdown_respects_char_boundaries() {
+        assert_eq!(
+            truncate_hover_markdown("€€€€€", 12),
+            "€€€…",
+            "Three euro signs and the ellipsis fill the budget exactly"
+        );
+        assert_eq!(
+            truncate_hover_markdown("€€€€€", 11),
+            "€€…",
+            "Truncation should back off to the nearest char boundary"
+        );
+    }
+
+    #[test]
+    fn test_truncate_hover_markdown_never_exceeds_budget() {
+        let text = format!("intro\n{}\n{}", "`".repeat(1000), "x".repeat(2000));
+        assert_eq!(
+            truncate_hover_markdown(&text, 500),
+            "intro\n…",
+            "A budget landing inside a giant fence run must not emit the run unclosed"
+        );
+        assert_eq!(
+            truncate_hover_markdown(&text, 2000),
+            "intro\n…",
+            "A block whose closing fence cannot fit must be dropped entirely"
+        );
+    }
+
+    #[test]
+    fn test_truncate_hover_markdown_ellipsis_preserves_fence_lines() {
+        let prefix = "intro\n```rust\ncode\n```";
+        let text = format!("{prefix}\nmore text past the budget");
+        assert_eq!(
+            truncate_hover_markdown(&text, prefix.len() + "\n…".len()),
+            format!("{prefix}\n…"),
+            "An ellipsis appended right after a closing fence would reopen the block"
+        );
+
+        let prefix = "body\n```rust";
+        let text = format!("{prefix}\ncode past the budget");
+        assert_eq!(
+            truncate_hover_markdown(&text, prefix.len() + "\n…\n```".len()),
+            format!("{prefix}\n…\n```"),
+            "An ellipsis appended to an opening fence would join its info string"
+        );
+    }
+
+    #[test]
+    fn test_backtick_fence_with_backtick_info_is_not_a_fence() {
+        let text = "```js`x\nnot a code block";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 6 + "…".len()),
+            "```js`x\nnot a code…",
+            "A backtick fence with a backtick in its info string is paragraph text"
+        );
+    }
+
+    #[test]
+    fn test_truncation_does_not_forge_fences_from_partial_lines() {
+        let text = "```js`x\nnot a code block";
+        assert_eq!(
+            truncate_hover_markdown(text, "```js".len() + "…".len()),
+            "…",
+            "Cutting \"```js`x\" down to \"```js\" would forge a fence out of paragraph text"
+        );
+
+        let text = "intro\n```rustacean\ncode";
+        assert_eq!(
+            truncate_hover_markdown(text, "intro\n```rust".len() + "…".len()),
+            "intro\n…",
+            "A fence with a cut-off info string would open a block the original does not have"
+        );
+
+        let text = "intro\n```rust\ncode\n``` and more text";
+        assert_eq!(
+            truncate_hover_markdown(text, "intro\n```rust\ncode\n```".len() + "\n…".len()),
+            "intro\n```rust\ncode\n…\n```",
+            "\"``` and more text\" does not close the block, so the cut must stay inside it"
+        );
+    }
+
+    #[test]
+    fn test_hover_blocks_share_byte_budget() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - 20),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "b".repeat(100),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "never shown".to_owned(),
+                kind: HoverBlockKind::Markdown,
+            },
+        ];
+        let second_block_budget = 20 - "\n\n…".len() - "\n\n".len();
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!(
+                "{}\n\n{}…\n\n…",
+                "a".repeat(MAX_HOVER_BYTES - 20),
+                "b".repeat(second_block_budget - "…".len())
+            ),
+            "The byte budget applies to the hover as a whole, and dropping the last block must leave a marker"
+        );
+        assert_eq!(
+            combined.len(),
+            MAX_HOVER_BYTES,
+            "The truncated hover must use the whole byte budget"
+        );
+    }
+
+    #[test]
+    fn test_dropped_hover_blocks_leave_ellipsis() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - "\n\n…".len()),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "never shown".to_owned(),
+                kind: HoverBlockKind::Markdown,
+            },
+        ];
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}\n\n…", "a".repeat(MAX_HOVER_BYTES - "\n\n…".len())),
+            "Blocks dropped after an exactly fitting block must leave a truncation indicator"
+        );
+        assert_eq!(
+            combined.len(),
+            MAX_HOVER_BYTES,
+            "The dropped-blocks indicator must fit within the byte budget"
+        );
+    }
+
+    #[test]
+    fn test_whitespace_hover_blocks_are_skipped() {
+        let mut blocks = vec![HoverBlock {
+            text: "a".repeat(MAX_HOVER_BYTES - 6),
+            kind: HoverBlockKind::Markdown,
+        }];
+        blocks.extend((0..100).map(|_| HoverBlock {
+            text: " ".to_owned(),
+            kind: HoverBlockKind::Markdown,
+        }));
+        blocks.push(HoverBlock {
+            text: "bbb".to_owned(),
+            kind: HoverBlockKind::Markdown,
+        });
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}\n\nbbb", "a".repeat(MAX_HOVER_BYTES - 6)),
+            "Whitespace-only blocks must not emit separators or consume the byte budget"
+        );
+    }
+
+    #[test]
+    fn test_unaffordable_code_fence_overhead_drops_the_block() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - 6),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "let x = 1;".to_owned(),
+                kind: HoverBlockKind::Code {
+                    language: "rust".to_owned(),
+                },
+            },
+        ];
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}\n\n…", "a".repeat(MAX_HOVER_BYTES - 6)),
+            "A code block whose fence overhead does not fit must be dropped, not overflow the budget"
+        );
+    }
+
+    #[test]
+    fn test_dropping_the_last_block_stays_within_the_budget() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - 2),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "bbb".to_owned(),
+                kind: HoverBlockKind::Markdown,
+            },
+        ];
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}…\n\n…", "a".repeat(MAX_HOVER_BYTES - 8)),
+            "Reserving the dropped-blocks marker must keep the total within the budget"
+        );
+        assert_eq!(combined.len(), MAX_HOVER_BYTES);
+    }
+
+    #[test]
+    fn test_code_hover_budget_includes_fence_overhead() {
+        let blocks = [HoverBlock {
+            text: "x".repeat(MAX_HOVER_BYTES),
+            kind: HoverBlockKind::Code {
+                language: "rust".to_owned(),
+            },
+        }];
+        let overhead = "```rust\n".len() + "…\n```".len();
+        assert_eq!(
+            combine_hover_blocks(&blocks),
+            format!("```rust\n{}…\n```", "x".repeat(MAX_HOVER_BYTES - overhead)),
+            "The fence markup must be counted against the byte budget"
+        );
+    }
+
+    #[test]
+    fn test_truncation_does_not_split_fence_runs() {
+        let text = "text\n`````\ncode";
+        assert_eq!(
+            truncate_hover_markdown(text, 10),
+            "text\n…",
+            "Cutting a ````` run down to ``` would forge a fence the original does not have"
+        );
+        assert_eq!(
+            truncate_hover_markdown(text, 10 + "\n…\n`````".len()),
+            "text\n`````\n…\n`````",
+            "A cut right after a full fence run keeps the fence and closes it"
+        );
+    }
+
+    #[test]
+    fn test_tab_indented_fence_is_content() {
+        let text = "```rust\ncode\n\t```\nmore code";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 5 + "…\n```".len()),
+            "```rust\ncode\n\t```\nmore…\n```",
+            "A tab-indented fence is indented too far to close the block"
+        );
+    }
+
+    #[test]
+    fn test_code_hover_language_is_sanitized() {
+        let blocks = [HoverBlock {
+            text: "let x = 1;".to_owned(),
+            kind: HoverBlockKind::Code {
+                language: "ru`st\n".to_owned(),
+            },
+        }];
+        assert_eq!(
+            combine_hover_blocks(&blocks),
+            "```rust\nlet x = 1;\n```",
+            "Backticks and newlines in the language id would break the fence line"
+        );
+    }
+
+    #[test]
+    fn test_wrapping_code_fence_outgrows_content_backticks() {
+        assert_eq!(wrapping_code_fence("let a = 1;"), "```");
+        assert_eq!(wrapping_code_fence("let a = \"``\";"), "```");
+        assert_eq!(wrapping_code_fence("docs with ``` inside"), "````");
+        assert_eq!(wrapping_code_fence("````"), "`````");
+    }
+
+    #[gpui::test]
     async fn test_line_ends_trimmed(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
@@ -1946,15 +2478,39 @@ mod tests {
             })
         });
 
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                inlay_hint_provider: Some(lsp::OneOf::Right(
-                    lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
-                        resolve_provider: Some(true),
-                        ..Default::default()
-                    }),
-                )),
-                ..Default::default()
+        let resolved_hint_label = Arc::new(Mutex::new(None::<lsp::InlayHintLabel>));
+        let mut cx = EditorLspTestContext::new_with_adapter(
+            Arc::into_inner(rust_lang()).expect("test language"),
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Right(
+                        lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                            resolve_provider: Some(true),
+                            ..lsp::InlayHintOptions::default()
+                        }),
+                    )),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let resolved_hint_label = resolved_hint_label.clone();
+                    move |server| {
+                        let resolved_hint_label = resolved_hint_label.clone();
+                        let mut resolved_hint_positions = BTreeSet::new();
+                        server.set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
+                            move |mut hint_to_resolve, _| {
+                                let inserted =
+                                    resolved_hint_positions.insert(hint_to_resolve.position);
+                                assert!(inserted, "Hint {hint_to_resolve:?} was resolved twice");
+                                hint_to_resolve.label = resolved_hint_label
+                                    .lock()
+                                    .clone()
+                                    .expect("resolved hint label");
+                                async move { Ok(hint_to_resolve) }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
             },
             cx,
         )
@@ -2012,6 +2568,46 @@ mod tests {
         let new_type_label = "TestNewType";
         let struct_label = "TestStruct";
         let entire_hint_label = ": TestNewType<TestStruct>";
+        // `: TestNewType<TestStruct>`
+        *resolved_hint_label.lock() = Some(lsp::InlayHintLabel::LabelParts(vec![
+            lsp::InlayHintLabelPart {
+                value: ": ".to_string(),
+                ..lsp::InlayHintLabelPart::default()
+            },
+            lsp::InlayHintLabelPart {
+                value: new_type_label.to_string(),
+                location: Some(lsp::Location {
+                    uri: uri.clone(),
+                    range: new_type_target_range,
+                }),
+                tooltip: Some(lsp::InlayHintLabelPartTooltip::String(format!(
+                    "A tooltip for `{new_type_label}`"
+                ))),
+                ..lsp::InlayHintLabelPart::default()
+            },
+            lsp::InlayHintLabelPart {
+                value: "<".to_string(),
+                ..lsp::InlayHintLabelPart::default()
+            },
+            lsp::InlayHintLabelPart {
+                value: struct_label.to_string(),
+                location: Some(lsp::Location {
+                    uri: uri.clone(),
+                    range: struct_target_range,
+                }),
+                tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
+                    lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: format!("A tooltip for `{struct_label}`"),
+                    },
+                )),
+                ..lsp::InlayHintLabelPart::default()
+            },
+            lsp::InlayHintLabelPart {
+                value: ">".to_string(),
+                ..lsp::InlayHintLabelPart::default()
+            },
+        ]));
         let closure_uri = uri.clone();
         cx.lsp
             .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
@@ -2057,286 +2653,408 @@ mod tests {
             .first()
             .cloned()
             .unwrap();
-        let new_type_hint_part_hover_position = cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let previous_valid = MultiBufferOffset(inlay_range.start).to_display_point(&snapshot);
-            let next_valid = MultiBufferOffset(inlay_range.end).to_display_point(&snapshot);
-            assert_eq!(previous_valid.row(), next_valid.row());
-            assert!(previous_valid.column() < next_valid.column());
-            let exact_unclipped = DisplayPoint::new(
-                previous_valid.row(),
-                previous_valid.column()
-                    + (entire_hint_label.find(new_type_label).unwrap() + new_type_label.len() / 2)
-                        as u32,
-            );
-            PointForPosition {
-                previous_valid,
-                next_valid,
-                nearest_valid: previous_valid,
-                exact_unclipped,
-                column_overshoot_after_line_end: 0,
-            }
+        for (label, range) in [(new_type_label, 2..13), (struct_label, 14..24)] {
+            cx.update_editor(|editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let start = MultiBufferOffset(inlay_range.start).to_display_point(&snapshot);
+                let hover_position = DisplayPoint::new(
+                    start.row(),
+                    start.column() + ((range.start + range.end) / 2) as u32,
+                );
+                editor.update_inlay_link_and_hover_points(
+                    &snapshot,
+                    Some(hover_position),
+                    None,
+                    true,
+                    false,
+                    window,
+                    cx,
+                );
+            });
+            cx.background_executor
+                .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+            cx.update_editor(|editor, _, cx| {
+                assert!(editor.hover_state.diagnostic_popover.is_none());
+                assert_eq!(editor.hover_state.info_popovers.len(), 1);
+                let popover = &editor.hover_state.info_popovers[0];
+                let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                assert_eq!(
+                    popover.symbol_range,
+                    RangeInEditor::Inlay(InlayHighlight {
+                        inlay: InlayId::Hint(0),
+                        inlay_position: buffer_snapshot
+                            .anchor_after(MultiBufferOffset(inlay_range.start)),
+                        range,
+                    }),
+                    "{label}"
+                );
+                assert_eq!(
+                    popover.get_rendered_text(cx),
+                    format!("A tooltip for {label}")
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_hover_pending_hint_survives_previous_popover_hiding(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                ..InlayHintSettingsContent::default()
+            })
         });
-        cx.update_editor(|editor, window, cx| {
-            editor.update_inlay_link_and_hover_points(
-                &editor.snapshot(window, cx),
-                new_type_hint_part_hover_position,
-                None,
-                true,
-                false,
-                window,
-                cx,
-            );
-        });
-
-        let resolve_closure_uri = uri.clone();
-        cx.lsp
-            .set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
-                move |mut hint_to_resolve, _| {
-                    let mut resolved_hint_positions = BTreeSet::new();
-                    let task_uri = resolve_closure_uri.clone();
-                    async move {
-                        let inserted = resolved_hint_positions.insert(hint_to_resolve.position);
-                        assert!(inserted, "Hint {hint_to_resolve:?} was resolved twice");
-
-                        // `: TestNewType<TestStruct>`
-                        hint_to_resolve.label = lsp::InlayHintLabel::LabelParts(vec![
-                            lsp::InlayHintLabelPart {
-                                value: ": ".to_string(),
-                                ..Default::default()
-                            },
-                            lsp::InlayHintLabelPart {
-                                value: new_type_label.to_string(),
-                                location: Some(lsp::Location {
-                                    uri: task_uri.clone(),
-                                    range: new_type_target_range,
-                                }),
-                                tooltip: Some(lsp::InlayHintLabelPartTooltip::String(format!(
-                                    "A tooltip for `{new_type_label}`"
-                                ))),
-                                ..Default::default()
-                            },
-                            lsp::InlayHintLabelPart {
-                                value: "<".to_string(),
-                                ..Default::default()
-                            },
-                            lsp::InlayHintLabelPart {
-                                value: struct_label.to_string(),
-                                location: Some(lsp::Location {
-                                    uri: task_uri,
-                                    range: struct_target_range,
-                                }),
-                                tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
-                                    lsp::MarkupContent {
-                                        kind: lsp::MarkupKind::Markdown,
-                                        value: format!("A tooltip for `{struct_label}`"),
-                                    },
-                                )),
-                                ..Default::default()
-                            },
-                            lsp::InlayHintLabelPart {
-                                value: ">".to_string(),
-                                ..Default::default()
-                            },
-                        ]);
-
-                        Ok(hint_to_resolve)
-                    }
+        let resolve_gate = Arc::new(Mutex::new(None::<oneshot::Receiver<()>>));
+        let hover_gate = Arc::new(Mutex::new(None::<oneshot::Receiver<()>>));
+        let mut cx = EditorLspTestContext::new_with_adapter(
+            Arc::into_inner(rust_lang()).expect("test language"),
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    inlay_hint_provider: Some(lsp::OneOf::Right(
+                        lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                            resolve_provider: Some(true),
+                            ..lsp::InlayHintOptions::default()
+                        }),
+                    )),
+                    ..lsp::ServerCapabilities::default()
                 },
-            )
-            .next()
-            .await;
-        cx.background_executor.run_until_parked();
-
-        cx.update_editor(|editor, window, cx| {
-            editor.update_inlay_link_and_hover_points(
-                &editor.snapshot(window, cx),
-                new_type_hint_part_hover_position,
-                None,
-                true,
-                false,
-                window,
-                cx,
-            );
-        });
-        cx.background_executor
-            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
-        cx.background_executor.run_until_parked();
+                initializer: Some(Box::new({
+                    let resolve_gate = resolve_gate.clone();
+                    let hover_gate = hover_gate.clone();
+                    move |server| {
+                        server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |_, _| async move {
+                                Ok(Some(
+                                    [
+                                        (17, "a", false),
+                                        (28, "b", true),
+                                        (39, "c", true),
+                                        (50, "d", true),
+                                        (61, "e", false),
+                                        (72, "f", true),
+                                        (83, "g", true),
+                                        (94, "h", true),
+                                    ]
+                                    .into_iter()
+                                    .map(|(column, name, resolve_tooltip)| lsp::InlayHint {
+                                        position: lsp::Position::new(0, column),
+                                        label: lsp::InlayHintLabel::String(format!(": {name}")),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: (!resolve_tooltip).then(|| {
+                                            lsp::InlayHintTooltip::String(format!("tooltip {name}"))
+                                        }),
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: resolve_tooltip
+                                            .then_some(serde_json::Value::Bool(true)),
+                                    })
+                                    .collect(),
+                                ))
+                            },
+                        );
+                        let resolve_gate = resolve_gate.clone();
+                        server.set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
+                            move |mut hint, _| {
+                                let resolve_gate = resolve_gate.lock().take();
+                                if hint.data.is_some()
+                                    && let lsp::InlayHintLabel::String(label) = &hint.label
+                                {
+                                    hint.tooltip = Some(lsp::InlayHintTooltip::String(format!(
+                                        "tooltip {}",
+                                        label.trim_start_matches(": ")
+                                    )));
+                                }
+                                async move {
+                                    if let Some(resolve_gate) = resolve_gate {
+                                        resolve_gate.await?;
+                                    }
+                                    Ok(hint)
+                                }
+                            },
+                        );
+                        let hover_gate = hover_gate.clone();
+                        server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+                            move |_, _| {
+                                let hover_gate = hover_gate.lock().take();
+                                async move {
+                                    if let Some(hover_gate) = hover_gate {
+                                        hover_gate.await?;
+                                    }
+                                    Ok(Some(lsp::Hover {
+                                        contents: lsp::HoverContents::Scalar(
+                                            lsp::MarkedString::String("text hover".to_string()),
+                                        ),
+                                        range: Some(lsp::Range::new(
+                                            lsp::Position::new(0, 3),
+                                            lsp::Position::new(0, 7),
+                                        )),
+                                    }))
+                                }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+            cx,
+        )
+        .await;
+        cx.set_state(
+            "fn main() { let aˇ = 1; let b = 2; let c = 3; let d = 4; let e = 5; let f = 6; let g = 7; let h = 8; }\n",
+        );
+        cx.run_until_parked();
         cx.update_editor(|editor, _, cx| {
-            let hover_state = &editor.hover_state;
-            assert!(
-                hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1
-            );
-            let popover = hover_state.info_popovers.first().unwrap();
-            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
             assert_eq!(
-                popover.symbol_range,
-                RangeInEditor::Inlay(InlayHighlight {
-                    inlay: InlayId::Hint(0),
-                    inlay_position: buffer_snapshot
-                        .anchor_after(MultiBufferOffset(inlay_range.start)),
-                    range: ": ".len()..": ".len() + new_type_label.len(),
-                }),
-                "Popover range should match the new type label part"
+                visible_hint_labels(editor, cx),
+                vec![": a", ": b", ": c", ": d", ": e", ": f", ": g", ": h"]
             );
+        });
+        let hover_delay = Duration::from_millis(get_hover_popover_delay(&cx) + 100);
+        let hiding_delay = cx.read(|cx| {
+            Duration::from_millis(EditorSettings::get_global(cx).hover_popover_hiding_delay.0 + 100)
+        });
+
+        let hint_a_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 18));
+        cx.simulate_mouse_move(hint_a_point, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(rendered_popovers(editor, cx), vec!["tooltip a"]);
+        });
+
+        let (release_resolve, gate) = oneshot::channel();
+        *resolve_gate.lock() = Some(gate);
+        let hint_b_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 33));
+        cx.simulate_mouse_move(hint_b_point, None, Modifiers::none());
+        cx.background_executor.advance_clock(hiding_delay);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(rendered_popovers(editor, cx), Vec::<String>::new());
+        });
+        release_resolve.send(()).expect("pending resolve gate");
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(rendered_popovers(editor, cx), vec!["tooltip b"]);
+        });
+
+        let (release_resolve, gate) = oneshot::channel();
+        *resolve_gate.lock() = Some(gate);
+        let hint_c_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 46));
+        cx.simulate_mouse_move(hint_c_point, None, Modifiers::none());
+        cx.dispatch_action(Cancel);
+        release_resolve.send(()).expect("pending resolve gate");
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(rendered_popovers(editor, cx), Vec::<String>::new());
+        });
+
+        cx.simulate_mouse_move(hint_a_point, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
+        let popover_a_center = cx.update_editor(|editor, _, cx| {
+            assert_eq!(rendered_popovers(editor, cx), vec!["tooltip a"]);
+            editor.hover_state.info_popovers[0]
+                .last_bounds
+                .get()
+                .expect("painted popover bounds")
+                .center()
+        });
+        let (release_resolve, gate) = oneshot::channel();
+        *resolve_gate.lock() = Some(gate);
+        let hint_d_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 60));
+        cx.simulate_mouse_move(hint_d_point, None, Modifiers::none());
+        cx.update_editor(|editor, _, _| {
+            assert!(editor.hover_state.hint_hover_task.is_some());
+        });
+        cx.simulate_mouse_move(popover_a_center, None, Modifiers::none());
+        release_resolve.send(()).expect("pending resolve gate");
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
             assert_eq!(
-                popover.get_rendered_text(cx),
-                format!("A tooltip for {new_type_label}"),
+                rendered_popovers(editor, cx),
+                vec!["tooltip a"],
+                "entering the shown popover cancels the pending hint hover"
             );
         });
 
-        let struct_hint_part_hover_position = cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let previous_valid = MultiBufferOffset(inlay_range.start).to_display_point(&snapshot);
-            let next_valid = MultiBufferOffset(inlay_range.end).to_display_point(&snapshot);
-            assert_eq!(previous_valid.row(), next_valid.row());
-            assert!(previous_valid.column() < next_valid.column());
-            let exact_unclipped = DisplayPoint::new(
-                previous_valid.row(),
-                previous_valid.column()
-                    + (entire_hint_label.find(struct_label).unwrap() + struct_label.len() / 2)
-                        as u32,
-            );
-            PointForPosition {
-                previous_valid,
-                next_valid,
-                nearest_valid: previous_valid,
-                exact_unclipped,
-                column_overshoot_after_line_end: 0,
-            }
+        let hint_e_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 74));
+        cx.simulate_mouse_move(hint_e_point, None, Modifiers::none());
+        cx.update_editor(|editor, _, _| {
+            assert!(editor.hover_state.hint_hover_task.is_some());
         });
-        cx.update_editor(|editor, window, cx| {
-            editor.update_inlay_link_and_hover_points(
-                &editor.snapshot(window, cx),
-                struct_hint_part_hover_position,
-                None,
-                true,
-                false,
-                window,
-                cx,
-            );
-        });
-        cx.background_executor
-            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
-        cx.background_executor.run_until_parked();
+        cx.simulate_mouse_move(popover_a_center, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
         cx.update_editor(|editor, _, cx| {
-            let hover_state = &editor.hover_state;
+            assert_eq!(
+                rendered_popovers(editor, cx),
+                vec!["tooltip a"],
+                "entering the shown popover cancels the delayed resolved hint hover"
+            );
+        });
+
+        let (release_resolve, gate) = oneshot::channel();
+        *resolve_gate.lock() = Some(gate);
+        let hint_f_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 88));
+        cx.simulate_mouse_move(hint_f_point, None, Modifiers::none());
+        release_resolve.send(()).expect("pending resolve gate");
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, cx| {
+            assert!(editor.hover_state.hint_hover_task.is_some());
+            assert_eq!(rendered_popovers(editor, cx), vec!["tooltip a"]);
+        });
+        cx.simulate_mouse_move(hint_a_point, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(
+                rendered_popovers(editor, cx),
+                vec!["tooltip a"],
+                "returning to the shown hint cancels the delayed hover of the hint left behind"
+            );
+        });
+
+        let text_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 4));
+        cx.simulate_mouse_move(text_point, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(rendered_popovers(editor, cx), vec!["text hover"]);
+        });
+        let (release_resolve, gate) = oneshot::channel();
+        *resolve_gate.lock() = Some(gate);
+        let hint_g_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 102));
+        cx.simulate_mouse_move(hint_g_point, None, Modifiers::none());
+        release_resolve.send(()).expect("pending resolve gate");
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, cx| {
+            assert!(editor.hover_state.hint_hover_task.is_some());
+            assert_eq!(rendered_popovers(editor, cx), vec!["text hover"]);
+        });
+        cx.simulate_mouse_move(text_point, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(
+                rendered_popovers(editor, cx),
+                vec!["text hover"],
+                "returning to the hovered text cancels the delayed hover of the hint left behind"
+            );
+        });
+
+        cx.dispatch_action(Cancel);
+        cx.update(|_, cx| crate::set_diagnostic_renderer(TestDiagnosticRenderer, cx));
+        cx.lsp
+            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+                uri: cx.buffer_lsp_url.clone(),
+                diagnostics: vec![lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 7)),
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    message: lsp::DiagnosticMessage::from("diagnostic".to_string()),
+                    ..lsp::Diagnostic::default()
+                }],
+                version: None,
+            });
+        cx.run_until_parked();
+        cx.simulate_mouse_move(text_point, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
+        let diagnostic_popover_center = cx.update_editor(|editor, _, cx| {
+            assert_eq!(rendered_popovers(editor, cx), vec!["text hover"]);
+            editor
+                .hover_state
+                .diagnostic_popover
+                .as_ref()
+                .expect("diagnostic popover")
+                .last_bounds
+                .get()
+                .expect("painted diagnostic popover bounds")
+                .center()
+        });
+        let (release_resolve, gate) = oneshot::channel();
+        *resolve_gate.lock() = Some(gate);
+        let hint_h_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 116));
+        cx.simulate_mouse_move(hint_h_point, None, Modifiers::none());
+        release_resolve.send(()).expect("pending resolve gate");
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, _| {
+            assert!(editor.hover_state.hint_hover_task.is_some());
+            assert!(editor.hover_state.diagnostic_popover.is_some());
+        });
+        cx.simulate_mouse_move(diagnostic_popover_center, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
             assert!(
-                hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1
+                editor.hover_state.diagnostic_popover.is_some(),
+                "entering the diagnostic popover cancels the delayed hint hover"
             );
-            let popover = hover_state.info_popovers.first().unwrap();
-            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            assert_eq!(rendered_popovers(editor, cx), vec!["text hover"]);
+        });
+
+        cx.dispatch_action(Cancel);
+        let (release_hover, gate) = oneshot::channel();
+        *hover_gate.lock() = Some(gate);
+        cx.simulate_mouse_move(text_point, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
+            assert!(editor.hover_state.info_task.is_some());
+            assert_eq!(rendered_popovers(editor, cx), Vec::<String>::new());
+        });
+        cx.simulate_mouse_move(hint_e_point, None, Modifiers::none());
+        cx.background_executor.advance_clock(hover_delay);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(rendered_popovers(editor, cx), vec!["tooltip e"]);
+        });
+        release_hover.send(()).ok();
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, cx| {
             assert_eq!(
-                popover.symbol_range,
-                RangeInEditor::Inlay(InlayHighlight {
-                    inlay: InlayId::Hint(0),
-                    inlay_position: buffer_snapshot
-                        .anchor_after(MultiBufferOffset(inlay_range.start)),
-                    range: ": ".len() + new_type_label.len() + "<".len()
-                        ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
-                }),
-                "Popover range should match the struct label part"
-            );
-            assert_eq!(
-                popover.get_rendered_text(cx),
-                format!("A tooltip for {struct_label}"),
-                "Rendered markdown element should remove backticks from text"
+                rendered_popovers(editor, cx),
+                vec!["tooltip e"],
+                "a pending text hover must not replace the hint tooltip"
             );
         });
     }
 
     #[test]
     fn test_find_hovered_hint_part_with_multibyte_characters() {
-        use crate::display_map::InlayOffset;
-        use multi_buffer::MultiBufferOffset;
-        use project::InlayHintLabelPart;
-
-        // Test with multi-byte UTF-8 character "→" (3 bytes, 1 character)
-        let label = "→ app/Livewire/UserProfile.php";
-        let label_parts = vec![InlayHintLabelPart {
-            value: label.to_string(),
-            tooltip: None,
-            location: None,
-        }];
-
-        let hint_start = InlayOffset(MultiBufferOffset(100));
-
-        // Verify the label has more bytes than characters (due to "→")
-        assert_eq!(label.len(), 32); // bytes
-        assert_eq!(label.chars().count(), 30); // characters
-
-        // Test hovering at the last byte (should find the part)
-        let last_byte_offset = InlayOffset(MultiBufferOffset(100 + label.len() - 1));
-        let result = find_hovered_hint_part(label_parts.clone(), hint_start, last_byte_offset);
-        assert!(
-            result.is_some(),
-            "Should find part when hovering at last byte"
-        );
-        let (part, range) = result.unwrap();
-        assert_eq!(part.value, label);
-        assert_eq!(range.start, hint_start);
-        assert_eq!(range.end, InlayOffset(MultiBufferOffset(100 + label.len())));
-
-        // Test hovering at the first byte of "→" (byte 0)
-        let first_byte_offset = InlayOffset(MultiBufferOffset(100));
-        let result = find_hovered_hint_part(label_parts.clone(), hint_start, first_byte_offset);
-        assert!(
-            result.is_some(),
-            "Should find part when hovering at first byte"
-        );
-
-        // Test hovering in the middle of "→" (byte 1, still part of the arrow character)
-        let mid_arrow_offset = InlayOffset(MultiBufferOffset(101));
-        let result = find_hovered_hint_part(label_parts, hint_start, mid_arrow_offset);
-        assert!(
-            result.is_some(),
-            "Should find part when hovering in middle of multi-byte char"
-        );
-
-        // Test with multiple parts containing multi-byte characters
-        // Part ranges are [start, end) - start inclusive, end exclusive
-        // "→ " occupies bytes [0, 4), "path" occupies bytes [4, 8)
-        let parts = vec![
-            InlayHintLabelPart {
-                value: "→ ".to_string(), // 4 bytes (3 + 1)
-                tooltip: None,
-                location: None,
-            },
-            InlayHintLabelPart {
-                value: "path".to_string(), // 4 bytes
-                tooltip: None,
-                location: None,
-            },
-        ];
-
-        // Hover at byte 3 (last byte of "→ ", the space character)
-        let arrow_last_byte = InlayOffset(MultiBufferOffset(100 + 3));
-        let result = find_hovered_hint_part(parts.clone(), hint_start, arrow_last_byte);
-        assert!(result.is_some(), "Should find first part at its last byte");
-        let (part, range) = result.unwrap();
-        assert_eq!(part.value, "→ ");
-        assert_eq!(
-            range,
-            InlayOffset(MultiBufferOffset(100))..InlayOffset(MultiBufferOffset(104))
-        );
-
-        // Hover at byte 4 (first byte of "path", at the boundary)
-        let path_start_offset = InlayOffset(MultiBufferOffset(100 + 4));
-        let result = find_hovered_hint_part(parts.clone(), hint_start, path_start_offset);
-        assert!(result.is_some(), "Should find second part at boundary");
-        let (part, _) = result.unwrap();
-        assert_eq!(part.value, "path");
-
-        // Hover at byte 7 (last byte of "path")
-        let path_end_offset = InlayOffset(MultiBufferOffset(100 + 7));
-        let result = find_hovered_hint_part(parts, hint_start, path_end_offset);
-        assert!(result.is_some(), "Should find second part at last byte");
-        let (part, range) = result.unwrap();
-        assert_eq!(part.value, "path");
-        assert_eq!(
-            range,
-            InlayOffset(MultiBufferOffset(104))..InlayOffset(MultiBufferOffset(108))
-        );
+        for (parts, end) in [
+            (vec![("→ app/Livewire/UserProfile.php", 0..32)], 32),
+            (
+                vec![
+                    ("", 0..0),
+                    ("→ ", 0..4),
+                    ("", 4..4),
+                    ("path", 4..8),
+                    ("", 8..8),
+                ],
+                8,
+            ),
+            (vec![("é", 0..2), ("🦀", 2..6)], 6),
+            (vec![("", 0..0)], 0),
+            (Vec::new(), 0),
+        ] {
+            let label_parts = parts
+                .iter()
+                .map(|(value, _)| InlayHintLabelPart {
+                    value: value.to_string(),
+                    tooltip: None,
+                    location: None,
+                    command: None,
+                })
+                .collect::<Vec<_>>();
+            for (value, range) in parts {
+                for offset in range.clone() {
+                    let result = find_hovered_hint_part(label_parts.clone(), offset);
+                    assert_eq!(
+                        result.map(|(part, range)| (part.value, range)),
+                        Some((value.to_string(), range.clone())),
+                        "offset {offset}"
+                    );
+                }
+            }
+            for offset in [end, usize::MAX] {
+                assert!(find_hovered_hint_part(label_parts.clone(), offset).is_none());
+            }
+        }
     }
 
     #[gpui::test]
@@ -2786,5 +3504,50 @@ mod tests {
             Some((PathBuf::from("/path/to/file"), Some("123".to_string())))
         );
         assert_eq!(parse_file_link("http://example.com/"), None,);
+    }
+
+    struct TestDiagnosticRenderer;
+
+    impl crate::DiagnosticRenderer for TestDiagnosticRenderer {
+        fn render_group(
+            &self,
+            _: Vec<language::DiagnosticEntryRef<'_, text::Point>>,
+            _: text::BufferId,
+            _: EditorSnapshot,
+            _: gpui::WeakEntity<Editor>,
+            _: Option<std::sync::Arc<language::LanguageRegistry>>,
+            _: &mut App,
+        ) -> Vec<crate::display_map::BlockProperties<Anchor>> {
+            Vec::new()
+        }
+
+        fn render_hover(
+            &self,
+            _: Vec<language::DiagnosticEntryRef<'_, text::Point>>,
+            _: Range<text::Point>,
+            _: text::BufferId,
+            _: Option<std::sync::Arc<language::LanguageRegistry>>,
+            cx: &mut App,
+        ) -> Option<Entity<Markdown>> {
+            Some(cx.new(|cx| Markdown::new("diagnostic".into(), None, None, cx)))
+        }
+
+        fn open_link(
+            &self,
+            _: &mut Editor,
+            _: SharedString,
+            _: &mut Window,
+            _: &mut Context<Editor>,
+        ) {
+        }
+    }
+
+    fn rendered_popovers(editor: &Editor, cx: &mut App) -> Vec<String> {
+        editor
+            .hover_state
+            .info_popovers
+            .iter()
+            .map(|popover| popover.get_rendered_text(cx))
+            .collect()
     }
 }

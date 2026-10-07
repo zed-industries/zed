@@ -298,8 +298,9 @@ fn rollout_workflows_to_extension(
                 &["${{ matrix.repo }}"],
             ))
             .with_permissions([
-                (TokenPermissions::PullRequests, Level::Write),
                 (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::Issues, Level::Write),
+                (TokenPermissions::PullRequests, Level::Write),
                 (TokenPermissions::Workflows, Level::Write),
             ])
             .into();

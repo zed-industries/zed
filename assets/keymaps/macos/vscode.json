@@ -14,7 +14,8 @@
       "cmd-shift-space": "editor::ShowSignatureHelp", // Trigger Parameter Hints
       "ctrl-shift-cmd-right": "editor::SelectLargerSyntaxNode", // Expand AST Selection
       "ctrl-shift-cmd-left": "editor::SelectSmallerSyntaxNode", // Shrink AST Selection
-      "cmd-k cmd-c": ["editor::ToggleComments", { "advance_downwards": false }], // Add Line Comment (closest analog)
+      "cmd-k cmd-c": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }], // Add Line Comment (closest analog)
+      "cmd-/": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }],
       "cmd-k f12": "editor::GoToDefinitionSplit", // Open Definition to the Side
     },
   },
@@ -25,6 +26,7 @@
       // In VS Code `cmd-k z` is Zen Mode; the word wrap toggle moves to `alt-z`.
       "cmd-k z": "workspace::ToggleCenteredLayout",
       "cmd-i": "assistant::InlineAssist", // Inline Chat
+      "shift-alt-h": "call_hierarchy::ShowIncomingCalls",
     },
   },
   {
@@ -77,6 +79,13 @@
     "bindings": {
       "f10": "debugger::StepOver",
       "f11": "debugger::StepInto",
+    },
+  },
+  {
+    "context": "CallHierarchyPicker > Picker > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-alt-h": "call_hierarchy::ToggleDirection",
     },
   },
 ]

@@ -1,4 +1,4 @@
-use std::{cmp, sync::Arc};
+use std::{cmp, sync::Arc, time::Duration};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
@@ -142,14 +142,16 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         &mut self,
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
-        _debounce: bool,
+        debounce_duration: Duration,
         trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let store = self.store.read(cx);
 
-        if store.user_store.read_with(cx, |user_store, _cx| {
-            user_store.account_too_young() || user_store.has_overdue_invoices()
+        if store.user_store.read_with(cx, |user_store, cx| {
+            user_store.account_too_young()
+                || user_store.has_overdue_invoices()
+                || crate::zed_edit_predictions_excluded_from_plan(user_store, cx)
         }) {
             return;
         }
@@ -168,6 +170,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 self.project.clone(),
                 buffer,
                 cursor_position,
+                debounce_duration,
                 trigger,
                 cx,
             )

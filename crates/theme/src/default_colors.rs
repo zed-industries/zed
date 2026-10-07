@@ -1,11 +1,13 @@
 use gpui::{Hsla, Rgba};
+use std::sync::LazyLock;
 
 use crate::ColorScale;
 use crate::scale::{ColorScaleSet, ColorScales};
 use crate::{SystemColors, ThemeColors};
 
-pub(crate) fn neutral() -> ColorScaleSet {
-    sand()
+pub(crate) fn neutral() -> &'static ColorScaleSet {
+    static NEUTRAL: LazyLock<ColorScaleSet> = LazyLock::new(sand);
+    &NEUTRAL
 }
 
 const ADDED_COLOR: Hsla = Hsla {
@@ -112,6 +114,7 @@ impl ThemeColors {
             minimap_thumb_active_background: neutral().light_alpha().step_5().alpha(0.7),
             minimap_thumb_border: gpui::transparent_black(),
             editor_foreground: neutral().light().step_12(),
+            editor_code_lens_foreground: None,
             editor_background: neutral().light().step_1(),
             editor_gutter_background: neutral().light().step_1(),
             editor_subheader_background: neutral().light().step_2(),
@@ -265,6 +268,7 @@ impl ThemeColors {
             minimap_thumb_active_background: neutral().dark_alpha().step_5().alpha(0.7),
             minimap_thumb_border: gpui::transparent_black(),
             editor_foreground: neutral().dark().step_12(),
+            editor_code_lens_foreground: None,
             editor_background: neutral().dark().step_1(),
             editor_gutter_background: neutral().dark().step_1(),
             editor_subheader_background: neutral().dark().step_3(),

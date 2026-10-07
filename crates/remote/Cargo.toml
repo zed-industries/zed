@@ -24,20 +24,19 @@ askpass.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 collections.workspace = true
-fs.workspace = true
+fs = { workspace = true, optional = true }
 futures.workspace = true
 gpui.workspace = true
-log.workspace = true
+log = { workspace = true, features = ["kv_unstable_std"] }
 parking_lot.workspace = true
 paths.workspace = true
-prost.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings.workspace = true
+settings_content.workspace = true
 smol.workspace = true
 telemetry.workspace = true
 tempfile.workspace = true
@@ -48,5 +47,3 @@ which.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-fs = { workspace = true, features = ["test-support"] }
-util = { workspace = true, features = ["test-support"] }

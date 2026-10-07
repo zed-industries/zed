@@ -1,6 +1,7 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::ClientUserMessageId;
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -76,7 +77,7 @@ pub struct DbThread {
     #[serde(default)]
     pub thinking_effort: Option<String>,
     #[serde(default)]
-    pub draft_prompt: Option<Vec<acp::ContentBlock>>,
+    pub draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
     #[serde(default)]
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
@@ -392,6 +393,14 @@ impl Column for DataType {
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     connection: Arc<Mutex<Connection>>,
+    /// In production, saves take real time (serialization, zstd, disk I/O) while
+    /// the user keeps typing, so new save requests routinely arrive mid-write.
+    /// The test executor completes writes instantly, so tests use this gate to
+    /// hold a write in flight and interleave more save requests with it.
+    #[cfg(test)]
+    write_gate: Mutex<Option<Shared<futures::channel::oneshot::Receiver<()>>>>,
+    #[cfg(test)]
+    save_count: std::sync::atomic::AtomicUsize,
 }
 
 struct GlobalThreadsDatabase(Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>);
@@ -481,6 +490,10 @@ impl ThreadsDatabase {
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
+            #[cfg(test)]
+            write_gate: Mutex::new(None),
+            #[cfg(test)]
+            save_count: Default::default(),
         };
 
         Ok(db)
@@ -629,9 +642,29 @@ impl ThreadsDatabase {
         folder_paths: PathList,
     ) -> Task<Result<()>> {
         let connection = self.connection.clone();
+        #[cfg(test)]
+        let write_gate = self.write_gate.lock().clone();
+        #[cfg(test)]
+        self.save_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-        self.executor
-            .spawn(async move { Self::save_thread_sync(&connection, id, thread, &folder_paths) })
+        self.executor.spawn(async move {
+            #[cfg(test)]
+            if let Some(write_gate) = write_gate {
+                write_gate.await.ok();
+            }
+            Self::save_thread_sync(&connection, id, thread, &folder_paths)
+        })
+    }
+
+    #[cfg(test)]
+    pub fn save_count(&self) -> usize {
+        self.save_count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    pub fn set_write_gate(&self, gate: futures::channel::oneshot::Receiver<()>) {
+        *self.write_gate.lock() = Some(gate.shared());
     }
 
     fn deserialize_thread(data_type: DataType, data: Vec<u8>) -> Result<DbThread> {
@@ -906,6 +939,58 @@ mod tests {
         assert!(
             db_thread.draft_prompt.is_none(),
             "Legacy threads without draft_prompt field should default to None"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_draft_prompt_preserves_legacy_and_v2_content(cx: &mut TestAppContext) {
+        let legacy_draft = serde_json::to_value(vec![
+            acp::ContentBlock::Text(acp::TextContent::new("legacy draft")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new("file", "file:///a.md")),
+        ])
+        .expect("serialize v1 draft");
+        let mut thread: DbThread = serde_json::from_value(serde_json::json!({
+            "title": "Draft Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z",
+            "draft_prompt": legacy_draft,
+        }))
+        .expect("decode legacy thread with v2 draft blocks");
+        assert_eq!(
+            serde_json::to_value(&thread.draft_prompt).expect("serialize decoded draft"),
+            legacy_draft
+        );
+
+        let extension = serde_json::json!({
+            "type": "_draft_card",
+            "payload": {"items": [1, {"enabled": true}], "optional": null},
+            "_meta": {"source": "draft", "nested": {"version": 2}},
+        });
+        let extension_block: acp_v2::ContentBlock =
+            serde_json::from_value(extension.clone()).expect("decode v2-only draft block");
+        assert!(matches!(extension_block, acp_v2::ContentBlock::Other(_)));
+        thread
+            .draft_prompt
+            .as_mut()
+            .expect("legacy draft exists")
+            .push(extension_block);
+        let mut expected = legacy_draft.as_array().expect("draft is an array").clone();
+        expected.push(extension);
+
+        let database = ThreadsDatabase::new(cx.executor()).expect("create database");
+        let thread_id = session_id("draft-thread");
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .expect("save mixed-version draft");
+        let restored = database
+            .load_thread(thread_id)
+            .await
+            .expect("load draft")
+            .expect("saved thread exists");
+        assert_eq!(
+            serde_json::to_value(restored.draft_prompt).expect("serialize restored draft"),
+            serde_json::Value::Array(expected)
         );
     }
 

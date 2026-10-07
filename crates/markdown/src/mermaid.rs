@@ -370,7 +370,7 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
 
     mermaid_render::MermaidTheme {
         dark_mode: is_dark,
-        font_family: mermaid_font_family(theme_settings.ui_font.family.as_ref()),
+        font_family: mermaid_font_family(theme_settings.mermaid_font_family().as_ref()),
         background: colors.editor_background,
         primary_color: colors.surface_background,
         primary_text_color: colors.text,
@@ -1139,6 +1139,23 @@ mod tests {
         let diagram = diagrams.values().next().unwrap();
         assert_eq!(diagram.contents.contents, "graph TD;");
         assert_eq!(diagram.contents.scale, 150);
+    }
+
+    #[test]
+    fn test_extract_mermaid_diagrams_with_tilde_fence() {
+        let markdown = "~~~mermaid\ngraph TD;\n~~~";
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(markdown, &events);
+
+        assert_eq!(diagrams.len(), 1);
+        assert_eq!(
+            diagrams
+                .values()
+                .next()
+                .map(|diagram| diagram.contents.contents.as_ref()),
+            Some("graph TD;")
+        );
     }
 
     #[test]

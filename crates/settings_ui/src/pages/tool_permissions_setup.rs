@@ -1404,6 +1404,9 @@ mod tests {
         const EXCLUDED_TOOLS: &[&str] = &[
             // Read-only / low-risk tools that don't call decide_permission_from_settings
             "apply_code_action",
+            // Interactive prompt: always asks the user via prompt_for_decision,
+            // so it has no settings-driven permission rules.
+            "ask_user",
             "diagnostics",
             "find_path",
             "find_references",

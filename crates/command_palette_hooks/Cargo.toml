@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/command_palette_hooks.rs"
 doctest = false
+test = false
 
 [dependencies]
 collections.workspace = true

@@ -45,6 +45,9 @@ impl Editor {
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
+        if self.cycle_inline_input_history(InlineInputHistoryDirection::Older, window, cx) {
+            return;
+        }
 
         if self.mode.is_single_line() {
             cx.propagate();
@@ -260,6 +263,9 @@ impl Editor {
 
     pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         if self.take_rename(true, window, cx).is_some() {
+            return;
+        }
+        if self.cycle_inline_input_history(InlineInputHistoryDirection::Newer, window, cx) {
             return;
         }
 
@@ -1068,7 +1074,7 @@ impl Editor {
 
     pub fn go_to_declaration_split(
         &mut self,
-        _: &GoToDeclaration,
+        _: &GoToDeclarationSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
@@ -1403,7 +1409,8 @@ impl Editor {
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
         Some(cx.spawn_in(window, async move |editor, cx| {
-            let _cleanup = cx.on_drop(&editor, move |editor, _| {
+            let _cleanup = cx.on_drop(&editor, move |editor, cx| {
+                let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
                 if let Ok(i) = editor
                     .find_all_references_task_sources
                     .binary_search_by(|anchor| anchor.cmp(&head_anchor, &multi_buffer_snapshot))
@@ -1467,8 +1474,6 @@ impl Editor {
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
                                 workspace.update(cx, |workspace, cx| {
-                                    let pane = workspace.active_pane().clone();
-
                                     let preview_tabs_settings = PreviewTabsSettings::get_global(cx);
                                     let keep_old_preview = preview_tabs_settings
                                         .enable_keep_preview_on_code_navigation;
@@ -1476,7 +1481,7 @@ impl Editor {
                                         .enable_preview_file_from_code_navigation;
 
                                     workspace.open_project_item(
-                                        pane,
+                                        None,
                                         target_buffer.clone(),
                                         true,
                                         true,
@@ -1942,7 +1947,7 @@ impl Editor {
                         window.defer(cx, move |window, cx| {
                             let (target_editor, target_pane): (Entity<Self>, Entity<Pane>) =
                                 workspace.update(cx, |workspace, cx| {
-                                    let pane = if split {
+                                    let requested_pane = if split {
                                         workspace.adjacent_pane(window, cx)
                                     } else {
                                         workspace.active_pane().clone()
@@ -1955,7 +1960,7 @@ impl Editor {
                                         .enable_preview_file_from_code_navigation;
 
                                     let editor = workspace.open_project_item(
-                                        pane.clone(),
+                                        split.then_some(requested_pane.clone()),
                                         target_buffer.clone(),
                                         true,
                                         true,
@@ -1964,7 +1969,10 @@ impl Editor {
                                         window,
                                         cx,
                                     );
-                                    (editor, pane)
+                                    let target_pane = workspace
+                                        .pane_for_item_id(editor.entity_id())
+                                        .unwrap_or(requested_pane);
+                                    (editor, target_pane)
                                 });
                             // We create our own nav history instead of using
                             // `target_editor.nav_history` because `nav_history`
@@ -2061,17 +2069,12 @@ impl Editor {
         cx: &mut Context<Self>,
         offset: i8,
     ) -> Task<Result<()>> {
-        let editor_snapshot = self.snapshot(window, cx);
-
         // We don't care about multi-buffer symbols
-        if !editor_snapshot.is_singleton() {
+        if !self.buffer.read(cx).is_singleton() {
             return Task::ready(Ok(()));
         }
 
-        let cursor_offset = self
-            .selections
-            .newest::<MultiBufferOffset>(&editor_snapshot.display_snapshot)
-            .head();
+        let cursor = self.selections.newest_anchor().head();
 
         cx.spawn_in(window, async move |editor, wcx| -> Result<()> {
             let Ok(Some(remote_id)) = editor.update(wcx, |ed, cx| {
@@ -2084,12 +2087,14 @@ impl Editor {
             let task = editor.update(wcx, |ed, cx| ed.buffer_outline_items(remote_id, cx))?;
             let outline_items: Vec<OutlineItem<text::Anchor>> = task.await;
 
-            let multi_snapshot = editor_snapshot.buffer();
+            let multi_snapshot =
+                editor.read_with(wcx, |editor, cx| editor.buffer.read(cx).snapshot(cx))?;
+            let cursor_offset = cursor.to_offset(&multi_snapshot);
             let buffer_range = |range: &Range<_>| {
                 Some(
                     multi_snapshot
                         .buffer_anchor_range_to_anchor_range(range.clone())?
-                        .to_offset(multi_snapshot),
+                        .to_offset(&multi_snapshot),
                 )
             };
 
@@ -2207,7 +2212,9 @@ impl Editor {
         let excerpt_buffer = cx.new(|cx| {
             let key = &mut key.1;
             let mut multibuffer = MultiBuffer::new(capability);
-            for (buffer, mut ranges_for_buffer) in locations {
+            let mut sorted_locations = locations.into_iter().collect::<Vec<_>>();
+            sorted_locations.sort_by_key(|(buffer, _)| buffer.read(cx).remote_id());
+            for (buffer, mut ranges_for_buffer) in sorted_locations {
                 ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
                 key.push((buffer.read(cx).remote_id(), ranges_for_buffer.clone()));
                 multibuffer.set_excerpts_for_path(
@@ -2350,10 +2357,11 @@ impl Editor {
             .iter()
             .flat_map(|selection| {
                 snapshot
-                    .range_to_buffer_ranges(selection.range())
-                    .into_iter()
-                    .filter_map(|(buffer_snapshot, range, _)| {
-                        snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
+                    .range_to_buffer_ranges_with_deleted_hunks(selection.range())
+                    .filter_map(|(buffer_snapshot, range, deleted_hunk_anchor)| {
+                        deleted_hunk_anchor.or_else(|| {
+                            snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
+                        })
                     })
             })
             .collect::<Vec<_>>();
@@ -2372,7 +2380,7 @@ impl Editor {
         })
     }
 
-    fn go_to_definition_of_kind(
+    pub(crate) fn go_to_definition_of_kind(
         &mut self,
         kind: GotoDefinitionKind,
         split: bool,
@@ -2442,10 +2450,9 @@ impl Editor {
             let location = Some({
                 let target_buffer_handle = location_task.await.context("open local buffer")?;
                 let range = target_buffer_handle.read_with(cx, |target_buffer, _| {
-                    let target_start = target_buffer
-                        .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
-                    let target_end = target_buffer
-                        .clip_point_utf16(point_from_lsp(lsp_location.range.end), Bias::Left);
+                    let range = language::range_from_lsp(lsp_location.range);
+                    let target_start = target_buffer.clip_point_utf16(range.start, Bias::Left);
+                    let target_end = target_buffer.clip_point_utf16(range.end, Bias::Left);
                     target_buffer.anchor_after(target_start)
                         ..target_buffer.anchor_before(target_end)
                 });

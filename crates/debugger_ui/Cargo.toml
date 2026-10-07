@@ -23,14 +23,14 @@ test-support = [
     "util/test-support",
     "workspace/test-support",
     "unindent",
+    "dep:command_palette_hooks",
 ]
 
 [dependencies]
 anyhow.workspace = true
 bitflags.workspace = true
-client.workspace = true
 collections.workspace = true
-command_palette_hooks.workspace = true
+command_palette_hooks = { workspace = true, optional = true }
 dap.workspace = true
 dap_adapters = { workspace = true, optional = true }
 db.workspace = true
@@ -52,7 +52,6 @@ parking_lot.workspace = true
 parse_int.workspace = true
 paths.workspace = true
 picker.workspace = true
-pretty_assertions.workspace = true
 project.workspace = true
 rpc.workspace = true
 schemars.workspace = true
@@ -76,12 +75,14 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+command_palette_hooks.workspace = true
 dap = { workspace = true, features = ["test-support"] }
 dap_adapters = { workspace = true, features = ["test-support"] }
 debugger_tools = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 tree-sitter-go.workspace = true
 unindent.workspace = true
