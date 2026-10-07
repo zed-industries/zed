@@ -35,7 +35,7 @@ The Z icon in the status bar also indicates Zeta is active.
 
 ### Pricing and Plans
 
-The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../account/plans-and-pricing.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
+Zeta predictions are included with [Zed Pro](../account/plans-and-pricing.md#pro), the [Pro trial](../account/plans-and-pricing.md#trials), and the [Student](../account/plans-and-pricing.md#student) and [Business](../account/plans-and-pricing.md#business) plans. On the Free plan, you can use [other providers](#other-providers), like GitHub Copilot or a [local model](#local-and-self-hosted-models). See [Zed's pricing page](https://zed.dev/pricing) for details.
 
 ### Switching Modes {#switching-modes}
 
