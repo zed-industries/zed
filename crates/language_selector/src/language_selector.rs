@@ -6,7 +6,7 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
-    Render, Styled, TaskExt, WeakEntity, Window, actions,
+    Render, TaskExt, WeakEntity, Window, actions,
 };
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use open_path_prompt::file_finder_settings::FileFinderSettings;
@@ -92,7 +92,6 @@ impl Render for LanguageSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("LanguageSelector")
-            .w(rems(34.))
             .child(self.picker.clone())
     }
 }
@@ -189,7 +188,9 @@ impl LanguageSelectorDelegate {
         matcher
             .path_suffixes
             .iter()
-            .find_map(|extension| file_icons::FileIcons::get_icon(Path::new(extension), cx))
+            .find_map(|extension| {
+                file_icons::FileIcons::get_icon(Path::new(extension.as_str()), cx)
+            })
             .map(Icon::from_path)
             .map(|icon| icon.color(Color::Muted))
     }
@@ -197,6 +198,10 @@ impl LanguageSelectorDelegate {
 
 impl PickerDelegate for LanguageSelectorDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "language selector"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a language…".into()
@@ -229,7 +234,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.language_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn selected_index(&self) -> usize {
@@ -363,10 +368,11 @@ mod tests {
                 language_registry.add(Arc::new(Language::new(
                     LanguageConfig {
                         name: language_name.into(),
-                        matcher: LanguageMatcher {
-                            path_suffixes: vec![path_suffix.to_string()],
+                        matcher: (LanguageMatcher {
+                            path_suffixes: vec![path_suffix.into()],
                             ..Default::default()
-                        },
+                        })
+                        .into(),
                         ..Default::default()
                     },
                     None,

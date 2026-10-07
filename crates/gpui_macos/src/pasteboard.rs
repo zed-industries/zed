@@ -10,7 +10,7 @@ use cocoa::{
     base::{id, nil},
     foundation::{NSArray, NSData, NSFastEnumeration, NSString},
 };
-use objc::{msg_send, runtime::Object, sel, sel_impl};
+use objc::{msg_send, rc::StrongPtr, runtime::Object, sel, sel_impl};
 use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
@@ -20,9 +20,9 @@ use gpui::{
 };
 
 pub struct Pasteboard {
-    inner: id,
-    text_hash_type: id,
-    metadata_type: id,
+    inner: StrongPtr,
+    text_hash_type: StrongPtr,
+    metadata_type: StrongPtr,
 }
 
 impl Pasteboard {
@@ -40,17 +40,19 @@ impl Pasteboard {
     }
 
     unsafe fn new(inner: id) -> Self {
+        // These constructors return autoreleased objects, but a Pasteboard can
+        // outlive the autorelease pool in which it was created.
         Self {
-            inner,
-            text_hash_type: unsafe { ns_string("zed-text-hash") },
-            metadata_type: unsafe { ns_string("zed-metadata") },
+            inner: unsafe { StrongPtr::retain(inner) },
+            text_hash_type: unsafe { StrongPtr::retain(ns_string("zed-text-hash")) },
+            metadata_type: unsafe { StrongPtr::retain(ns_string("zed-metadata")) },
         }
     }
 
     pub fn read(&self) -> Option<ClipboardItem> {
         unsafe {
             // Check for file paths first
-            let filenames = NSPasteboard::propertyListForType(self.inner, NSFilenamesPboardType);
+            let filenames = NSPasteboard::propertyListForType(*self.inner, NSFilenamesPboardType);
             if filenames != nil && NSArray::count(filenames) > 0 {
                 let mut paths = SmallVec::new();
                 for file in filenames.iter() {
@@ -118,27 +120,18 @@ impl Pasteboard {
                 return None;
             }
 
-            let data = self.inner.dataForType(string_type);
-            let text_bytes: &[u8] = if data == nil {
-                return None;
-            } else if data.bytes().is_null() {
-                // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
-                // "If the length of the NSData object is 0, this property returns nil."
-                &[]
-            } else {
-                slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize)
-            };
+            let text_bytes = self.data_for_type(string_type)?;
 
-            let text = String::from_utf8_lossy(text_bytes).to_string();
+            let text = String::from_utf8_lossy(&text_bytes).to_string();
             let metadata = self
-                .data_for_type(self.text_hash_type)
+                .data_for_type(*self.text_hash_type)
                 .and_then(|hash_bytes| {
-                    let hash_bytes = hash_bytes.try_into().ok()?;
+                    let hash_bytes = hash_bytes.as_slice().try_into().ok()?;
                     let hash = u64::from_be_bytes(hash_bytes);
-                    let metadata = self.data_for_type(self.metadata_type)?;
+                    let metadata = self.data_for_type(*self.metadata_type)?;
 
                     if hash == ClipboardString::text_hash(&text) {
-                        String::from_utf8(metadata.to_vec()).ok()
+                        String::from_utf8(metadata).ok()
                     } else {
                         None
                     }
@@ -148,16 +141,17 @@ impl Pasteboard {
         }
     }
 
-    unsafe fn data_for_type(&self, kind: id) -> Option<&[u8]> {
+    unsafe fn data_for_type(&self, kind: id) -> Option<Vec<u8>> {
         unsafe {
             let data = self.inner.dataForType(kind);
             if data == nil {
                 None
+            } else if data.bytes().is_null() {
+                Some(Vec::new())
             } else {
-                Some(slice::from_raw_parts(
-                    data.bytes() as *mut u8,
-                    data.length() as usize,
-                ))
+                Some(
+                    slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize).to_vec(),
+                )
             }
         }
     }
@@ -226,7 +220,7 @@ impl Pasteboard {
                     hash_bytes.as_ptr() as *const c_void,
                     hash_bytes.len() as u64,
                 );
-                self.inner.setData_forType(hash_bytes, self.text_hash_type);
+                self.inner.setData_forType(hash_bytes, *self.text_hash_type);
 
                 let metadata_bytes = NSData::dataWithBytes_length_(
                     nil,
@@ -234,7 +228,7 @@ impl Pasteboard {
                     metadata.len() as u64,
                 );
                 self.inner
-                    .setData_forType(metadata_bytes, self.metadata_type);
+                    .setData_forType(metadata_bytes, *self.metadata_type);
             }
         }
     }
@@ -345,6 +339,7 @@ mod tests {
     use std::ffi::c_void;
 
     use gpui::{ClipboardEntry, ClipboardItem, ClipboardString, ImageFormat};
+    use objc::rc::autoreleasepool;
 
     use super::*;
 
@@ -407,6 +402,18 @@ mod tests {
             pasteboard.read(),
             Some(ClipboardItem::new_string(text_from_other_app.to_string()))
         );
+    }
+
+    #[test]
+    fn test_custom_types_survive_creation_autorelease_pool() {
+        let pasteboard = autoreleasepool(|| unsafe { Pasteboard::new(nil) });
+
+        unsafe {
+            let text_hash_type = CStr::from_ptr(NSString::UTF8String(*pasteboard.text_hash_type));
+            let metadata_type = CStr::from_ptr(NSString::UTF8String(*pasteboard.metadata_type));
+            assert_eq!(text_hash_type.to_bytes(), b"zed-text-hash");
+            assert_eq!(metadata_type.to_bytes(), b"zed-metadata");
+        }
     }
 
     #[test]

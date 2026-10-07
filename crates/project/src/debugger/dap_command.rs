@@ -165,7 +165,7 @@ impl DapCommand for NextCommand {
 
     fn from_proto(request: &Self::ProtoRequest) -> Self {
         Self {
-            inner: StepCommand::from_proto(request.clone()),
+            inner: StepCommand::from_proto(*request),
         }
     }
 

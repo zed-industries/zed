@@ -94,42 +94,39 @@ impl Component for Facepile {
         ComponentScope::Collaboration
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "Displays a collection of avatars or initials in a compact format. Often used to represent active collaborators or a subset of contributors.",
-        )
+    fn description() -> &'static str {
+        "Displays a collection of avatars or initials in a compact format. \
+        Often used to represent active collaborators or a subset of contributors."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![example_group_with_title(
-                    "Facepile Examples",
-                    vec![
-                        single_example(
-                            "Default",
-                            Facepile::new(
-                                EXAMPLE_FACES
-                                    .iter()
-                                    .map(|&url| Avatar::new(url).into_any_element())
-                                    .collect(),
-                            )
-                            .into_any_element(),
-                        ),
-                        single_example(
-                            "Custom Size",
-                            Facepile::new(
-                                EXAMPLE_FACES
-                                    .iter()
-                                    .map(|&url| Avatar::new(url).size(px(24.)).into_any_element())
-                                    .collect(),
-                            )
-                            .into_any_element(),
-                        ),
-                    ],
-                )])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![example_group_with_title(
+                "Facepile Examples",
+                vec![
+                    single_example(
+                        "Default",
+                        Facepile::new(
+                            EXAMPLE_FACES
+                                .iter()
+                                .map(|&url| Avatar::new(url).into_any_element())
+                                .collect(),
+                        )
+                        .into_any_element(),
+                    ),
+                    single_example(
+                        "Custom Size",
+                        Facepile::new(
+                            EXAMPLE_FACES
+                                .iter()
+                                .map(|&url| Avatar::new(url).size(px(24.)).into_any_element())
+                                .collect(),
+                        )
+                        .into_any_element(),
+                    ),
+                ],
+            )])
+            .into_any_element()
     }
 }

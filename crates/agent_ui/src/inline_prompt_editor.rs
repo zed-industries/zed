@@ -17,7 +17,6 @@ use language_model::{LanguageModel, LanguageModelRegistry};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
-use prompt_store::PromptStore;
 use settings::Settings;
 use std::cmp;
 use std::ops::Range;
@@ -63,7 +62,6 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
     edited_since_done: bool,
@@ -119,8 +117,8 @@ impl<T: 'static> Render for PromptEditor<T> {
         };
 
         let bottom_padding = match &self.mode {
-            PromptEditorMode::Buffer { .. } => rems_from_px(2.0),
-            PromptEditorMode::Terminal { .. } => rems_from_px(4.0),
+            PromptEditorMode::Buffer { .. } => rems_from_px(2.0_f32),
+            PromptEditorMode::Terminal { .. } => rems_from_px(4.0_f32),
         };
 
         buttons.extend(self.render_buttons(window, cx));
@@ -239,7 +237,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                             div()
                                 .size_full()
                                 .min_w_0()
-                                .pt(rems_from_px(3.))
+                                .pt(rems_from_px(3_f32))
                                 .pl_0p5()
                                 .flex_1()
                                 .border_t_1()
@@ -334,7 +332,6 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
         });
@@ -571,8 +568,8 @@ impl<T: 'static> PromptEditor<T> {
             return;
         };
 
-        let model_telemetry_id = model.model.telemetry_id();
-        let model_provider_id = model.provider.id().to_string();
+        let model_telemetry_id = model.telemetry_id();
+        let model_provider_id = model.provider_id().to_string();
 
         let (kind, language_name) = match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
@@ -613,16 +610,13 @@ impl<T: 'static> PromptEditor<T> {
             CompletionState::Generated { completion_text } => {
                 let model_info = self.model_selector.read(cx).active_model(cx);
                 let (model_id, use_streaming_tools) = {
-                    let Some(configured_model) = model_info else {
+                    let Some(model) = model_info else {
                         self.toast("No configured model", None, cx);
                         return;
                     };
                     (
-                        configured_model.model.telemetry_id(),
-                        CodegenAlternative::use_streaming_tools(
-                            configured_model.model.as_ref(),
-                            cx,
-                        ),
+                        model.telemetry_id(),
+                        CodegenAlternative::use_streaming_tools(&model, cx),
                     )
                 };
 
@@ -676,16 +670,13 @@ impl<T: 'static> PromptEditor<T> {
             CompletionState::Generated { completion_text } => {
                 let model_info = self.model_selector.read(cx).active_model(cx);
                 let (model_telemetry_id, use_streaming_tools) = {
-                    let Some(configured_model) = model_info else {
+                    let Some(model) = model_info else {
                         self.toast("No configured model", None, cx);
                         return;
                     };
                     (
-                        configured_model.model.telemetry_id(),
-                        CodegenAlternative::use_streaming_tools(
-                            configured_model.model.as_ref(),
-                            cx,
-                        ),
+                        model.telemetry_id(),
+                        CodegenAlternative::use_streaming_tools(&model, cx),
                     )
                 };
 
@@ -1025,11 +1016,11 @@ impl<T: 'static> PromptEditor<T> {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let default_model = model_registry.default_model().map(|default| default.model);
+        let default_model = model_registry.default_model();
         let alternative_models = model_registry.inline_alternative_models();
 
         let get_model_name = |index: usize| -> String {
-            let name = |model: &Arc<dyn LanguageModel>| model.name().0.to_string();
+            let name = |model: &LanguageModel| model.name.0.to_string();
 
             match index {
                 0 => default_model.as_ref().map_or_else(String::new, name),
@@ -1163,7 +1154,7 @@ impl<T: 'static> PromptEditor<T> {
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         MarkdownElement::new(markdown, style)
-            .image_resolver(|dest_url| crate::resolve_agent_image(dest_url, &[]))
+            .image_resolver(|dest_url, _cx| crate::resolve_agent_image(dest_url, &[]))
     }
 }
 
@@ -1204,7 +1195,7 @@ struct PromptEditorCompletionProviderDelegate;
 fn inline_assistant_model_supports_images(cx: &App) -> bool {
     LanguageModelRegistry::read_global(cx)
         .inline_assistant_model()
-        .map_or(false, |m| m.model.supports_images())
+        .map_or(false, |m| m.supports_images())
 }
 
 impl PromptCompletionProviderDelegate for PromptEditorCompletionProviderDelegate {
@@ -1214,7 +1205,7 @@ impl PromptCompletionProviderDelegate for PromptEditorCompletionProviderDelegate
             PromptContextType::Symbol,
             PromptContextType::Thread,
             PromptContextType::Fetch,
-            PromptContextType::Rules,
+            PromptContextType::Skill,
         ]
     }
 
@@ -1239,7 +1230,6 @@ impl PromptEditor<BufferCodegen> {
         session_id: Uuid,
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1278,15 +1268,13 @@ impl PromptEditor<BufferCodegen> {
             editor
         });
 
-        let mention_set = cx
-            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
+        let mention_set = cx.new(|_cx| MentionSet::new(project, Some(thread_store.clone())));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
-            prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
@@ -1396,7 +1384,6 @@ impl PromptEditor<TerminalCodegen> {
         session_id: Uuid,
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1430,15 +1417,13 @@ impl PromptEditor<TerminalCodegen> {
             editor
         });
 
-        let mention_set = cx
-            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
+        let mention_set = cx.new(|_cx| MentionSet::new(project, Some(thread_store.clone())));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
-            prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
@@ -1624,6 +1609,8 @@ fn insert_message_creases(
                 crease.label.clone(),
                 crease.icon_path.clone(),
                 None,
+                None,
+                None,
                 start..end,
                 cx.weak_entity(),
             )
@@ -1684,7 +1671,6 @@ mod tests {
                     cx.background_executor(),
                     PathStyle::local(),
                 )
-                .unwrap()
                 .subscribe(cx)
             })
         });
@@ -1709,7 +1695,6 @@ mod tests {
                     session_id,
                     fs,
                     thread_store,
-                    None,
                     project,
                     workspace.downgrade(),
                     window,

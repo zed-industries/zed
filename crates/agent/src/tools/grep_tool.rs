@@ -1,11 +1,12 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema as acp;
+use acp_thread::MentionUri;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use project::{
-    Project, SearchResults, WorktreeSettings,
+    Project, ProjectPath, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
@@ -13,8 +14,15 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{cmp, fmt::Write, sync::Arc};
 use util::RangeExt;
-use util::markdown::MarkdownInlineCode;
+use util::markdown::{MarkdownCodeBlock, MarkdownInlineCode};
 use util::paths::PathMatcher;
+
+pub const fn default_max_ancestor_lines() -> u32 {
+    10
+}
+pub const fn default_context_lines() -> u32 {
+    2
+}
 
 /// Searches the contents of files in the project with a regular expression
 ///
@@ -55,6 +63,17 @@ pub struct GrepToolInput {
     /// Whether the regex is case-sensitive. Defaults to false (case-insensitive).
     #[serde(default)]
     pub case_sensitive: bool,
+    /// The syntax-ancestor prefix includes its first line and up to this many following lines.
+    /// Defaults to 10.
+    /// 0 permits only the first line.
+    /// If this prefix does not contain all matched lines, or no syntax ancestor is available, use context_lines instead.
+    #[serde(default = "default_max_ancestor_lines")]
+    pub max_ancestor_lines: u32,
+    /// The number of lines to include before and after the matched lines in fallback context.
+    /// Defaults to 2.
+    /// Used only when no syntax ancestor is available or its capped prefix does not contain all matched lines.
+    #[serde(default = "default_context_lines")]
+    pub context_lines: u32,
 }
 
 impl GrepToolInput {
@@ -118,9 +137,6 @@ impl AgentTool for GrepTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        const CONTEXT_LINES: u32 = 2;
-        const MAX_ANCESTOR_LINES: u32 = 10;
-
         let project = self.project.clone();
         cx.spawn(async move |cx|  {
             let input = input
@@ -174,10 +190,12 @@ impl AgentTool for GrepTool {
             let project = project.downgrade();
             // Keep the search alive for the duration of result iteration. Dropping this task is the
             // cancellation mechanism; we intentionally do not detach it.
-            let SearchResults {rx, _task_handle}  = results;
+            let SearchResults {rx, ..}  = results;
             futures::pin_mut!(rx);
 
             let mut output = String::new();
+            let mut content = Vec::new();
+            let mut locations = Vec::new();
             let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
@@ -203,24 +221,38 @@ impl AgentTool for GrepTool {
                     continue;
                 }
 
-                let (Some(path), mut parse_status) = buffer.read_with(cx, |buffer, cx| {
-                    (buffer.file().map(|file| file.full_path(cx)), buffer.parse_status())
-                }) else {
+                let (Some((path, project_path)), mut parse_status) =
+                    buffer.read_with(cx, |buffer, cx| {
+                        (
+                            buffer.file().map(|file| {
+                                (
+                                    file.full_path(cx),
+                                    ProjectPath {
+                                        worktree_id: file.worktree_id(cx),
+                                        path: file.path().clone(),
+                                    },
+                                )
+                            }),
+                            buffer.parse_status(),
+                        )
+                    })
+                else {
                     continue;
                 };
 
                 // Check if this file should be excluded based on its worktree settings
-                if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
-                    project.find_project_path(&path, cx)
+                if cx.update(|cx| {
+                    let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+                    worktree_settings.is_path_excluded(&project_path.path)
+                        || worktree_settings.is_path_private(&project_path.path)
                 }) {
-                    if cx.update(|cx| {
-                        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
-                        worktree_settings.is_path_excluded(&project_path.path)
-                            || worktree_settings.is_path_private(&project_path.path)
-                    }) {
-                        continue;
-                    }
+                    continue;
                 }
+
+                let abs_path = project
+                    .read_with(cx, |project, cx| project.absolute_path(&project_path, cx))
+                    .ok()
+                    .flatten();
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await.map_err(|e| e.to_string())?;
@@ -238,7 +270,7 @@ impl AgentTool for GrepTool {
 
                         if let Some(ancestor_node) = snapshot.syntax_ancestor(full_lines.clone()) {
                             let full_ancestor_range = ancestor_node.byte_range().to_point(&snapshot);
-                            let end_row = full_ancestor_range.end.row.min(full_ancestor_range.start.row + MAX_ANCESTOR_LINES);
+                            let end_row = full_ancestor_range.end.row.min(full_ancestor_range.start.row.saturating_add(input.max_ancestor_lines));
                             let end_col = snapshot.line_len(end_row);
                             let capped_ancestor_range = Point::new(full_ancestor_range.start.row, 0)..Point::new(end_row, end_col);
 
@@ -250,10 +282,10 @@ impl AgentTool for GrepTool {
                         let mut matched = matched;
                         matched.start.column = 0;
                         matched.start.row =
-                            matched.start.row.saturating_sub(CONTEXT_LINES);
+                            matched.start.row.saturating_sub(input.context_lines);
                         matched.end.row = cmp::min(
                             snapshot.max_point().row,
-                            matched.end.row + CONTEXT_LINES,
+                            matched.end.row.saturating_add(input.context_lines),
                         );
                         matched.end.column = snapshot.line_len(matched.end.row);
 
@@ -298,17 +330,45 @@ impl AgentTool for GrepTool {
                             .ok();
                     }
 
-                    if range.start.row == end_row {
-                        writeln!(output, "L{}", range.start.row + 1)
-                            .ok();
+                    let line_label = if range.start.row == end_row {
+                        format!("L{}", range.start.row + 1)
                     } else {
-                        writeln!(output, "L{}-{}", range.start.row + 1, end_row + 1)
-                            .ok();
-                    }
+                        format!("L{}-{}", range.start.row + 1, end_row + 1)
+                    };
+                    writeln!(output, "{line_label}").ok();
 
+                    let snippet: String = snapshot.text_for_range(range.clone()).collect();
                     output.push_str("```\n");
-                    output.extend(snapshot.text_for_range(range));
+                    output.push_str(&snippet);
                     output.push_str("\n```\n");
+
+                    if let Some(abs_path) = &abs_path {
+                        let uri = MentionUri::Selection {
+                            abs_path: Some(abs_path.clone()),
+                            line_range: range.start.row..=end_row,
+                            column: None,
+                        };
+                        content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                                format!("{}#{}", path.display(), line_label),
+                                uri.to_uri().to_string(),
+                            )),
+                        )));
+                        locations.push(
+                            acp::ToolCallLocation::new(abs_path).line(Some(range.start.row)),
+                        );
+                    }
+                    // Use a fence longer than any backtick run in the snippet so
+                    // matches containing code fences don't break the rendering.
+                    content.push(acp::ToolCallContent::Content(acp::Content::new(
+                        acp::ContentBlock::Text(acp::TextContent::new(
+                            MarkdownCodeBlock {
+                                tag: "",
+                                text: &snippet,
+                            }
+                            .to_string(),
+                        )),
+                    )));
 
                     if let Some(ancestor_range) = ancestor_range
                         && end_row < ancestor_range.end.row {
@@ -319,6 +379,14 @@ impl AgentTool for GrepTool {
 
                     matches_found += 1;
                 }
+            }
+
+            if !content.is_empty() {
+                event_stream.update_fields(
+                    acp::ToolCallUpdateFields::new()
+                        .content(content)
+                        .locations(locations),
+                );
             }
 
             if matches_found == 0 {
@@ -345,7 +413,8 @@ mod tests {
     use gpui::{TestAppContext, UpdateGlobal};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, SplicingVec};
+    use std::path::PathBuf;
     use unindent::Unindent;
     use util::path;
 
@@ -379,6 +448,8 @@ mod tests {
             include_pattern: Some("root/**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -398,6 +469,8 @@ mod tests {
             include_pattern: Some("root/**/src/**".to_string()),
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -420,6 +493,8 @@ mod tests {
             include_pattern: None,
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -456,6 +531,8 @@ mod tests {
             include_pattern: Some("**/*.txt".to_string()),
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -470,6 +547,8 @@ mod tests {
             include_pattern: Some("**/*.txt".to_string()),
             offset: 0,
             case_sensitive: true,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -484,6 +563,8 @@ mod tests {
             include_pattern: Some("**/*.txt".to_string()),
             offset: 0,
             case_sensitive: true,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -499,12 +580,179 @@ mod tests {
             include_pattern: Some("**/*.txt".to_string()),
             offset: 0,
             case_sensitive: true,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         assert!(
             result.contains("lowercase"),
             "Case-sensitive search should match lowercase text"
+        );
+    }
+
+    // The grep tool streams a clickable `file://` ResourceLink and a tool-call
+    // location for every match so each result opens the file at the matched line
+    // in the agent panel. The model-facing text output stays link-free.
+    #[gpui::test]
+    async fn test_grep_results_are_clickable_file_links(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": {
+                    "alpha.txt": "the needle is in alpha",
+                },
+                "beta.txt": "the needle is in beta",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let tool = Arc::new(GrepTool { project });
+        let (event_stream, mut events) = ToolCallEventStream::test();
+        let input = GrepToolInput {
+            regex: "needle".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
+        };
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+        let output = task.await.expect("grep tool should succeed");
+        let update = events.expect_update_fields().await;
+
+        // Model-facing output is unchanged: matches are rendered as markdown, but
+        // the clickable `file://` URIs only live in the tool-call UI content.
+        assert!(output.contains("## Matches in"));
+        assert!(
+            !output.contains("file://"),
+            "model-facing output should not embed file:// links, got:\n{output}"
+        );
+
+        // Pull the ResourceLink blocks (the clickable links) out of the content.
+        let content = update.content.expect("expected content blocks");
+        let links = content
+            .iter()
+            .filter_map(|block| match block {
+                acp::ToolCallContent::Content(inner) => match &inner.content {
+                    acp::ContentBlock::ResourceLink(link) => Some(link),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(links.len(), 2, "expected one resource link per match");
+
+        let selection_uri = |abs_path: &str| {
+            MentionUri::Selection {
+                abs_path: Some(PathBuf::from(abs_path)),
+                line_range: 0..=0,
+                column: None,
+            }
+            .to_uri()
+            .to_string()
+        };
+
+        let alpha_uri = selection_uri(path!("/root/src/alpha.txt"));
+        assert!(
+            links.iter().any(|link| {
+                link.name.replace('\\', "/") == "root/src/alpha.txt#L1" && link.uri == alpha_uri
+            }),
+            "missing clickable link for alpha.txt, got: {links:?}"
+        );
+
+        let beta_uri = selection_uri(path!("/root/beta.txt"));
+        assert!(
+            links
+                .iter()
+                .any(|link| link.name.replace('\\', "/") == "root/beta.txt#L1"
+                    && link.uri == beta_uri),
+            "missing clickable link for beta.txt, got: {links:?}"
+        );
+
+        // Each match also reports a location so the panel can reveal the file at
+        // the matched (0-based) row.
+        let locations = update.locations.expect("expected locations");
+        assert_eq!(locations.len(), 2);
+        assert!(
+            locations.iter().any(|location| {
+                location.path.to_string_lossy().replace('\\', "/")
+                    == path!("/root/src/alpha.txt").replace('\\', "/")
+                    && location.line == Some(0)
+            }),
+            "missing location for alpha.txt, got: {locations:?}"
+        );
+        assert!(
+            locations.iter().any(|location| {
+                location.path.to_string_lossy().replace('\\', "/")
+                    == path!("/root/beta.txt").replace('\\', "/")
+                    && location.line == Some(0)
+            }),
+            "missing location for beta.txt, got: {locations:?}"
+        );
+    }
+
+    // Snippets that themselves contain a ``` code fence (e.g. matches inside
+    // markdown) must be wrapped in a longer fence so they don't break out of the
+    // surrounding code block when rendered in the agent panel.
+    #[gpui::test]
+    async fn test_grep_snippet_fence_outlives_inner_backticks(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "doc.md": "before\n```\nNEEDLE inside fence\n```\nafter",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let tool = Arc::new(GrepTool { project });
+        let (event_stream, mut events) = ToolCallEventStream::test();
+        let input = GrepToolInput {
+            regex: "NEEDLE".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
+        };
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+        task.await.expect("grep tool should succeed");
+        let update = events.expect_update_fields().await;
+
+        // Find the snippet text block emitted alongside the clickable link.
+        let content = update.content.expect("expected content blocks");
+        let snippet = content
+            .iter()
+            .find_map(|block| match block {
+                acp::ToolCallContent::Content(inner) => match &inner.content {
+                    acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("expected a snippet text block in the tool-call content");
+
+        // The snippet embeds a three-backtick fence, so the wrapping fence must be
+        // at least four backticks long to avoid breaking out of the code block.
+        assert!(
+            snippet.contains("NEEDLE inside fence"),
+            "snippet should contain the matched line, got:\n{snippet}"
+        );
+        assert!(
+            snippet.starts_with("````\n"),
+            "snippet should be wrapped in a fence longer than the inner ```, got:\n{snippet}"
         );
     }
 
@@ -600,6 +848,8 @@ mod tests {
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -629,6 +879,8 @@ mod tests {
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -660,6 +912,8 @@ mod tests {
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -695,6 +949,8 @@ mod tests {
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -725,6 +981,8 @@ mod tests {
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -765,6 +1023,8 @@ mod tests {
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
         };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
@@ -784,6 +1044,67 @@ mod tests {
             "#
         .unindent();
         assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_context_options(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let text = "fn sample() {\n    needle();\n}";
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "main.rs": text }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(language::rust_lang())
+        });
+
+        for (regex, max_ancestor_lines, context_lines, line_label, snippet, remaining_lines) in [
+            ("sample", 0, 1, "L1", "fn sample() {", Some(2)),
+            (
+                "sample",
+                1,
+                0,
+                "L1-2",
+                "fn sample() {\n    needle();",
+                Some(1),
+            ),
+            (
+                r"sample\(\) \{\n    needle",
+                0,
+                0,
+                "L1-2",
+                "fn sample() {\n    needle();",
+                None,
+            ),
+            ("needle", 0, 0, "L2", "    needle();", None),
+            ("needle", 0, 1, "L1-3", text, None),
+            ("needle", u32::MAX, 0, "L1-3", text, None),
+            ("needle", 0, u32::MAX, "L1-3", text, None),
+        ] {
+            let input = serde_json::from_value::<GrepToolInput>(json!({
+                "regex": regex,
+                "max_ancestor_lines": max_ancestor_lines,
+                "context_lines": context_lines,
+            }))
+            .expect("valid grep input");
+            let result = run_grep_tool(input, project.clone(), cx).await;
+            let mut expected = format!(
+                "Found 1 matches:\n\n## Matches in root/main.rs\n\n### fn sample › {line_label}\n```\n{snippet}\n```\n"
+            );
+            if let Some(remaining_lines) = remaining_lines {
+                writeln!(
+                    expected,
+                    "\n{remaining_lines} lines remaining in ancestor node. Read the file to see all."
+                )
+                .expect("write to string");
+            }
+            assert_eq!(
+                result, expected,
+                "regex: {regex}, max_ancestor_lines: {max_ancestor_lines}, context_lines: {context_lines}"
+            );
+        }
     }
 
     async fn run_grep_tool(
@@ -853,10 +1174,10 @@ mod tests {
             use settings::SettingsStore;
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions = Some(vec![
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
-                    ]);
+                    ]));
                     settings.project.worktree.private_files = Some(
                         vec![
                             "**/.mysecrets".to_string(),
@@ -878,6 +1199,8 @@ mod tests {
                 include_pattern: None,
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -896,6 +1219,8 @@ mod tests {
                 include_pattern: None,
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -914,6 +1239,8 @@ mod tests {
                 include_pattern: None,
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -931,6 +1258,8 @@ mod tests {
                 include_pattern: None,
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -949,6 +1278,8 @@ mod tests {
                 include_pattern: None,
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -966,6 +1297,8 @@ mod tests {
                 include_pattern: None,
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -984,6 +1317,8 @@ mod tests {
                 include_pattern: None,
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -1002,6 +1337,8 @@ mod tests {
                 include_pattern: None,
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -1020,6 +1357,8 @@ mod tests {
                 include_pattern: Some("../outside_project/**/*.rs".to_string()),
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -1088,8 +1427,10 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                        "**/.git".to_string(),
+                        "**/node_modules".to_string(),
+                    ]));
                     settings.project.worktree.private_files =
                         Some(vec!["**/.env".to_string()].into());
                 });
@@ -1113,6 +1454,8 @@ mod tests {
                 include_pattern: None,
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,
@@ -1167,6 +1510,8 @@ mod tests {
                 include_pattern: Some("worktree1/**/*.rs".to_string()),
                 offset: 0,
                 case_sensitive: false,
+                max_ancestor_lines: default_max_ancestor_lines(),
+                context_lines: default_context_lines(),
             },
             project.clone(),
             cx,

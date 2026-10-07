@@ -4,7 +4,7 @@ use std::{
 };
 
 use agent::{ThreadStore, ZED_AGENT_ID};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
@@ -25,7 +25,7 @@ pub use project::WorktreePaths;
 use project::{AgentId, linked_worktree_short_name};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
-use util::ResultExt as _;
+use util::{ResultExt as _, paths::PathStyle};
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
 use crate::DEFAULT_THREAD_TITLE;
@@ -347,6 +347,20 @@ impl ThreadMetadata {
     pub fn main_worktree_paths(&self) -> &PathList {
         self.worktree_paths.main_worktree_path_list()
     }
+
+    pub fn references_folder_path(&self, path: &Path) -> bool {
+        self.folder_paths()
+            .paths()
+            .iter()
+            .any(|folder_path| folder_path.as_path() == path)
+    }
+
+    pub fn matches_remote_connection(
+        &self,
+        remote_connection: Option<&RemoteConnectionOptions>,
+    ) -> bool {
+        same_remote_connection_identity(self.remote_connection.as_ref(), remote_connection)
+    }
 }
 
 /// Derives worktree display info from a thread's stored path list.
@@ -370,7 +384,8 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
         let is_linked = main_path != folder_path;
 
         if is_linked {
-            let short_name = linked_worktree_short_name(main_path, folder_path).unwrap_or_default();
+            let short_name = linked_worktree_short_name(main_path, folder_path, PathStyle::local())
+                .unwrap_or_default();
             let project_name = main_path
                 .file_name()
                 .map(|n| SharedString::from(n.to_string_lossy().to_string()))
@@ -587,6 +602,12 @@ impl ThreadMetadataStore {
         self.threads.values()
     }
 
+    pub fn reload_task(&self) -> Shared<Task<()>> {
+        self.reload_task
+            .clone()
+            .unwrap_or_else(|| Task::ready(()).shared())
+    }
+
     /// Returns all archived threads.
     pub fn archived_entries(&self) -> impl Iterator<Item = &ThreadMetadata> + '_ {
         self.entries().filter(|t| t.archived)
@@ -609,9 +630,7 @@ impl ThreadMetadataStore {
             .flatten()
             .filter_map(|s| self.threads.get(s))
             .filter(|s| !s.archived)
-            .filter(move |s| {
-                same_remote_connection_identity(s.remote_connection.as_ref(), remote_connection)
-            })
+            .filter(move |s| s.matches_remote_connection(remote_connection))
     }
 
     /// Returns threads whose `main_worktree_paths` matches the given path list
@@ -633,9 +652,7 @@ impl ThreadMetadataStore {
             .flatten()
             .filter_map(|s| self.threads.get(s))
             .filter(|s| !s.archived)
-            .filter(move |s| {
-                same_remote_connection_identity(s.remote_connection.as_ref(), remote_connection)
-            })
+            .filter(move |s| s.matches_remote_connection(remote_connection))
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
@@ -697,6 +714,26 @@ impl ThreadMetadataStore {
         }
         let metadata = ThreadMetadata {
             title_override: Some(title_override),
+            ..existing.clone()
+        };
+        self.save(metadata, cx);
+    }
+
+    pub fn set_generated_title(
+        &mut self,
+        thread_id: ThreadId,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(existing) = self.entry(thread_id) else {
+            return;
+        };
+        if existing.title.as_ref() == Some(&title) && existing.title_override.is_none() {
+            return;
+        }
+        let metadata = ThreadMetadata {
+            title: Some(title),
+            title_override: None,
             ..existing.clone()
         };
         self.save(metadata, cx);
@@ -844,27 +881,36 @@ impl ThreadMetadataStore {
         self.in_flight_archives.remove(&thread_id);
     }
 
-    /// Returns `true` if any unarchived thread other than `current_session_id`
+    /// Returns `true` if any unarchived thread other than `thread_id`
     /// references `path` in its folder paths. Used to determine whether a
     /// worktree can safely be removed from disk.
-    pub fn path_is_referenced_by_other_unarchived_threads(
+    pub fn path_is_referenced_by_unarchived_threads(
         &self,
-        thread_id: ThreadId,
+        thread_id: Option<ThreadId>,
         path: &Path,
         remote_connection: Option<&RemoteConnectionOptions>,
     ) -> bool {
+        self.path_is_referenced_by_unarchived_threads_matching(
+            thread_id,
+            path,
+            remote_connection,
+            |_| true,
+        )
+    }
+
+    pub fn path_is_referenced_by_unarchived_threads_matching(
+        &self,
+        thread_id: Option<ThreadId>,
+        path: &Path,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        matches: impl Fn(&ThreadMetadata) -> bool,
+    ) -> bool {
         self.entries().any(|thread| {
-            thread.thread_id != thread_id
+            Some(thread.thread_id) != thread_id
                 && !thread.archived
-                && same_remote_connection_identity(
-                    thread.remote_connection.as_ref(),
-                    remote_connection,
-                )
-                && thread
-                    .folder_paths()
-                    .paths()
-                    .iter()
-                    .any(|other_path| other_path.as_path() == path)
+                && thread.matches_remote_connection(remote_connection)
+                && thread.references_folder_path(path)
+                && matches(thread)
         })
     }
 
@@ -1115,6 +1161,26 @@ impl ThreadMetadataStore {
             .log_err();
         crate::draft_prompt_store::delete(thread_id, cx).detach_and_log_err(cx);
         cx.notify();
+    }
+
+    pub fn unarchived_draft_ids_matching(
+        &self,
+        matches: impl Fn(&ThreadMetadata) -> bool,
+    ) -> Vec<ThreadId> {
+        self.entries()
+            .filter(|thread| thread.is_draft() && !thread.archived && matches(thread))
+            .map(|thread| thread.thread_id)
+            .collect()
+    }
+
+    pub fn delete_all(
+        &mut self,
+        thread_ids: impl IntoIterator<Item = ThreadId>,
+        cx: &mut Context<Self>,
+    ) {
+        for thread_id in thread_ids {
+            self.delete(thread_id, cx);
+        }
     }
 
     fn new(db: ThreadMetadataDb, cx: &mut Context<Self>) -> Self {
@@ -1759,7 +1825,7 @@ mod tests {
     use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::DbThread;
-    use agent_client_protocol::schema as acp;
+    use agent_client_protocol::schema::{v1 as acp, v2 as acp_v2};
     use gpui::{TestAppContext, VisualTestContext};
     use project::FakeFs;
     use project::Project;
@@ -1779,13 +1845,14 @@ mod tests {
             request_token_usage: Default::default(),
             model: None,
             profile: None,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            sandboxed_terminal_temp_dir: None,
+            sandbox_grants: Default::default(),
         }
     }
 
@@ -1842,7 +1909,7 @@ mod tests {
             .unwrap();
         let mut vcx = VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel = workspace_entity.update_in(&mut vcx, |workspace, window, cx| {
-            cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| crate::AgentPanel::new(workspace, window, cx))
         });
         (panel, vcx)
     }
@@ -1936,6 +2003,39 @@ mod tests {
             assert_eq!(metadata.title.as_deref(), Some("Agent Generated Title"));
             assert_eq!(metadata.title_override.as_deref(), Some("User Title"));
             assert_eq!(metadata.display_title().as_ref(), "User Title");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_store_set_generated_title_clears_title_override(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut metadata = make_metadata(
+            "session-1",
+            "Old Generated Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        metadata.title_override = Some("User Title".into());
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.set_generated_title(thread_id, "New Generated Title".into(), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let metadata = store.entry(thread_id).expect("metadata should be cached");
+            assert_eq!(metadata.title.as_deref(), Some("New Generated Title"));
+            assert_eq!(metadata.title_override, None);
+            assert_eq!(metadata.display_title().as_ref(), "New Generated Title");
         });
     }
 
@@ -2759,7 +2859,7 @@ mod tests {
                     project.clone(),
                     action_log,
                     subagent_session_id.clone(),
-                    watch::Receiver::constant(acp::PromptCapabilities::new()),
+                    watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
                     cx,
                 )
             })

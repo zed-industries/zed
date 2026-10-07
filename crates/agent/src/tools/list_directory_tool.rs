@@ -3,7 +3,7 @@ use super::tool_permissions::{
     resolve_global_skill_path, resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
 use futures::StreamExt as _;
@@ -18,11 +18,13 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 /// Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.
+///
+/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
     /// The fully-qualified path of the directory to list in the project.
     ///
-    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill directory under `~/.agents/skills`.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -40,6 +42,10 @@ pub struct ListDirectoryToolInput {
     /// - bar
     ///
     /// If you wanna list contents in the directory `foo/baz`, you should use the path `foo/baz`.
+    /// </example>
+    ///
+    /// <example>
+    /// To list a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.
     /// </example>
     pub path: String,
 }
@@ -234,7 +240,7 @@ impl AgentTool for ListDirectoryTool {
 
             // Fast path: a global skill resource lives outside any worktree, so
             // standard project-path resolution would refuse it. If the path
-            // resolves under the global skills tree, list it directly.
+            // expands and resolves under the global skills tree, list it directly.
             if let Some(skill_path) =
                 resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
             {
@@ -264,21 +270,21 @@ impl AgentTool for ListDirectoryTool {
                 let worktree = project
                     .worktree_for_id(project_path.worktree_id, cx)
                     .with_context(|| {
-                        format!("{} is not in a known worktree", &input.path)
+                        format!("{} is not in a known worktree", input.path)
                     })?;
 
                 let global_settings = WorktreeSettings::get_global(cx);
                 if global_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's global `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if global_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's global `private_files` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -286,14 +292,14 @@ impl AgentTool for ListDirectoryTool {
                 if worktree_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's worktree `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if worktree_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's worktree `private_paths` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -336,7 +342,7 @@ mod tests {
     use indoc::indoc;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, SplicingVec};
     use std::path::PathBuf;
     use util::path;
 
@@ -572,11 +578,11 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions = Some(vec![
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
                         "**/.hidden_subdir".to_string(),
-                    ]);
+                    ]));
                     settings.project.worktree.private_files = Some(
                         vec![
                             "**/.mysecrets".to_string(),
@@ -734,8 +740,10 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                        "**/.git".to_string(),
+                        "**/node_modules".to_string(),
+                    ]));
                     settings.project.worktree.private_files =
                         Some(vec!["**/.env".to_string()].into());
                 });

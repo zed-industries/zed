@@ -1,7 +1,9 @@
+use std::borrow::Cow;
 use std::ops::Range;
 
+use crate::utils::replace_control_characters;
 use crate::{LabelLike, prelude::*};
-use gpui::{HighlightStyle, StyleRefinement, StyledText};
+use gpui::{HighlightStyle, StyleRefinement, StyledText, TextAlign};
 
 /// A struct representing a label element in the UI.
 ///
@@ -73,6 +75,19 @@ impl Label {
         self.base = self.base.truncate_start();
         self
     }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    pub fn truncate_middle(mut self) -> Self {
+        self.base = self.base.truncate_middle();
+        self
+    }
+
+    /// Wraps the text and truncates it with an ellipsis (`…`) at the end of
+    /// the last visible line if it exceeds the given number of lines.
+    pub fn line_clamp(mut self, lines: usize) -> Self {
+        self.base = self.base.line_clamp(lines);
+        self
+    }
 }
 
 // Style methods.
@@ -84,6 +99,11 @@ impl Label {
     gpui::margin_style_methods!({
         visibility: pub
     });
+
+    pub fn text_center(mut self) -> Self {
+        self.style().text.text_align = Some(TextAlign::Center);
+        self
+    }
 
     pub fn flex_1(mut self) -> Self {
         self.style().flex_grow = Some(1.);
@@ -226,7 +246,9 @@ impl LabelCommon for Label {
     }
 
     fn single_line(mut self) -> Self {
-        self.label = SharedString::from(self.label.replace('\n', "⏎"));
+        if let Cow::Owned(replaced) = replace_control_characters(&self.label) {
+            self.label = SharedString::from(replaced);
+        }
         self.base = self.base.single_line();
         self
     }
@@ -315,6 +337,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_single_line_replaces_control_characters() {
+        // File names are allowed to contain these, and rendering them verbatim
+        // breaks the layout of tabs and project panel entries.
+        let label = Label::new("a\nb\rc\td").single_line();
+        assert_eq!(label.label, "a⏎b␍c␉d");
+    }
+
+    #[test]
+    fn test_single_line_leaves_printable_text_alone() {
+        let label = Label::new("main.rs").single_line();
+        assert_eq!(label.label, "main.rs");
+    }
+
+    #[test]
     fn test_parse_backtick_spans_no_backticks() {
         assert_eq!(parse_backtick_spans("plain text"), None);
     }
@@ -352,13 +388,13 @@ impl Component for Label {
         ComponentScope::Typography
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A text label component that supports various styles, sizes, and formatting options.")
+    fn description() -> &'static str {
+        "A text label component that supports various styles, \
+        sizes, and formatting options."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
                 .gap_6()
                 .children(vec![
                     example_group_with_title(
@@ -405,6 +441,5 @@ impl Component for Label {
                     ),
                 ])
                 .into_any_element()
-        )
     }
 }

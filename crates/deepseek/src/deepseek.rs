@@ -4,7 +4,9 @@ use futures::{
     io::BufReader,
     stream::{BoxStream, StreamExt},
 };
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
@@ -48,8 +50,8 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum Model {
-    #[serde(rename = "deepseek-v4-flash")]
-    V4Flash,
+    #[serde(rename = "deepseek-flash")]
+    V4_1Flash,
     #[serde(rename = "deepseek-v4-pro")]
     #[default]
     V4Pro,
@@ -65,12 +67,12 @@ pub enum Model {
 
 impl Model {
     pub fn default_fast() -> Self {
-        Model::V4Flash
+        Model::V4_1Flash
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "deepseek-v4-flash" => Ok(Self::V4Flash),
+            "deepseek-flash" => Ok(Self::V4_1Flash),
             "deepseek-v4-pro" => Ok(Self::V4Pro),
             _ => anyhow::bail!("invalid model id {id}"),
         }
@@ -78,7 +80,7 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Self::V4Flash => "deepseek-v4-flash",
+            Self::V4_1Flash => "deepseek-flash",
             Self::V4Pro => "deepseek-v4-pro",
             Self::Custom { name, .. } => name,
         }
@@ -86,7 +88,7 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::V4Flash => "DeepSeek V4 Flash",
+            Self::V4_1Flash => "DeepSeek V4.1 Flash",
             Self::V4Pro => "DeepSeek V4 Pro",
             Self::Custom {
                 name, display_name, ..
@@ -94,16 +96,20 @@ impl Model {
         }
     }
 
+    pub fn supports_images(&self) -> bool {
+        matches!(self, Self::V4_1Flash)
+    }
+
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::V4Flash | Self::V4Pro => 1_000_000,
+            Self::V4_1Flash | Self::V4Pro => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Self::V4Flash | Self::V4Pro => Some(384_000),
+            Self::V4_1Flash | Self::V4Pro => Some(384_000),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -148,6 +154,7 @@ pub enum ThinkingType {
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
+    Low,
     High,
     Max,
 }
@@ -192,15 +199,60 @@ pub enum RequestMessage {
         reasoning_content: Option<String>,
     },
     User {
-        content: String,
+        content: MessageContent,
     },
     System {
         content: String,
     },
     Tool {
-        content: String,
+        content: MessageContent,
         tool_call_id: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Plain(String),
+    Multipart(Vec<MessagePart>),
+}
+
+impl MessageContent {
+    pub fn push_part(&mut self, part: MessagePart) {
+        match self {
+            MessageContent::Plain(text) => {
+                let text = std::mem::take(text);
+                *self = MessageContent::Multipart(vec![MessagePart::Text { text }, part]);
+            }
+            MessageContent::Multipart(parts) => parts.push(part),
+        }
+    }
+}
+
+impl From<Vec<MessagePart>> for MessageContent {
+    fn from(mut parts: Vec<MessagePart>) -> Self {
+        if let [MessagePart::Text { text }] = parts.as_mut_slice() {
+            MessageContent::Plain(std::mem::take(text))
+        } else {
+            MessageContent::Multipart(parts)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(tag = "type")]
+pub enum MessagePart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    Image { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct ImageUrl {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -297,15 +349,16 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
 
     if response.status().is_success() {
@@ -319,10 +372,7 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            match serde_json::from_str(line) {
-                                Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(error))),
-                            }
+                            Some(serde_json::from_str(line).map_err(Into::into))
                         }
                     }
                     Err(error) => Some(Err(anyhow!(error))),

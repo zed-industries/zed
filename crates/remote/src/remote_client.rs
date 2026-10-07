@@ -71,6 +71,16 @@ impl RemoteOs {
     pub fn is_windows(&self) -> bool {
         matches!(self, RemoteOs::Windows)
     }
+
+    /// A human-readable OS name for telemetry. Matches `client::telemetry::os_name`
+    /// ignoring the compositor (as we run headless on remotes).
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            RemoteOs::Linux => "Linux",
+            RemoteOs::MacOs => "macOS",
+            RemoteOs::Windows => "Windows",
+        }
+    }
 }
 
 impl std::fmt::Display for RemoteOs {
@@ -127,6 +137,7 @@ pub trait RemoteClientDelegate: Send + Sync {
         &self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        cancellation: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
     );
     fn get_download_url(
@@ -320,12 +331,15 @@ pub struct RemoteClient {
     unique_identifier: String,
     connection_options: RemoteConnectionOptions,
     path_style: PathStyle,
+    platform: RemotePlatform,
+    os_version: Option<String>,
     state: Option<State>,
 }
 
 #[derive(Debug)]
 pub enum RemoteClientEvent {
     Disconnected { server_not_running: bool },
+    Reconnected,
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
@@ -371,7 +385,7 @@ pub async fn connect(
 ) -> Result<Arc<dyn RemoteConnection>> {
     cx.update(|cx| {
         cx.update_default_global(|pool: &mut ConnectionPool, cx| {
-            pool.connect(connection_options.clone(), delegate.clone(), cx)
+            pool.connect(connection_options.clone(), None, delegate.clone(), cx)
         })
     })
     .await
@@ -418,11 +432,17 @@ impl RemoteClient {
                 });
 
                 let path_style = remote_connection.path_style();
+                let platform = remote_connection.remote_platform();
+                let os_version = remote_connection.remote_os_version();
+                let connection_options = remote_connection.connection_options();
+                let connection_type = connection_options.connection_type();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
-                    connection_options: remote_connection.connection_options(),
+                    connection_options,
                     path_style,
+                    platform,
+                    os_version: os_version.clone(),
                     state: Some(State::Connecting),
                 });
 
@@ -490,6 +510,18 @@ impl RemoteClient {
                         heartbeat_task,
                     });
                 });
+
+                // Use the same `remote_*` property schema as the forwarded
+                // remote events (see `client::telemetry::report_remote_event`)
+                // so all remote-origin telemetry can be queried uniformly.
+                telemetry::event!(
+                    "Remote Connection Established",
+                    remote = true,
+                    remote_connection_type = connection_type,
+                    remote_os_name = platform.os.display_name(),
+                    remote_os_version = os_version,
+                    remote_architecture = platform.arch.as_str(),
+                );
 
                 Ok(Some(this))
             });
@@ -652,7 +684,12 @@ impl RemoteClient {
             let (remote_connection, io_task) = match async {
                 let remote_connection = cx
                     .update_global(|pool: &mut ConnectionPool, cx| {
-                        pool.connect(connection_options, delegate.clone(), cx)
+                        pool.connect(
+                            connection_options,
+                            Some(remote_connection.remote_platform().os),
+                            delegate.clone(),
+                            cx,
+                        )
                     })
                     .await
                     .map_err(|error| error.cloned())?;
@@ -694,6 +731,8 @@ impl RemoteClient {
         cx.spawn(async move |this, cx| {
             let new_state = reconnect_task.await;
             this.update(cx, |this, cx| {
+                let reconnected = this.state_is(State::is_reconnecting)
+                    && matches!(&new_state, State::Connected { .. });
                 this.try_set_state(cx, |old_state| {
                     if old_state.is_reconnecting() {
                         match &new_state {
@@ -722,6 +761,10 @@ impl RemoteClient {
                         None
                     }
                 });
+
+                if reconnected {
+                    cx.emit(RemoteClientEvent::Reconnected);
+                }
 
                 if this.state_is(State::is_reconnect_failed) {
                     this.reconnect(cx)
@@ -891,7 +934,7 @@ impl RemoteClient {
     }
 
     fn set_state(&mut self, state: State, cx: &mut Context<Self>) {
-        log::info!("setting state to '{}'", &state);
+        log::info!("setting state to '{state}'");
 
         let is_reconnect_exhausted = state.is_reconnect_exhausted();
         let is_server_not_running = state.is_server_not_running();
@@ -924,24 +967,6 @@ impl RemoteClient {
     }
 
     pub fn build_command(
-        &self,
-        program: Option<String>,
-        args: &[String],
-        env: &HashMap<String, String>,
-        working_dir: Option<String>,
-        port_forward: Option<(u16, String, u16)>,
-    ) -> Result<CommandTemplate> {
-        self.build_command_with_options(
-            program,
-            args,
-            env,
-            working_dir,
-            port_forward,
-            Interactive::Yes,
-        )
-    }
-
-    pub fn build_command_with_options(
         &self,
         program: Option<String>,
         args: &[String],
@@ -1010,6 +1035,24 @@ impl RemoteClient {
 
     pub fn path_style(&self) -> PathStyle {
         self.path_style
+    }
+
+    /// The platform (OS and architecture) of the remote host, detected during
+    /// connection setup.
+    pub fn remote_platform(&self) -> RemotePlatform {
+        self.platform
+    }
+
+    /// The OS version of the remote host (e.g. `"ubuntu 24.04"`), detected
+    /// during connection setup. `None` if it could not be determined.
+    pub fn remote_os_version(&self) -> Option<String> {
+        self.os_version.clone()
+    }
+
+    /// A stable identifier for the kind of remote connection (e.g. `"ssh"`,
+    /// `"wsl"`, `"docker"`, `"podman"`).
+    pub fn connection_type(&self) -> &'static str {
+        self.connection_options.connection_type()
     }
 
     /// Forcibly disconnects from the remote server by killing the underlying connection.
@@ -1193,6 +1236,7 @@ impl ConnectionPool {
     fn connect(
         &mut self,
         opts: RemoteConnectionOptions,
+        known_os: Option<RemoteOs>,
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
@@ -1232,7 +1276,7 @@ impl ConnectionPool {
                 async move |cx| {
                     let connection = match opts.clone() {
                         RemoteConnectionOptions::Ssh(opts) => {
-                            SshRemoteConnection::new(opts, delegate, cx)
+                            SshRemoteConnection::new(opts, known_os, delegate, cx)
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
@@ -1316,6 +1360,34 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
     }
+
+    /// A stable identifier for the kind of remote connection, suitable for
+    /// telemetry (e.g. `"ssh"`, `"wsl"`, `"docker"`, `"podman"`).
+    pub fn connection_type(&self) -> &'static str {
+        match self {
+            RemoteConnectionOptions::Ssh(_) => "ssh",
+            RemoteConnectionOptions::Wsl(_) => "wsl",
+            RemoteConnectionOptions::Docker(opts) => {
+                if opts.use_podman {
+                    "podman"
+                } else {
+                    "docker"
+                }
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => "mock",
+        }
+    }
+
+    pub fn host(&self) -> String {
+        match self {
+            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
+            RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1343,6 +1415,38 @@ mod tests {
         });
 
         assert_eq!(options.display_name(), "1.2.3.4");
+    }
+
+    #[test]
+    fn test_connection_type() {
+        assert_eq!(
+            RemoteConnectionOptions::Ssh(SshConnectionOptions::default()).connection_type(),
+            "ssh"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: None,
+            })
+            .connection_type(),
+            "wsl"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: false,
+                ..Default::default()
+            })
+            .connection_type(),
+            "docker"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: true,
+                ..Default::default()
+            })
+            .connection_type(),
+            "podman"
+        );
     }
 
     #[gpui::test]
@@ -1475,6 +1579,17 @@ mod tests {
             "stream channel should be removed once the consumer has dropped the stream"
         );
     }
+
+    #[test]
+    fn test_ssh_host_ignores_nickname() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            nickname: Some("My Cool Project".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(options.host(), "1.2.3.4");
+    }
 }
 
 impl From<SshConnectionOptions> for RemoteConnectionOptions {
@@ -1543,6 +1658,11 @@ pub trait RemoteConnection: Send + Sync {
     ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
+    /// The remote platform (OS and architecture), detected during connection setup.
+    fn remote_platform(&self) -> RemotePlatform;
+    /// The remote host's OS version (e.g. `"ubuntu 24.04"` or `"15.6.1"`),
+    /// detected during connection setup. `None` if it could not be determined.
+    fn remote_os_version(&self) -> Option<String>;
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
     fn has_wsl_interop(&self) -> bool;
@@ -1555,7 +1675,7 @@ type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, ones
 type StreamResponseChannels =
     Arc<Mutex<HashMap<MessageId, UnboundedSender<(Result<Envelope>, oneshot::Sender<()>)>>>>;
 
-struct Signal<T> {
+struct Signal<T: 'static> {
     tx: Mutex<Option<oneshot::Sender<T>>>,
     rx: Shared<Task<Option<T>>>,
 }

@@ -138,7 +138,12 @@ impl Component for Chip {
         ComponentScope::DataDisplay
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A small, compact label container used to display tags, statuses, \
+        or other short informative pieces of metadata, optionally with an icon."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let chip_examples = vec![
             single_example("Default", Chip::new("Chip Example").into_any_element()),
             single_example(
@@ -162,6 +167,6 @@ impl Component for Chip {
             ),
         ];
 
-        Some(example_group(chip_examples).vertical().into_any_element())
+        example_group(chip_examples).vertical().into_any_element()
     }
 }
