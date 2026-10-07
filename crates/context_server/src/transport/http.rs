@@ -1,11 +1,15 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use gpui::BackgroundExecutor;
-use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
-use std::{pin::Pin, sync::Arc};
+use std::{
+    pin::{Pin, pin},
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
@@ -48,6 +52,12 @@ pub struct HttpTransport {
     /// requires clients to echo this in the `MCP-Protocol-Version` header on
     /// every subsequent request.
     protocol_version: Arc<SyncMutex<Option<String>>>,
+    /// Bumped by `invalidate`, i.e. when a client generation using this
+    /// transport is torn down. SSE reader tasks compare their captured
+    /// generation against this and stop delivering messages once their
+    /// generation is stale — otherwise a stream from a torn-down client could
+    /// still feed responses to the successor.
+    generation: Arc<AtomicU64>,
     executor: BackgroundExecutor,
     response_tx: async_channel::Sender<String>,
     response_rx: async_channel::Receiver<String>,
@@ -62,7 +72,28 @@ pub struct HttpTransport {
     /// the start of each send so it always describes the most recent attempt.
     /// See [`Transport::auth_challenge`].
     auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
+    /// Total deadline applied to every HTTP request, slightly above the
+    /// client-level request timeout. Without it a request written into a stale
+    /// keep-alive connection that never answers would hang at the HTTP layer
+    /// until the client-level timer fires — producing no transport error and
+    /// leaving the dead connection in the pool for the next request to reuse.
+    request_deadline: Option<Duration>,
 }
+
+/// Grace added on top of the client-level request timeout when computing the
+/// HTTP request deadline, so the MCP-level timeout (which can carry a
+/// cancellation) wins the race against the transport-level deadline.
+const REQUEST_DEADLINE_GRACE: Duration = Duration::from_secs(10);
+
+/// Maximum time a response may deliver no bytes: neither the response body
+/// (JSON) nor an SSE stream may stall for this long. Note that the total
+/// request deadline below still bounds the *entire* request including a
+/// healthy, actively-streaming body — the MCP-level request timeout usually
+/// fires first, so this idle timeout mainly catches stalls earlier. A
+/// long-running tool call that sends nothing until its final JSON answer is
+/// also bounded by this — servers that support long operations should stream
+/// SSE progress or keepalive pings (which are counted as activity).
+const RESPONSE_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl HttpTransport {
     pub fn new(
@@ -70,8 +101,16 @@ impl HttpTransport {
         endpoint: String,
         headers: HashMap<String, String>,
         executor: BackgroundExecutor,
+        request_timeout: Option<Duration>,
     ) -> Self {
-        Self::new_with_token_provider(http_client, endpoint, headers, executor, None)
+        Self::new_with_token_provider(
+            http_client,
+            endpoint,
+            headers,
+            executor,
+            None,
+            request_timeout,
+        )
     }
 
     pub fn new_with_token_provider(
@@ -80,6 +119,7 @@ impl HttpTransport {
         headers: HashMap<String, String>,
         executor: BackgroundExecutor,
         token_provider: Option<Arc<dyn OAuthTokenProvider>>,
+        request_timeout: Option<Duration>,
     ) -> Self {
         let (response_tx, response_rx) = async_channel::unbounded();
         let (error_tx, error_rx) = async_channel::unbounded();
@@ -90,6 +130,7 @@ impl HttpTransport {
             endpoint,
             session_id: Arc::new(SyncMutex::new(None)),
             protocol_version: Arc::new(SyncMutex::new(None)),
+            generation: Arc::new(AtomicU64::new(0)),
             response_tx,
             response_rx,
             error_tx,
@@ -97,13 +138,20 @@ impl HttpTransport {
             headers,
             token_provider,
             auth_challenge: SyncMutex::new(None),
+            request_deadline: request_timeout.map(|timeout| timeout + REQUEST_DEADLINE_GRACE),
         }
     }
 
     /// Build a POST request for the given message body, attaching all standard
     /// headers (content-type, accept, session ID, static headers, and bearer
-    /// token if available).
-    fn build_request(&self, message: &[u8]) -> Result<http_client::Request<AsyncBody>> {
+    /// token if available). `initialize` requests never carry a session ID —
+    /// per the MCP spec, and so a re-initialize after a session expiry cannot
+    /// be rejected for presenting a stale one.
+    fn build_request(
+        &self,
+        message: &[u8],
+        is_initialize: bool,
+    ) -> Result<http_client::Request<AsyncBody>> {
         let mut request_builder = Request::builder()
             .method(Method::POST)
             .uri(&self.endpoint)
@@ -112,6 +160,10 @@ impl HttpTransport {
                 "Accept",
                 format!("{}, {}", JSON_MIME_TYPE, EVENT_STREAM_MIME_TYPE),
             );
+
+        if let Some(deadline) = self.request_deadline {
+            request_builder = request_builder.timeout(deadline);
+        }
 
         for (key, value) in &self.headers {
             request_builder = request_builder.header(key.as_str(), value.as_str());
@@ -123,7 +175,9 @@ impl HttpTransport {
         }
 
         // Add session ID if we have one (except for initialize).
-        if let Some(ref session_id) = *self.session_id.lock() {
+        if let Some(ref session_id) = *self.session_id.lock()
+            && !is_initialize
+        {
             request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
         }
 
@@ -146,6 +200,34 @@ impl HttpTransport {
         TransportError::AuthRequired { www_authenticate }.into()
     }
 
+    /// Read the whole response body, failing if it delivers no bytes for
+    /// [`RESPONSE_IDLE_TIMEOUT`] instead of hanging until the total request
+    /// deadline.
+    async fn read_body_with_idle_timeout(
+        &self,
+        response: &mut Response<AsyncBody>,
+    ) -> Result<String> {
+        let mut body = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let read = pin!(futures::AsyncReadExt::read(response.body_mut(), &mut chunk));
+            let mut read = read.fuse();
+            let bytes_read = futures::select_biased! {
+                bytes = read => bytes?,
+                _ = self.executor.timer(RESPONSE_IDLE_TIMEOUT).fuse() => {
+                    anyhow::bail!(
+                        "context server response body stalled for {RESPONSE_IDLE_TIMEOUT:?}"
+                    );
+                }
+            };
+            if bytes_read == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..bytes_read]);
+        }
+        Ok(String::from_utf8_lossy(&body).into_owned())
+    }
+
     /// Send a message and handle the response based on content type.
     async fn send_message(&self, message: String) -> Result<()> {
         // The same server instance can be restarted over this transport; a
@@ -153,8 +235,25 @@ impl HttpTransport {
         // observed by the current one.
         *self.auth_challenge.lock() = None;
 
-        let is_notification =
-            !message.contains("\"id\":") || message.contains("notifications/initialized");
+        // Classify the message structurally from the parsed JSON: a request
+        // carries an `id`, a notification does not. Substring matching could
+        // false-positive on a tool call whose arguments embed the literal
+        // `"method":"initialize"` JSON, which — combined with the
+        // session-rejection check below — would tear down a healthy session.
+        let parsed = serde_json::from_str::<serde_json::Value>(&message).ok();
+        let is_initialize = parsed.as_ref().is_some_and(|value| {
+            value.get("method").and_then(|method| method.as_str()) == Some("initialize")
+        });
+        let is_notification = parsed
+            .as_ref()
+            .is_some_and(|value| value.get("method").is_some() && value.get("id").is_none());
+        if is_initialize {
+            // Never present a stale session from a previous generation: the
+            // MCP spec requires initialize to start a fresh session, and some
+            // servers answer 400 otherwise. A session id in the initialize
+            // response repopulates this.
+            *self.session_id.lock() = None;
+        }
 
         // If we currently have no access token, try refreshing before sending
         // the request so restored but expired sessions do not need an initial
@@ -165,7 +264,7 @@ impl HttpTransport {
             }
         }
 
-        let request = self.build_request(message.as_bytes())?;
+        let request = self.build_request(message.as_bytes(), is_initialize)?;
         let mut response = self.http_client.send(request).await?;
 
         // On 401, try refreshing the token and retry once.
@@ -187,7 +286,7 @@ impl HttpTransport {
             if let Some(ref provider) = self.token_provider {
                 if provider.try_refresh().await.unwrap_or(false) {
                     // Retry with the refreshed token.
-                    let retry_request = self.build_request(message.as_bytes())?;
+                    let retry_request = self.build_request(message.as_bytes(), is_initialize)?;
                     response = self.http_client.send(retry_request).await?;
 
                     // If still 401 after refresh, give up.
@@ -223,10 +322,11 @@ impl HttpTransport {
 
                 match content_type {
                     Some(ct) if ct.starts_with(JSON_MIME_TYPE) => {
-                        // JSON response - read and forward immediately
-                        let mut body = String::new();
-                        futures::AsyncReadExt::read_to_string(response.body_mut(), &mut body)
-                            .await?;
+                        // JSON response - read and forward immediately. The
+                        // read is bounded by an idle timer so a response that
+                        // stalls mid-body fails (and tears down the client)
+                        // instead of hanging until the total request deadline.
+                        let body = self.read_body_with_idle_timeout(&mut response).await?;
 
                         // Only send non-empty responses
                         if !body.is_empty() {
@@ -255,11 +355,31 @@ impl HttpTransport {
                 log::debug!("Notification accepted");
             }
             _ => {
-                let mut error_body = String::new();
-                futures::AsyncReadExt::read_to_string(response.body_mut(), &mut error_body).await?;
+                let status = response.status().as_u16();
+                let error_body = self.read_body_with_idle_timeout(&mut response).await?;
+
+                // A server that has expired our session rejects every request
+                // carrying the old session ID: the MCP streamable-HTTP spec
+                // says such a server may answer 404, and some servers answer
+                // 400 with an "initialize required" error. Failing the send
+                // (rather than just piping the error to `error_tx`) kills the
+                // client so the owning store restarts it with a fresh
+                // initialize handshake; otherwise this request hangs until its
+                // timeout and every later call keeps failing the same way.
+                let session_rejected = self.session_id.lock().is_some()
+                    && (status == 404
+                        || (status == 400
+                            && error_body.to_lowercase().contains("initialize required")));
+                if session_rejected {
+                    log::error!(
+                        "server rejected the MCP session (HTTP {status}); \
+                         failing the transport so the session is re-initialized"
+                    );
+                    return Err(anyhow!("MCP session no longer valid (HTTP {status})"));
+                }
 
                 self.error_tx
-                    .send(format!("HTTP {}: {}", response.status(), error_body))
+                    .send(format!("HTTP {status}: {error_body}"))
                     .await
                     .map_err(|_| anyhow!("Failed to send error"))?;
             }
@@ -274,6 +394,9 @@ impl HttpTransport {
         let error_tx = self.error_tx.clone();
 
         // Spawn a task to handle the SSE stream
+        let executor = self.executor.clone();
+        let generation = self.generation.clone();
+        let stream_generation = generation.load(std::sync::atomic::Ordering::SeqCst);
         self.executor
             .spawn(async move {
                 let reader = futures::io::BufReader::new(response.body_mut());
@@ -281,8 +404,38 @@ impl HttpTransport {
 
                 let mut data_buffer = Vec::new();
                 let mut in_message = false;
+                // Captured by reference in a closure below; both fields are
+                // plain values so the closure is a cheap Fn.
+                let stale = || {
+                    generation.load(std::sync::atomic::Ordering::SeqCst) != stream_generation
+                };
 
-                while let Some(line_result) = lines.next().await {
+                loop {
+                    let next_line = pin!(lines.next());
+                    let mut next_line = next_line.fuse();
+                    let line_result = futures::select_biased! {
+                        line = next_line => match line {
+                            Some(line) => line,
+                            None => break,
+                        },
+                        _ = executor.timer(RESPONSE_IDLE_TIMEOUT).fuse() => {
+                            // A stale generation's stream must fail silently:
+                            // its errors are meaningless to the successor.
+                            if stale() {
+                                log::debug!("SSE stream from a stale client generation; discarding");
+                                break;
+                            }
+                            if let Err(err) = error_tx
+                                .send(format!(
+                                    "SSE stream stalled: no data for {RESPONSE_IDLE_TIMEOUT:?}"
+                                ))
+                                .await
+                            {
+                                log::error!("failed to report SSE stall: {err}");
+                            }
+                            break;
+                        }
+                    };
                     match line_result {
                         Ok(line) => {
                             if line.is_empty() {
@@ -292,6 +445,18 @@ impl HttpTransport {
 
                                     // Filter out ping messages and empty data
                                     if !message.trim().is_empty() && message != "ping" {
+                                        // Re-check the generation between the
+                                        // line arriving and the send: a line
+                                        // already unblocked when the generation
+                                        // changed must not reach the successor
+                                        // (request ids restart at zero per
+                                        // generation).
+                                        if stale() {
+                                            log::debug!(
+                                                "SSE stream from a stale client generation; discarding"
+                                            );
+                                            break;
+                                        }
                                         if let Err(e) = response_tx.send(message).await {
                                             log::error!("Failed to send SSE message: {}", e);
                                             break;
@@ -354,6 +519,15 @@ impl Transport for HttpTransport {
         *self.protocol_version.lock() = Some(version.to_string());
     }
 
+    fn invalidate(&self) {
+        // A client generation using this transport is torn down: stale SSE
+        // reader tasks stop delivering (see `setup_sse_stream`). Bumping here
+        // — not on initialize — keeps the initialize-era stream of the current
+        // generation valid.
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn auth_challenge(&self) -> Option<WwwAuthenticate> {
         self.auth_challenge.lock().clone()
     }
@@ -412,7 +586,6 @@ impl Drop for HttpTransport {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use futures::FutureExt as _;
     use gpui::TestAppContext;
     use parking_lot::Mutex as SyncMutex;
     use std::{
@@ -518,6 +691,7 @@ mod tests {
                 "http://mcp.example.com/mcp".to_string(),
                 HashMap::default(),
                 cx.background_executor.clone(),
+                None,
             );
 
             transport
@@ -564,6 +738,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider),
+            None,
         );
 
         transport
@@ -596,6 +771,7 @@ mod tests {
             "http://mcp.example.com/mcp".to_string(),
             HashMap::default(),
             cx.background_executor.clone(),
+            None,
         );
 
         transport
@@ -627,6 +803,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         transport
@@ -675,6 +852,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         transport
@@ -720,6 +898,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         // Set the new token that will be used on retry.
@@ -757,6 +936,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         let err = transport
@@ -803,6 +983,7 @@ mod tests {
             "http://mcp.example.com/mcp".to_string(),
             HashMap::default(),
             cx.background_executor.clone(),
+            None,
         );
 
         let err = transport
@@ -843,6 +1024,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         let err = transport
@@ -854,5 +1036,286 @@ mod tests {
             .expect("error should be TransportError");
         // Refresh was attempted exactly once.
         assert_eq!(provider.refresh_count(), 1);
+    }
+
+    /// A reader that yields one chunk of bytes and then stalls forever,
+    /// simulating a server that goes silent mid-response.
+    struct StallAfterFirstChunk {
+        bytes: &'static [u8],
+        sent: bool,
+    }
+
+    impl futures::AsyncRead for StallAfterFirstChunk {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            if self.sent {
+                return std::task::Poll::Pending;
+            }
+            self.sent = true;
+            let len = self.bytes.len().min(buf.len());
+            buf[..len].copy_from_slice(&self.bytes[..len]);
+            std::task::Poll::Ready(Ok(len))
+        }
+    }
+
+    /// A reader that yields its chunks in order, but pends before every chunk
+    /// after the first until the gate is opened — lets a test interleave with
+    /// the SSE reader task. The gate stores the task's waker so opening it
+    /// actually wakes the task (otherwise the task would never be re-polled
+    /// and the test would pass vacuously).
+    struct Gate {
+        open: std::sync::atomic::AtomicBool,
+        waker: SyncMutex<Option<std::task::Waker>>,
+    }
+
+    impl Gate {
+        fn open(&self) {
+            self.open.store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(waker) = self.waker.lock().take() {
+                waker.wake();
+            }
+        }
+    }
+
+    struct GatedChunks {
+        chunks: Vec<&'static [u8]>,
+        gate: Arc<Gate>,
+        index: usize,
+    }
+
+    impl futures::AsyncRead for GatedChunks {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            use std::sync::atomic::Ordering;
+            if self.index >= self.chunks.len() {
+                return std::task::Poll::Pending;
+            }
+            if self.index > 0 && !self.gate.open.load(Ordering::SeqCst) {
+                *self.gate.waker.lock() = Some(cx.waker().clone());
+                return std::task::Poll::Pending;
+            }
+            let chunk = self.chunks[self.index];
+            self.index += 1;
+            let len = chunk.len().min(buf.len());
+            buf[..len].copy_from_slice(&chunk[..len]);
+            std::task::Poll::Ready(Ok(len))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_initialize_omits_and_clears_session_id(cx: &mut TestAppContext) {
+        let captured_session_headers: Arc<SyncMutex<Vec<Option<String>>>> =
+            Arc::new(SyncMutex::new(Vec::new()));
+        let captured = captured_session_headers.clone();
+        let client = make_fake_http_client(move |req| {
+            let captured = captured.clone();
+            Box::pin(async move {
+                let session_header = req
+                    .headers()
+                    .get(HEADER_SESSION_ID)
+                    .map(|value| value.to_str().unwrap().to_string());
+                let mut body = req.into_body();
+                let mut message = String::new();
+                futures::AsyncReadExt::read_to_string(&mut body, &mut message).await?;
+                captured.lock().push(session_header);
+
+                if message.contains("initialize") {
+                    // No session header: initialize starts a fresh session.
+                    json_response(
+                        200,
+                        r#"{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"t","version":"1"}}}"#,
+                    )
+                } else {
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .header(HEADER_SESSION_ID, "sess-1")
+                        .body(AsyncBody::from(
+                            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.as_bytes().to_vec(),
+                        ))
+                        .unwrap())
+                }
+            })
+        });
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        );
+
+        // Establish a session: the response carries one, and the next request
+        // must present it.
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+        // initialize must not present the session, and its session-less
+        // response must clear the stored id for all later requests.
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}"#.to_string())
+            .await
+            .expect("send should succeed");
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+
+        assert_eq!(
+            *captured_session_headers.lock(),
+            vec![None, Some("sess-1".to_string()), None, None,],
+            "initialize must omit the session header and a session-less initialize \
+             response must clear the stored session id"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sse_stream_from_stale_generation_is_discarded(cx: &mut TestAppContext) {
+        let gate = Arc::new(Gate {
+            open: std::sync::atomic::AtomicBool::new(false),
+            waker: SyncMutex::new(None),
+        });
+        let gate_clone = gate.clone();
+        let client = make_fake_http_client(move |_req| {
+            let gate = gate_clone.clone();
+            Box::pin(async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .body(AsyncBody::from_reader(GatedChunks {
+                        chunks: vec![
+                            b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"n\":1}}\n\n"
+                                .as_ref(),
+                            b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"n\":2}}\n\n"
+                                .as_ref(),
+                        ],
+                        gate,
+                        index: 0,
+                    }))
+                    .unwrap())
+            })
+        });
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+        cx.run_until_parked();
+
+        let mut responses = transport.receive();
+        let first = responses.next().await.expect("first SSE event");
+        assert!(first.contains("\"n\":1"), "unexpected event: {first}");
+
+        // The client generation is torn down (as on a restart or timeout) and
+        // only then does the stale stream deliver its next event — the gate
+        // opening wakes the parked SSE task, so this is a real delivery
+        // attempt. It must be discarded: request ids restart at zero per
+        // generation, so the event could be matched against the successor's
+        // requests.
+        transport.invalidate();
+        gate.open();
+        cx.run_until_parked();
+
+        assert!(
+            futures::poll!(responses.next()).is_pending(),
+            "an SSE event from a stale client generation must be discarded"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sse_stream_idle_timeout(cx: &mut TestAppContext) {
+        let body = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n";
+        let client = make_fake_http_client(move |_req| {
+            Box::pin(async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .body(AsyncBody::from_reader(StallAfterFirstChunk {
+                        bytes: body.as_bytes(),
+                        sent: false,
+                    }))
+                    .unwrap())
+            })
+        });
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+
+        // The stream never delivers another byte. After the idle timeout the
+        // stalled stream must surface an error instead of hanging forever.
+        cx.background_executor.advance_clock(RESPONSE_IDLE_TIMEOUT);
+        cx.run_until_parked();
+
+        let mut errs = transport.receive_err();
+        let err = errs
+            .next()
+            .await
+            .expect("expected an error for the stalled SSE stream");
+        assert!(err.contains("stalled"), "unexpected error: {err}");
+    }
+
+    #[gpui::test]
+    async fn test_json_response_body_idle_timeout(cx: &mut TestAppContext) {
+        let client = make_fake_http_client(move |_req| {
+            Box::pin(async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "application/json")
+                    .body(AsyncBody::from_reader(StallAfterFirstChunk {
+                        bytes: b"{\"jsonrpc\":\"2.0\"",
+                        sent: false,
+                    }))
+                    .unwrap())
+            })
+        });
+        let transport = std::sync::Arc::new(HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        ));
+
+        let send_transport = transport.clone();
+        let send_task = cx.background_executor.spawn(async move {
+            send_transport
+                .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string())
+                .await
+        });
+        cx.background_executor.advance_clock(RESPONSE_IDLE_TIMEOUT);
+        let result = send_task.await;
+
+        let err = result.expect_err("a stalled response body should fail the send");
+        assert!(
+            format!("{:#}", err).contains("stalled"),
+            "unexpected error: {err}"
+        );
     }
 }

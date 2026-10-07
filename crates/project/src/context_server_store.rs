@@ -3,7 +3,7 @@ pub mod registry;
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
@@ -34,6 +34,14 @@ use crate::{
 /// Maximum timeout for context server requests
 /// Prevents extremely large timeout values from tying up resources indefinitely.
 const MAX_TIMEOUT_SECS: u64 = 600; // 10 minutes
+
+/// A server whose transport dies is restarted automatically, but only this
+/// many times within [`RESTART_WINDOW`]: a server that rejects every session
+/// (e.g. behind a misbehaving proxy) would otherwise churn the connection on
+/// every request. The window sliding out is the reset — a successful start
+/// proves nothing, since a churning server still accepts `initialize`.
+const MAX_RESTARTS_PER_WINDOW: usize = 3;
+const RESTART_WINDOW: Duration = Duration::from_secs(60);
 
 pub fn init(cx: &mut App) {
     extension::init(cx);
@@ -303,6 +311,7 @@ pub struct ContextServerStore {
     /// `maintain_servers` restart a server when its working directory changes,
     /// since the working directory is not part of `ContextServerConfiguration`.
     server_working_directories: HashMap<ContextServerId, Option<Arc<Path>>>,
+    recent_restarts: HashMap<ContextServerId, Vec<Instant>>,
     needs_server_update: bool,
     ai_disabled: bool,
     _subscriptions: Vec<Subscription>,
@@ -521,6 +530,7 @@ impl ContextServerStore {
             update_servers_task: None,
             context_server_factory,
             server_working_directories: HashMap::default(),
+            recent_restarts: HashMap::default(),
         };
         if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
             this.available_context_servers_changed(cx);
@@ -685,7 +695,17 @@ impl ContextServerStore {
         .detach_and_log_err(cx);
     }
 
+    /// Explicitly stops a server. This is an operator decision, so it also
+    /// clears the automatic-restart budget (see `restart_after_transport_death`).
     pub fn stop_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
+        let result = self.stop_server_inner(id, cx);
+        self.recent_restarts.remove(id);
+        result
+    }
+
+    /// Stops a server without touching the restart budget; used by the
+    /// automatic restart path, where a reset would defeat the budget.
+    fn stop_server_inner(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
         if matches!(
             self.servers.get(id),
             Some(ContextServerState::Stopped { .. })
@@ -730,7 +750,7 @@ impl ContextServerStore {
                     | ContextServerState::Authenticating { .. },
             )
         ) {
-            self.stop_server(&id, cx).log_err();
+            self.stop_server_inner(&id, cx).log_err();
         }
         let task = cx.spawn({
             let id = server.id();
@@ -741,6 +761,11 @@ impl ContextServerStore {
                 let new_state = match server.clone().start(cx).await {
                     Ok(_) => {
                         debug_assert!(server.client().is_some());
+                        // Not resetting `recent_restarts` here on purpose: an
+                        // initialize succeeding proves nothing about session
+                        // health (a churning server accepts initialize and
+                        // rejects the calls after it). The window expiring is
+                        // the reset.
                         let _transport_watch =
                             Self::watch_transport_shutdown(this.clone(), server.clone(), cx);
                         ContextServerState::Running {
@@ -769,8 +794,7 @@ impl ContextServerStore {
         );
     }
 
-    /// Watches a running server's transport and initiates the OAuth flow if it
-    /// shuts down on an authentication challenge.
+    /// Watches a running server's transport and reacts to its shutdown.
     ///
     /// MCP servers may accept `initialize` unauthenticated and only send a 401
     /// with a `WWW-Authenticate` challenge on a later request or notification.
@@ -779,6 +803,11 @@ impl ContextServerStore {
     /// relying on some request to carry a typed error back to a caller — is
     /// what lets any post-initialize 401 move the server into `AuthRequired`
     /// instead of leaving it `Running` with a dead client.
+    ///
+    /// For HTTP servers that die without an auth challenge, the transport is
+    /// unusable (e.g. a stale keep-alive connection that stopped delivering
+    /// responses), so the server is restarted with a fresh connection instead
+    /// of staying `Running` with a dead client.
     fn watch_transport_shutdown(
         this: WeakEntity<Self>,
         server: Arc<ContextServer>,
@@ -790,17 +819,84 @@ impl ContextServerStore {
         else {
             return Task::ready(());
         };
-        cx.spawn(async move |cx| {
-            let Some(www_authenticate) = shutdown.await else {
-                // Non-auth transport deaths leave the server state untouched,
-                // as they did before this watch existed.
-                return;
-            };
-            this.update(cx, |this, cx| {
-                this.handle_auth_challenge(server, www_authenticate, cx);
-            })
-            .log_err();
+        cx.spawn(async move |cx| match shutdown.await {
+            Some(www_authenticate) => {
+                this.update(cx, |this, cx| {
+                    this.handle_auth_challenge(server.clone(), www_authenticate, cx);
+                })
+                .log_err();
+            }
+            None => {
+                this.update(cx, |this, cx| {
+                    this.restart_after_transport_death(server.clone(), cx);
+                })
+                .log_err();
+            }
         })
+    }
+
+    /// Restarts an HTTP server whose transport died without an auth
+    /// challenge. Stdio servers are left alone: their transport dying means
+    /// the server process exited, and blindly re-spawning a crashing binary
+    /// would churn.
+    fn restart_after_transport_death(
+        &mut self,
+        server: Arc<ContextServer>,
+        cx: &mut Context<Self>,
+    ) {
+        if server.uses_stdio_transport() {
+            return;
+        }
+
+        // Act only if this exact server is still the one we consider running.
+        // If the state has changed since the shutdown was observed, whoever
+        // changed it owns the lifecycle now.
+        let Some(ContextServerState::Running {
+            server: running_server,
+            configuration,
+            ..
+        }) = self.servers.get(&server.id())
+        else {
+            return;
+        };
+        if !Arc::ptr_eq(running_server, &server) {
+            return;
+        }
+
+        // Prune the window, then bail out if this server has restarted too
+        // often recently: restarting again would just churn. The server stays
+        // `Running` with a dead client — requests fail fast until the user
+        // intervenes (editing settings restarts it via the normal path).
+        let now = Instant::now();
+        self.recent_restarts
+            .entry(server.id())
+            .or_default()
+            .retain(|instant| now.duration_since(*instant) < RESTART_WINDOW);
+        if self
+            .recent_restarts
+            .get(&server.id())
+            .is_some_and(|restarts| restarts.len() >= MAX_RESTARTS_PER_WINDOW)
+        {
+            log::error!(
+                "{} transport died {} times within {:?}; not restarting again \
+                 until the window elapses",
+                server.id(),
+                MAX_RESTARTS_PER_WINDOW,
+                RESTART_WINDOW
+            );
+            return;
+        }
+        self.recent_restarts
+            .get_mut(&server.id())
+            .expect("entry was just created")
+            .push(now);
+
+        log::info!(
+            "{} transport died without an auth challenge; restarting",
+            server.id()
+        );
+        let configuration = configuration.clone();
+        self.run_server(server, configuration, cx);
     }
 
     fn handle_auth_challenge(
@@ -866,6 +962,7 @@ impl ContextServerStore {
             .remove(id)
             .context("Context server not found")?;
         self.server_working_directories.remove(id);
+        self.recent_restarts.remove(id);
 
         if let ContextServerConfiguration::Http { url, .. } = state.configuration().as_ref() {
             let server_url = url.clone();
@@ -1028,19 +1125,21 @@ impl ContextServerStore {
                     timeout,
                     oauth: _,
                 } => {
+                    let request_timeout = Some(Duration::from_secs(
+                        timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
+                    ));
                     let transport = HttpTransport::new_with_token_provider(
                         cx.http_client(),
                         url.to_string(),
                         headers.clone(),
                         cx.background_executor().clone(),
                         cached_token_provider.clone(),
+                        request_timeout,
                     );
                     anyhow::Ok(Arc::new(ContextServer::new_with_timeout(
                         id,
                         Arc::new(transport),
-                        Some(Duration::from_secs(
-                            timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
-                        )),
+                        request_timeout,
                     )))
                 }
                 _ => {
@@ -1541,19 +1640,21 @@ impl ContextServerStore {
                 timeout,
                 oauth: _,
             } => {
+                let request_timeout = Some(Duration::from_secs(
+                    timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
+                ));
                 let transport = HttpTransport::new_with_token_provider(
                     http_client.clone(),
                     url.to_string(),
                     headers.clone(),
                     cx.background_executor().clone(),
                     Some(token_provider.clone()),
+                    request_timeout,
                 );
                 Ok(Arc::new(ContextServer::new_with_timeout(
                     id.clone(),
                     Arc::new(transport),
-                    Some(Duration::from_secs(
-                        timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
-                    )),
+                    request_timeout,
                 )))
             }
             _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
