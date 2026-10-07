@@ -8,7 +8,7 @@ use gpui::{
     IntoElement, IsZero, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent,
     Size, Stateful, StatefulInteractiveElement, Style, StyleRefinement, Styled, Task,
-    UniformListDecoration, UniformListScrollHandle, Window, ease_in_out,
+    UniformListDecoration, UniformListScrollHandle, Window, ease_in_out, fill,
     prelude::FluentBuilder as _, px, quad, relative, size,
 };
 use gpui_util::ResultExt;
@@ -1529,25 +1529,6 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             track_color.fade_out(fade);
                         }
 
-                        let border_edges = has_border
-                            .then(|| match axis {
-                                ScrollbarAxis::Horizontal => Edges {
-                                    top: BORDER_WIDTH,
-                                    ..Default::default()
-                                },
-                                ScrollbarAxis::Vertical => Edges {
-                                    left: BORDER_WIDTH,
-                                    ..Default::default()
-                                },
-                            })
-                            .unwrap_or_default();
-
-                        let border_color = if has_border {
-                            cx.theme().colors().border_variant.opacity(0.6)
-                        } else {
-                            Hsla::transparent_black()
-                        };
-
                         let track_corners = match axis {
                             ScrollbarAxis::Horizontal => Corners {
                                 bottom_left: track_corner_radii.bottom_left,
@@ -1559,17 +1540,54 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 bottom_right: track_corner_radii.bottom_right,
                                 ..Default::default()
                             },
-                        }
-                        .clamp_radii_for_quad_size(track_bounds.size);
+                        };
 
-                        window.paint_quad(quad(
-                            *track_bounds,
-                            track_corners,
-                            track_color,
-                            border_edges,
-                            border_color,
-                            BorderStyle::Solid,
-                        ));
+                        // Quad radii are clamped to half the quad's size, so a thin track
+                        // can't follow a larger parent curve. Paint a quad thick enough
+                        // to hold the full radii and crop it back to the track.
+                        let largest_radius = track_corners
+                            .top_left
+                            .max(track_corners.top_right)
+                            .max(track_corners.bottom_right)
+                            .max(track_corners.bottom_left);
+                        let extension = (largest_radius * 2.
+                            - track_bounds.size.along(axis.invert()))
+                        .max(Pixels::ZERO);
+                        let painted_bounds = track_bounds.extend(match axis {
+                            ScrollbarAxis::Horizontal => Edges {
+                                top: extension,
+                                ..Default::default()
+                            },
+                            ScrollbarAxis::Vertical => Edges {
+                                left: extension,
+                                ..Default::default()
+                            },
+                        });
+
+                        window.with_content_mask(
+                            Some(ContentMask {
+                                bounds: *track_bounds,
+                            }),
+                            |window| {
+                                window.paint_quad(fill(painted_bounds, track_color).corner_radii(
+                                    track_corners.clamp_radii_for_quad_size(painted_bounds.size),
+                                ));
+                            },
+                        );
+
+                        // Painted separately because the crop would remove a border on the extended quad.
+                        if has_border {
+                            let border_bounds = Bounds::new(
+                                track_bounds.origin,
+                                track_bounds
+                                    .size
+                                    .apply_along(axis.invert(), |_| BORDER_WIDTH),
+                            );
+                            window.paint_quad(fill(
+                                border_bounds,
+                                cx.theme().colors().border_variant.opacity(0.6),
+                            ));
+                        }
                     }
 
                     window.paint_quad(quad(
