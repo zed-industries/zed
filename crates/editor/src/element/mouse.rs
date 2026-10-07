@@ -21,8 +21,11 @@ use crate::{
     CURSORS_VISIBLE_FOR, ColumnarMode, DisplayDiffHunk, DisplayPoint, DisplayRow, Editor,
     EditorSettings, EditorSnapshot, GutterHoverButton, HoveredCursor, JumpData,
     PhantomDiffReviewIndicator, SelectPhase, Selection, SelectionDragState,
-    display_map::ToDisplayPoint, editor_settings::DoubleClickInMultibuffer,
-    hover_popover::hover_at, mouse_context_menu, scroll::ScrollPixelOffset,
+    display_map::ToDisplayPoint,
+    editor_settings::DoubleClickInMultibuffer,
+    hover_popover::hover_at,
+    mouse_context_menu,
+    scroll::{ScrollOffset, ScrollPixelOffset},
 };
 
 impl EditorElement {
@@ -669,7 +672,8 @@ impl EditorElement {
                                 Bias::Right,
                             )
                             .row;
-                        let line_offset_from_top = display_row - scroll_position_row as u32;
+                        let line_offset_from_top =
+                            (display_row as ScrollOffset - scroll_position_row).max(0.0);
                         // if double click is made without alt, open the corresponding excerp
                         editor.open_excerpts_common(
                             Some(JumpData::MultiBufferRow {
@@ -705,7 +709,8 @@ impl EditorElement {
                     })
                 })
             {
-                let line_offset_from_top = display_row - position_map.scroll_position.y as u32;
+                let line_offset_from_top =
+                    (display_row as ScrollOffset - position_map.scroll_position.y).max(0.0);
 
                 editor.open_excerpts_common(
                     Some(JumpData::MultiBufferRow {
