@@ -233,7 +233,6 @@ fn is_br_tag(html: &str) -> bool {
 }
 
 fn yaml_frontmatter_candidate(text: &str) -> Option<&str> {
-    // strip_prefix checks only the three-byte prefix and borrows the remainder without copying.
     let after_fence = text.strip_prefix("---")?;
     let opening_whitespace_length = after_fence
         .bytes()
@@ -243,13 +242,11 @@ fn yaml_frontmatter_candidate(text: &str) -> Option<&str> {
         .get(opening_whitespace_length..)?
         .strip_prefix('\n')?;
 
-    // Reject blank first content lines before scanning, matching pulldown-cmark's rule.
     let first_content = after_opening_line.trim_start_matches([' ', '\t', '\u{b}', '\u{c}']);
     if first_content.is_empty() || first_content.starts_with(['\r', '\n']) {
         return None;
     }
 
-    // Keep offsets relative to the original text, including the stripped opening line.
     let mut line_start = text.len() - after_opening_line.len();
     let lines = after_opening_line.split_inclusive('\n');
     for line in lines {
@@ -296,7 +293,6 @@ pub(crate) fn parse_markdown_with_options(
     let mut metadata_block_content_range: Option<Range<usize>> = None;
     let mut frontmatter = Vec::new();
     if parse_metadata_blocks && let Some(candidate) = yaml_frontmatter_candidate(text) {
-        // Creating the parser scans the entire input, so exclude the body from the YAML probe.
         let mut parser = Parser::new_ext(
             candidate,
             PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS),
@@ -1141,7 +1137,7 @@ mod tests {
                 parsed
                     .events
                     .iter()
-                    .filter(|(_, event)| matches!(event, Rule))
+                    .filter(|(_, event)| *event == Rule)
                     .count(),
                 2
             );
@@ -1153,14 +1149,22 @@ mod tests {
                     .count(),
                 3
             );
-            assert!(
+            assert_eq!(
                 parsed
                     .events
                     .iter()
-                    .any(|(_, event)| matches!(event, Start(Strong)))
+                    .filter(|(_, event)| *event == Start(Strong))
+                    .count(),
+                1
             );
             assert_eq!(
-                parsed.events.iter().filter(|(_, event)| matches!(event, Start(Link { dest_url, .. }) if dest_url.as_ref() == "https://example.com")).count(),
+                parsed
+                    .events
+                    .iter()
+                    .filter(|(_, event)| {
+                        matches!(event, Start(Link { dest_url, .. }) if dest_url.as_ref() == "https://example.com")
+                    })
+                    .count(),
                 2
             );
             assert_eq!(
@@ -1174,8 +1178,10 @@ mod tests {
             for (range, _) in &parsed.events {
                 assert!(source.get(range.clone()).is_some());
             }
-            let heading_offset = parsed.heading_slugs["first-section"];
-            assert!(source[heading_offset..].starts_with("First section"));
+            assert_eq!(
+                parsed.heading_slugs["first-section"],
+                source.find("First section").expect("first section heading")
+            );
         }
     }
 
@@ -1224,8 +1230,10 @@ mod tests {
         let parsed = parse_markdown_with_options(&source, false, true, true);
         let metadata = parsed.metadata_blocks.get(&0).expect("frontmatter");
         assert_eq!(&source[metadata.content_range.clone()], content);
-        let heading_offset = parsed.heading_slugs["body"];
-        assert!(source[heading_offset..].starts_with("Body"));
+        assert_eq!(
+            parsed.heading_slugs["body"],
+            source.find("Body").expect("body heading")
+        );
     }
 
     #[test]
