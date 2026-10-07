@@ -2261,7 +2261,10 @@ async fn test_zed_cloud_predictions_skip_organizations_without_subscriptions(
                 });
         });
     });
-    let local_provider_result = ep_store
+    cx.update(|cx| {
+        cx.set_http_client(ep_store.read(cx).client.http_client());
+    });
+    ep_store
         .update(cx, |store, cx| {
             store.request_prediction(
                 &project,
@@ -2271,16 +2274,8 @@ async fn test_zed_cloud_predictions_skip_organizations_without_subscriptions(
                 cx,
             )
         })
-        .await;
-    let Err(local_provider_error) = local_provider_result else {
-        panic!("local provider request should reach its configured server");
-    };
-    assert!(
-        local_provider_error
-            .to_string()
-            .contains("custom server error"),
-        "local provider request should reach its configured server: {local_provider_error:#}"
-    );
+        .await
+        .unwrap();
     cx.update_global::<SettingsStore, _>(|settings_store, cx| {
         settings_store.update_user_settings(cx, |settings| {
             settings
@@ -2930,6 +2925,22 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                         "/client/llm_tokens" => serde_json::to_string(&json!({
                             "token": "test"
                         }))
+                        .unwrap(),
+                        "/v1/completions" => serde_json::to_string(&RawCompletionResponse {
+                            id: "local-request".to_string(),
+                            object: "text_completion".to_string(),
+                            created: 0,
+                            model: "local-model".to_string(),
+                            choices: vec![RawCompletionChoice {
+                                text: String::new(),
+                                finish_reason: Some("stop".to_string()),
+                            }],
+                            usage: RawCompletionUsage {
+                                prompt_tokens: 0,
+                                completion_tokens: 0,
+                                total_tokens: 0,
+                            },
+                        })
                         .unwrap(),
                         "/predict_edits/v3" => {
                             let mut buf = Vec::new();
