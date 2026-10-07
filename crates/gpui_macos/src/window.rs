@@ -2871,9 +2871,23 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         match &event {
             PlatformInput::MouseDown(_) => {
                 drop(lock);
-                unsafe {
-                    let input_context: id = msg_send![this, inputContext];
-                    msg_send![input_context, handleEvent: native_event]
+                let input_context: id = unsafe { msg_send![this, inputContext] };
+                let handled_by_input_method: BOOL =
+                    unsafe { msg_send![input_context, handleEvent: native_event] };
+                // Input methods keep composing through clicks they don't consume, so the next
+                // keystroke would re-insert the whole composition at the new cursor. End it here,
+                // like the Linux backends do, keeping the composed text in place.
+                if handled_by_input_method == NO
+                    && with_input_handler(this, |input_handler| {
+                        input_handler.marked_text_range().is_some()
+                            && input_handler.query_ends_composition_on_mouse_down()
+                    })
+                    .unwrap_or(false)
+                {
+                    unsafe {
+                        let _: () = msg_send![input_context, discardMarkedText];
+                    }
+                    with_input_handler(this, |input_handler| input_handler.unmark_text());
                 }
                 lock = window_state.as_ref().lock();
             }

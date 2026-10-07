@@ -1886,6 +1886,13 @@ impl PlatformInputHandler {
             .unwrap_or(false)
     }
 
+    /// See [`InputHandler::ends_composition_on_mouse_down`].
+    pub fn query_ends_composition_on_mouse_down(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.ends_composition_on_mouse_down(window, cx))
+            .unwrap_or(true)
+    }
+
     /// See [`InputHandler::text_input_configuration`].
     pub fn text_input_configuration(
         &mut self,
@@ -2088,6 +2095,18 @@ pub trait InputHandler: 'static {
     /// The terminal keeps the default `false` so that raw keys reach the terminal process.
     fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         false
+    }
+
+    /// Returns whether a mouse down should end an in-progress IME composition, keeping the
+    /// composed text. Only consulted on macOS, where input methods keep composing through
+    /// clicks they don't handle.
+    ///
+    /// Defaults to `true`, since a click that moves the cursor would otherwise cause the next
+    /// keystroke to re-insert the whole composition at the new position. The terminal returns
+    /// `false`, matching native macOS terminals, because clicks don't move where its composed
+    /// text will be committed.
+    fn ends_composition_on_mouse_down(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
+        true
     }
 
     /// Get this handler's preferences for platform text assistance.

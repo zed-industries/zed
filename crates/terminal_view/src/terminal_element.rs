@@ -1855,6 +1855,10 @@ impl InputHandler for TerminalInputHandler {
         });
     }
 
+    fn ends_composition_on_mouse_down(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
+        false
+    }
+
     fn bounds_for_range(
         &mut self,
         range_utf16: std::ops::Range<usize>,
