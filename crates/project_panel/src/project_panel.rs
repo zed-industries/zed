@@ -6726,6 +6726,11 @@ impl ProjectPanel {
                                     .ancestors
                                     .get(components_len - 1 - index)
                                     .cloned();
+                                let drag_target = FoldedDirectoryDragTarget {
+                                    entry_id,
+                                    index,
+                                    is_delimiter_target: false,
+                                };
                                 div.when(drag_and_drop_enabled, |div| {
                                     div.on_drag_move(cx.listener(
                                         move |this,
@@ -6734,11 +6739,7 @@ impl ProjectPanel {
                                               _| {
                                             this.update_folded_directory_drag_target(
                                                 event.bounds.contains(&event.event.position),
-                                                FoldedDirectoryDragTarget {
-                                                    entry_id,
-                                                    index,
-                                                    is_delimiter_target: false,
-                                                },
+                                                drag_target,
                                             );
                                         },
                                     ))
@@ -6760,11 +6761,7 @@ impl ProjectPanel {
                                         move |this, event: &DragMoveEvent<ExternalPaths>, _, _| {
                                             this.update_folded_directory_drag_target(
                                                 event.bounds.contains(&event.event.position),
-                                                FoldedDirectoryDragTarget {
-                                                    entry_id,
-                                                    index,
-                                                    is_delimiter_target: false,
-                                                },
+                                                drag_target,
                                             );
                                         },
                                     ))
@@ -6862,6 +6859,11 @@ impl ProjectPanel {
             .ancestors
             .get(components_len - 1 - delimiter_target_index)
             .cloned();
+        let drag_target = FoldedDirectoryDragTarget {
+            entry_id,
+            index: delimiter_target_index,
+            is_delimiter_target: true,
+        };
         div()
             .when(!is_sticky, |div| {
                 div.when(drag_and_drop_enabled, |div| {
@@ -6877,11 +6879,7 @@ impl ProjectPanel {
                         move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
                             this.update_folded_directory_drag_target(
                                 event.bounds.contains(&event.event.position),
-                                FoldedDirectoryDragTarget {
-                                    entry_id,
-                                    index: delimiter_target_index,
-                                    is_delimiter_target: true,
-                                },
+                                drag_target,
                             );
                         },
                     ))
@@ -6902,11 +6900,7 @@ impl ProjectPanel {
                         move |this, event: &DragMoveEvent<ExternalPaths>, _, _| {
                             this.update_folded_directory_drag_target(
                                 event.bounds.contains(&event.event.position),
-                                FoldedDirectoryDragTarget {
-                                    entry_id,
-                                    index: delimiter_target_index,
-                                    is_delimiter_target: true,
-                                },
+                                drag_target,
                             );
                         },
                     ))
