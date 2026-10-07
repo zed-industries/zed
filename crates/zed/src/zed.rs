@@ -5570,6 +5570,8 @@ mod tests {
         init_keymap_test(cx);
 
         let expected_bindings = [
+            ("space w t", "workspace::TransposePaneGroup"),
+            ("space w ctrl-t", "workspace::TransposePaneGroup"),
             ("space w w", "workspace::ActivateNextPane"),
             ("space w left", "workspace::ActivatePaneLeft"),
             ("space w right", "workspace::ActivatePaneRight"),
@@ -5594,6 +5596,15 @@ mod tests {
                     "unexpected binding for {keystrokes:?} in {context:?}",
                 );
             }
+        }
+
+        let editor_context = "Workspace Pane Editor VimControl vim_mode=helix_normal";
+        for keystrokes in ["ctrl-w t", "ctrl-w ctrl-t"] {
+            assert_eq!(
+                vim_bindings_for(keystrokes, editor_context, cx),
+                ["workspace::TransposePaneGroup"],
+                "unexpected binding for {keystrokes:?} in {editor_context:?}",
+            );
         }
     }
 

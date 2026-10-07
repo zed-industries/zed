@@ -576,6 +576,8 @@ actions!(
         MovePaneUp,
         /// Move the current pane to be at the very bottom.
         MovePaneDown,
+        /// Transposes the split group containing the current pane.
+        TransposePaneGroup,
     ]
 );
 
@@ -5766,6 +5768,12 @@ impl Workspace {
         }
     }
 
+    pub fn transpose_active_pane_group(&mut self, cx: &mut Context<Self>) {
+        if self.center.transpose_pane_group(&self.active_pane, cx) {
+            cx.notify();
+        }
+    }
+
     pub fn resize_pane(
         &mut self,
         axis: gpui::Axis,
@@ -7930,6 +7938,9 @@ impl Workspace {
             }))
             .on_action(cx.listener(|workspace, _: &MovePaneDown, _, cx| {
                 workspace.move_pane_to_border(SplitDirection::Down, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &TransposePaneGroup, _, cx| {
+                workspace.transpose_active_pane_group(cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
                 this.toggle_dock(DockPosition::Left, window, cx);
@@ -13841,6 +13852,117 @@ mod tests {
             let (top, nested) = nested_axis(workspace);
             assert_eq!(*top.flexes.lock(), vec![1.0; top.members.len()]);
             assert_eq!(*nested.flexes.lock(), vec![1.0; nested.members.len()]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_transpose_active_pane_group(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        cx.dispatch_action(TransposePaneGroup);
+        workspace.update(cx, |workspace, _| {
+            assert!(matches!(workspace.center.root, Member::Pane(_)));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Down,
+                window,
+                cx,
+            );
+        });
+
+        let pane_ids = workspace.update(cx, |workspace, _| {
+            workspace
+                .center
+                .panes()
+                .into_iter()
+                .map(|pane| pane.entity_id())
+                .collect::<Vec<_>>()
+        });
+
+        let pane_axes = |workspace: &Workspace| {
+            let Member::Axis(top) = &workspace.center.root else {
+                panic!("expected the center to be a split axis");
+            };
+            let nested = top
+                .members
+                .iter()
+                .find_map(|member| match member {
+                    Member::Axis(axis) => Some(axis),
+                    Member::Pane(_) => None,
+                })
+                .expect("expected a nested split axis");
+            assert!(nested.members.iter().any(
+                |member| matches!(member, Member::Pane(pane) if pane == workspace.active_pane())
+            ));
+            (top.axis, nested.axis)
+        };
+
+        workspace.update(cx, |workspace, _| {
+            assert_eq!(pane_axes(workspace), (Axis::Horizontal, Axis::Vertical));
+        });
+
+        let direct_pane = workspace.read_with(cx, |workspace, _| {
+            let Member::Axis(top) = &workspace.center.root else {
+                panic!("expected the center to be a split axis");
+            };
+            top.members
+                .iter()
+                .find_map(|member| match member {
+                    Member::Pane(pane) => Some(pane.clone()),
+                    Member::Axis(_) => None,
+                })
+                .expect("expected a pane directly in the top-level split")
+        });
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.center.transpose_pane_group(&direct_pane, cx));
+            assert_eq!(pane_axes(workspace), (Axis::Vertical, Axis::Vertical));
+            assert_eq!(
+                workspace
+                    .center
+                    .panes()
+                    .into_iter()
+                    .map(|pane| pane.entity_id())
+                    .collect::<Vec<_>>(),
+                pane_ids
+            );
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.center.transpose_pane_group(&direct_pane, cx));
+            assert_eq!(pane_axes(workspace), (Axis::Horizontal, Axis::Vertical));
+        });
+
+        cx.dispatch_action(TransposePaneGroup);
+
+        workspace.update(cx, |workspace, _| {
+            assert_eq!(pane_axes(workspace), (Axis::Horizontal, Axis::Horizontal));
+        });
+
+        cx.dispatch_action(TransposePaneGroup);
+
+        workspace.update(cx, |workspace, _| {
+            assert_eq!(pane_axes(workspace), (Axis::Horizontal, Axis::Vertical));
         });
     }
 

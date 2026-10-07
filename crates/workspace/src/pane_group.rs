@@ -290,6 +290,14 @@ impl PaneGroup {
         self.root.invert_pane_axies();
         self.mark_positions(cx);
     }
+
+    pub fn transpose_pane_group(&mut self, pane: &Entity<Pane>, cx: &mut App) -> bool {
+        let transposed = self.root.transpose_parent_of(pane);
+        if transposed {
+            self.mark_positions(cx);
+        }
+        transposed
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -640,6 +648,25 @@ impl Member {
                 }
             }
             Self::Pane(_) => {}
+        }
+    }
+
+    fn transpose_parent_of(&mut self, pane: &Entity<Pane>) -> bool {
+        let Self::Axis(axis) = self else {
+            return false;
+        };
+
+        if axis
+            .members
+            .iter()
+            .any(|member| matches!(member, Self::Pane(candidate) if candidate == pane))
+        {
+            axis.axis = axis.axis.invert();
+            true
+        } else {
+            axis.members
+                .iter_mut()
+                .any(|member| member.transpose_parent_of(pane))
         }
     }
 }

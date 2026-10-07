@@ -542,8 +542,12 @@
       "g shift-u": "git::UnstageAndNext", // Zed specific
 
       // Window mode
+      "ctrl-w t": "workspace::TransposePaneGroup",
+      "ctrl-w ctrl-t": "workspace::TransposePaneGroup",
       "space w v": "pane::SplitRight",
       "space w s": "pane::SplitDown",
+      "space w t": "workspace::TransposePaneGroup",
+      "space w ctrl-t": "workspace::TransposePaneGroup",
       "space w left": "workspace::ActivatePaneLeft",
       "space w right": "workspace::ActivatePaneRight",
       "space w up": "workspace::ActivatePaneUp",
@@ -1011,6 +1015,8 @@
       "space f": "file_finder::Toggle",
       "space /": "pane::DeploySearch",
       "space shift-s": "project_symbols::Toggle",
+      "space w t": "workspace::TransposePaneGroup",
+      "space w ctrl-t": "workspace::TransposePaneGroup",
       "space w left": "workspace::ActivatePaneLeft",
       "space w right": "workspace::ActivatePaneRight",
       "space w up": "workspace::ActivatePaneUp",
