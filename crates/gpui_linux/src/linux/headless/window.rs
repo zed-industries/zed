@@ -10,47 +10,15 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use gpui::{
-    Bounds, Capslock, DispatchEventResult, DisplayId, GpuSpecs, HeadlessAtlas, Modifiers, Pixels,
+    Bounds, Capslock, DispatchEventResult, GpuSpecs, HeadlessAtlas, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, Scene, Size, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, WindowVisibility,
-    px,
 };
-
-#[derive(Debug)]
-pub(crate) struct HeadlessDisplay {
-    bounds: Bounds<Pixels>,
-}
-
-impl HeadlessDisplay {
-    pub(crate) fn new() -> Self {
-        Self {
-            bounds: Bounds::from_corners(Point::default(), Point::new(px(1920.), px(1080.))),
-        }
-    }
-}
-
-impl PlatformDisplay for HeadlessDisplay {
-    fn id(&self) -> DisplayId {
-        DisplayId::new(0)
-    }
-
-    fn uuid(&self) -> anyhow::Result<Uuid> {
-        // Stable identity: there is exactly one headless display.
-        Ok(Uuid::nil())
-    }
-
-    fn bounds(&self) -> Bounds<Pixels> {
-        self.bounds
-    }
-}
 
 struct HeadlessWindowState {
     bounds: Bounds<Pixels>,
-    display: Rc<dyn PlatformDisplay>,
     /// Held while this window exists, so the platform can tell that headless windows are open.
     _lease: Rc<()>,
     input_handler: Option<PlatformInputHandler>,
@@ -78,14 +46,9 @@ impl raw_window_handle::HasDisplayHandle for HeadlessWindow {
 }
 
 impl HeadlessWindow {
-    pub(crate) fn new(
-        params: WindowParams,
-        display: Rc<dyn PlatformDisplay>,
-        lease: Rc<()>,
-    ) -> Self {
+    pub(crate) fn new(params: WindowParams, lease: Rc<()>) -> Self {
         Self(Rc::new(RefCell::new(HeadlessWindowState {
             bounds: params.bounds,
-            display,
             _lease: lease,
             input_handler: None,
             title: None,
@@ -124,7 +87,7 @@ impl PlatformWindow for HeadlessWindow {
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(self.0.borrow().display.clone())
+        None
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
