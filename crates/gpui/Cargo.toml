@@ -190,7 +190,7 @@ ignored = [
     "objc2",
     "objc2-metal",
 ]
-ignored-paths = ["src/_ownership_and_data_flow.rs"]
+ignored-paths = ["src/_ownership_and_data_flow.rs", "benches/focus_cleanup.rs"]
 
 [[example]]
 name = "hello_world"
