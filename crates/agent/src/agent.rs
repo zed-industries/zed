@@ -257,9 +257,9 @@ impl Session {
             .map(|acp_thread| acp_thread.read(cx).draft_prompt_revision())
     }
 
-    /// Streaming notifies the thread once per chunk, but `to_db` doesn't
-    /// include the streaming message, so those notifies have nothing new to save.
     fn can_skip_save_while_streaming(&self, cx: &App) -> bool {
+        // Streaming notifies the thread once per chunk, but `to_db` doesn't
+        // include the streaming message, so those notifies have nothing new to save.
         let thread = self.thread.read(cx);
         thread.is_streaming_message()
             && self
