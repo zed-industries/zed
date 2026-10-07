@@ -2833,11 +2833,18 @@ mod test {
 
         cx.assert_state("foo hello worldˇbar", Mode::HelixNormal);
 
-        // Test paste with shift-r on selection
+        // Test paste with shift-r on selection from Helix Normal Mode
         cx.set_state("foo «barˇ» baz", Mode::HelixNormal);
         cx.simulate_keystrokes("shift-r");
 
         cx.assert_state("foo hello worldˇ baz", Mode::HelixNormal);
+
+        // Test shift-r paste on selection from Helix Select Mode returns to Helix Normal Mode
+        cx.set_state("foo «barˇ» baz fizz", Mode::HelixSelect);
+        cx.simulate_keystrokes("e"); // if we're in Select Mode, the selection should be extended to inlcude ` baz`
+        cx.simulate_keystrokes("shift-r");
+
+        cx.assert_state("foo hello worldˇ fizz", Mode::HelixNormal);
     }
 
     #[gpui::test]
