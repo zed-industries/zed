@@ -2732,14 +2732,19 @@ impl CollabPanel {
 
         v_flex()
             .p_4()
-            .gap_4()
+            .gap_1()
             .size_full()
+            .items_center()
             .text_center()
             .justify_center()
-            .child(Label::new(collab_blurb))
+            .child(
+                Label::new(collab_blurb)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
             .child(
                 Button::new(button_id, button_label)
-                    .full_width()
+                    .label_size(LabelSize::Small)
                     .start_icon(Icon::new(button_icon).color(Color::Muted))
                     .style(ButtonStyle::Outlined)
                     .disabled(is_busy)
