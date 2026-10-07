@@ -16,6 +16,7 @@ pub struct ScrollbarSettings {
 
 #[derive(Debug, Clone, PartialEq, RegisterSetting)]
 pub struct GitPanelSettings {
+    pub date_style: settings::GitDateStyle,
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
@@ -60,6 +61,7 @@ impl Settings for GitPanelSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let git_panel = content.git_panel.clone().unwrap();
         Self {
+            date_style: git_panel.date_style.unwrap_or_default(),
             button: git_panel.button.unwrap(),
             dock: git_panel.dock.unwrap().into(),
             default_width: git_panel.default_width.unwrap().into_gpui(),
