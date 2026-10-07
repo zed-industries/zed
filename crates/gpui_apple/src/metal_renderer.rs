@@ -1340,7 +1340,7 @@ fn build_pipeline_state(
     color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::SourceAlpha);
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
 
     device
         .new_render_pipeline_state(&descriptor)
@@ -1374,7 +1374,7 @@ fn build_path_sprite_pipeline_state(
     color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
 
     device
         .new_render_pipeline_state(&descriptor)
@@ -1669,5 +1669,142 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
 
     fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
         self.renderer.sprite_atlas().clone()
+    }
+}
+
+#[cfg(test)]
+mod transparent_composition_tests {
+    use super::*;
+    use gpui::{
+        BorderStyle, FontId, GlyphId, MonochromeSprite, PlatformAtlas, Quad, RenderGlyphParams,
+        TransformationMatrix, hsla, px,
+    };
+    use std::borrow::Cow;
+
+    enum Foreground {
+        Quad,
+        MonochromeSprite,
+        Path,
+    }
+
+    fn render_pixel(foreground: Foreground, background_alpha: f32) -> [u8; 4] {
+        let mut renderer =
+            MetalRenderer::new_headless(Arc::new(Mutex::new(InstanceBufferPool::default())));
+        renderer.update_transparency(true);
+        let bounds = Bounds::new(
+            point(ScaledPixels(0.0), ScaledPixels(0.0)),
+            size(ScaledPixels(8.0), ScaledPixels(8.0)),
+        );
+        let content_mask = ContentMask { bounds };
+        let quad = |color: gpui::Hsla| Quad {
+            order: 0,
+            border_style: BorderStyle::Solid,
+            bounds,
+            content_mask,
+            background: color.into(),
+            border_color: gpui::transparent_black(),
+            corner_radii: Default::default(),
+            border_widths: Default::default(),
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(quad(hsla(0.0, 0.0, 0.1, background_alpha)));
+        match foreground {
+            Foreground::Quad => {
+                scene.insert_primitive(quad(hsla(0.0, 0.0, 0.65, 0.25)));
+            }
+            Foreground::MonochromeSprite => {
+                // Exercise the same atlas-coverage multiplication as glyphs and SVGs.
+                let tile = renderer
+                    .sprite_atlas()
+                    .get_or_insert_with(
+                        RenderGlyphParams {
+                            font_id: FontId(0),
+                            glyph_id: GlyphId(0),
+                            font_size: px(8.0),
+                            subpixel_variant: point(0, 0),
+                            scale_factor: 1.0,
+                            is_emoji: false,
+                            subpixel_rendering: false,
+                            dilation: 0,
+                        }
+                        .into(),
+                        &mut || {
+                            Ok(Some((
+                                size(DevicePixels(8), DevicePixels(8)),
+                                Cow::Owned(vec![64; 64]),
+                            )))
+                        },
+                    )
+                    .unwrap()
+                    .unwrap();
+                scene.insert_primitive(MonochromeSprite {
+                    order: 0,
+                    pad: 0,
+                    bounds,
+                    content_mask,
+                    color: hsla(0.0, 0.0, 0.65, 1.0),
+                    tile,
+                    transformation: TransformationMatrix::unit(),
+                });
+            }
+            Foreground::Path => {
+                let mut path = Path::new(point(px(0.0), px(0.0)));
+                path.line_to(point(px(8.0), px(0.0)));
+                path.line_to(point(px(8.0), px(8.0)));
+                path.line_to(point(px(0.0), px(8.0)));
+                path.color = hsla(0.0, 0.0, 0.65, 0.25).into();
+                path.content_mask = ContentMask {
+                    bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(8.0), px(8.0))),
+                };
+                scene.insert_primitive(path.scale(1.0));
+            }
+        }
+        scene.finish();
+        renderer
+            .render_scene_to_image(&scene, size(DevicePixels(8), DevicePixels(8)))
+            .unwrap()
+            .get_pixel(3, 4)
+            .0
+    }
+
+    fn assert_source_over(pixel: [u8; 4], background_alpha: f32) {
+        let coverage = 0.25;
+        let expected_rgb = (0.65 * coverage + 0.1 * background_alpha * (1.0 - coverage)) * 255.0;
+        let expected_alpha = (coverage + background_alpha * (1.0 - coverage)) * 255.0;
+        // Allow atlas quantization, UNORM writes and shader dithering.
+        for channel in &pixel[..3] {
+            assert!((*channel as f32 - expected_rgb).abs() <= 4.0, "{pixel:?}");
+        }
+        assert!((pixel[3] as f32 - expected_alpha).abs() <= 4.0, "{pixel:?}");
+    }
+
+    #[test]
+    fn transparent_quads_preserve_source_over_alpha() {
+        for background_alpha in [0.0, 0.4, 1.0] {
+            assert_source_over(
+                render_pixel(Foreground::Quad, background_alpha),
+                background_alpha,
+            );
+        }
+    }
+
+    #[test]
+    fn transparent_glyph_coverage_preserves_source_over_alpha() {
+        for background_alpha in [0.0, 0.4, 1.0] {
+            assert_source_over(
+                render_pixel(Foreground::MonochromeSprite, background_alpha),
+                background_alpha,
+            );
+        }
+    }
+
+    #[test]
+    fn transparent_paths_preserve_source_over_alpha() {
+        for background_alpha in [0.0, 0.4, 1.0] {
+            assert_source_over(
+                render_pixel(Foreground::Path, background_alpha),
+                background_alpha,
+            );
+        }
     }
 }
