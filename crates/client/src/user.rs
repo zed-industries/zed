@@ -762,6 +762,15 @@ impl UserStore {
         cx.notify();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_authenticated_user_response_for_test(
+        &mut self,
+        response: GetAuthenticatedUserResponse,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_authenticated_user(response, cx);
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -782,6 +791,17 @@ impl UserStore {
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
+    }
+
+    pub fn current_organization_has_no_active_subscription(&self) -> bool {
+        self.plan_info.is_some()
+            && self
+                .current_organization
+                .as_ref()
+                .is_some_and(|organization| {
+                    !organization.is_personal
+                        && !self.plans_by_organization.contains_key(&organization.id)
+                })
     }
 
     pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
@@ -829,7 +849,11 @@ impl UserStore {
     }
 
     pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
-        self.edit_prediction_usage
+        if self.current_organization_has_no_active_subscription() {
+            None
+        } else {
+            self.edit_prediction_usage
+        }
     }
 
     pub fn update_edit_prediction_usage(

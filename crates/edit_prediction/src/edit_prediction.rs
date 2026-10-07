@@ -1127,6 +1127,16 @@ impl EditPredictionStore {
     }
 
     pub fn refresh_available_experiments(&mut self, cx: &mut Context<Self>) {
+        if self
+            .user_store
+            .read(cx)
+            .current_organization_has_no_active_subscription()
+        {
+            self.available_experiments.clear();
+            cx.notify();
+            return;
+        }
+
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
@@ -2766,6 +2776,15 @@ impl EditPredictionStore {
                 EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
             );
         if is_cloud_zeta && !self.client.cloud_client().has_credentials() {
+            return Task::ready(Ok(None));
+        }
+
+        if is_cloud_zeta
+            && self
+                .user_store
+                .read(cx)
+                .current_organization_has_no_active_subscription()
+        {
             return Task::ready(Ok(None));
         }
 
