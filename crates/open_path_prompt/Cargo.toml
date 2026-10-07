@@ -31,3 +31,4 @@ workspace = true
 
 [lib]
 path = "src/open_path_prompt.rs"
+doctest = false

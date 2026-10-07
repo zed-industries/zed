@@ -7,11 +7,13 @@ license = "Apache-2.0"
 
 [lib]
 path = "gpui_shared_string.rs"
+test = false
+doctest = false
 
 [dependencies]
 schemars.workspace = true
 serde.workspace = true
-smol_str = "0.3.6"
+smol_str = { version = "0.3.6", default-features = false, features = ["serde"] }
 
 [lints]
 workspace = true

@@ -11,7 +11,7 @@ See [All Settings](./reference/all-settings.md) for additional information and o
 
 ## Themes
 
-You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of extensions by running {#action zed::Extensions} from the command palette.
+You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of [extensions](./extensions.md) by running {#action zed::Extensions} from the command palette.
 
 You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and {#action icon_theme_selector::Toggle} which will modify the following settings:
 
@@ -78,15 +78,24 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   // and any other snippet of code.
   "agent_buffer_font_size": 12,
 
-  // Controls the font size for the markdown preview.
-  // If not specified, it falls back to the editor font size.
-  "markdown_preview_font_size": null,
-  // Controls the font family for the markdown preview.
-  // If not specified, it falls back to the UI font family.
-  "markdown_preview_font_family": null,
-  // Controls the font family for code blocks in the markdown preview.
-  // If not specified, it falls back to the editor font family.
-  "markdown_preview_code_font_family": null
+  // Controls the font family for Mermaid diagrams in the agent panel and
+  // markdown preview. If not specified, it falls back to the UI font family.
+  "mermaid_font_family": "Inter",
+
+  "markdown_preview": {
+    // Controls the font size for the markdown preview.
+    // If not specified, it falls back to the editor font size.
+    "font_size": null,
+    // Controls the font family for the markdown preview.
+    // If not specified, it falls back to the UI font family.
+    "font_family": null,
+    // Controls the font family for code blocks in the markdown preview.
+    // If not specified, it falls back to the editor font family.
+    "code_font_family": null,
+    // Controls the font weight for headings (H1 through H6) in the markdown preview,
+    // in CSS units from 100 to 900. Defaults to 600.
+    "heading_font_weight": 600
+  }
 ```
 
 ### Font ligatures
@@ -134,14 +143,15 @@ To disable this behavior use:
   // Control which items are shown/hidden in the title bar
   "title_bar": {
     "show_branch_status_icon": false, // Show git status on branch icon
-    "show_branch_name": true,       // Show/hide branch name
-    "show_worktree_name": true,     // Show/hide worktree name
-    "show_project_items": true,     // Show/hide project host and name
-    "show_onboarding_banner": true, // Show/hide onboarding banners
-    "show_user_picture": true,      // Show/hide user avatar
-    "show_user_menu": true,         // Show/hide app user button
-    "show_sign_in": true,           // Show/hide sign-in button
-    "show_menus": false             // Show/hide menus
+    "show_branch_name": true,         // Show/hide branch name
+    "show_worktree_name": true,       // Show/hide worktree name
+    "show_project_items": true,       // Show/hide project host and name
+    "show_onboarding_banner": true,   // Show/hide onboarding banners
+    "show_user_picture": true,        // Show/hide user avatar
+    "show_user_menu": true,           // Show/hide app user button
+    "show_sign_in": true,             // Show/hide sign-in button
+    "show_menus": false,              // Show/hide menus
+    "open_menus_on_hover": false      // Automatically open menus on hover
   },
 ```
 
@@ -359,16 +369,17 @@ TBD: Centered layout related settings
     // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
     // Defaults to "non_utf8".
     "active_encoding_button": "non_utf8",
-    // Show/hide an indicator with a countdown while timed multi-stroke
-    // input is pending. Hovering it pauses the timeout. Unless the which-key
-    // menu is enabled, hovering also lists the bindings that could still match.
+    // Show/hide an indicator while multi-stroke input is pending.
+    // If the input has a timeout, a countdown is shown and hovering pauses it.
+    // Unless the which-key menu is enabled, hovering also lists the bindings
+    // that could still match.
     // Defaults to true.
     "pending_keystrokes_indicator": true
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.
     // Activity from the LSP is still shown.
-    // Button is not shown if "enable_language_server" if false.
+    // Button is not shown if "enable_language_server" is false.
     "button": true
   },
 ```
@@ -470,7 +481,7 @@ TBD: Centered layout related settings
 
 ## Project Panel
 
-Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
+[Project panel](./project-panel.md) can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
 
 ```json [settings]
   // Project Panel Settings
@@ -521,7 +532,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "enabled": true, // Enable/disable the agent
     "button": true, // Show/hide the icon in the status bar
     "dock": "right", // Where to dock: left, right, bottom
-    "default_width": 640, // Default width (left/right docked)
+    "flexible": true, // Use proportional sizing (left/right docked)
+    "default_width": 640, // Fixed width when flexible is false
     "default_height": 320 // Default height (bottom docked)
   },
   // Controls the font family and size for agent responses in the agent panel.
@@ -535,6 +547,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
   "agent_buffer_font_size": 12
 }
 ```
+
+When `agent.flexible` is enabled, `agent.default_width` does not control the panel width. Double-clicking the panel’s outer resize handle restores the default proportion. Set `agent.flexible` to `false` to use `agent.default_width` as the reset width.
 
 See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settings.
 
