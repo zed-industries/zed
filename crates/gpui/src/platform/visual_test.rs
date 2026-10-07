@@ -7,7 +7,7 @@
 
 use crate::ScreenCaptureSource;
 use crate::{
-    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayEvent,
+    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
     ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Task, TestDispatcher, WindowAppearance, WindowParams,
@@ -101,8 +101,8 @@ impl Platform for VisualTestPlatform {
         self.platform.primary_display()
     }
 
-    fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
-        self.platform.on_display_change(callback)
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.platform.on_displays_changed(callback)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

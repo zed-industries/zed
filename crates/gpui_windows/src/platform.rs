@@ -11,7 +11,6 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use collections::HashSet;
 use futures::channel::oneshot::Receiver;
 use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
@@ -99,8 +98,6 @@ pub(crate) struct WindowsPlatformState {
     /// thread; see [`DrawCoordinator`].
     pub(crate) draw_coordinator: Rc<DrawCoordinator>,
     directx_devices: RefCell<Option<DirectXDevices>>,
-    /// Updated when a window reports `WM_DISPLAYCHANGE`.
-    display_ids: RefCell<HashSet<DisplayId>>,
 }
 
 #[derive(Default)]
@@ -114,7 +111,7 @@ struct PlatformCallbacks {
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
     system_sleep: Cell<Option<Box<dyn FnMut()>>>,
     system_wake: Cell<Option<Box<dyn FnMut()>>>,
-    display_change: Cell<Option<Box<dyn FnMut(DisplayEvent)>>>,
+    displays_changed: Cell<Option<Box<dyn FnMut()>>>,
 }
 
 impl WindowsPlatformState {
@@ -131,7 +128,6 @@ impl WindowsPlatformState {
             draw_coordinator: Rc::new(DrawCoordinator::new()),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
-            display_ids: RefCell::new(WindowsDisplay::ids()),
         }
     }
 }
@@ -736,11 +732,11 @@ impl Platform for WindowsPlatform {
         WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
-    fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
         self.inner
             .state
             .callbacks
-            .display_change
+            .displays_changed
             .set(Some(callback));
     }
 
@@ -1226,16 +1222,9 @@ impl WindowsPlatformInner {
     }
 
     fn handle_displays_changed(&self) -> Option<isize> {
-        let current = WindowsDisplay::ids();
-        let events = gpui::display_events(&self.state.display_ids.borrow(), &current);
-        *self.state.display_ids.borrow_mut() = current;
         self.with_callback(
-            |callbacks| &callbacks.display_change,
-            |callback| {
-                for event in events {
-                    callback(event);
-                }
-            },
+            |callbacks| &callbacks.displays_changed,
+            |callback| callback(),
         );
         Some(0)
     }

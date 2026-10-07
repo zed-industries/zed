@@ -473,13 +473,28 @@ impl TestAppContext {
     }
 
     /// Simulates connecting a display.
-    pub fn simulate_display_added(&self, display_id: DisplayId) {
-        self.test_platform.simulate_display_added(display_id);
+    pub fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<std::time::Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_added(display_id, refresh_interval);
     }
 
     /// Simulates disconnecting a display.
     pub fn simulate_display_removed(&self, display_id: DisplayId) {
         self.test_platform.simulate_display_removed(display_id);
+    }
+
+    /// Simulates a connected display changing its refresh interval.
+    pub fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<std::time::Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_refresh_interval_change(display_id, refresh_interval);
     }
 
     /// Simulates visible viewport changes without resizing the window's layout area.

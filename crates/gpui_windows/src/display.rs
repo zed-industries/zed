@@ -1,4 +1,3 @@
-use collections::HashSet;
 use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
@@ -131,21 +130,6 @@ impl WindowsDisplay {
             .collect()
     }
 
-    /// The IDs of the connected monitors.
-    pub(crate) fn ids() -> HashSet<DisplayId> {
-        available_monitors()
-            .into_iter()
-            .map(Self::display_id_for_monitor)
-            .collect()
-    }
-
-    /// Reads the monitor's refresh interval from the system.
-    pub(crate) fn refresh_interval(&self) -> Option<std::time::Duration> {
-        get_monitor_info(self.handle)
-            .log_err()
-            .and_then(|info| refresh_interval_for_device(&info.szDevice))
-    }
-
     pub fn physical_bounds(&self) -> Bounds<DevicePixels> {
         self.physical_bounds
     }
@@ -166,6 +150,12 @@ impl PlatformDisplay for WindowsDisplay {
 
     fn visible_bounds(&self) -> Bounds<Pixels> {
         self.visible_bounds
+    }
+
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        get_monitor_info(self.handle)
+            .log_err()
+            .and_then(|info| refresh_interval_for_device(&info.szDevice))
     }
 }
 

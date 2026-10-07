@@ -1725,12 +1725,8 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().moved = Some(callback);
     }
 
-    // A GPUI display on X11 is an X screen, which spans every monitor and so
-    // has no single refresh rate, and a window never changes screen.
-    fn refresh_interval(&self) -> Option<std::time::Duration> {
-        None
-    }
-
+    // A GPUI display on X11 is an X screen, which spans every monitor, and a
+    // window never changes screen.
     fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {

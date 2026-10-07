@@ -81,9 +81,6 @@ pub struct WindowsWindowState {
     pub nc_button_pressed: Cell<Option<u32>>,
 
     pub display: Cell<WindowsDisplay>,
-    /// Read from the window's monitor when the window moves to another monitor
-    /// or monitors change mode.
-    pub refresh_interval: Cell<Option<Duration>>,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub invalidate_devices: Arc<AtomicBool>,
@@ -186,7 +183,6 @@ impl WindowsWindowState {
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),
-            refresh_interval: Cell::new(display.refresh_interval()),
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
@@ -1003,10 +999,6 @@ impl PlatformWindow for WindowsWindow {
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.state.callbacks.resize.set(Some(callback));
-    }
-
-    fn refresh_interval(&self) -> Option<Duration> {
-        self.state.refresh_interval.get()
     }
 
     fn on_display_changed(&self, callback: Box<dyn FnMut()>) {

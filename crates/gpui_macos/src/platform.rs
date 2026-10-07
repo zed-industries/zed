@@ -20,7 +20,6 @@ use cocoa::{
         NSArray, NSAutoreleasePool, NSBundle, NSInteger, NSProcessInfo, NSString, NSUInteger, NSURL,
     },
 };
-use collections::HashSet;
 use core_foundation::{
     base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
     boolean::CFBoolean,
@@ -34,11 +33,11 @@ use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
     Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
-    CursorStyle, DisplayEvent, DisplayId, ForegroundExecutor, GraphicalEnvironment, KeyContext,
-    Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result,
-    SystemMenuType, Task, ThermalState, WindowAppearance, WindowKind, WindowParams,
-    WindowingRequest, popup::PopupNotSupportedError,
+    CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
+    OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task,
+    ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
+    popup::PopupNotSupportedError,
 };
 use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
@@ -199,9 +198,7 @@ pub(crate) struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     on_thermal_state_change: Option<Box<dyn FnMut()>>,
-    on_display_change: Option<Box<dyn FnMut(DisplayEvent)>>,
-    /// Updated when AppKit reports a screen configuration change.
-    display_ids: HashSet<DisplayId>,
+    on_displays_changed: Option<Box<dyn FnMut()>>,
     on_system_sleep: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
     system_power_observers_registered: bool,
@@ -278,8 +275,7 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             on_thermal_state_change: None,
-            on_display_change: None,
-            display_ids: HashSet::default(),
+            on_displays_changed: None,
             on_system_sleep: None,
             on_system_wake: None,
             system_power_observers_registered: false,
@@ -750,8 +746,8 @@ impl Platform for MacPlatform {
             .collect()
     }
 
-    fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
-        self.0.lock().on_display_change = Some(callback);
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_displays_changed = Some(callback);
     }
 
     #[cfg(feature = "screen-capture")]
@@ -1442,10 +1438,8 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         // SAFETY: `this` is a live Objective-C object; only the pointer's type changes.
         let observer = &*(this as *mut Object as *const AnyObject);
         let platform = get_mac_platform(this);
-        let display_ids = MacDisplay::ids();
         let callback = {
             let mut state = platform.0.lock();
-            state.display_ids = display_ids;
             if (state.on_system_sleep.is_some() || state.on_system_wake.is_some())
                 && !state.system_power_observers_registered
             {
@@ -1555,21 +1549,15 @@ extern "C" fn on_screen_parameters_change(this: &mut Object, _: Sel, _: id) {
 
     extern "C" fn on_screen_parameters_change(context: *mut c_void) {
         let platform = unsafe { &*(context as *const MacPlatform) };
-        let current = MacDisplay::ids();
-        let mut lock = platform.0.lock();
-        let events = gpui::display_events(&lock.display_ids, &current);
-        lock.display_ids = current;
-        if events.is_empty() {
-            return;
+        let callback = platform.0.lock().on_displays_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            platform
+                .0
+                .lock()
+                .on_displays_changed
+                .get_or_insert(callback);
         }
-        let Some(mut callback) = lock.on_display_change.take() else {
-            return;
-        };
-        drop(lock);
-        for event in events {
-            callback(event);
-        }
-        platform.0.lock().on_display_change.get_or_insert(callback);
     }
 }
 

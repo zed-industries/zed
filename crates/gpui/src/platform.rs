@@ -48,7 +48,7 @@ use crate::{
 use anyhow::bail;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
-use collections::{FxHashMap, HashSet};
+use collections::FxHashMap;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
@@ -129,21 +129,24 @@ pub enum DisplayEvent {
     /// A display was disconnected. Windows on it are moved to another
     /// display by the platform.
     Removed(DisplayId),
+    /// A connected display's properties changed.
+    Changed {
+        /// The display that changed.
+        id: DisplayId,
+        /// Which of its properties changed.
+        changes: DisplayChanges,
+    },
 }
 
-/// The events that turn one snapshot of the connected displays into the next,
-/// for platforms whose display notifications don't say what changed.
-pub fn display_events(
-    previous: &HashSet<DisplayId>,
-    current: &HashSet<DisplayId>,
-) -> Vec<DisplayEvent> {
-    let removed = previous
-        .difference(current)
-        .map(|id| DisplayEvent::Removed(*id));
-    let added = current
-        .difference(previous)
-        .map(|id| DisplayEvent::Added(*id));
-    removed.chain(added).collect()
+bitflags::bitflags! {
+    /// The properties of a display that a [`DisplayEvent::Changed`] reports.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct DisplayChanges: u8 {
+        /// [`PlatformDisplay::bounds`] changed.
+        const BOUNDS = 1 << 0;
+        /// [`PlatformDisplay::refresh_interval`] changed.
+        const REFRESH_INTERVAL = 1 << 1;
+    }
 }
 
 /// Converts a refresh rate in hertz to the time between refreshes, rejecting
@@ -384,9 +387,11 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
-    /// Registers the callback invoked when a display is added or removed. The
-    /// callback runs on the main thread.
-    fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>);
+    /// Registers the callback invoked when displays may have been added or
+    /// removed, or a display's properties may have changed. GPUI rereads
+    /// [`Self::displays`] to find out what changed, so calls may be spurious.
+    /// The callback runs on the main thread outside of any window update.
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>);
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
@@ -609,6 +614,16 @@ pub trait PlatformDisplay: Debug {
 
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<Pixels>;
+
+    /// The time between the display's refreshes. Variable refresh rate
+    /// displays report their maximum rate. `None` when the platform doesn't
+    /// report it.
+    ///
+    /// May query the operating system; GPUI caches it per display, see
+    /// [`Window::refresh_interval`](crate::Window::refresh_interval).
+    fn refresh_interval(&self) -> Option<Duration> {
+        None
+    }
 
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
     /// This is the usable area where windows can be placed without being obscured.
@@ -1251,16 +1266,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
-    /// The time between refreshes of the display the window is on. Variable
-    /// refresh rate displays report their maximum rate. `None` when the
-    /// platform doesn't report it.
-    ///
-    /// Returns the value the platform cached when the window's display last
-    /// changed, without querying the operating system.
-    fn refresh_interval(&self) -> Option<Duration>;
-    /// Registers the callback invoked when the window moves to another display
-    /// or its display's refresh interval changes. Calls may be spurious. The
-    /// callback runs on the main thread outside of any window update.
+    /// Registers the callback invoked when the window moves to another
+    /// display. Calls may be spurious. The callback runs on the main thread
+    /// outside of any window update.
     fn on_display_changed(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
@@ -3634,23 +3642,6 @@ mod frame_signal_tests {
 mod tests {
     use super::*;
     use std::collections::HashSet;
-
-    #[test]
-    fn test_display_events() {
-        let previous = collections::HashSet::from_iter([DisplayId(1), DisplayId(2)]);
-        let current = collections::HashSet::from_iter([DisplayId(1), DisplayId(3)]);
-        let events = display_events(&previous, &current)
-            .into_iter()
-            .collect::<HashSet<_>>();
-        assert_eq!(
-            events,
-            HashSet::from_iter([
-                DisplayEvent::Removed(DisplayId(2)),
-                DisplayEvent::Added(DisplayId(3)),
-            ])
-        );
-        assert_eq!(display_events(&current, &current), []);
-    }
 
     #[test]
     fn test_refresh_interval_from_hz() {

@@ -16,6 +16,7 @@ pub(crate) struct WaylandDisplay {
     pub id: ObjectId,
     pub name: Option<String>,
     pub bounds: Bounds<Pixels>,
+    pub refresh_interval: Option<Duration>,
 }
 
 impl Hash for WaylandDisplay {
@@ -39,6 +40,10 @@ impl PlatformDisplay for WaylandDisplay {
 
     fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
+    }
+
+    fn refresh_interval(&self) -> Option<Duration> {
+        self.refresh_interval
     }
 }
 

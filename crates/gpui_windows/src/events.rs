@@ -953,7 +953,7 @@ impl WindowsWindowInner {
     fn handle_display_change_msg(&self, handle: HWND) -> Option<isize> {
         // `WM_DISPLAYCHANGE` is only broadcast to top-level windows, which
         // excludes the platform's message-only window. Every window forwards
-        // it; the platform finds nothing changed on repeats.
+        // it; GPUI finds nothing changed on repeats.
         unsafe {
             PostMessageW(
                 Some(self.platform_window_handle),
@@ -973,10 +973,7 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    /// Records the window's monitor, rereads its refresh interval, and
-    /// reports the change.
     fn set_display(&self, display: WindowsDisplay) {
-        self.state.refresh_interval.set(display.refresh_interval());
         self.state.display.set(display);
         if let Some(mut callback) = self.state.callbacks.display_changed.take() {
             callback();

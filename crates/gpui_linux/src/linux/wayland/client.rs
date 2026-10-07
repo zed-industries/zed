@@ -99,13 +99,13 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayEvent, DisplayId,
-    ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment,
-    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
-    PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow,
-    Point, ScrollDelta, ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout,
-    WindowKind, WindowParams, point, px, size,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, ExternalDragPayload,
+    FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment, KeyDownEvent,
+    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta,
+    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams,
+    point, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -578,17 +578,18 @@ impl WaylandClientStatePtr {
             .expect("The pointer should always be valid when dispatching in wayland")
     }
 
-    /// Reports a display event. The client state and `LinuxCommon` must not
-    /// be borrowed, since GPUI may read display state while handling it.
-    fn report_display_event(&self, event: DisplayEvent) {
+    /// Reports that the outputs may have changed. The client state and
+    /// `LinuxCommon` must not be borrowed, since GPUI reads the displays while
+    /// handling it.
+    fn report_displays_changed(&self) {
         let common = self.get_client().borrow().common.clone();
-        let callback = common.borrow_mut().callbacks.display_change.take();
+        let callback = common.borrow_mut().callbacks.displays_changed.take();
         if let Some(mut callback) = callback {
-            callback(event);
+            callback();
             common
                 .borrow_mut()
                 .callbacks
-                .display_change
+                .displays_changed
                 .get_or_insert(callback);
         }
     }
@@ -1226,6 +1227,7 @@ impl WaylandConnection {
                     id: id.clone(),
                     name: output.name.clone(),
                     bounds: output.bounds.to_pixels(output.scale as f32),
+                    refresh_interval: output.refresh_interval,
                 }) as Rc<dyn PlatformDisplay>
             })
             .collect()
@@ -1623,7 +1625,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 }
                 if was_complete {
                     drop(state);
-                    this.report_display_event(DisplayEvent::Removed(display_id_for_output(&id)));
+                    this.report_displays_changed();
                 }
             }
             _ => {}
@@ -1709,10 +1711,6 @@ fn frame_callback_instant(
         .unwrap_or(received_at)
 }
 
-fn display_id_for_output(output: &ObjectId) -> DisplayId {
-    DisplayId::new(output.protocol_id() as u64)
-}
-
 pub(crate) fn get_window(
     state: &mut RefMut<WaylandClientState>,
     surface_id: &ObjectId,
@@ -1792,15 +1790,13 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                     return;
                 };
                 let id = output.id();
-                let added = state.outputs.insert(id.clone(), complete.clone()).is_none();
+                state.outputs.insert(id.clone(), complete.clone());
                 let windows = state.windows.values().cloned().collect::<Vec<_>>();
                 drop(state);
-                if added {
-                    this.report_display_event(DisplayEvent::Added(display_id_for_output(&id)));
-                }
                 for window in windows {
                     window.handle_output_changed(&id, &complete);
                 }
+                this.report_displays_changed();
             }
             _ => {}
         }

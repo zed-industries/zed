@@ -4,7 +4,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use calloop::ping::Ping;
@@ -1634,16 +1634,10 @@ impl WaylandWindowStatePtr {
             return;
         };
         *entered = output.clone();
-        let is_display = match &mut state.display {
-            Some((display_id, display)) if display_id == id => {
-                *display = output.clone();
-                true
-            }
-            _ => false,
-        };
-        drop(state);
-        if is_display {
-            self.report_display_changed();
+        if let Some((display_id, display)) = &mut state.display
+            && display_id == id
+        {
+            *display = output.clone();
         }
     }
 
@@ -1818,6 +1812,7 @@ impl PlatformWindow for WaylandWindow {
                 id: id.clone(),
                 name: display.name.clone(),
                 bounds: display.bounds.to_pixels(state.scale),
+                refresh_interval: display.refresh_interval,
             }) as Rc<dyn PlatformDisplay>
         })
     }
@@ -1984,13 +1979,6 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
-    }
-
-    fn refresh_interval(&self) -> Option<Duration> {
-        self.borrow()
-            .display
-            .as_ref()
-            .and_then(|(_, output)| output.refresh_interval)
     }
 
     fn on_display_changed(&self, callback: Box<dyn FnMut()>) {

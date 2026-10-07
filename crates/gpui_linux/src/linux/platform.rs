@@ -37,10 +37,10 @@ use crate::linux::{
 };
 use gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DisplayEvent, ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
-    WindowAppearance, WindowButtonLayout, WindowParams, WindowingModes, WindowingRequest,
+    ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
+    WindowButtonLayout, WindowParams, WindowingModes, WindowingRequest,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -71,7 +71,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
     pub(crate) system_sleep: Option<Box<dyn FnMut()>>,
     pub(crate) system_wake: Option<Box<dyn FnMut()>>,
-    pub(crate) display_change: Option<Box<dyn FnMut(DisplayEvent)>>,
+    pub(crate) displays_changed: Option<Box<dyn FnMut()>>,
 }
 
 /// A logind `PrepareForSleep` signal, forwarded from the D-Bus listener to
@@ -712,8 +712,8 @@ impl Platform for LinuxPlatform {
         self.connection.borrow().displays()
     }
 
-    fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
-        self.with_common(|common| common.callbacks.display_change = Some(callback));
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.with_common(|common| common.callbacks.displays_changed = Some(callback));
     }
 
     #[cfg(feature = "screen-capture")]

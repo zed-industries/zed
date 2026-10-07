@@ -216,10 +216,6 @@ impl PlatformWindow for HeadlessWindow {
 
     fn on_moved(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn refresh_interval(&self) -> Option<std::time::Duration> {
-        None
-    }
-
     fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
