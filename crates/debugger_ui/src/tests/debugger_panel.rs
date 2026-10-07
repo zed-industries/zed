@@ -2702,8 +2702,7 @@ async fn test_debugger_terminal_pane_has_search_bar(
     cx.update(|cx| {
         cx.set_global(workspace::PaneSearchBarCallbacks {
             setup_search_bar: |languages, toolbar, window, cx| {
-                let search_bar =
-                    cx.new(|cx| search::BufferSearchBar::new(languages, window, cx));
+                let search_bar = cx.new(|cx| search::BufferSearchBar::new(languages, window, cx));
                 toolbar.update(cx, |toolbar, cx| {
                     toolbar.add_item(search_bar, window, cx);
                 });
@@ -2753,7 +2752,10 @@ async fn test_debugger_terminal_pane_has_search_bar(
     workspace
         .update(cx, |workspace, _, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-            let session = debug_panel.read(cx).active_session().expect("active session");
+            let session = debug_panel
+                .read(cx)
+                .active_session()
+                .expect("active session");
             let running_state = session.read(cx).running_state().clone();
             let active_pane = running_state.read(cx).active_pane().clone();
             let search_bar = active_pane
