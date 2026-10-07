@@ -98,6 +98,7 @@ pub(crate) struct WindowsPlatformState {
     /// thread; see [`DrawCoordinator`].
     pub(crate) draw_coordinator: Rc<DrawCoordinator>,
     directx_devices: RefCell<Option<DirectXDevices>>,
+    system_suspended: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -127,6 +128,7 @@ impl WindowsPlatformState {
             cursor_visible: Arc::new(AtomicBool::new(true)),
             draw_coordinator: Rc::new(DrawCoordinator::new()),
             directx_devices: RefCell::new(directx_devices),
+            system_suspended: Cell::new(false),
             menus: RefCell::new(Vec::new()),
         }
     }
@@ -217,9 +219,12 @@ impl WindowsPlatform {
             directx_devices: None,
             dispatcher: None,
         };
+        // A hidden top-level window rather than a message-only one, since only
+        // top-level windows receive system broadcasts such as `WM_DISPLAYCHANGE`
+        // and `WM_ENDSESSION`, which the app needs even with no windows open.
         let result = unsafe {
             CreateWindowExW(
-                WINDOW_EX_STYLE(0),
+                WS_EX_TOOLWINDOW,
                 PLATFORM_WINDOW_CLASS_NAME,
                 None,
                 WINDOW_STYLE(0),
@@ -227,7 +232,7 @@ impl WindowsPlatform {
                 0,
                 0,
                 0,
-                Some(HWND_MESSAGE),
+                None,
                 None,
                 None,
                 Some(&raw const context as *const _),
@@ -1189,9 +1194,11 @@ impl WindowsPlatformInner {
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_DISPLAYS_CHANGED
-            | WM_GPUI_GPU_DEVICE_LOST
-            | WM_GPUI_END_SESSION => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
             WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
+            WM_DISPLAYCHANGE => self.handle_display_change(handle),
+            WM_QUERYENDSESSION => Some(1),
+            WM_ENDSESSION if wparam.0 != 0 => self.handle_end_session(),
             _ => None,
         };
         if let Some(result) = handled {
@@ -1216,9 +1223,23 @@ impl WindowsPlatformInner {
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_DISPLAYS_CHANGED => self.handle_displays_changed(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
-            WM_GPUI_END_SESSION => self.handle_end_session(),
             _ => unreachable!(),
         }
+    }
+
+    fn handle_display_change(&self, handle: HWND) -> Option<isize> {
+        // Broadcasts can be delivered while the app is mid-update, e.g. inside a
+        // COM call, so report the change from the message loop instead.
+        unsafe {
+            PostMessageW(
+                Some(handle),
+                WM_GPUI_DISPLAYS_CHANGED,
+                WPARAM(self.validation_number),
+                LPARAM(0),
+            )
+            .log_err();
+        }
+        Some(0)
     }
 
     fn handle_displays_changed(&self) -> Option<isize> {
@@ -1357,11 +1378,13 @@ impl WindowsPlatformInner {
     }
 
     fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
+        // A top-level window gets the broadcast as well as the notification
+        // registered by `on_system_wake`, so ignore repeats.
         match wparam.0 as u32 {
-            PBT_APMSUSPEND => {
+            PBT_APMSUSPEND if !self.state.system_suspended.replace(true) => {
                 self.with_callback(|callbacks| &callbacks.system_sleep, |callback| callback());
             }
-            PBT_APMRESUMEAUTOMATIC => {
+            PBT_APMRESUMEAUTOMATIC if self.state.system_suspended.replace(false) => {
                 self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
             }
             _ => {}
