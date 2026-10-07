@@ -10,6 +10,7 @@ use gpui::{
     AnyWindowHandle, Empty, Entity, InputEvent as _, KeyDownEvent, Keystroke, Size, TestAppContext,
     VisualTestContext,
 };
+use itertools::iproduct;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, LanguageServerId,
     PointUtf16, Unclipped,
@@ -5795,7 +5796,7 @@ async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppCo
 }
 
 #[gpui::test]
-async fn test_shift_click_drag_moves_entire_folded_directories(cx: &mut TestAppContext) {
+async fn test_range_selection_drag_moves_entire_folded_directories(cx: &mut TestAppContext) {
     init_test_with_editor(cx);
     cx.update(|cx| {
         let settings = *ProjectPanelSettings::get_global(cx);
@@ -5808,12 +5809,17 @@ async fn test_shift_click_drag_moves_entire_folded_directories(cx: &mut TestAppC
         );
     });
 
-    for (source_path, target_path, copy) in [
-        ("project/root/a", "project/root/other", false),
-        ("project/root/other", "project/root/a", false),
-        ("project/root/a", "project/root/other", true),
-        ("project/root/other", "project/root/a", true),
-    ] {
+    // Cmd/ctrl-clicking the source keeps the folded rows marked with their inner
+    // directory, which the range selection must still widen to the whole row.
+    for (range_selection, source_click_modifiers, copy, (source_path, target_path)) in iproduct!(
+        [RangeSelection::ShiftClick, RangeSelection::ShiftArrows],
+        [Modifiers::none(), Modifiers::secondary_key()],
+        [false, true],
+        [
+            ("project/root/a", "project/root/other"),
+            ("project/root/other", "project/root/a"),
+        ]
+    ) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/project"),
@@ -5847,16 +5853,8 @@ async fn test_shift_click_drag_moves_entire_folded_directories(cx: &mut TestAppC
 
         select_folded_path_with_mark(&panel, "project/root/c/d", "project/root/c/d", cx);
         select_folded_path_with_mark(&panel, "project/root/e/f", "project/root/e/f", cx);
-        click_project_entry(&panel, source_path, Modifiers::none(), cx);
-        click_project_entry(
-            &panel,
-            target_path,
-            Modifiers {
-                shift: true,
-                ..Modifiers::none()
-            },
-            cx,
-        );
+        click_project_entry(&panel, source_path, source_click_modifiers, cx);
+        extend_range_selection_to(&panel, range_selection, target_path, cx);
 
         cx.simulate_modifiers_change(Modifiers {
             alt: copy && cfg!(target_os = "macos"),
@@ -5887,13 +5885,13 @@ async fn test_shift_click_drag_moves_entire_folded_directories(cx: &mut TestAppC
         assert_eq!(
             fs.paths(false).into_iter().collect::<BTreeSet<_>>(),
             expected_paths,
-            "dragging the range {source_path} to {target_path} with copy={copy} should include the entire folded directories"
+            "dragging the range {source_path} to {target_path} with {range_selection:?}, source click {source_click_modifiers:?} and copy={copy} should include the entire folded directories"
         );
     }
 }
 
 #[gpui::test]
-async fn test_shift_click_preserves_folded_range_endpoints(cx: &mut TestAppContext) {
+async fn test_range_selection_folded_endpoints(cx: &mut TestAppContext) {
     init_test_with_editor(cx);
     cx.update(|cx| {
         let settings = *ProjectPanelSettings::get_global(cx);
@@ -5906,7 +5904,17 @@ async fn test_shift_click_preserves_folded_range_endpoints(cx: &mut TestAppConte
         );
     });
 
-    for (source_path, target_path) in [("root/a/b/c", "root/g/h/i"), ("root/g/h/i", "root/a/b/c")] {
+    // (leaf, segment clicked before selecting, outermost directory)
+    let folded_rows = [
+        ("root/a/b/c", "root/a/b", "root/a"),
+        ("root/d/e/f", "root/d/e/f", "root/d"),
+        ("root/g/h/i", "root/g/h", "root/g"),
+    ];
+
+    for (range_selection, (source_path, target_path)) in iproduct!(
+        [RangeSelection::ShiftClick, RangeSelection::ShiftArrows],
+        [("root/a/b/c", "root/g/h/i"), ("root/g/h/i", "root/a/b/c")]
+    ) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/root"),
@@ -5921,34 +5929,32 @@ async fn test_shift_click_preserves_folded_range_endpoints(cx: &mut TestAppConte
         let (window, panel) = create_drag_test_panel(&project, cx);
         let cx = &mut VisualTestContext::from_window(window, cx);
 
-        select_folded_path_with_mark(&panel, "root/a/b/c", "root/a/b", cx);
-        select_folded_path_with_mark(&panel, "root/d/e/f", "root/d/e/f", cx);
-        select_folded_path_with_mark(&panel, "root/g/h/i", "root/g/h", cx);
+        for (leaf_path, clicked_path, _) in folded_rows {
+            select_folded_path_with_mark(&panel, leaf_path, clicked_path, cx);
+        }
         click_project_entry(&panel, source_path, Modifiers::none(), cx);
-        click_project_entry(
-            &panel,
-            target_path,
-            Modifiers {
-                shift: true,
-                ..Modifiers::none()
-            },
-            cx,
-        );
+        extend_range_selection_to(&panel, range_selection, target_path, cx);
 
-        for (leaf_path, active_path) in [
-            ("root/a/b/c", "root/a/b"),
-            ("root/d/e/f", "root/d"),
-            ("root/g/h/i", "root/g/h"),
-        ] {
+        for (leaf_path, clicked_path, outermost_path) in folded_rows {
+            // A click points at an exact segment, so shift-click keeps both endpoints'
+            // segments. Shift-arrows only keep the segment of the row they started from.
+            let keeps_clicked_segment = leaf_path == source_path
+                || (leaf_path == target_path
+                    && matches!(range_selection, RangeSelection::ShiftClick));
+            let expected_path = if keeps_clicked_segment {
+                clicked_path
+            } else {
+                outermost_path
+            };
             let leaf_entry =
                 find_project_entry(&panel, leaf_path, cx).expect("folded directory should exist");
-            let active_entry =
-                find_project_entry(&panel, active_path, cx).expect("active directory should exist");
+            let expected_entry = find_project_entry(&panel, expected_path, cx)
+                .expect("expected directory should exist");
             panel.read_with(cx, |panel, _| {
                 assert_eq!(
                     panel.resolve_entry(leaf_entry),
-                    active_entry,
-                    "range {source_path} to {target_path} should select {active_path}"
+                    expected_entry,
+                    "range {source_path} to {target_path} with {range_selection:?} should select {expected_path}"
                 );
             });
         }
@@ -11046,6 +11052,71 @@ pub(crate) fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Vis
         panic!("no worktree for path {:?}", path);
     });
     cx.run_until_parked();
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RangeSelection {
+    ShiftClick,
+    ShiftArrows,
+}
+
+fn extend_range_selection_to(
+    panel: &Entity<ProjectPanel>,
+    range_selection: RangeSelection,
+    target_path: &str,
+    cx: &mut VisualTestContext,
+) {
+    match range_selection {
+        RangeSelection::ShiftClick => click_project_entry(
+            panel,
+            target_path,
+            Modifiers {
+                shift: true,
+                ..Modifiers::none()
+            },
+            cx,
+        ),
+        RangeSelection::ShiftArrows => shift_select_with_keyboard_to(panel, target_path, cx),
+    }
+}
+
+fn shift_select_with_keyboard_to(
+    panel: &Entity<ProjectPanel>,
+    target_path: &str,
+    cx: &mut VisualTestContext,
+) {
+    let target_entry_id =
+        find_project_entry(panel, target_path, cx).expect("target entry should exist");
+    cx.simulate_modifiers_change(Modifiers {
+        shift: true,
+        ..Modifiers::none()
+    });
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            let selection = panel
+                .selection
+                .expect("a selection is required before extending it");
+            let (_, _, target_index) = panel
+                .index_for_selection(SelectedEntry {
+                    worktree_id: selection.worktree_id,
+                    entry_id: target_entry_id,
+                })
+                .expect("target entry should be visible");
+            while let Some(selection) = panel.selection
+                && selection.entry_id != target_entry_id
+            {
+                let (_, _, index) = panel
+                    .index_for_selection(selection)
+                    .expect("selected entry should be visible");
+                if index < target_index {
+                    panel.select_next(&SelectNext, window, cx);
+                } else {
+                    panel.select_previous(&SelectPrevious, window, cx);
+                }
+            }
+        })
+    });
+    cx.simulate_modifiers_change(Modifiers::none());
 }
 
 fn click_project_entry(

@@ -1926,10 +1926,20 @@ impl ProjectPanel {
     ) {
         // Mark the entry the selection started from too, so that extending a selection
         // with the keyboard includes it, the same as a shift-click range does.
-        for entry in [previous_selection, selection] {
-            if !self.marked_entries.contains(&entry) {
-                self.marked_entries.push(entry);
-            }
+        if !self.marked_entries.contains(&previous_selection) {
+            self.marked_entries.push(previous_selection);
+        }
+        if !self.marked_entries.contains(&selection) {
+            self.marked_entries.push(selection);
+        }
+        self.select_outermost_folded_ancestor(selection.entry_id);
+    }
+
+    // A vertical selection gesture says nothing about which segment of a folded
+    // directory is meant, so select the whole folded directory.
+    fn select_outermost_folded_ancestor(&mut self, entry_id: ProjectEntryId) {
+        if let Some(folds) = self.state.ancestors.get_mut(&entry_id) {
+            folds.set_active_index(0);
         }
     }
 
@@ -6382,13 +6392,8 @@ impl ProjectPanel {
                                     && new_selection.entry_id != clicked_entry.entry_id;
 
                                 if is_intermediate_entry {
-                                    if let Some(folds) = project_panel
-                                        .state
-                                        .ancestors
-                                        .get_mut(&new_selection.entry_id)
-                                    {
-                                        folds.set_active_index(0);
-                                    }
+                                    project_panel
+                                        .select_outermost_folded_ancestor(new_selection.entry_id);
                                 }
                             }
 
