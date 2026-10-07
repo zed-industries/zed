@@ -3362,6 +3362,40 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn go_back_returns_to_preview_after_opening_another_file(cx: &mut TestAppContext) {
+        let (project, workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({ "note.md": "# Note\n", "other.txt": "Other File\n" }),
+            false,
+        )
+        .await;
+
+        open_project_file(cx, &project, &multi_workspace, "note.md", None, true).await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        open_project_file(cx, &project, &multi_workspace, "other.txt", None, true).await;
+
+        let go_back = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let pane = workspace.active_pane().downgrade();
+                    workspace.go_back(pane, window, cx)
+                })
+            })
+            .unwrap();
+
+        go_back.await.unwrap();
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item_as::<MarkdownPreviewView>(cx),
+                Some(preview.clone()),
+                "going back should return to the preview"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn close_and_return_to_editor_closes_preview_and_focuses_source_editor(
         cx: &mut TestAppContext,
     ) {
