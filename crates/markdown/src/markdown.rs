@@ -2816,7 +2816,11 @@ impl Element for MarkdownElement {
                                             .border_color(cx.theme().colors().border_variant);
                                     }
 
-                                    let mut parent_container: AnyDiv = if let Some(scroll_handle) =
+                                    // Styles must be final before `custom_scrollbars`, which reads the
+                                    // corner radii and borders to round the scrollbar track.
+                                    parent_container.style().refine(&self.style.code_block);
+
+                                    let parent_container: AnyDiv = if let Some(scroll_handle) =
                                         scroll_handle.as_ref()
                                     {
                                         let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
@@ -2826,21 +2830,20 @@ impl Element for MarkdownElement {
                                                 ScrollAxes::Horizontal,
                                                 cx.theme().colors().editor_background,
                                             )
-                                            .track_corner_radius(bottom_inner_corner_radius(
-                                                parent_container.style(),
-                                                &self.style.code_block,
-                                                window.rem_size(),
-                                            ))
                                             .notify_content();
 
+                                        let mut parent_container = parent_container
+                                            .custom_scrollbars(scrollbars, window, cx);
+                                        // Keep the code block's padding over the space reserved for the scrollbar track.
                                         parent_container
-                                            .custom_scrollbars(scrollbars, window, cx)
-                                            .into()
+                                            .style()
+                                            .padding
+                                            .refine(&self.style.code_block.padding);
+                                        parent_container.into()
                                     } else {
                                         parent_container.into()
                                     };
 
-                                    parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
                                     let code_block = div()
@@ -3575,27 +3578,6 @@ impl IntoElement for MarkdownElement {
     fn into_element(self) -> Self::Element {
         self
     }
-}
-
-/// Prefers `code_block_style` since it's refined onto the container afterwards.
-fn bottom_inner_corner_radius(
-    container_style: &StyleRefinement,
-    code_block_style: &StyleRefinement,
-    rem_size: Pixels,
-) -> Pixels {
-    let corner_radius = code_block_style
-        .corner_radii
-        .bottom_left
-        .or(container_style.corner_radii.bottom_left)
-        .unwrap_or_default()
-        .to_pixels(rem_size);
-    let border_width = code_block_style
-        .border_widths
-        .bottom
-        .or(container_style.border_widths.bottom)
-        .unwrap_or_default()
-        .to_pixels(rem_size);
-    (corner_radius - border_width).max(Pixels::ZERO)
 }
 
 pub enum AnyDiv {

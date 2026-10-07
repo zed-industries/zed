@@ -7,9 +7,9 @@ use gpui::{
     Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
     IntoElement, IsZero, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent,
-    Size, Stateful, StatefulInteractiveElement, Style, Styled, Task, UniformListDecoration,
-    UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
-    size,
+    Size, Stateful, StatefulInteractiveElement, Style, StyleRefinement, Styled, Task,
+    UniformListDecoration, UniformListScrollHandle, Window, ease_in_out,
+    prelude::FluentBuilder as _, px, quad, relative, size,
 };
 use gpui_util::ResultExt;
 use smallvec::SmallVec;
@@ -17,7 +17,10 @@ use theme::ActiveTheme as _;
 
 use std::ops::Range;
 
-use crate::scrollbars::{ScrollbarAutoHide, ScrollbarVisibility, ShowScrollbar};
+use crate::{
+    scrollbars::{ScrollbarAutoHide, ScrollbarVisibility, ShowScrollbar},
+    utils::inner_corner_radius,
+};
 
 const SCROLLBAR_HIDE_DELAY_INTERVAL: Duration = Duration::from_secs(1);
 const SCROLLBAR_HIDE_DURATION: Duration = Duration::from_millis(400);
@@ -68,6 +71,7 @@ pub mod scrollbars {
 
 fn get_scrollbar_state<T>(
     mut config: Scrollbars<T>,
+    parent_style: &StyleRefinement,
     caller_location: &'static std::panic::Location,
     window: &mut Window,
     cx: &mut App,
@@ -77,19 +81,21 @@ where
 {
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
-    let track_corner_radius = config.track_corner_radius;
+    let track_corner_radii = inner_corner_radii(parent_style, window.rem_size());
     let has_border = config.border;
     let reveal_policy = config.reveal_policy;
 
     let state = window.use_keyed_state(element_id, cx, |_, cx| {
         let parent_id = cx.entity_id();
-        ScrollbarStateWrapper(cx.new(|cx| ScrollbarState::new_from_config(config, parent_id, cx)))
+        ScrollbarStateWrapper(
+            cx.new(|cx| ScrollbarState::new_from_config(config, track_corner_radii, parent_id, cx)),
+        )
     });
 
     state.update(cx, |state, cx| {
         state.0.update(cx, |state, _cx| {
             state.update_colors(track_color, has_border);
-            state.track_corner_radius = track_corner_radius;
+            state.track_corner_radii = track_corner_radii;
             state.reveal_policy = reveal_policy;
         })
     });
@@ -99,6 +105,8 @@ where
 pub trait WithScrollbar: Sized {
     type Output;
 
+    /// The scrollbar tracks are rounded to fit the element's corner radii and borders,
+    /// which are read when this is called, so set them beforehand.
     fn custom_scrollbars<T>(
         self,
         config: Scrollbars<T>,
@@ -149,7 +157,7 @@ impl WithScrollbar for Stateful<Div> {
 
     #[track_caller]
     fn custom_scrollbars<T>(
-        self,
+        mut self,
         config: Scrollbars<T>,
         window: &mut Window,
         cx: &mut App,
@@ -157,11 +165,14 @@ impl WithScrollbar for Stateful<Div> {
     where
         T: ScrollableHandle,
     {
-        render_scrollbar(
-            get_scrollbar_state(config, std::panic::Location::caller(), window, cx),
-            self,
+        let scrollbar = get_scrollbar_state(
+            config,
+            self.style(),
+            std::panic::Location::caller(),
+            window,
             cx,
-        )
+        );
+        render_scrollbar(scrollbar, self, cx)
     }
 }
 
@@ -170,7 +181,7 @@ impl WithScrollbar for Div {
 
     #[track_caller]
     fn custom_scrollbars<T>(
-        self,
+        mut self,
         config: Scrollbars<T>,
         window: &mut Window,
         cx: &mut App,
@@ -178,7 +189,13 @@ impl WithScrollbar for Div {
     where
         T: ScrollableHandle,
     {
-        let scrollbar = get_scrollbar_state(config, std::panic::Location::caller(), window, cx);
+        let scrollbar = get_scrollbar_state(
+            config,
+            self.style(),
+            std::panic::Location::caller(),
+            window,
+            cx,
+        );
         // We know this ID stays consistent as long as the element is rendered for
         // consecutive frames, which is sufficient for our use case here
         let scrollbar_entity_id = scrollbar.entity_id();
@@ -188,6 +205,33 @@ impl WithScrollbar for Div {
             self.id(("track-scroll", scrollbar_entity_id)),
             cx,
         )
+    }
+}
+
+/// Content masks are rectangular, so the parent's rounded corners don't clip the track.
+/// Rounding the track by the parent's inner radii keeps it from showing past the parent's border.
+fn inner_corner_radii(style: &StyleRefinement, rem_size: Pixels) -> Corners<Pixels> {
+    let to_pixels =
+        |length: Option<gpui::AbsoluteLength>| length.unwrap_or_default().to_pixels(rem_size);
+    let radii = &style.corner_radii;
+    let borders = &style.border_widths;
+    let top = to_pixels(borders.top);
+    let right = to_pixels(borders.right);
+    let bottom = to_pixels(borders.bottom);
+    let left = to_pixels(borders.left);
+    let inner = |radius, border_a: Pixels, border_b: Pixels| {
+        inner_corner_radius(
+            to_pixels(radius),
+            border_a.max(border_b),
+            Pixels::ZERO,
+            Pixels::ZERO,
+        )
+    };
+    Corners {
+        top_left: inner(radii.top_left, top, left),
+        top_right: inner(radii.top_right, top, right),
+        bottom_right: inner(radii.bottom_right, bottom, right),
+        bottom_left: inner(radii.bottom_left, bottom, left),
     }
 }
 
@@ -390,7 +434,6 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     style: Option<ScrollbarStyle>,
     reveal_policy: ScrollbarRevealPolicy,
     track_color: Option<Hsla>,
-    track_corner_radius: Pixels,
     border: bool,
 }
 
@@ -419,7 +462,6 @@ impl Scrollbars {
             style: None,
             reveal_policy: ScrollbarRevealPolicy::default(),
             track_color: None,
-            track_corner_radius: Pixels::ZERO,
             border: false,
         }
     }
@@ -460,7 +502,6 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             visibility,
             get_visibility,
             track_color,
-            track_corner_radius,
             border,
             style,
             reveal_policy,
@@ -473,7 +514,6 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             tracked_entity: tracked_entity_id,
             visibility,
             track_color,
-            track_corner_radius,
             border,
             get_visibility,
             style,
@@ -506,13 +546,6 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         self.visibility = along.apply_to(self.visibility, ReservedSpace::StableTrack);
         self.track_color = Some(background_color);
         self.border = true;
-        self
-    }
-
-    /// Rounds the track's outer corners so it stays inside a rounded parent.
-    /// Use the parent's corner radius minus its border width.
-    pub fn track_corner_radius(mut self, radius: Pixels) -> Self {
-        self.track_corner_radius = radius;
         self
     }
 }
@@ -662,7 +695,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     get_visibility: fn(&App) -> ShowScrollbar,
     visibility: Point<ReservedSpace>,
     track_color: Option<TrackColors>,
-    track_corner_radius: Pixels,
+    track_corner_radii: Corners<Pixels>,
     reveal_policy: ScrollbarRevealPolicy,
     show_state: VisibilityState,
     style: ScrollbarStyle,
@@ -672,7 +705,12 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
 }
 
 impl<T: ScrollableHandle> ScrollbarState<T> {
-    fn new_from_config(config: Scrollbars<T>, parent_id: EntityId, cx: &mut Context<Self>) -> Self {
+    fn new_from_config(
+        config: Scrollbars<T>,
+        track_corner_radii: Corners<Pixels>,
+        parent_id: EntityId,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (manually_added, scroll_handle) = match config.scrollable_handle {
             Handle::Tracked(handle) => (true, handle),
             Handle::Untracked(func) => (false, func()),
@@ -689,7 +727,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
                 background: color,
                 has_border: config.border,
             }),
-            track_corner_radius: config.track_corner_radius,
+            track_corner_radii,
             show_behavior,
             get_visibility: config.get_visibility,
             style: config.style.unwrap_or_default(),
@@ -1436,7 +1474,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 let state = self.state.read(cx);
                 let thumb_state = &state.thumb_state;
                 let style = state.style;
-                let track_corner_radius = state.track_corner_radius;
+                let track_corner_radii = state.track_corner_radii;
 
                 if thumb_state.is_dragging() {
                     capture_phase = DispatchPhase::Capture;
@@ -1512,13 +1550,13 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                         let track_corners = match axis {
                             ScrollbarAxis::Horizontal => Corners {
-                                bottom_left: track_corner_radius,
-                                bottom_right: track_corner_radius,
+                                bottom_left: track_corner_radii.bottom_left,
+                                bottom_right: track_corner_radii.bottom_right,
                                 ..Default::default()
                             },
                             ScrollbarAxis::Vertical => Corners {
-                                top_right: track_corner_radius,
-                                bottom_right: track_corner_radius,
+                                top_right: track_corner_radii.top_right,
+                                bottom_right: track_corner_radii.bottom_right,
                                 ..Default::default()
                             },
                         }
