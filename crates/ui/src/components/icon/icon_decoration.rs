@@ -135,20 +135,18 @@ impl RenderOnce for IconDecoration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let size = self.size;
 
-        let foreground = svg()
+        let foreground = svg(self.kind.fg().path())
             .absolute()
             .bottom_0()
             .right_0()
             .size(size)
-            .path(self.kind.fg().path())
             .text_color(self.color);
 
-        let background = svg()
+        let background = svg(self.kind.bg().path())
             .absolute()
             .bottom_0()
             .right_0()
             .size(size)
-            .path(self.kind.bg().path())
             .text_color(self.knockout_color)
             .map(|this| match self.group_name {
                 Some(group_name) => this.group_hover(group_name, |style| {
