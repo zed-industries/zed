@@ -1218,7 +1218,7 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
     refresh_interval: Option<Duration>,
-    display_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) display_observers: SubscriberSet<(), AnyObserver>,
     is_resizable: bool,
     is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -8056,7 +8056,7 @@ mod tests {
     /// when displays are connected or disconnected.
     #[gpui::test]
     fn test_display_tracking(cx: &mut TestAppContext) {
-        use crate::{DisplayEvent, DisplayId};
+        use crate::{DisplayEvent, DisplayId, Subscription};
 
         let sixty_hertz = Duration::from_secs(1) / 60;
         let one_hundred_twenty_hertz = Duration::from_secs(1) / 120;
@@ -8068,7 +8068,15 @@ mod tests {
             move |cx| cx.observe_displays(move |event, _| display_events.borrow_mut().push(event))
         });
 
-        let window = cx.add_window(|_, _| EmptyView);
+        let window = cx.add_window(|window, cx| DisplayTracker {
+            refresh_intervals: Vec::new(),
+            _subscription: cx.observe_window_display(
+                window,
+                |tracker: &mut DisplayTracker, window, _| {
+                    tracker.refresh_intervals.push(window.refresh_interval());
+                },
+            ),
+        });
         let window_notifications = Rc::new(RefCell::new(Vec::new()));
         let _window_subscription = window
             .update(cx, {
@@ -8111,6 +8119,28 @@ mod tests {
                 DisplayEvent::Removed(DisplayId(1)),
             ]
         );
+        window
+            .update(cx, |tracker, _, _| {
+                assert_eq!(
+                    tracker.refresh_intervals,
+                    [
+                        Some(one_hundred_twenty_hertz),
+                        Some(one_hundred_forty_four_hertz)
+                    ]
+                );
+            })
+            .unwrap();
+
+        struct DisplayTracker {
+            refresh_intervals: Vec<Option<Duration>>,
+            _subscription: Subscription,
+        }
+
+        impl Render for DisplayTracker {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                Empty
+            }
+        }
     }
 
     #[gpui::test]
