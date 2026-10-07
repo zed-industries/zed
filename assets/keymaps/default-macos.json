@@ -1643,6 +1643,15 @@
     },
   },
   {
+    "context": "Slider",
+    "bindings": {
+      "left": "slider::Decrease",
+      "right": "slider::Increase",
+      "home": "slider::SetMinimum",
+      "end": "slider::SetMaximum",
+    },
+  },
+  {
     "context": "EditPredictionContext > Editor",
     "bindings": {
       "alt-left": "dev::EditPredictionContextGoBack",

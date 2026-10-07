@@ -9,10 +9,11 @@ use editor::{Editor, EditorEvent};
 use futures::{StreamExt, channel::mpsc};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
-    Focusable, Global, KeyContext, ListState, ReadGlobal as _, Role, ScrollHandle, Stateful,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, WeakEntity, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
+    Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, ElementId, Entity,
+    FocusHandle, Focusable, Global, KeyContext, ListState, PathPromptOptions, ReadGlobal as _,
+    Role, ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle,
+    WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, list, point,
+    prelude::*, px, uniform_list,
 };
 
 use language::Buffer;
@@ -54,7 +55,7 @@ use zed_actions::{
 
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
-    SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
+    SettingsSectionHeader, Slider, font_picker, icon_theme_picker, render_ollama_model_picker,
     text_field_a11y_state, theme_picker,
 };
 use crate::pages::{
@@ -70,6 +71,8 @@ const HEADER_GROUP_TAB_INDEX: isize = 3;
 
 const CONTENT_CONTAINER_TAB_INDEX: isize = 4;
 const CONTENT_GROUP_TAB_INDEX: isize = 5;
+
+const BACKGROUND_IMAGE_MAX_OPACITY: f32 = 0.5;
 
 const SIDEBAR_WIDTH: Pixels = px(226.);
 const CONTENT_MIN_WIDTH: Pixels = px(400.);
@@ -625,6 +628,8 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PixelSetting>(render_editable_number_field)
         .add_basic_renderer::<settings::CenteredPaddingSettings>(render_editable_number_field)
         .add_basic_renderer::<settings::InactiveOpacity>(render_editable_number_field)
+        .add_basic_renderer::<settings::BackgroundImagePath>(render_background_image_path)
+        .add_basic_renderer::<settings::BackgroundImageOpacity>(render_background_image_opacity)
         .add_basic_renderer::<settings::MinimumContrast>(render_editable_number_field)
         .add_basic_renderer::<settings::ShowScrollbar>(render_dropdown)
         .add_basic_renderer::<settings::ScrollbarDiagnostics>(render_dropdown)
@@ -5057,6 +5062,196 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
             }
         })
         .into_any_element()
+}
+
+struct BackgroundImageMemoryUsage {
+    path: Option<PathBuf>,
+    estimate: Option<Result<u64, SharedString>>,
+    _task: Task<()>,
+}
+
+fn render_background_image_path(
+    field: SettingField<settings::BackgroundImagePath>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, path) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let path = path.map(|path| path.0.clone());
+    let id = field.json_path.unwrap_or("background-image-path");
+    let memory_usage = path
+        .clone()
+        .map(|path| background_image_memory_usage(id, path, window, cx));
+
+    let write_path: Rc<dyn Fn(Option<PathBuf>, &mut Window, &mut App)> =
+        Rc::new(move |path, window, cx| {
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |settings, app| {
+                    (field.write)(settings, path.map(settings::BackgroundImagePath), app);
+                },
+            )
+            .log_err();
+        });
+
+    v_flex()
+        .items_end()
+        .gap_1()
+        .child(
+            h_flex()
+                .gap_1()
+                .child(
+                    SettingsInputField::new(id)
+                        .tab_index(0)
+                        .aria_label(title)
+                        .when(!description.is_empty(), |this| {
+                            this.aria_description(description)
+                        })
+                        .with_placeholder("Path to an image")
+                        .when_some(path, |this, path| {
+                            this.with_initial_text(path.to_string_lossy().into_owned())
+                        })
+                        .on_confirm({
+                            let write_path = write_path.clone();
+                            move |text, window, cx| write_path(text.map(PathBuf::from), window, cx)
+                        }),
+                )
+                .child(
+                    Button::new((ElementId::from(id), "browse"), "Browse…")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .tab_index(0_isize)
+                        .on_click(move |_, window, cx| {
+                            let selected_paths = cx.prompt_for_paths(PathPromptOptions {
+                                files: true,
+                                directories: false,
+                                multiple: false,
+                                prompt: Some("Select Image".into()),
+                            });
+                            let write_path = write_path.clone();
+                            window
+                                .spawn(cx, async move |cx| {
+                                    let selected_path = selected_paths
+                                        .await??
+                                        .and_then(|paths| paths.into_iter().next());
+                                    if let Some(path) = selected_path {
+                                        cx.update(|window, cx| write_path(Some(path), window, cx))?;
+                                    }
+                                    anyhow::Ok(())
+                                })
+                                .detach_and_log_err(cx);
+                        }),
+                ),
+        )
+        .children(memory_usage.map(|memory_usage| {
+            match memory_usage {
+                None => Label::new("Estimating memory usage…")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .into_any_element(),
+                Some(Ok(bytes)) => Label::new(format!(
+                    "Uses about {} MB of memory",
+                    bytes.div_ceil(1024 * 1024)
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+                Some(Err(error)) => div()
+                    .id((ElementId::from(id), "memory-usage-error"))
+                    .child(
+                        Label::new("Couldn't read this image")
+                            .size(LabelSize::Small)
+                            .color(Color::Error),
+                    )
+                    .tooltip(Tooltip::text(error))
+                    .into_any_element(),
+            }
+        }))
+        .into_any_element()
+}
+
+fn background_image_memory_usage(
+    id: &'static str,
+    path: PathBuf,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Result<u64, SharedString>> {
+    let state = window.use_keyed_state((ElementId::from(id), "memory-usage"), cx, |_, _| {
+        BackgroundImageMemoryUsage {
+            path: None,
+            estimate: None,
+            _task: Task::ready(()),
+        }
+    });
+    if state.read(cx).path.as_ref() != Some(&path) {
+        state.update(cx, |state, cx| {
+            state.path = Some(path.clone());
+            state.estimate = None;
+            let estimate = cx.background_spawn(async move {
+                workspace::background_image::estimate_memory_usage(&path)
+            });
+            state._task = cx.spawn(async move |state, cx| {
+                let estimate = estimate
+                    .await
+                    .map_err(|error| SharedString::from(error.to_string()));
+                state
+                    .update(cx, |state, cx| {
+                        state.estimate = Some(estimate);
+                        cx.notify();
+                    })
+                    .ok();
+            });
+        });
+    }
+    state.read(cx).estimate.clone()
+}
+
+fn render_background_image_opacity(
+    field: SettingField<settings::BackgroundImageOpacity>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    _description: &'static str,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, opacity) =
+        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let opacity = opacity
+        .copied()
+        .unwrap_or(settings::BackgroundImageOpacity::DEFAULT)
+        .0;
+
+    Slider::new(
+        field.json_path.unwrap_or("background-image-opacity"),
+        opacity / BACKGROUND_IMAGE_MAX_OPACITY,
+        move |fraction, window, cx| {
+            let opacity = (fraction * BACKGROUND_IMAGE_MAX_OPACITY * 100.).round() / 100.;
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |settings, app| {
+                    (field.write)(
+                        settings,
+                        Some(settings::BackgroundImageOpacity(opacity)),
+                        app,
+                    );
+                },
+            )
+            .log_err();
+        },
+    )
+    .tab_index(0)
+    .aria_label(title)
+    .into_any_element()
 }
 
 fn render_dropdown<T>(

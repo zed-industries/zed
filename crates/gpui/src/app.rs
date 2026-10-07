@@ -2890,7 +2890,6 @@ impl App {
 
     /// Check whether an asset is present in GPUI's cache (loading or loaded),
     /// without fetching it.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn has_asset<A: Asset>(&self, source: &A::Source) -> bool {
         let asset_id = (TypeId::of::<A>(), hash(source));
         self.loading_assets.contains_key(&asset_id)

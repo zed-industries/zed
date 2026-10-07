@@ -443,6 +443,69 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 `boolean` values
 
+## Background Images
+
+- Description: Images drawn over regions of the window, keyed by region: `window`, `title_bar`, `center`, `status_bar`, `left_dock`, `right_dock`, `bottom_dock`, or a panel key such as `project_panel` or `terminal_panel`. A panel key takes precedence over the dock it is shown in. See [Visual Customization](../visual-customization.md#background-images).
+- Setting: `background_images`
+- Default: `{}`
+
+**Options**
+
+```json [settings]
+{
+  "background_images": {
+    "window": {
+      "enabled": true,
+      "path": "~/Pictures/wallpaper.jpg",
+      "opacity": 0.25,
+      "fit": "cover",
+      "layer": "above"
+    }
+  }
+}
+```
+
+### Enabled
+
+- Description: Whether the image is shown.
+- Setting: `enabled`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Path
+
+- Description: Path to the image. `~` expands to the home directory and relative paths resolve against Zed's config directory.
+- Setting: `path`
+
+### Opacity
+
+- Description: Opacity of the image, from 0 to 1.
+- Setting: `opacity`
+- Default: `0.25`
+
+### Fit
+
+- Description: How the image is scaled within its region.
+- Setting: `fit`
+- Default: `cover`
+
+**Options**
+
+`cover`, `contain`, `fill`, `scale_down` or `none`
+
+### Layer
+
+- Description: Whether the image is drawn above the region's content or below it. Images drawn below only show through theme colors made translucent with `theme_overrides`.
+- Setting: `layer`
+- Default: `above`
+
+**Options**
+
+`above` or `below`
+
 ## Base Keymap
 
 - Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.

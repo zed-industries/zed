@@ -553,6 +553,137 @@ fn general_page(cx: &App) -> SettingsPage {
     }
 }
 
+struct BackgroundImageRegion {
+    key: &'static str,
+    title: &'static str,
+    description: &'static str,
+    enabled_json_path: &'static str,
+    path_json_path: &'static str,
+    opacity_json_path: &'static str,
+}
+
+macro_rules! background_image_region {
+    ($key:literal, $title:literal, $description:literal) => {
+        BackgroundImageRegion {
+            key: $key,
+            title: $title,
+            description: $description,
+            enabled_json_path: concat!("background_images.", $key, ".enabled"),
+            path_json_path: concat!("background_images.", $key, ".path"),
+            opacity_json_path: concat!("background_images.", $key, ".opacity"),
+        }
+    };
+}
+
+const BACKGROUND_IMAGE_REGIONS: [BackgroundImageRegion; 3] = [
+    background_image_region!("window", "Window", "Show an image across the whole window."),
+    background_image_region!(
+        "project_panel",
+        "Project Panel",
+        "Show an image in the project panel."
+    ),
+    background_image_region!(
+        "terminal_panel",
+        "Terminal Panel",
+        "Show an image in the terminal panel."
+    ),
+];
+
+fn background_image<const REGION: usize>(
+    settings_content: &SettingsContent,
+) -> Option<&settings::BackgroundImageContent> {
+    settings_content
+        .workspace
+        .background_images
+        .get(BACKGROUND_IMAGE_REGIONS[REGION].key)
+}
+
+fn background_image_mut<const REGION: usize>(
+    settings_content: &mut SettingsContent,
+) -> &mut settings::BackgroundImageContent {
+    settings_content
+        .workspace
+        .background_images
+        .entry(BACKGROUND_IMAGE_REGIONS[REGION].key.to_string())
+        .or_default()
+}
+
+fn background_image_item<const REGION: usize>() -> SettingsPageItem {
+    let region = &BACKGROUND_IMAGE_REGIONS[REGION];
+    SettingsPageItem::DynamicItem(DynamicItem {
+        discriminant: SettingItem {
+            files: USER,
+            title: region.title,
+            description: region.description,
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some(region.enabled_json_path),
+                pick: |settings_content| {
+                    background_image::<REGION>(settings_content)
+                        .map(|image| image.enabled.as_ref().unwrap_or(&true))
+                },
+                write: |settings_content, enabled, _| match enabled {
+                    Some(enabled) => {
+                        background_image_mut::<REGION>(settings_content).enabled = Some(enabled)
+                    }
+                    None => {
+                        settings_content
+                            .workspace
+                            .background_images
+                            .remove(BACKGROUND_IMAGE_REGIONS[REGION].key);
+                    }
+                },
+            }),
+            metadata: None,
+        },
+        pick_discriminant: |settings_content| {
+            Some(
+                background_image::<REGION>(settings_content)
+                    .is_some_and(|image| image.enabled != Some(false)) as usize,
+            )
+        },
+        fields: vec![
+            Vec::new(),
+            vec![
+                SettingItem {
+                    files: USER,
+                    title: "Image",
+                    description: "A PNG, JPEG, GIF, WebP or other image file.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some(region.path_json_path),
+                        pick: |settings_content| {
+                            background_image::<REGION>(settings_content)?.path.as_ref()
+                        },
+                        write: |settings_content, path, _| {
+                            background_image_mut::<REGION>(settings_content).path = path;
+                        },
+                    }),
+                    metadata: None,
+                },
+                SettingItem {
+                    files: USER,
+                    title: "Opacity",
+                    description: "How strongly the image shows over the interface.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some(region.opacity_json_path),
+                        pick: |settings_content| {
+                            background_image::<REGION>(settings_content)?
+                                .opacity
+                                .as_ref()
+                        },
+                        write: |settings_content, opacity, _| {
+                            background_image_mut::<REGION>(settings_content).opacity = opacity;
+                        },
+                    }),
+                    metadata: None,
+                },
+            ],
+        ],
+    })
+}
+
 fn appearance_page() -> SettingsPage {
     fn theme_section() -> [SettingsPageItem; 3] {
         [
@@ -1653,8 +1784,18 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
+    fn background_images_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Background Images"),
+            background_image_item::<0>(),
+            background_image_item::<1>(),
+            background_image_item::<2>(),
+        ]
+    }
+
     let items: Box<[SettingsPageItem]> = concat_sections!(
         theme_section(),
+        background_images_section(),
         buffer_font_section(),
         ui_font_section(),
         agent_panel_font_section(),
@@ -11450,6 +11591,53 @@ fn write_helix_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn test_background_image_item(cx: &mut App) {
+        let SettingsPageItem::DynamicItem(item) = background_image_item::<1>() else {
+            panic!("background image items are dynamic items");
+        };
+        let enabled = *item
+            .discriminant
+            .field
+            .as_any()
+            .downcast_ref::<SettingField<bool>>()
+            .unwrap();
+        let path = *item.fields[1][0]
+            .field
+            .as_any()
+            .downcast_ref::<SettingField<settings::BackgroundImagePath>>()
+            .unwrap();
+
+        let mut settings = SettingsContent::default();
+        assert_eq!((item.pick_discriminant)(&settings), Some(0));
+        assert_eq!((enabled.pick)(&settings), None);
+
+        (enabled.write)(&mut settings, Some(true), cx);
+        (path.write)(
+            &mut settings,
+            Some(settings::BackgroundImagePath("panel.png".into())),
+            cx,
+        );
+        assert_eq!((item.pick_discriminant)(&settings), Some(1));
+        assert_eq!((enabled.pick)(&settings), Some(&true));
+        assert!(
+            settings
+                .workspace
+                .background_images
+                .contains_key("project_panel")
+        );
+
+        (enabled.write)(&mut settings, Some(false), cx);
+        assert_eq!((item.pick_discriminant)(&settings), Some(0));
+        assert_eq!(
+            (path.pick)(&settings),
+            Some(&settings::BackgroundImagePath("panel.png".into()))
+        );
+
+        (enabled.write)(&mut settings, None, cx);
+        assert!(settings.workspace.background_images.is_empty());
+    }
 
     #[test]
     fn test_write_vim_helix_mode() {
