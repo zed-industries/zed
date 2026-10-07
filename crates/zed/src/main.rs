@@ -440,8 +440,8 @@ fn main() {
         paths::keymap_file().clone(),
     );
 
-    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
-    if !stdout_is_a_pty() {
+    let shell_env_loaded = if !stdout_is_a_pty() {
+        let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
         app.background_executor()
             .spawn(async {
                 #[cfg(unix)]
@@ -449,9 +449,11 @@ fn main() {
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach();
+
+        Some(shell_env_loaded_rx.shared())
     } else {
-        drop(shell_env_loaded_tx)
-    }
+        None
+    };
 
     app.on_open_urls({
         let open_listener = open_listener.clone();
@@ -556,7 +558,7 @@ fn main() {
         .detach();
         ui::on_new_scrollbars::<SettingsStore>(cx);
 
-        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
+        let node_runtime = NodeRuntime::new(client.http_client(), shell_env_loaded.clone(), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
@@ -695,7 +697,12 @@ fn main() {
             app_state.user_store.clone(),
             cx,
         );
-        language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        language_models::init(
+            app_state.user_store.clone(),
+            app_state.client.clone(),
+            shell_env_loaded.clone(),
+            cx,
+        );
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
         zed::remote_debug::init(cx);

@@ -4,7 +4,8 @@ use ::settings::{Settings, SettingsStore};
 use client::{Client, UserStore};
 use collections::{HashMap, HashSet};
 use credentials_provider::CredentialsProvider;
-use gpui::{App, Context, Entity};
+use futures::{channel::oneshot, future::Shared};
+use gpui::{App, Context, Entity, Task};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
@@ -34,7 +35,25 @@ use crate::provider::x_ai::XAiLanguageModelProvider;
 use crate::provider::x_ai_subscribed::XAiSubscribedProvider;
 pub use crate::settings::*;
 
-pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
+pub fn init(
+    user_store: Entity<UserStore>,
+    client: Arc<Client>,
+    shell_env_loaded: Option<Shared<oneshot::Receiver<()>>>,
+    cx: &mut App,
+) {
+    if let Some(shell_env_loaded) = shell_env_loaded {
+        cx.spawn(async move |cx| {
+            shell_env_loaded.await.ok();
+
+            cx.update(|cx| init_registry(user_store, client, cx));
+        })
+        .detach();
+    } else {
+        init_registry(user_store, client, cx);
+    }
+}
+
+fn init_registry(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     let credentials_provider = client.credentials_provider();
     let registry = LanguageModelRegistry::global(cx);
     registry.update(cx, |registry, cx| {
@@ -137,6 +156,67 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         }
     })
     .detach();
+
+    authenticate_all_language_model_providers(cx).detach();
+}
+
+fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
+    let authenticate_all_providers = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .visible_providers()
+        .iter()
+        .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
+        .collect::<Vec<_>>();
+
+    cx.spawn(async move |cx| {
+        for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
+            if let Err(err) = authenticate_task.await {
+                match err {
+                    language_model::AuthenticateError::CredentialsNotFound => {
+                        // Since we're authenticating these providers in the
+                        // background for the purposes of populating the
+                        // language selector, we don't care about providers
+                        // where the credentials are not found.
+                    }
+                    language_model::AuthenticateError::ConnectionRefused => {
+                        // Not logging connection refused errors as they are mostly from LM Studio's noisy auth failures.
+                        // LM Studio only has one auth method (endpoint call) which fails for users who haven't enabled it.
+                        // TODO: Better manage LM Studio auth logic to avoid these noisy failures.
+                    }
+                    _ => {
+                        // Some providers have noisy failure states that we
+                        // don't want to spam the logs with every time the
+                        // language model selector is initialized.
+                        //
+                        // Ideally these should have more clear failure modes
+                        // that we know are safe to ignore here, like what we do
+                        // with `CredentialsNotFound` above.
+                        match provider_id.0.as_ref() {
+                            "lmstudio" | "ollama" => {
+                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                                //
+                                // These fail noisily, so we don't log them.
+                            }
+                            "copilot_chat" => {
+                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                            }
+                            _ => {
+                                log::error!(
+                                    "Failed to authenticate provider: {}: {err:#}",
+                                    provider_name.0
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx)
+                .update(cx, |registry, cx| registry.refresh_fallback_model(cx))
+        });
+    })
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -356,11 +436,16 @@ fn register_language_model_providers(
 mod tests {
     use super::*;
     use anyhow::Result;
+    use client::RefreshLlmTokenListener;
     use clock::FakeSystemClock;
     use feature_flags::FeatureFlagAppExt as _;
-    use gpui::{AppContext as _, AsyncApp, BorrowAppContext as _};
+    use futures::FutureExt as _;
+    use gpui::{AppContext as _, AsyncApp, BorrowAppContext as _, TestAppContext};
     use http_client::FakeHttpClient;
-    use language_model::IconOrSvg;
+    use language_model::{
+        IconOrSvg, LanguageModelProviderName, OPEN_AI_PROVIDER_ID,
+        fake_provider::FakeLanguageModelProvider,
+    };
     use release_channel::AppVersion;
     use std::future::Future;
     use std::pin::Pin;
@@ -455,6 +540,49 @@ mod tests {
             .filter(|provider| provider.id().0.as_ref() == id)
             .map(|provider| provider.icon())
             .collect()
+    }
+
+    #[gpui::test]
+    async fn test_waits_for_shell_environment_before_initializing(cx: &mut TestAppContext) {
+        let (client, user_store) = cx.update(|cx| {
+            let (client, _) = init_test(cx);
+            language_model::init(cx);
+            <dyn fs::Fs>::set_global(fs::FakeFs::new(cx.background_executor().clone()), cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+            (client, user_store)
+        });
+        let provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("test-provider".to_string()),
+            LanguageModelProviderName::from("Test Provider".to_string()),
+        ));
+        let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
+        cx.update(|cx| {
+            init(user_store, client, Some(shell_env_loaded_rx.shared()), cx);
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(provider.authentication_count(), 0);
+        assert!(cx.read(|cx| {
+            LanguageModelRegistry::global(cx)
+                .read(cx)
+                .provider(&OPEN_AI_PROVIDER_ID)
+                .is_none()
+        }));
+
+        shell_env_loaded_tx.send(()).unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(provider.authentication_count(), 1);
+        assert!(cx.read(|cx| {
+            LanguageModelRegistry::global(cx)
+                .read(cx)
+                .provider(&OPEN_AI_PROVIDER_ID)
+                .is_some()
+        }));
     }
 
     #[gpui::test]

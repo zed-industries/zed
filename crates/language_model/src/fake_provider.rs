@@ -23,6 +23,7 @@ pub struct FakeLanguageModelProvider {
 
 #[derive(Default)]
 struct FakeProviderState {
+    authentication_count: usize,
     models: Vec<LanguageModel>,
     pending_completions: Vec<PendingCompletion>,
     forbid_requests: bool,
@@ -80,6 +81,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
     }
 
     fn authenticate(&self, _: &mut App) -> Task<Result<(), AuthenticateError>> {
+        self.state.lock().authentication_count += 1;
         Task::ready(Ok(()))
     }
 
@@ -126,6 +128,10 @@ impl LanguageModelClient for FakeLanguageModelProvider {
 }
 
 impl FakeLanguageModelProvider {
+    pub fn authentication_count(&self) -> usize {
+        self.state.lock().authentication_count
+    }
+
     /// A provider offering one model, with id `fake`.
     pub fn new(id: LanguageModelProviderId, name: LanguageModelProviderName) -> Self {
         let provider = Self {

@@ -280,7 +280,6 @@ pub struct LanguageModels {
     model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
     refresh_models_tx: watch::Sender<()>,
-    _authenticate_all_providers_task: Task<()>,
 }
 
 impl LanguageModels {
@@ -292,7 +291,6 @@ impl LanguageModels {
             model_list: acp_thread::AgentModelList::Grouped(IndexMap::default()),
             refresh_models_rx,
             refresh_models_tx,
-            _authenticate_all_providers_task: Self::authenticate_all_language_model_providers(cx),
         };
         this.refresh_list(cx);
         this
@@ -377,65 +375,6 @@ impl LanguageModels {
 
     fn model_id(model: &LanguageModel) -> AgentModelId {
         AgentModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
-    }
-
-    fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
-        let authenticate_all_providers = LanguageModelRegistry::global(cx)
-            .read(cx)
-            .visible_providers()
-            .iter()
-            .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
-            .collect::<Vec<_>>();
-
-        cx.spawn(async move |cx| {
-            for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
-                if let Err(err) = authenticate_task.await {
-                    match err {
-                        language_model::AuthenticateError::CredentialsNotFound => {
-                            // Since we're authenticating these providers in the
-                            // background for the purposes of populating the
-                            // language selector, we don't care about providers
-                            // where the credentials are not found.
-                        }
-                        language_model::AuthenticateError::ConnectionRefused => {
-                            // Not logging connection refused errors as they are mostly from LM Studio's noisy auth failures.
-                            // LM Studio only has one auth method (endpoint call) which fails for users who haven't enabled it.
-                            // TODO: Better manage LM Studio auth logic to avoid these noisy failures.
-                        }
-                        _ => {
-                            // Some providers have noisy failure states that we
-                            // don't want to spam the logs with every time the
-                            // language model selector is initialized.
-                            //
-                            // Ideally these should have more clear failure modes
-                            // that we know are safe to ignore here, like what we do
-                            // with `CredentialsNotFound` above.
-                            match provider_id.0.as_ref() {
-                                "lmstudio" | "ollama" => {
-                                    // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
-                                    //
-                                    // These fail noisily, so we don't log them.
-                                }
-                                "copilot_chat" => {
-                                    // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
-                                }
-                                _ => {
-                                    log::error!(
-                                        "Failed to authenticate provider: {}: {err:#}",
-                                        provider_name.0
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            cx.update(|cx| {
-                LanguageModelRegistry::global(cx)
-                    .update(cx, |registry, cx| registry.refresh_fallback_model(cx))
-            });
-        })
     }
 }
 

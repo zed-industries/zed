@@ -62,15 +62,16 @@ struct NodeRuntimeState {
 impl NodeRuntime {
     pub fn new(
         http: Arc<dyn HttpClient>,
-        shell_env_loaded: Option<oneshot::Receiver<()>>,
+        shell_env_loaded: Option<Shared<oneshot::Receiver<()>>>,
         options: watch::Receiver<Option<NodeBinaryOptions>>,
     ) -> Self {
+        let shell_env_loaded = shell_env_loaded.unwrap_or_else(|| oneshot::channel().1.shared());
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
             http,
             instance: None,
             last_options: None,
             options,
-            shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
+            shell_env_loaded,
         })))
     }
 
