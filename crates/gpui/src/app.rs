@@ -2093,17 +2093,28 @@ impl App {
             handles,
             dropped_handles,
         } = &mut *focus_handles;
+        if dropped_handles.is_empty() {
+            return;
+        }
+
         for handle_id in dropped_handles.drain(..) {
             handles.remove(handle_id);
-            for window_handle in self.windows() {
-                window_handle
-                    .update(self, |_, window, cx| {
-                        if window.focus == Some(handle_id) {
-                            window.blur(cx);
-                        }
-                    })
-                    .expect("window missing during focus cleanup");
-            }
+        }
+        let windows = self
+            .windows
+            .values()
+            .filter_map(|window| {
+                let window = window.as_ref()?;
+                let focus = window.focus?;
+                (!handles.contains_key(focus)).then_some(window.handle)
+            })
+            .collect::<SmallVec<[_; 1]>>();
+        drop(focus_handles);
+
+        for window_handle in windows {
+            window_handle
+                .update(self, |_, window, cx| window.blur(cx))
+                .ok();
         }
     }
 

@@ -11,6 +11,7 @@ homepage = "https://gpui.rs"
 readme = "README.md"
 keywords = ["desktop", "gui", "immediate"]
 categories = ["gui"]
+autobenches = false
 
 
 [lints]
