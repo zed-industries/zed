@@ -5207,10 +5207,10 @@ impl InputHandler for MarkdownInputHandler {
 mod tests {
     use super::*;
     use gpui::{
-        Background, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, JustifyContent,
-        LineLayout, Modifiers, NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage,
-        ScrollDelta, ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode,
-        TouchPhase, UpdateGlobal, VisualTestContext, size,
+        Background, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
+        Modifiers, NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage, ScrollDelta,
+        ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
+        UpdateGlobal, VisualTestContext, size,
     };
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::borrow::Cow;
@@ -5219,51 +5219,6 @@ mod tests {
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
-
-    fn element_builder_with_text_align(text_align: TextAlign) -> MarkdownElementBuilder {
-        let base_text_style = TextStyle {
-            text_align,
-            ..Default::default()
-        };
-        MarkdownElementBuilder::new(
-            &StyleRefinement::default(),
-            base_text_style,
-            Arc::new(SyntaxTheme::default()),
-            MarkdownHighlights {
-                search_highlights: Rc::from(Vec::<Range<usize>>::new()),
-                active_search_highlight: None,
-                search_match_color: Hsla::default(),
-                active_search_match_color: Hsla::default(),
-                selection: None,
-                next_search_highlight_ix: 0,
-            },
-            Arc::new(CodeBlockHighlights::default()),
-        )
-    }
-
-    #[test]
-    fn test_image_child_container_follows_text_align() {
-        for (text_align, expected) in [
-            (TextAlign::Left, JustifyContent::Start),
-            (TextAlign::Center, JustifyContent::Center),
-            (TextAlign::Right, JustifyContent::End),
-        ] {
-            let mut builder = element_builder_with_text_align(text_align);
-            builder.push_image_child(div());
-
-            assert_eq!(
-                builder
-                    .div_stack
-                    .last_mut()
-                    .expect("image child should have a container")
-                    .div
-                    .style()
-                    .justify_content,
-                Some(expected),
-                "{text_align:?} paragraph should justify its image container to match"
-            );
-        }
-    }
 
     #[gpui::test]
     fn test_code_block_controls_are_unique_across_markdown_entities(cx: &mut TestAppContext) {
@@ -6454,6 +6409,96 @@ mod tests {
             "images in a paragraph should stay top-aligned"
         );
         assert!(icon.left() < tall_image.left());
+    }
+
+    fn leading_image_and_container_bounds(
+        source: &'static str,
+        cx: &mut TestAppContext,
+    ) -> (Bounds<Pixels>, Bounds<Pixels>) {
+        let mut cx = render_image_layout(source, cx);
+        let image = cx
+            .debug_bounds("markdown_image_0")
+            .expect("image should be rendered");
+        let container = cx
+            .debug_bounds("inner")
+            .expect("markdown container should be rendered");
+        (image, container)
+    }
+
+    #[gpui::test]
+    fn test_images_in_html_blocks_follow_text_align(cx: &mut TestAppContext) {
+        for (source, expected_alignment) in [
+            (r#"<p><img src="icon.png"></p>"#, TextAlign::Left),
+            (
+                r#"<p align="center"><img src="icon.png"></p>"#,
+                TextAlign::Center,
+            ),
+            (
+                r#"<p align="right"><img src="icon.png"></p>"#,
+                TextAlign::Right,
+            ),
+            (
+                r#"<p style="text-align: center"><a href="https://zed.dev"><img src="icon.png"></a></p>"#,
+                TextAlign::Center,
+            ),
+        ] {
+            let (image, container) = leading_image_and_container_bounds(source, cx);
+            let left_gap = image.left() - container.left();
+            let right_gap = container.right() - image.right();
+            let aligned = match expected_alignment {
+                TextAlign::Left => left_gap < px(1.) && right_gap > px(100.),
+                TextAlign::Center => (left_gap - right_gap).abs() <= px(1.5) && left_gap > px(100.),
+                TextAlign::Right => right_gap < px(1.) && left_gap > px(100.),
+            };
+            assert!(
+                aligned,
+                "image in {source:?} should be {expected_alignment:?} aligned: \
+                 left gap {left_gap:?}, right gap {right_gap:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_wide_images_shrink_to_fit_container(cx: &mut TestAppContext) {
+        for source in [
+            "![](wide.png)",
+            r#"<p align="center"><img src="wide.png"></p>"#,
+        ] {
+            let (image, container) = leading_image_and_container_bounds(source, cx);
+            assert!(
+                image.left() >= container.left() && image.right() <= container.right(),
+                "image in {source:?} should not overflow its container: \
+                 image {image:?}, container {container:?}"
+            );
+            // The wrapper is clamped to the container even when the image inside it overflows,
+            // so check that the 10px tall image was scaled down along with its width.
+            assert!(
+                image.size.height < px(10.),
+                "image in {source:?} should scale down proportionally: image {image:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_image_alt_text() {
+        let alt_text = |markdown: &str| {
+            let events = parse_markdown_with_options(markdown, false, false, false).events;
+            let image_start = events
+                .iter()
+                .position(|(_, event)| {
+                    matches!(event, MarkdownEvent::Start(MarkdownTag::Image { .. }))
+                })
+                .expect("markdown should contain an image");
+            collect_image_alt_text(&events[image_start..], markdown)
+        };
+
+        assert_eq!(alt_text("![Zed logo](logo.png)"), Some("Zed logo".into()));
+        assert_eq!(alt_text("![Zed *logo*](logo.png)"), Some("Zed logo".into()));
+        assert_eq!(
+            alt_text("![logo](logo.png) trailing text"),
+            Some("logo".into())
+        );
+        assert_eq!(alt_text("![](logo.png) trailing text"), None);
     }
 
     #[test]
@@ -8242,19 +8287,21 @@ mod tests {
         markdown: Entity<Markdown>,
         icon: Arc<RenderImage>,
         tall_image: Arc<RenderImage>,
+        wide_image: Arc<RenderImage>,
     }
 
     impl Render for ImageLayoutView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let icon = self.icon.clone();
             let tall_image = self.tall_image.clone();
+            let wide_image = self.wide_image.clone();
             div().size_full().child(
                 MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
                     .image_resolver(move |dest_url, _| {
-                        let image = if dest_url == "tall.png" {
-                            tall_image.clone()
-                        } else {
-                            icon.clone()
+                        let image = match dest_url {
+                            "tall.png" => tall_image.clone(),
+                            "wide.png" => wide_image.clone(),
+                            _ => icon.clone(),
                         };
                         Some(ImageSource::Render(image))
                     }),
@@ -8279,12 +8326,28 @@ mod tests {
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="80"></svg>"#,
             cx,
         );
+        let wide_image = render_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="10"></svg>"#,
+            cx,
+        );
         let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
-            let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+            let markdown = cx.new(|cx| {
+                Markdown::new_with_options(
+                    source.into(),
+                    None,
+                    None,
+                    MarkdownOptions {
+                        parse_html: true,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            });
             ImageLayoutView {
                 markdown,
                 icon,
                 tall_image,
+                wide_image,
             }
         });
         cx.run_until_parked();
