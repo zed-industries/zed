@@ -237,6 +237,7 @@ struct Session {
     pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
     /// The thread's streaming save key as of the last enqueued save.
     last_streaming_save_key: Option<StreamingSaveKey>,
+    last_draft_prompt_revision: Option<usize>,
     save_wake: watch::Sender<()>,
     save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
@@ -250,12 +251,10 @@ impl Session {
         }
     }
 
-    /// Saving copies the draft from the ACP thread into the native thread, so
-    /// they differ only when the draft changed since the last save.
-    fn draft_prompt_changed(&self, cx: &App) -> bool {
-        self.acp_thread.upgrade().is_some_and(|acp_thread| {
-            acp_thread.read(cx).draft_prompt() != self.thread.read(cx).draft_prompt()
-        })
+    fn draft_prompt_revision(&self, cx: &App) -> Option<usize> {
+        self.acp_thread
+            .upgrade()
+            .map(|acp_thread| acp_thread.read(cx).draft_prompt_revision())
     }
 
     /// Streaming notifies the thread once per chunk, but `to_db` doesn't
@@ -267,7 +266,7 @@ impl Session {
                 .last_streaming_save_key
                 .as_ref()
                 .is_some_and(|key| *key == thread.streaming_save_key())
-            && !self.draft_prompt_changed(cx)
+            && self.last_draft_prompt_revision == self.draft_prompt_revision(cx)
     }
 }
 
@@ -917,6 +916,7 @@ impl NativeAgent {
                 project_id,
                 pending_save,
                 last_streaming_save_key: None,
+                last_draft_prompt_revision: None,
                 save_wake,
                 save_worker,
                 _subscriptions: subscriptions,
@@ -1853,6 +1853,7 @@ impl NativeAgent {
             return;
         };
         session.last_streaming_save_key = Some(session.thread.read(cx).streaming_save_key());
+        session.last_draft_prompt_revision = session.draft_prompt_revision(cx);
         *session.pending_save.lock() = Some(PendingThreadSave {
             folder_paths,
             db_thread,
