@@ -31,8 +31,8 @@ pub fn release_nightly() -> Workflow {
     const NIGHTLY: Option<ReleaseChannel> = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {
-        linux_aarch64: bundle_linux(Arch::AARCH64, NIGHTLY, &[&tests]),
-        linux_x86_64: bundle_linux(Arch::X86_64, NIGHTLY, &[&tests]),
+        linux_aarch64: bundle_linux(Arch::AARCH64, NIGHTLY, true, &[&tests]),
+        linux_x86_64: bundle_linux(Arch::X86_64, NIGHTLY, true, &[&tests]),
         bwrap_linux_aarch64: build_static_bwrap(Arch::AARCH64, &[&tests]),
         bwrap_linux_x86_64: build_static_bwrap(Arch::X86_64, &[&tests]),
         mac_aarch64: bundle_mac(Arch::AARCH64, NIGHTLY, &[&tests]),
