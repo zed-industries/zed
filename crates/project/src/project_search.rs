@@ -915,7 +915,7 @@ impl RequestHandler<'_> {
             if let Some(text) = self.open_entries.get(&entry.id) {
                 if self
                     .query
-                    .detect(&mut text.bytes_in_range(0..text.len()))
+                    .detect(BufReader::new(Box::new(text.bytes_in_range(0..text.len()))))
                     .await?
                     .is_none()
                 {

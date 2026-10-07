@@ -397,7 +397,7 @@ impl SearchQuery {
 
     pub async fn detect(
         &self,
-        mut reader: BufReader<Box<dyn Read + Send + Sync>>,
+        mut reader: BufReader<Box<dyn Read + Send + Sync + '_>>,
     ) -> Result<Option<MatchPositionHint>> {
         let query_str = self.as_str();
         if query_str.is_empty() {
