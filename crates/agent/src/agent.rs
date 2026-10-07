@@ -235,7 +235,6 @@ struct Session {
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
     pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
-    /// The thread's streaming save key as of the last enqueued save.
     last_streaming_save_key: Option<StreamingSaveKey>,
     last_draft_prompt_revision: Option<usize>,
     save_wake: watch::Sender<()>,
@@ -7889,7 +7888,6 @@ mod internal_tests {
         );
     }
 
-    /// A native session whose first prompt, "hello", is waiting on the fake model.
     struct StreamingTurn {
         fake: Arc<FakeLanguageModelProvider>,
         model: LanguageModel,
@@ -7938,8 +7936,7 @@ mod internal_tests {
             crate::thread::messages_to_markdown(&self.saved_thread().await.messages)
         }
 
-        /// Starts a message and reports its usage, as providers like Anthropic
-        /// do before streaming any content.
+        /// Providers like Anthropic report usage before streaming any content.
         fn send_start_message_with_usage(&self, input_tokens: u64) {
             self.fake.send_last_event(
                 &self.model,
