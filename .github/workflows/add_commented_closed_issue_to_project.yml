@@ -40,6 +40,9 @@ jobs:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
           owner: zed-industries
+          repositories: zed
+          permission-members: read
+          permission-organization-projects: write
 
       - if: steps.is-post-close-comment.outputs.result == 'true'
         id: check-staff

@@ -52,6 +52,7 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
+release_channel.workspace = true
 remote.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -66,13 +67,11 @@ telemetry.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
 zed_actions.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

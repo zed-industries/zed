@@ -31,14 +31,15 @@
 //! elements when you need to take manual control of the layout and painting process, such as when using
 //! your own custom layout algorithm or rendering a code editor.
 
+#[cfg(any(feature = "inspector", debug_assertions))]
+use crate::InspectorElementPath;
 use crate::{
     A11ySubtreeBuilder, App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId,
-    FocusHandle, InspectorElementId, LayoutId, Pixels, Point, SharedString, Size, Style, Window,
+    FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
     util::FluentBuilder, window::with_element_arena,
 };
-use derive_more::{Deref, DerefMut};
 use std::{
-    any::{Any, type_name},
+    any::Any,
     fmt::{self, Debug, Display},
     mem, panic,
     sync::Arc,
@@ -194,7 +195,7 @@ pub trait ParentElement {
     where
         Self: Sized,
     {
-        self.extend(std::iter::once(child.into_element().into_any()));
+        self.extend(std::iter::once(child.into_any_element()));
         self
     }
 
@@ -208,138 +209,89 @@ pub trait ParentElement {
     }
 }
 
-/// An element for rendering components. An implementation detail of the [`IntoElement`] derive macro
-/// for [`RenderOnce`]
-#[doc(hidden)]
-pub struct Component<C: RenderOnce> {
-    component: Option<C>,
-    #[cfg(debug_assertions)]
-    source: &'static core::panic::Location<'static>,
+/// A globally unique identifier for an element, used to track state across frames.
+///
+/// The hash of the id path is computed once, when the id is built. Every
+/// element with an id is looked up in the element-state maps of two frames
+/// and recorded as accessed on every frame it is drawn, and each of those
+/// hashes the whole path — every ancestor's id, string names byte by byte —
+/// so on a deep tree the hashing alone was a visible share of a frame.
+#[derive(Clone, Debug)]
+pub struct GlobalElementId {
+    ids: Arc<[ElementId]>,
+    hash: u64,
 }
 
-impl<C: RenderOnce> Component<C> {
-    /// Create a new component from the given RenderOnce type.
-    #[track_caller]
-    pub fn new(component: C) -> Self {
-        Component {
-            component: Some(component),
-            #[cfg(debug_assertions)]
-            source: core::panic::Location::caller(),
+/// The hash of an empty id path; every path hash is folded from it with
+/// [`extend_path_hash`], one id at a time, so the window can keep the hash
+/// of each prefix of its id stack and never re-hash a path.
+pub(crate) const EMPTY_PATH_HASH: u64 = 0;
+
+/// The hash of the path `prefix` + `id`, given the hash of `prefix`.
+pub(crate) fn extend_path_hash(prefix: u64, id: &ElementId) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = collections::FxHasher::with_seed(prefix as usize);
+    id.hash(&mut hasher);
+    hasher.finish()
+}
+
+impl GlobalElementId {
+    pub(crate) fn new(ids: &[ElementId]) -> Self {
+        let hash = ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash);
+        Self::with_hash(ids, hash)
+    }
+
+    /// `ids` with its hash already known, as the window's id stack keeps it.
+    pub(crate) fn with_hash(ids: &[ElementId], hash: u64) -> Self {
+        debug_assert_eq!(hash, ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash));
+        Self {
+            ids: Arc::from(ids),
+            hash,
         }
     }
-}
 
-fn prepaint_component(
-    (element, name): &mut (AnyElement, &'static str),
-    window: &mut Window,
-    cx: &mut App,
-) {
-    window.with_id(ElementId::Name(SharedString::new_static(name)), |window| {
-        element.prepaint(window, cx);
-    })
-}
-
-fn paint_component(
-    (element, name): &mut (AnyElement, &'static str),
-    window: &mut Window,
-    cx: &mut App,
-) {
-    window.with_id(ElementId::Name(SharedString::new_static(name)), |window| {
-        element.paint(window, cx);
-    })
-}
-impl<C: RenderOnce> Element for Component<C> {
-    type RequestLayoutState = (AnyElement, &'static str);
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        #[cfg(debug_assertions)]
-        return Some(self.source);
-
-        #[cfg(not(debug_assertions))]
-        return None;
-    }
-
-    fn request_layout(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        window.with_id(ElementId::Name(type_name::<C>().into()), |window| {
-            let mut element = self
-                .component
-                .take()
-                .unwrap()
-                .render(window, cx)
-                .into_any_element();
-
-            let layout_id = element.request_layout(window, cx);
-            (layout_id, (element, type_name::<C>()))
-        })
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        state: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        prepaint_component(state, window, cx);
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        state: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        paint_component(state, window, cx);
+    pub(crate) fn accesskit_node_id(&self) -> accesskit::NodeId {
+        accesskit::NodeId(self.hash)
     }
 }
 
-impl<C: RenderOnce> IntoElement for Component<C> {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
+impl Default for GlobalElementId {
+    fn default() -> Self {
+        Self::new(&[])
     }
 }
 
-/// A globally unique identifier for an element, used to track state across frames.
-#[derive(Deref, DerefMut, Clone, Default, Debug, Eq, PartialEq, Hash)]
-pub struct GlobalElementId(pub(crate) Arc<[ElementId]>);
+impl std::ops::Deref for GlobalElementId {
+    type Target = [ElementId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.ids
+    }
+}
+
+impl PartialEq for GlobalElementId {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && (Arc::ptr_eq(&self.ids, &other.ids) || self.ids == other.ids)
+    }
+}
+
+impl Eq for GlobalElementId {}
+
+impl std::hash::Hash for GlobalElementId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
+    }
+}
 
 impl Display for GlobalElementId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, element_id) in self.0.iter().enumerate() {
+        for (i, element_id) in self.ids.iter().enumerate() {
             if i > 0 {
                 write!(f, ".")?;
             }
             write!(f, "{}", element_id)?;
         }
         Ok(())
-    }
-}
-
-impl GlobalElementId {
-    pub(crate) fn accesskit_node_id(&self) -> accesskit::NodeId {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::hash::DefaultHasher::default();
-        self.hash(&mut hasher);
-        accesskit::NodeId(hasher.finish())
     }
 }
 
@@ -407,21 +359,21 @@ impl<E: Element> Drawable<E> {
     fn request_layout(&mut self, window: &mut Window, cx: &mut App) -> LayoutId {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Start => {
-                let global_id = self.element.id().map(|element_id| {
-                    window.element_id_stack.push(element_id);
-                    GlobalElementId(Arc::from(&*window.element_id_stack))
-                });
+                let global_id = self
+                    .element
+                    .id()
+                    .map(|element_id| prepare_element_id(element_id, window));
 
                 let inspector_id;
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 {
-                    inspector_id = self.element.source_location().map(|source| {
-                        let path = crate::InspectorElementPath {
-                            global_id: GlobalElementId(Arc::from(&*window.element_id_stack)),
-                            source_location: source,
-                        };
-                        window.build_inspector_element_id(path)
-                    });
+                    inspector_id = if window.inspector_enabled() {
+                        self.element
+                            .source_location()
+                            .map(|source| prepare_inspector_id(source, window))
+                    } else {
+                        None
+                    };
                 }
                 #[cfg(not(any(feature = "inspector", debug_assertions)))]
                 {
@@ -468,7 +420,7 @@ impl<E: Element> Drawable<E> {
             } => {
                 if let Some(element_id) = self.element.id() {
                     window.element_id_stack.push(element_id);
-                    debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
+                    debug_assert_eq!(&**global_id.as_ref().unwrap(), &*window.element_id_stack);
                 }
 
                 let bounds = window.layout_bounds(layout_id);
@@ -488,6 +440,24 @@ impl<E: Element> Drawable<E> {
                             self.element.write_a11y_info(&mut node);
                             window.a11y.node_bounds.insert(node_id, bounds);
                             pushed_a11y_node = window.a11y.nodes.push(node_id, node);
+                            #[cfg(debug_assertions)]
+                            if pushed_a11y_node {
+                                let view = window
+                                    .a11y
+                                    .view_type_names
+                                    .get(&window.current_view())
+                                    .copied();
+                                let source_location = self.element.source_location();
+                                window.a11y.nodes.record_node_info(
+                                    node_id,
+                                    crate::window::a11y::debug::NodeDebugInfo {
+                                        synthetic: false,
+                                        view,
+                                        element_id: global_id.last().map(|id| format!("{id:?}")),
+                                        source_location,
+                                    },
+                                );
+                            }
                         }
                     }
                 }
@@ -505,10 +475,24 @@ impl<E: Element> Drawable<E> {
 
                 if pushed_a11y_node {
                     if let Some(global_id) = global_id.as_ref() {
+                        #[cfg(debug_assertions)]
+                        let creator = crate::window::a11y::debug::NodeCreator {
+                            view: window
+                                .a11y
+                                .view_type_names
+                                .get(&window.current_view())
+                                .copied(),
+                            element_id: global_id.last().map(|id| format!("{id:?}")),
+                            source_location: self.element.source_location(),
+                        };
                         let mut builder = A11ySubtreeBuilder::new(
                             global_id.accesskit_node_id(),
                             &mut window.a11y.nodes,
                         );
+                        #[cfg(debug_assertions)]
+                        {
+                            builder = builder.with_creator(creator);
+                        }
                         self.element
                             .a11y_synthetic_children(&mut prepaint, &mut builder);
                     }
@@ -549,7 +533,7 @@ impl<E: Element> Drawable<E> {
             } => {
                 if let Some(element_id) = self.element.id() {
                     window.element_id_stack.push(element_id);
-                    debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
+                    debug_assert_eq!(&**global_id.as_ref().unwrap(), &*window.element_id_stack);
                 }
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);
@@ -866,5 +850,154 @@ impl Element for Empty {
         _window: &mut Window,
         _cx: &mut App,
     ) {
+    }
+}
+
+#[inline(never)]
+fn prepare_element_id(element_id: ElementId, window: &mut Window) -> GlobalElementId {
+    window.element_id_stack.push(element_id);
+    window.element_id_stack.global_id()
+}
+
+#[cfg(any(feature = "inspector", debug_assertions))]
+#[inline(never)]
+fn prepare_inspector_id(
+    source: &'static panic::Location<'static>,
+    window: &mut Window,
+) -> InspectorElementId {
+    let path = InspectorElementPath {
+        global_id: window.element_id_stack.global_id(),
+        source_location: source,
+    };
+    window.build_inspector_element_id(path)
+}
+
+#[cfg(test)]
+mod global_element_id_tests {
+    use super::*;
+    use std::hash::{Hash, Hasher};
+
+    fn path(depth: usize, leaf: u64) -> Vec<ElementId> {
+        let mut ids: Vec<ElementId> = (0..depth as u64)
+            .map(|level| ElementId::NamedInteger("some-container-element".into(), level))
+            .collect();
+        ids.push(ElementId::NamedInteger("leaf".into(), leaf));
+        ids
+    }
+
+    fn fx_hash(value: &impl Hash) -> u64 {
+        let mut hasher = collections::FxHasher::default();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn equal_paths_are_equal_and_hash_alike() {
+        let a = GlobalElementId::new(&path(8, 1));
+        let b = GlobalElementId::new(&path(8, 1));
+        let c = GlobalElementId::new(&path(8, 2));
+        let shallower = GlobalElementId::new(&path(7, 1));
+        assert_eq!(a, b);
+        assert_eq!(fx_hash(&a), fx_hash(&b));
+        assert_eq!(a.accesskit_node_id(), b.accesskit_node_id());
+        assert_ne!(a, c);
+        assert_ne!(a, shallower);
+        assert_ne!(fx_hash(&a), fx_hash(&c));
+        assert_eq!(&*a, path(8, 1).as_slice());
+        assert_eq!(a.to_string(), b.to_string());
+        assert_eq!(GlobalElementId::default(), GlobalElementId::new(&[]));
+    }
+
+    /// A window of `items` columns of `depth` nested stateful divs — the
+    /// shape of a list of cards — drawn from scratch on every frame.
+    struct DeepStatefulTree {
+        items: usize,
+        depth: usize,
+    }
+
+    impl crate::Render for DeepStatefulTree {
+        fn render(&mut self, _: &mut Window, _: &mut crate::Context<Self>) -> impl IntoElement {
+            use crate::{InteractiveElement as _, ParentElement as _, Styled as _, div, px};
+            let depth = self.depth;
+            div()
+                .flex()
+                .flex_wrap()
+                .size_full()
+                .children((0..self.items).map(move |item| {
+                    let mut element = div().id(("leaf", item as u64)).size(px(2.));
+                    for level in (0..depth).rev() {
+                        element = div()
+                            .id(("some-container-element", level as u64))
+                            .child(element);
+                    }
+                    element.id(("item", item as u64)).size(px(4.))
+                }))
+        }
+    }
+
+    /// Frame cost of a tree of stateful elements: every one of them builds a
+    /// `GlobalElementId` and looks its state up in two frames' maps.
+    ///
+    /// `cargo test -p gpui --release --lib global_element_id_tests::frame_cost -- --ignored --nocapture`
+    #[crate::test]
+    #[ignore = "prints timings; run by hand"]
+    fn frame_cost(cx: &mut crate::TestAppContext) {
+        use crate::AppContext as _;
+        for (items, depth) in [(500, 4), (500, 12), (2000, 12)] {
+            let window = cx.add_window(move |_, _| DeepStatefulTree { items, depth });
+            let window = crate::AnyWindowHandle::from(window);
+            let mut frame = |cx: &mut crate::TestAppContext| {
+                cx.update_window(window, |_, window, cx| {
+                    window.refresh();
+                    let started = std::time::Instant::now();
+                    window.draw(cx).clear(cx);
+                    started.elapsed()
+                })
+                .unwrap()
+            };
+            for _ in 0..5 {
+                frame(cx);
+            }
+            let mut samples: Vec<_> = (0..40).map(|_| frame(cx)).collect();
+            samples.sort();
+            let median = samples[samples.len() / 2];
+            let stateful = items * (depth + 2);
+            eprintln!(
+                "{items} items x {depth} deep ({stateful} stateful elements): median frame {:.2} ms, {:.0} ns per stateful element",
+                median.as_secs_f64() * 1e3,
+                median.as_nanos() as f64 / stateful as f64,
+            );
+        }
+    }
+
+    /// `cargo test -p gpui --release --lib global_element_id_tests::hash_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore = "prints timings; run by hand"]
+    fn hash_cost() {
+        let ids = path(11, 7);
+        let id = GlobalElementId::new(&ids);
+        let n = 1_000_000u64;
+        let mut acc = 0u64;
+        let started = std::time::Instant::now();
+        for _ in 0..n {
+            acc ^= fx_hash(&std::hint::black_box(ids.as_slice()));
+        }
+        let walk = started.elapsed();
+        let started = std::time::Instant::now();
+        for _ in 0..n {
+            acc ^= fx_hash(std::hint::black_box(&id));
+        }
+        let cached = started.elapsed();
+        let started = std::time::Instant::now();
+        for _ in 0..n {
+            acc ^= GlobalElementId::new(std::hint::black_box(&ids)).hash;
+        }
+        let build = started.elapsed();
+        eprintln!(
+            "12-deep path: hash by walking ids {:.1} ns, cached {:.1} ns, build (clone + hash once) {:.1} ns [{acc}]",
+            walk.as_nanos() as f64 / n as f64,
+            cached.as_nanos() as f64 / n as f64,
+            build.as_nanos() as f64 / n as f64,
+        );
     }
 }

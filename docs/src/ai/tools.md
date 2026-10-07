@@ -15,6 +15,8 @@ To add custom tools beyond these built-in ones, see [MCP servers](./mcp.md).
 
 To choose which built-in tools and MCP tools are available in a Zed Agent thread, use [Agent Profiles](./agent-profiles.md). Profiles control tool availability; tool permissions control allow, deny, and confirm behavior.
 
+The terminal tool can also run with additional OS-level restrictions when [Zed Agent sandboxing](./sandboxing.md) is enabled.
+
 ## Read & Search Tools
 
 ### `diagnostics`
@@ -28,6 +30,8 @@ When no path is provided, shows a summary of error and warning counts for all fi
 ### `fetch`
 
 Fetches a URL and returns the content as Markdown. Useful for providing docs as context.
+
+`fetch` is governed by tool permissions, agent profiles, and project trust. It is not run inside the terminal OS sandbox, so terminal sandbox network grants such as `allow_hosts` and `allow_all_hosts` do not apply to it.
 
 **Example:** Fetching a library's changelog page to check whether a breaking API change was introduced in a recent version before writing integration code.
 

@@ -7,8 +7,7 @@ use crate::{
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
         InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId,
-        UserId,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, UserId,
     },
     executor::Executor,
 };
@@ -164,6 +163,7 @@ impl Principal {
         match &self {
             Principal::User(user) => {
                 span.record("user_id", user.id.0);
+                span.record("username", &user.username);
                 span.record("login", &user.github_login);
             }
         }
@@ -291,7 +291,7 @@ impl Debug for Session {
         let mut result = f.debug_struct("Session");
         match &self.principal {
             Principal::User(user) => {
-                result.field("user", &user.github_login);
+                result.field("user", &user.username);
             }
         }
         result.field("connection_id", &self.connection_id).finish()
@@ -364,6 +364,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
+            .add_request_handler(forward_read_only_project_request::<proto::ResolveCodeAction>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveDocumentLink>)
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
@@ -371,9 +372,13 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::DownloadFileByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDefaultBranch>)
+            .add_request_handler(forward_read_only_project_request::<proto::BlameBufferAtRevision>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
+            .add_request_handler(
+                forward_read_only_project_request::<proto::LspExtExpandAbbreviation>,
+            )
             .add_request_handler(forward_read_only_project_request::<proto::LspExtOpenDocs>)
             .add_request_handler(forward_mutating_project_request::<proto::LspExtRunnables>)
             .add_request_handler(
@@ -396,6 +401,7 @@ impl Server {
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             )
             .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
+            .add_request_handler(forward_mutating_project_request::<proto::ExecuteLspCommand>)
             .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
             .add_request_handler(forward_mutating_project_request::<proto::ReloadBuffers>)
@@ -405,6 +411,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::RenameProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::CopyProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::DeleteProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::TrashProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::RestoreProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::ExpandProjectEntry>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::ExpandAllForProjectEntry>,
@@ -413,7 +421,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             .add_request_handler(lsp_query)
-            .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
+            .add_message_handler(forward_lsp_query_response)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -425,6 +433,17 @@ impl Server {
                 broadcast_project_message_from_host::<proto::RefreshSemanticTokens>,
             )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentColors>,
+            )
+            .add_message_handler(broadcast_project_message_from_host::<proto::RefreshDocumentLinks>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentHighlights>,
+            )
+            .add_message_handler(broadcast_project_message_from_host::<proto::RefreshFoldingRanges>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentSymbols>,
+            )
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateBufferFile>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
@@ -476,11 +495,16 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
             .add_request_handler(forward_mutating_project_request::<proto::RunGitHook>)
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetFilePermalink>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
             .add_request_handler(forward_read_only_project_request::<proto::GitShow>)
             .add_request_handler(forward_read_only_project_request::<proto::LoadCommitDiff>)
-            .add_request_handler(forward_read_only_project_request::<proto::GitReset>)
-            .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitReset>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitCheckoutFiles>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitAddPathToGitignore>)
+            .add_request_handler(
+                forward_mutating_project_request::<proto::GitAddPathToGitInfoExclude>,
+            )
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleBreakpoint>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BreakpointsForFile>)
@@ -510,11 +534,10 @@ impl Server {
             .add_request_handler(disallow_guest_request::<proto::GitCreateArchiveCheckpoint>)
             .add_request_handler(disallow_guest_request::<proto::GitRestoreArchiveCheckpoint>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
-            .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
+            .add_message_handler(forward_toggle_lsp_logs)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
-            .add_request_handler(share_agent_thread)
-            .add_request_handler(get_shared_agent_thread)
-            .add_request_handler(forward_project_search_chunk);
+            .add_request_handler(forward_project_search_chunk)
+            .add_request_handler(forward_read_only_project_request::<proto::LoadCommitTemplate>);
 
         Arc::new(server)
     }
@@ -641,7 +664,7 @@ impl Server {
                                             peer.send(
                                                 contact_conn_id,
                                                 proto::UpdateContacts {
-                                                    contacts: vec![updated_contact.clone()],
+                                                    contacts: vec![updated_contact],
                                                     remove_contacts: Default::default(),
                                                     incoming_requests: Default::default(),
                                                     remove_incoming_requests: Default::default(),
@@ -1340,7 +1363,7 @@ async fn connection_lost(
         _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
 
             log::info!("connection lost, removing all resources for user:{}, connection:{:?}", session.user_id(), session.connection_id);
-            leave_room_for_session(&session, session.connection_id, None).await.trace_err();
+            leave_room_for_session(&session, session.connection_id).await.trace_err();
             leave_channel_buffers_for_session(&session)
                 .await
                 .trace_err();
@@ -1494,44 +1517,6 @@ async fn rejoin_room(
             .rejoin_room(request, session.user_id(), session.connection_id)
             .await?;
 
-        // Include fresh LiveKit connection info so that clients whose LiveKit
-        // connection failed (e.g. because their token was revoked by a stale
-        // connection cleanup) can re-establish it.
-        let live_kit_connection_info =
-            session
-                .app_state
-                .livekit_client
-                .as_ref()
-                .and_then(|live_kit| {
-                    let (can_publish, token) = if rejoined_room.role == ChannelRole::Guest {
-                        (
-                            false,
-                            live_kit
-                                .guest_token(
-                                    &rejoined_room.room.livekit_room,
-                                    &session.user_id().to_string(),
-                                )
-                                .trace_err()?,
-                        )
-                    } else {
-                        (
-                            true,
-                            live_kit
-                                .room_token(
-                                    &rejoined_room.room.livekit_room,
-                                    &session.user_id().to_string(),
-                                )
-                                .trace_err()?,
-                        )
-                    };
-
-                    Some(LiveKitConnectionInfo {
-                        server_url: live_kit.url().into(),
-                        token,
-                        can_publish,
-                    })
-                });
-
         response.send(proto::RejoinRoomResponse {
             room: Some(rejoined_room.room.clone()),
             reshared_projects: rejoined_room
@@ -1551,7 +1536,6 @@ async fn rejoin_room(
                 .iter()
                 .map(|rejoined_project| rejoined_project.to_proto())
                 .collect(),
-            live_kit_connection_info,
         })?;
         room_updated(&rejoined_room.room, &session.peer);
 
@@ -1639,6 +1623,8 @@ fn notify_rejoined_projects(
                 abs_path: worktree.abs_path.clone(),
                 root_name: worktree.root_name,
                 root_repo_common_dir: worktree.root_repo_common_dir,
+                // todo(collab): Get this field from database
+                root_repo_is_linked_worktree: false,
                 updated_entries: worktree.updated_entries,
                 removed_entries: worktree.removed_entries,
                 scan_id: worktree.scan_id,
@@ -1703,7 +1689,7 @@ async fn leave_room(
     response: Response<proto::LeaveRoom>,
     session: MessageContext,
 ) -> Result<()> {
-    leave_room_for_session(&session, session.connection_id, None).await?;
+    leave_room_for_session(&session, session.connection_id).await?;
     response.send(proto::Ack {})?;
     Ok(())
 }
@@ -1967,7 +1953,7 @@ async fn unshare_project_internal(
         broadcast(
             Some(connection_id),
             guest_connection_ids.iter().copied(),
-            |conn_id| session.peer.send(conn_id, message.clone()),
+            |conn_id| session.peer.send(conn_id, message),
         );
         if let Some(room) = room {
             room_updated(room, &session.peer);
@@ -2047,6 +2033,8 @@ async fn join_project(
             visible: worktree.visible,
             abs_path: worktree.abs_path.clone(),
             root_repo_common_dir: None,
+            // todo(collab): Get this field from database
+            root_repo_is_linked_worktree: false,
         })
         .collect::<Vec<_>>();
 
@@ -2099,6 +2087,8 @@ async fn join_project(
             abs_path: worktree.abs_path.clone(),
             root_name: worktree.root_name,
             root_repo_common_dir: worktree.root_repo_common_dir,
+            // todo(collab): Get this field from database
+            root_repo_is_linked_worktree: false,
             updated_entries: worktree.entries,
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,
@@ -2277,7 +2267,7 @@ async fn remove_repository(
         |connection_id| {
             session
                 .peer
-                .forward_send(session.connection_id, connection_id, request.clone())
+                .forward_send(session.connection_id, connection_id, request)
         },
     );
     response.send(proto::Ack {})?;
@@ -2454,6 +2444,22 @@ where
     Ok(())
 }
 
+async fn forward_toggle_lsp_logs(
+    message: proto::ToggleLspLogs,
+    session: MessageContext,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(message.project_id);
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_mutating_project_request(project_id, session.connection_id)
+        .await?;
+    session
+        .peer
+        .forward_send(session.connection_id, host_connection_id, message)?;
+    Ok(())
+}
+
 async fn disallow_guest_request<T>(
     _request: T,
     response: Response<T>,
@@ -2484,6 +2490,26 @@ async fn lsp_query(
         forward_mutating_project_request(request, response, session).await
     } else {
         forward_read_only_project_request(request, response, session).await
+    }
+}
+
+async fn forward_lsp_query_response(
+    request: proto::LspQueryResponse,
+    session: MessageContext,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(request.project_id);
+    session
+        .db()
+        .await
+        .check_user_is_project_host(project_id, session.connection_id)
+        .await?;
+    if let Some(peer_id) = request.peer_id {
+        session
+            .peer
+            .forward_send(session.connection_id, peer_id.into(), request)?;
+        Ok(())
+    } else {
+        broadcast_project_message_from_host(request, session).await
     }
 }
 
@@ -2725,6 +2751,7 @@ async fn get_users(
         .into_iter()
         .map(|user| proto::User {
             id: user.id.to_proto(),
+            username: user.username,
             avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
@@ -2763,6 +2790,7 @@ async fn fuzzy_search_users(
         .filter(|user| user.id != session.user_id())
         .map(|user| proto::User {
             id: user.id.to_proto(),
+            username: user.username,
             avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
@@ -3438,7 +3466,7 @@ async fn join_channel_internal(
                 "cleaning up stale connection",
             );
             drop(db);
-            leave_room_for_session(&session, connection, Some(channel_id)).await?;
+            leave_room_for_session(&session, connection).await?;
             db = session.db().await;
         }
 
@@ -4053,7 +4081,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
                     .send(
                         contact_conn_id,
                         proto::UpdateContacts {
-                            contacts: vec![updated_contact.clone()],
+                            contacts: vec![updated_contact],
                             remove_contacts: Default::default(),
                             incoming_requests: Default::default(),
                             remove_incoming_requests: Default::default(),
@@ -4068,11 +4096,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
     Ok(())
 }
 
-async fn leave_room_for_session(
-    session: &Session,
-    connection_id: ConnectionId,
-    rejoining_channel_id: Option<ChannelId>,
-) -> Result<()> {
+async fn leave_room_for_session(session: &Session, connection_id: ConnectionId) -> Result<()> {
     let mut contacts_to_update = HashSet::default();
 
     let room_id;
@@ -4081,7 +4105,6 @@ async fn leave_room_for_session(
     let delete_livekit_room;
     let room;
     let channel;
-    let left_channel_id;
 
     if let Some(mut left_room) = session.db().await.leave_room(connection_id).await? {
         contacts_to_update.insert(session.user_id());
@@ -4096,22 +4119,11 @@ async fn leave_room_for_session(
         delete_livekit_room = left_room.deleted;
         room = mem::take(&mut left_room.room);
         channel = mem::take(&mut left_room.channel);
-        left_channel_id = channel.as_ref().map(|channel| channel.id);
 
         room_updated(&room, &session.peer);
     } else {
         return Ok(());
     }
-
-    // When this cleanup is part of rejoining the same channel, the user is
-    // immediately re-entering this LiveKit room with the same identity, which
-    // LiveKit handles by evicting the prior session. Calling
-    // `remove_participant` here is therefore redundant, and worse: on LiveKit
-    // Cloud it revokes the identity's tokens (including the freshly issued one
-    // for the rejoin), leaving the user connected to collab but unable to join
-    // audio. Skip the removal in that case.
-    let skip_livekit_removal =
-        rejoining_channel_id.is_some() && left_channel_id == rejoining_channel_id;
 
     if let Some(channel) = channel {
         channel_updated(
@@ -4145,12 +4157,10 @@ async fn leave_room_for_session(
     }
 
     if let Some(live_kit) = session.app_state.livekit_client.as_ref() {
-        if !skip_livekit_removal {
-            live_kit
-                .remove_participant(livekit_room.clone(), session.user_id().to_string())
-                .await
-                .trace_err();
-        }
+        live_kit
+            .remove_participant(livekit_room.clone(), session.user_id().to_string())
+            .await
+            .trace_err();
 
         if delete_livekit_room {
             live_kit.delete_room(livekit_room).await.trace_err();
@@ -4209,54 +4219,6 @@ fn project_left(project: &db::LeftProject, session: &Session) {
     }
 }
 
-async fn share_agent_thread(
-    request: proto::ShareAgentThread,
-    response: Response<proto::ShareAgentThread>,
-    session: MessageContext,
-) -> Result<()> {
-    let user_id = session.user_id();
-
-    let share_id = SharedThreadId::from_proto(request.session_id.clone())
-        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
-
-    session
-        .db()
-        .await
-        .upsert_shared_thread(share_id, user_id, &request.title, request.thread_data)
-        .await?;
-
-    response.send(proto::Ack {})?;
-
-    Ok(())
-}
-
-async fn get_shared_agent_thread(
-    request: proto::GetSharedAgentThread,
-    response: Response<proto::GetSharedAgentThread>,
-    session: MessageContext,
-) -> Result<()> {
-    let share_id = SharedThreadId::from_proto(request.session_id)
-        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
-
-    let result = session.db().await.get_shared_thread(share_id).await?;
-
-    match result {
-        Some((thread, username)) => {
-            response.send(proto::GetSharedAgentThreadResponse {
-                title: thread.title,
-                thread_data: thread.data,
-                sharer_username: username,
-                created_at: thread.created_at.and_utc().to_rfc3339(),
-            })?;
-        }
-        None => {
-            return Err(anyhow!("Shared thread not found").into());
-        }
-    }
-
-    Ok(())
-}
-
 pub trait ResultExt {
     type Ok;
 
@@ -4285,6 +4247,7 @@ impl From<User> for proto::User {
     fn from(user: User) -> Self {
         Self {
             id: user.id.to_proto(),
+            username: user.username,
             avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,

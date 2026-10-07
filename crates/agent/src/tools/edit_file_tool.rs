@@ -7,7 +7,7 @@ use super::edit_session::{
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
@@ -289,7 +289,7 @@ mod tests {
     use crate::{ContextServerRegistry, Templates, ToolInputSender};
     use fs::Fs as _;
     use gpui::{AppContext as _, TestAppContext, UpdateGlobal};
-    use language_model::fake_provider::FakeLanguageModel;
+    use language_model::LanguageModelRegistry;
     use project::ProjectPath;
     use prompt_store::ProjectContext;
     use serde_json::json;
@@ -322,6 +322,150 @@ mod tests {
             panic!("expected success");
         };
         assert_eq!(new_text, "line 1\nmodified line 2\nline 3\n");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_exact_fragments(cx: &mut TestAppContext) {
+        let content = concat!(
+            "fn spaces() {\n",
+            "    spaces_old();\n",
+            "}\n",
+            "fn tabs() {\n",
+            "\ttabs_old();\n",
+            "}\n",
+            "controls: keyboard WASD, voxel-based\n",
+            "prefix OLD suffix\n",
+            "foo suffix\n",
+            "foo\n",
+        );
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.rs": content})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.rs".into(),
+                        edits: vec![
+                            Edit {
+                                old_text: "keyboard WASD, voxel-based".into(),
+                                new_text: "arrow keys".into(),
+                            },
+                            Edit {
+                                old_text: "spaces_old();".into(),
+                                new_text: "spaces_new();\nspaces_more();".into(),
+                            },
+                            Edit {
+                                old_text: "tabs_old();".into(),
+                                new_text: "tabs_new();\ntabs_more();".into(),
+                            },
+                            Edit {
+                                old_text: "OLD".into(),
+                                new_text: "NEW\n".into(),
+                            },
+                            Edit {
+                                old_text: "foo\n".into(),
+                                new_text: "bar\n".into(),
+                            },
+                        ],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(
+            new_text,
+            concat!(
+                "fn spaces() {\n",
+                "    spaces_new();\n",
+                "    spaces_more();\n",
+                "}\n",
+                "fn tabs() {\n",
+                "\ttabs_new();\n",
+                "\ttabs_more();\n",
+                "}\n",
+                "controls: arrow keys\n",
+                "prefix NEW\n",
+                " suffix\n",
+                "foo suffix\n",
+                "bar\n",
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_first_line_missing_indent(cx: &mut TestAppContext) {
+        // Reproduces https://github.com/zed-industries/zed/issues/60302: the
+        // first line of the multi-line `old_text` omits its leading
+        // indentation while subsequent lines include theirs, so the indent
+        // delta computed from the first line must not be applied to the
+        // following lines. `old_text` also omits the `self.extra` line, so
+        // the query lines don't correspond one-to-one to the matched buffer
+        // rows and the indent pairing must follow the fuzzy match's
+        // alignment instead of assuming equal line counts.
+        let content = concat!(
+            "class Outer:\n",
+            "    def method(self):\n",
+            "        self.kept = \"unchanged\"\n",
+            "        self.target_a = \"before\"\n",
+            "        self.extra = \"row\"\n",
+            "        self.target_b = \"before\"\n",
+            "        self.target_c = \"before\"\n",
+            "        self.target_d = \"before\"\n",
+            "        self.kept_2 = \"unchanged\"\n",
+        );
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.py": content})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.py".into(),
+                        edits: vec![Edit {
+                            old_text: concat!(
+                                "self.target_a = \"before\"\n",
+                                "        self.target_b = \"before\"\n",
+                                "        self.target_c = \"before\"\n",
+                                "        self.target_d = \"before\"",
+                            )
+                            .into(),
+                            new_text: concat!(
+                                "self.target_a = \"after\"\n",
+                                "        self.target_b = \"after\"\n",
+                                "        self.target_c = \"after\"\n",
+                                "        self.target_d = \"after\"",
+                            )
+                            .into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        // The matched range includes the `self.extra` row, so it is replaced
+        // along with the rest of the match.
+        assert_eq!(
+            new_text,
+            concat!(
+                "class Outer:\n",
+                "    def method(self):\n",
+                "        self.kept = \"unchanged\"\n",
+                "        self.target_a = \"after\"\n",
+                "        self.target_b = \"after\"\n",
+                "        self.target_c = \"after\"\n",
+                "        self.target_d = \"after\"\n",
+                "        self.kept_2 = \"unchanged\"\n",
+            )
+        );
     }
 
     #[gpui::test]
@@ -556,6 +700,33 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_streaming_edit_rejects_overlapping_matches(cx: &mut TestAppContext) {
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "aaaaa"})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.txt".into(),
+                        edits: vec![Edit {
+                            old_text: "aaaa".into(),
+                            new_text: "replacement".into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Error { error, diff, .. } = result.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(error.contains("matched multiple locations"));
+        assert!(diff.is_empty());
+    }
+
     /// When the edit fails after a session is created but before any edits are
     /// actually applied (e.g., the first `old_text` doesn't match), the empty
     /// diff placeholder in the UI should be replaced with the error message.
@@ -742,6 +913,105 @@ mod tests {
         assert_eq!(
             new_text,
             "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_refreshes_match_after_buffer_change(cx: &mut TestAppContext) {
+        for (content, old_text, new_text, range, replacement, expected) in [
+            (
+                "prefix\nold value\nsuffix\n",
+                "old value",
+                "new value",
+                0..0,
+                "😀\n",
+                "😀\nprefix\nnew value\nsuffix\n",
+            ),
+            (
+                "prefix\nold value\nsuffix\n",
+                "old value",
+                "new value",
+                0..7,
+                "",
+                "new value\nsuffix\n",
+            ),
+            (
+                "prefix\n    old value\n        nested\nsuffix\n",
+                "old value\n    nested",
+                "new value\n    updated",
+                0..7,
+                "😀\n\n",
+                "😀\n\n    new value\n        updated\nsuffix\n",
+            ),
+        ] {
+            let (edit_tool, project, _action_log, _fs, _thread) =
+                setup_test(cx, json!({"file.txt": content})).await;
+            let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
+            let (event_stream, _receiver) = ToolCallEventStream::test();
+            let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
+            sender.send_partial(json!({"path": "root/file.txt"}));
+            cx.run_until_parked();
+            sender.send_partial(json!({
+                "path": "root/file.txt",
+                "edits": [{"old_text": old_text.split_inclusive('\n').next().unwrap()}]
+            }));
+            cx.run_until_parked();
+
+            let buffer = project.read_with(cx, |project, cx| {
+                let path = project.find_project_path("root/file.txt", cx).unwrap();
+                project.get_open_buffer(&path, cx).unwrap()
+            });
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(range, replacement)], None, cx)
+            });
+            sender.send_full(json!({
+                "path": "root/file.txt",
+                "edits": [{"old_text": old_text, "new_text": new_text}]
+            }));
+            let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+                panic!("expected success");
+            };
+            assert_eq!(new_text, expected);
+            assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), expected);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_detects_new_ambiguous_match(cx: &mut TestAppContext) {
+        let (edit_tool, project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "old value\n"})).await;
+        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
+        sender.send_partial(json!({"path": "root/file.txt"}));
+        cx.run_until_parked();
+        sender.send_partial(json!({
+            "path": "root/file.txt",
+            "edits": [{"old_text": "old "}]
+        }));
+        cx.run_until_parked();
+
+        let buffer = project.read_with(cx, |project, cx| {
+            let path = project.find_project_path("root/file.txt", cx).unwrap();
+            project.get_open_buffer(&path, cx).unwrap()
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "old value\n")], None, cx)
+        });
+        sender.send_full(json!({
+            "path": "root/file.txt",
+            "edits": [{"old_text": "old value", "new_text": "new value"}]
+        }));
+        let EditFileToolOutput::Error { error, .. } = task.await.unwrap_err() else {
+            panic!("expected ambiguous match error");
+        };
+        assert_eq!(
+            error,
+            "Edit 0 matched multiple locations in the file at lines: 1, 2. Please provide more context in old_text to uniquely identify the location."
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "old value\nold value\n"
         );
     }
 
@@ -2890,6 +3160,19 @@ mod tests {
         assert!(input.edits.is_none());
     }
 
+    #[test]
+    fn test_wrong_edit_field_names_produce_actionable_error() {
+        let err = serde_json::from_value::<EditFileToolInput>(json!({
+            "path": "test.go",
+            "edits": [{"old_str": "hello", "new_text": "world"}]
+        }))
+        .unwrap_err();
+
+        // When the model uses incorrect field names, the error should
+        // tell it what to fix.
+        assert_eq!(err.to_string(), "missing field `old_text`");
+    }
+
     async fn setup_test_with_fs(
         cx: &mut TestAppContext,
         fs: Arc<project::FakeFs>,
@@ -2905,7 +3188,7 @@ mod tests {
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = cx.update(|cx| LanguageModelRegistry::test(cx).model("fake"));
         let thread = cx.new(|cx| {
             crate::Thread::new(
                 project.clone(),

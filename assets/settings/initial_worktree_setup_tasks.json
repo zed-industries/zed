@@ -1,0 +1,23 @@
+// Worktree setup tasks, stored in this project's tasks.json.
+// See https://zed.dev/docs/tasks#hooks for the full Tasks Hooks documentation.
+//
+// Tasks with the `create_worktree` hook run automatically right after Zed
+// creates a new git worktree. Use them to get a fresh worktree ready to work
+// in — for example, installing dependencies or copying files that git doesn't
+// track (like `.env`) from the original repository.
+//
+// Two variables are available to these tasks:
+// * $ZED_WORKTREE_ROOT     — the root directory of the newly created worktree
+// * $ZED_MAIN_GIT_WORKTREE — the original repository's working directory
+//
+// Uncomment the example below and adjust the command to get started.
+// Note: hooked tasks run as soon as a worktree is created, so only enable
+// commands you want to run automatically.
+[
+  // {
+  //   "label": "Set up new worktree",
+  //   "command": "cp -n \"$ZED_MAIN_GIT_WORKTREE/.env\" \"$ZED_WORKTREE_ROOT/\" && npm install",
+  //   "cwd": "$ZED_WORKTREE_ROOT",
+  //   "hooks": ["create_worktree"]
+  // }
+]

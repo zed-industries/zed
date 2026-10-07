@@ -42,6 +42,7 @@ impl PlainOpenAiClient {
             stream: false,
             stream_options: None,
             max_completion_tokens: Some(max_tokens),
+            max_tokens: None,
             stop: Vec::new(),
             temperature: None,
             tool_choice: None,
@@ -487,6 +488,7 @@ impl BatchingOpenAiClient {
                             content: Some(MessageContent::Plain(msg.content)),
                             tool_calls: Vec::new(),
                             reasoning_content: None,
+                            reasoning_details: None,
                         },
                         "system" => RequestMessage::System {
                             content: MessageContent::Plain(msg.content),
@@ -503,6 +505,7 @@ impl BatchingOpenAiClient {
                     stream: false,
                     stream_options: None,
                     max_completion_tokens: Some(serializable_request.max_tokens),
+                    max_tokens: None,
                     stop: Vec::new(),
                     temperature: None,
                     tool_choice: None,

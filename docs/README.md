@@ -13,6 +13,17 @@ mdbook serve docs
 
 The first command dumps an action manifest to `crates/docs_preprocessor/actions.json`. Without it, the preprocessor cannot validate keybinding and action references in the docs and will report errors. You only need to re-run it when actions change.
 
+If you use Nix, the development shell provides a pinned `mdbook` (0.4.40) and a
+prebuilt docs preprocessor, so you can build the docs without installing anything
+or compiling the preprocessor on every run:
+
+```sh
+nix develop -c mdbook build docs
+```
+
+(When `actions.json` has not been generated, action/keybinding validation is
+skipped with a warning rather than failing the build.)
+
 It's important to note the version number above. For an unknown reason, as of 2025-04-23, running 0.4.48 will cause odd URL behavior that breaks things.
 
 Before committing, verify that the docs are formatted in the way Prettier expects with:
@@ -25,7 +36,7 @@ cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
 
 We have a custom mdBook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
 
-If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed_docs_preprocessor]` from the `book.toml`.
+If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed-docs-preprocessor]` from the `book.toml`.
 
 ## Images and videos
 

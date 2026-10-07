@@ -12,10 +12,11 @@ use http_client::read_no_proxy_from_env;
 use project::{AgentId, Project, agent_server_store::AgentServerStore};
 
 use acp_thread::AgentConnection;
-use agent_client_protocol::schema as acp_schema;
+use agent_client_protocol::schema::v1 as acp_schema;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use gpui::{App, AppContext, Entity, Task};
-use settings::SettingsStore;
+use settings::{AgentConfigOptionValue, SettingsStore};
 use std::{any::Any, rc::Rc, sync::Arc};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -24,7 +25,8 @@ pub use acp::test_support::{
 };
 pub use acp::{
     AcpConnection, AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection,
-    GEMINI_TERMINAL_AUTH_METHOD_ID,
+    DecodedTerminalNotification, DecodedTerminalUpdate, GEMINI_TERMINAL_AUTH_METHOD_ID,
+    v2_terminal_client_builder,
 };
 
 pub struct AgentServerDelegate {
@@ -71,14 +73,14 @@ pub trait AgentServer: Send {
     ) {
     }
 
-    fn default_config_option(&self, _config_id: &str, _cx: &App) -> Option<String> {
+    fn default_config_option(&self, _config_id: &str, _cx: &App) -> Option<AgentConfigOptionValue> {
         None
     }
 
     fn set_default_config_option(
         &self,
         _config_id: &str,
-        _value_id: Option<&str>,
+        _value: Option<AgentConfigOptionValue>,
         _fs: Arc<dyn Fs>,
         _cx: &mut App,
     ) {
@@ -86,16 +88,16 @@ pub trait AgentServer: Send {
 
     fn favorite_config_option_value_ids(
         &self,
-        _config_id: &acp_schema::SessionConfigId,
+        _config_id: &acp_v2::SessionConfigId,
         _cx: &mut App,
-    ) -> HashSet<acp_schema::SessionConfigValueId> {
+    ) -> HashSet<acp_v2::SessionConfigValueId> {
         HashSet::default()
     }
 
     fn toggle_favorite_config_option_value(
         &self,
-        _config_id: acp_schema::SessionConfigId,
-        _value_id: acp_schema::SessionConfigValueId,
+        _config_id: acp_v2::SessionConfigId,
+        _value_id: acp_v2::SessionConfigValueId,
         _should_be_favorite: bool,
         _fs: Arc<dyn Fs>,
         _cx: &App,

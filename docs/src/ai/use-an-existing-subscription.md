@@ -38,6 +38,22 @@ GitHub Copilot can be used as a Copilot Chat model provider for Zed AI features 
 
 If you use a Copilot agent or CLI, that setup is owned by Copilot. See [External Agents](./external-agents.md) and [Terminal Threads](./terminal-threads.md).
 
+### GitHub Copilot Enterprise {#copilot-enterprise}
+
+To use your enterprise instance for Copilot Chat and edit predictions, add this to your settings file ([how to edit](../configuring-zed.md#settings-files)):
+
+```json [settings]
+{
+  "copilot": {
+    "enterprise_uri": "https://your.enterprise.domain"
+  }
+}
+```
+
+Replace `"https://your.enterprise.domain"` with the URL provided by your GitHub Enterprise administrator (for example, `https://foo.ghe.com`).
+
+This setting also controls [Copilot edit predictions](./edit-prediction.md#using-github-copilot-enterprise).
+
 ## OpenCode Zen / Go {#opencode}
 
 OpenCode is a first-class language model provider in Zed. If you think of Zen or Go as your OpenCode subscription, the Zed setup path is still [Use API Access](./use-api-access.md#opencode): enter an OpenCode API key, then choose which OpenCode models to show. Zed does not sign in to OpenCode with OAuth or detect your subscription directly.

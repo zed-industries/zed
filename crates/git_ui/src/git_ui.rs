@@ -2,41 +2,48 @@ use anyhow::anyhow;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
 
-use ui::{
-    Color, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render,
-    Styled, StyledExt, div, h_flex, rems, v_flex,
-};
 use workspace::{Toast, notifications::NotificationId};
 
 mod blame_ui;
 pub mod clone;
 
 use git::{
+    Oid,
     repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    SharedString, Subscription, Task, TaskExt, Window,
+    SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use menu::{Cancel, Confirm};
+use notifications::status_toast::StatusToast;
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use time::OffsetDateTime;
-use ui::prelude::*;
-use workspace::{ModalView, OpenMode, Workspace, notifications::DetachAndPromptErr};
+use ui::{ButtonLike, ContextMenu, ElevationIndex, PopoverMenuHandle, TintColor, prelude::*};
+use util::ResultExt as _;
+use workspace::{
+    ModalView, OpenMode, Workspace,
+    notifications::{DetachAndPromptErr, NotifyTaskExt},
+};
 use zed_actions;
 
-use crate::{commit_view::CommitView, git_panel::GitPanel, text_diff_view::TextDiffView};
+use crate::{
+    commit_view::CommitView,
+    git_panel::{GitPanel, GitStatusEntry, RemoteOperationKind},
+    solo_diff_view::SoloDiffView,
+    text_diff_view::TextDiffView,
+};
 
-mod askpass_modal;
+pub mod branch_diff;
 pub mod branch_picker;
+mod commit_context_menu;
 mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
-pub mod created_worktrees;
-pub mod file_diff_view;
+mod diff_multibuffer;
 pub mod git_graph;
 pub mod git_panel;
 mod git_panel_settings;
@@ -48,32 +55,52 @@ pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
 pub mod solo_diff_view;
+pub mod staged_diff;
 pub mod stash_picker;
 pub mod text_diff_view;
-pub mod worktree_names;
-pub mod worktree_picker;
-pub mod worktree_service;
+pub mod unstaged_diff;
 
+pub use blame_ui::GitBlameStatus;
 pub use conflict_view::MergeConflictIndicator;
-
-pub fn get_provider_icon(name: &str) -> IconName {
-    match name {
-        "Bitbucket" => IconName::Bitbucket,
-        "Chromium" => IconName::Gerrit,
-        "Codeberg" => IconName::Codeberg,
-        "Forgejo Self-Hosted" => IconName::Forgejo,
-        "GitHub" => IconName::Github,
-        "GitLab" => IconName::Gitlab,
-        "Gitea" => IconName::Gitea,
-        "SourceHut" => IconName::Sourcehut,
-        _ => IconName::Link,
-    }
-}
 
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
     git_graph::init(cx);
+
+    git_ui_core::set_branch_picker_builder(
+        |workspace, repository, window, cx| {
+            let picker = git_picker::popover(
+                workspace,
+                repository,
+                git_picker::GitPickerTab::Branches,
+                gpui::rems(34.),
+                window,
+                cx,
+            );
+            cx.new(|cx| git_ui_core::GitPickerPopover::new(picker, cx))
+        },
+        cx,
+    );
+
+    git_ui_core::set_file_history_opener(
+        |workspace, project_path, window, cx| {
+            let Some((repo_id, log_source)) =
+                git_graph::resolve_file_history_target_from_project_path(
+                    workspace,
+                    project_path,
+                    cx,
+                )
+            else {
+                return;
+            };
+            let git_store = workspace.project().read(cx).git_store().clone();
+            git_graph::open_or_reuse_graph(
+                workspace, repo_id, git_store, log_source, None, window, cx,
+            );
+        },
+        cx,
+    );
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
@@ -82,6 +109,9 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         ProjectDiff::register(workspace, cx);
+        staged_diff::StagedDiff::register(workspace, cx);
+        unstaged_diff::UnstagedDiff::register(workspace, cx);
+        branch_diff::BranchDiff::register(workspace, cx);
         CommitModal::register(workspace);
         git_panel::register(workspace);
         repository_selector::register(workspace);
@@ -89,12 +119,16 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(
             |workspace, action: &zed_actions::CreateWorktree, window, cx| {
-                worktree_service::handle_create_worktree(workspace, action, window, None, cx);
+                git_ui_core::worktree_service::handle_create_worktree(
+                    workspace, action, window, None, cx,
+                );
             },
         );
         workspace.register_action(
             |workspace, action: &zed_actions::SwitchWorktree, window, cx| {
-                worktree_service::handle_switch_worktree(workspace, action, window, None, cx);
+                git_ui_core::worktree_service::handle_switch_worktree(
+                    workspace, action, window, None, cx,
+                );
             },
         );
 
@@ -103,7 +137,7 @@ pub fn init(cx: &mut App) {
             let project = workspace.project().clone();
             let workspace_handle = workspace.weak_handle();
             workspace.toggle_modal(window, cx, |window, cx| {
-                worktree_picker::WorktreePicker::new_modal(
+                git_ui_core::worktree_picker::WorktreePicker::new_modal(
                     project,
                     workspace_handle,
                     focused_dock,
@@ -125,7 +159,7 @@ pub fn init(cx: &mut App) {
                     let workspace_handle = workspace.weak_handle();
                     cx.spawn_in(window, async move |_, cx| {
                         if let Some(connection_options) = connection_options {
-                            crate::worktree_picker::open_remote_worktree(
+                            git_ui_core::worktree_picker::open_remote_worktree(
                                 connection_options,
                                 vec![path],
                                 app_state,
@@ -224,6 +258,22 @@ pub fn init(cx: &mut App) {
                 panel.stash_all(action, window, cx);
             });
         });
+        workspace.register_action(|workspace, action: &git::StashStaged, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_staged(action, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, action: &git::StashTracked, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_tracked(action, window, cx);
+            });
+        });
         workspace.register_action(|workspace, action: &git::StashPop, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
@@ -284,8 +334,28 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
         });
+        workspace.register_action_renderer(|div, workspace, _window, cx| {
+            div.when_some(
+                file_diff_entry(workspace, cx),
+                |div, (entry, repository)| {
+                    let workspace = workspace.weak_handle();
+                    div.on_action(move |_: &git::OpenFileDiff, window, cx| {
+                        open_file_diff(
+                            entry.clone(),
+                            repository.clone(),
+                            workspace.clone(),
+                            window,
+                            cx,
+                        );
+                    })
+                },
+            )
+        });
         workspace.register_action(|workspace, _: &git::RenameBranch, window, cx| {
             rename_current_branch(workspace, window, cx);
+        });
+        workspace.register_action(|workspace, _: &git::CreateTagAtHead, window, cx| {
+            create_tag_at_head(workspace, window, cx);
         });
         workspace.register_action(|workspace, _: &git::CopyBranchName, _, cx| {
             copy_branch_name(workspace, cx);
@@ -300,6 +370,47 @@ pub fn init(cx: &mut App) {
         );
     })
     .detach();
+}
+
+fn open_file_diff(
+    entry: GitStatusEntry,
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.defer(cx, move |window, cx| {
+        SoloDiffView::open_or_focus(entry, repository, workspace.clone(), window, cx)
+            .detach_and_notify_err(workspace, window, cx);
+    });
+}
+
+fn file_diff_entry(
+    workspace: &Workspace,
+    cx: &App,
+) -> Option<(GitStatusEntry, Entity<Repository>)> {
+    let project_path = workspace.active_item(cx)?.project_path(cx)?;
+
+    workspace
+        .project()
+        .read(cx)
+        .repositories(cx)
+        .values()
+        .find_map(|repository| {
+            let repo_path = repository
+                .read(cx)
+                .project_path_to_repo_path(&project_path, cx)?;
+            let status_entry = repository.read(cx).status_for_path(&repo_path)?;
+            Some((
+                GitStatusEntry {
+                    repo_path,
+                    status: status_entry.status,
+                    staging: status_entry.status.staging(),
+                    diff_stat: status_entry.diff_stat,
+                },
+                repository.clone(),
+            ))
+        })
 }
 
 fn open_modified_files(
@@ -422,6 +533,114 @@ impl Render for RenameBranchModal {
     }
 }
 
+struct CreateTagModal {
+    commit: Oid,
+    at_head: bool,
+    editor: Entity<Editor>,
+    repo: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+}
+
+impl CreateTagModal {
+    fn new(
+        commit: Oid,
+        at_head: bool,
+        repo: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Tag name", window, cx);
+            editor
+        });
+        Self {
+            commit,
+            at_head,
+            editor,
+            repo,
+            workspace,
+        }
+    }
+
+    fn tag_target_commit_label(&self) -> String {
+        let short_sha = self.commit.display_short();
+
+        if self.at_head {
+            return format!("{short_sha} (HEAD)");
+        }
+
+        short_sha
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let tag_name = self.editor.read(cx).text(cx).trim().to_string();
+        if tag_name.is_empty() {
+            return;
+        }
+
+        let repo = self.repo.clone();
+        let commit = self.commit.to_string();
+        let workspace = self.workspace.clone();
+        let success_message = format!(
+            "Created tag \"{tag_name}\" at {}",
+            self.tag_target_commit_label()
+        );
+        cx.spawn(async move |_, cx| {
+            repo.update(cx, |repo, _| repo.create_tag(tag_name, commit))
+                .await??;
+
+            workspace
+                .update(cx, |workspace, cx| {
+                    let toast = StatusToast::new(success_message, cx, |this, _| this);
+                    workspace.toggle_status_toast(toast, cx);
+                })
+                .log_err();
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to create tag", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for CreateTagModal {}
+impl ModalView for CreateTagModal {}
+impl Focusable for CreateTagModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for CreateTagModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let title = format!("Create Tag at {}", self.tag_target_commit_label());
+        v_flex()
+            .key_context("CreateTagModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitCommit).size(IconSize::XSmall))
+                    .child(Headline::new(title).size(HeadlineSize::XSmall)),
+            )
+            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
+}
+
 fn rename_current_branch(
     workspace: &mut Workspace,
     window: &mut Window,
@@ -447,6 +666,35 @@ fn rename_current_branch(
 
     workspace.toggle_modal(window, cx, |window, cx| {
         RenameBranchModal::new(current_branch_name, repo, window, cx)
+    });
+}
+
+fn create_tag_at_head(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    let Some(repo) = workspace.project().read(cx).active_repository(cx) else {
+        return;
+    };
+    let Some(commit) = repo
+        .read(cx)
+        .head_commit
+        .as_ref()
+        .and_then(|commit| Oid::try_from(commit.sha.as_ref()).ok())
+    else {
+        return;
+    };
+    create_tag_at_commit(commit, true, repo, workspace, window, cx);
+}
+
+pub(crate) fn create_tag_at_commit(
+    commit: Oid,
+    at_head: bool,
+    repo: Entity<Repository>,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let workspace_handle = cx.weak_entity();
+    workspace.toggle_modal(window, cx, |window, cx| {
+        CreateTagModal::new(commit, at_head, repo, workspace_handle, window, cx)
     });
 }
 
@@ -698,6 +946,8 @@ fn render_remote_button(
     branch: &Branch,
     keybinding_target: Option<FocusHandle>,
     show_fetch_button: bool,
+    in_progress_operation: Option<RemoteOperationKind>,
+    menu_handle: PopoverMenuHandle<ContextMenu>,
 ) -> Option<impl IntoElement> {
     let id = id.into();
     let upstream = branch.upstream.as_ref();
@@ -706,20 +956,27 @@ fn render_remote_button(
             tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { ahead, behind }),
             ..
         }) => match (*ahead, *behind) {
-            (0, 0) if show_fetch_button => {
-                Some(remote_button::render_fetch_button(keybinding_target, id))
-            }
+            (0, 0) if show_fetch_button => Some(remote_button::render_fetch_button(
+                keybinding_target,
+                id,
+                in_progress_operation,
+                menu_handle,
+            )),
             (0, 0) => None,
             (ahead, 0) => Some(remote_button::render_push_button(
                 keybinding_target,
                 id,
                 ahead,
+                in_progress_operation,
+                menu_handle,
             )),
             (ahead, behind) => Some(remote_button::render_pull_button(
                 keybinding_target,
                 id,
                 ahead,
                 behind,
+                in_progress_operation,
+                menu_handle,
             )),
         },
         Some(Upstream {
@@ -728,22 +985,31 @@ fn render_remote_button(
         }) => Some(remote_button::render_republish_button(
             keybinding_target,
             id,
+            in_progress_operation,
+            menu_handle,
         )),
-        None => Some(remote_button::render_publish_button(keybinding_target, id)),
+        None => Some(remote_button::render_publish_button(
+            keybinding_target,
+            id,
+            in_progress_operation,
+            menu_handle,
+        )),
     }
 }
 
 mod remote_button {
+    use crate::git_panel::RemoteOperationKind;
     use gpui::{Action, Anchor, AnyView, ClickEvent, FocusHandle};
     use ui::{
-        App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder, Icon, IconName,
-        IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement,
-        PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window, div, h_flex, rems,
+        ButtonLike, CommonAnimationExt, ContextMenu, ElevationIndex, PopoverMenu,
+        PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
     };
 
     pub fn render_fetch_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
+        in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -752,6 +1018,8 @@ mod remote_button {
             0,
             Some(IconName::ArrowCircle),
             keybinding_target.clone(),
+            in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Fetch), cx);
             },
@@ -771,6 +1039,8 @@ mod remote_button {
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
         ahead: u32,
+        in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -779,6 +1049,8 @@ mod remote_button {
             0,
             None,
             keybinding_target.clone(),
+            in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -799,6 +1071,8 @@ mod remote_button {
         id: SharedString,
         ahead: u32,
         behind: u32,
+        in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -807,6 +1081,8 @@ mod remote_button {
             behind as usize,
             None,
             keybinding_target.clone(),
+            in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Pull), cx);
             },
@@ -825,6 +1101,8 @@ mod remote_button {
     pub fn render_publish_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
+        in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -833,6 +1111,8 @@ mod remote_button {
             0,
             Some(IconName::ExpandUp),
             keybinding_target.clone(),
+            in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -851,6 +1131,8 @@ mod remote_button {
     pub fn render_republish_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
+        in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -859,6 +1141,8 @@ mod remote_button {
             0,
             Some(IconName::ExpandUp),
             keybinding_target.clone(),
+            in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -872,6 +1156,14 @@ mod remote_button {
                 )
             },
         )
+    }
+
+    fn in_progress_tooltip(operation: RemoteOperationKind) -> &'static str {
+        match operation {
+            RemoteOperationKind::Fetch => "Fetch in Progress…",
+            RemoteOperationKind::Pull => "Pull in Progress…",
+            RemoteOperationKind::Push => "Push in Progress…",
+        }
     }
 
     fn git_action_tooltip(
@@ -894,18 +1186,16 @@ mod remote_button {
     fn render_git_action_menu(
         id: impl Into<ElementId>,
         keybinding_target: Option<FocusHandle>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> impl IntoElement {
+        let menu_open = menu_handle.is_deployed();
+
         PopoverMenu::new(id.into())
-            .trigger(
-                ui::ButtonLike::new_rounded_right("split-button-right")
-                    .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ui::ButtonSize::None)
-                    .child(
-                        div()
-                            .px_1()
-                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
-                    ),
-            )
+            .trigger(crate::render_split_button_chevron_trigger(
+                "split-button-right",
+                menu_open,
+            ))
+            .with_handle(menu_handle)
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                     context_menu
@@ -923,6 +1213,10 @@ mod remote_button {
                 }))
             })
             .anchor(Anchor::TopRight)
+            .offset(gpui::Point {
+                x: px(0.),
+                y: px(2.),
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -933,6 +1227,8 @@ mod remote_button {
         behind_count: usize,
         left_icon: Option<IconName>,
         keybinding_target: Option<FocusHandle>,
+        in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
         left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> SplitButton {
@@ -940,7 +1236,6 @@ mod remote_button {
             h_flex()
                 .ml_neg_px()
                 .h(rems(0.875))
-                .items_center()
                 .overflow_hidden()
                 .px_0p5()
                 .child(
@@ -951,49 +1246,83 @@ mod remote_button {
         }
 
         let should_render_counts = left_icon.is_none() && (ahead_count > 0 || behind_count > 0);
+        let is_in_progress = in_progress_operation.is_some();
 
-        let left = ui::ButtonLike::new_rounded_left(ElementId::Name(
-            format!("split-button-left-{}", id).into(),
-        ))
-        .layer(ui::ElevationIndex::ModalSurface)
-        .size(ui::ButtonSize::Compact)
-        .when(should_render_counts, |this| {
-            this.child(
-                h_flex()
-                    .ml_neg_0p5()
-                    .when(behind_count > 0, |this| {
-                        this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
-                            .child(count(behind_count))
-                    })
-                    .when(ahead_count > 0, |this| {
-                        this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
-                            .child(count(ahead_count))
-                    }),
+        let left = ButtonLike::new_rounded_left(format!("split-button-left-{}", id))
+            .layer(ElevationIndex::ModalSurface)
+            .size(ButtonSize::Compact)
+            .disabled(is_in_progress)
+            .when(should_render_counts, |this| {
+                this.child(
+                    h_flex()
+                        .ml_neg_0p5()
+                        .when(behind_count > 0, |this| {
+                            this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
+                                .child(count(behind_count))
+                        })
+                        .when(ahead_count > 0, |this| {
+                            this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
+                                .child(count(ahead_count))
+                        }),
+                )
+            })
+            .when_some(left_icon, |this, left_icon| {
+                this.map(|this| {
+                    if is_in_progress {
+                        this.child(
+                            Icon::new(IconName::LoadCircle)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled)
+                                .with_rotate_animation(2),
+                        )
+                    } else {
+                        this.child(Icon::new(left_icon).size(IconSize::XSmall))
+                    }
+                })
+            })
+            .child(
+                Label::new(left_label)
+                    .size(LabelSize::Small)
+                    .when(is_in_progress, |this| this.color(Color::Disabled))
+                    .mr_0p5(),
             )
-        })
-        .when_some(left_icon, |this, left_icon| {
-            this.child(
-                h_flex()
-                    .ml_neg_0p5()
-                    .child(Icon::new(left_icon).size(IconSize::XSmall)),
-            )
-        })
-        .child(
-            div()
-                .child(Label::new(left_label).size(LabelSize::Small))
-                .mr_0p5(),
-        )
-        .on_click(left_on_click)
-        .tooltip(tooltip);
+            .on_click(left_on_click)
+            .tooltip(move |window, cx| {
+                if let Some(operation) = in_progress_operation {
+                    Tooltip::simple(in_progress_tooltip(operation), cx)
+                } else {
+                    tooltip(window, cx)
+                }
+            });
 
         let right = render_git_action_menu(
-            ElementId::Name(format!("split-button-right-{}", id).into()),
+            format!("split-button-right-{}", id),
             keybinding_target,
+            menu_handle,
         )
         .into_any_element();
 
         SplitButton::new(left, right)
     }
+}
+
+pub(crate) fn render_split_button_chevron_trigger(
+    id: impl Into<ElementId>,
+    menu_open: bool,
+) -> ButtonLike {
+    let chevron_button_size = rems_from_px(20_f32);
+    let chevron_icon = if menu_open {
+        IconName::ChevronUp
+    } else {
+        IconName::ChevronDown
+    };
+
+    ButtonLike::new_rounded_right(id)
+        .layer(ElevationIndex::ModalSurface)
+        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+        .width(chevron_button_size)
+        .height(chevron_button_size.into())
+        .child(Icon::new(chevron_icon).size(IconSize::XSmall))
 }
 
 /// A visual representation of a file's Git status.
@@ -1264,5 +1593,121 @@ mod view_commit_tests {
 
         assert!(!initial_modal_state);
         assert!(final_modal_state);
+    }
+
+    #[gpui::test]
+    async fn test_create_tag_at_head(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = setup_git_repo(cx).await;
+        let commit = Oid::try_from("abcdef1234567890abcdef1234567890abcdef12")
+            .expect("commit SHA should be valid");
+        fs.set_head_for_repo(Path::new("/root/project/.git"), &[], commit.to_string());
+        let (_project, workspace) = create_test_workspace(fs.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        cx.executor().run_until_parked();
+
+        workspace
+            .update(cx, |workspace, window, cx| {
+                create_tag_at_head(workspace, window, cx);
+            })
+            .expect("workspace should exist");
+
+        let modal = workspace
+            .update(cx, |workspace, _, cx| {
+                workspace.active_modal::<CreateTagModal>(cx)
+            })
+            .expect("workspace should exist")
+            .expect("create tag modal should be open");
+        assert_eq!(modal.read_with(cx, |modal, _| modal.commit), commit);
+        assert!(modal.read_with(cx, |modal, _| modal.at_head));
+
+        modal.update_in(cx, |modal, window, cx| {
+            modal.editor.update(cx, |editor, cx| {
+                editor.set_text("v1.0.0", window, cx);
+            });
+            modal.confirm(&Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        let tagged_commit = fs
+            .with_git_state(Path::new("/root/project/.git"), false, |state| {
+                state.refs.get("refs/tags/v1.0.0").cloned()
+            })
+            .expect("fake git state should exist");
+        assert_eq!(tagged_commit, Some(commit.to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_create_tag_from_commit_context_menu(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = setup_git_repo(cx).await;
+        let head = Oid::try_from("abcdef1234567890abcdef1234567890abcdef12")
+            .expect("HEAD SHA should be valid");
+        let selected_commit = Oid::try_from("1234567890abcdef1234567890abcdef12345678")
+            .expect("selected commit SHA should be valid");
+        fs.set_head_for_repo(Path::new("/root/project/.git"), &[], head.to_string());
+        let (_project, workspace) = create_test_workspace(fs.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        cx.executor().run_until_parked();
+
+        let (repository, focus_handle, workspace_handle) = workspace
+            .update(cx, |workspace, _, cx| {
+                let repository = workspace
+                    .project()
+                    .read(cx)
+                    .active_repository(cx)
+                    .expect("active repository should exist");
+                (repository, workspace.focus_handle(cx), cx.weak_entity())
+            })
+            .expect("workspace should exist");
+        let context_menu = cx.update(|window, cx| {
+            commit_context_menu::commit_context_menu(
+                commit_context_menu::CommitContextMenuData {
+                    sha: selected_commit,
+                    tag_names: Vec::new(),
+                },
+                commit_context_menu::CommitContextMenuSource::GitPanel,
+                None,
+                focus_handle,
+                Some(repository.downgrade()),
+                workspace_handle,
+                window,
+                cx,
+            )
+        });
+
+        context_menu.update_in(cx, |menu, window, cx| {
+            menu.select_first(&menu::SelectFirst, window, cx);
+            menu.select_next(&menu::SelectNext, window, cx);
+            menu.select_next(&menu::SelectNext, window, cx);
+            menu.confirm(&Confirm, window, cx);
+        });
+
+        let modal = workspace
+            .update(cx, |workspace, _, cx| {
+                workspace.active_modal::<CreateTagModal>(cx)
+            })
+            .expect("workspace should exist")
+            .expect("create tag modal should be open");
+        assert_eq!(
+            modal.read_with(cx, |modal, _| modal.commit),
+            selected_commit
+        );
+        assert!(!modal.read_with(cx, |modal, _| modal.at_head));
+
+        modal.update_in(cx, |modal, window, cx| {
+            modal.editor.update(cx, |editor, cx| {
+                editor.set_text("v1.0.0", window, cx);
+            });
+            modal.confirm(&Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        let tagged_commit = fs
+            .with_git_state(Path::new("/root/project/.git"), false, |state| {
+                state.refs.get("refs/tags/v1.0.0").cloned()
+            })
+            .expect("fake git state should exist");
+        assert_eq!(tagged_commit, Some(selected_commit.to_string()));
     }
 }

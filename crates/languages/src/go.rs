@@ -394,43 +394,43 @@ impl LspAdapter for GoLspAdapter {
     ) -> Option<CodeLabel> {
         let name = &symbol.name;
         let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+            language::SymbolKind::Method | language::SymbolKind::Function => {
                 let text = format!("func {} () {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::STRUCT => {
+            language::SymbolKind::Struct => {
                 let text = format!("type {} struct {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..text.len();
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::INTERFACE => {
+            language::SymbolKind::Interface => {
                 let text = format!("type {} interface {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..text.len();
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::CLASS => {
+            language::SymbolKind::Class => {
                 let text = format!("type {} T", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::CONSTANT => {
+            language::SymbolKind::Constant => {
                 let text = format!("const {} = nil", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::VARIABLE => {
+            language::SymbolKind::Variable => {
                 let text = format!("var {} = nil", name);
                 let filter_range = 4..4 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::MODULE => {
+            language::SymbolKind::Module => {
                 let text = format!("package {}", name);
                 let filter_range = 8..8 + name.len();
                 let display_range = 0..filter_range.end;
@@ -823,6 +823,14 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
+                label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+                command: "go".into(),
+                args: vec!["test".into()],
+                cwd: package_cwd.clone(),
+                tags: vec!["go-package-test".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
                 label: "go test ./...".into(),
                 command: "go".into(),
                 args: vec!["test".into(), "./...".into()],
@@ -842,7 +850,7 @@ impl ContextProvider for GoContextProvider {
                     "-v".into(),
                     "-run".into(),
                     format!(
-                        "'^{}$/^{}$'",
+                        "\\^{}\\$/\\^{}\\$",
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
@@ -943,7 +951,9 @@ mod tests {
     use super::*;
     use crate::language;
     use gpui::{AppContext, Hsla, TestAppContext};
+    use task::TaskContext;
     use theme::SyntaxTheme;
+    use unindent::Unindent as _;
 
     fn go_language() -> Arc<Language> {
         let language = language("go", tree_sitter_go::LANGUAGE.into());
@@ -1217,6 +1227,73 @@ mod tests {
             "Should find go-subtest tag, found: {:?}",
             tag_strings
         );
+    }
+
+    #[gpui::test]
+    async fn test_go_test_templates_run_arg_is_shell_escaped(cx: &mut TestAppContext) {
+        let templates = cx
+            .update(|cx| GoContextProvider.associated_tasks(None, cx))
+            .await
+            .expect("Go context provider returns associated tasks");
+
+        // `resolve_task` returns `None` for any `ZED_` variable a template
+        // references but the context omits, so supply all of them.
+        let context = TaskContext {
+            cwd: None,
+            task_variables: TaskVariables::from_iter([
+                (VariableName::Symbol, "TestFoo".to_string()),
+                (GO_SUBTEST_NAME_TASK_VARIABLE, "simple_subtest".to_string()),
+                (
+                    GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE,
+                    "table_case".to_string(),
+                ),
+                (GO_SUITE_NAME_TASK_VARIABLE, "Suite".to_string()),
+                (GO_PACKAGE_TASK_VARIABLE, ".".to_string()),
+                (VariableName::Dirname, "/tmp".to_string()),
+            ]),
+            project_env: HashMap::default(),
+        };
+
+        // `go-benchmark` is excluded: its `-run='^$'` form intentionally quotes.
+        let escaped_run_arg_tags = [
+            "go-test",
+            "go-example",
+            "go-subtest",
+            "go-fuzz",
+            "go-testify-suite",
+            "go-table-test-case",
+        ];
+
+        for tag in escaped_run_arg_tags {
+            let template = templates
+                .0
+                .iter()
+                .find(|template| template.tags.iter().any(|template_tag| template_tag == tag))
+                .unwrap_or_else(|| panic!("`{tag}` task template exists"));
+
+            let resolved = template
+                .resolve_task("go", &context)
+                .unwrap_or_else(|| panic!("`{tag}` template resolves"));
+
+            let run_index = resolved
+                .resolved
+                .args
+                .iter()
+                .position(|arg| arg == "-run")
+                .unwrap_or_else(|| panic!("`{tag}` resolved args contain a `-run` flag"));
+            let run_arg = &resolved.resolved.args[run_index + 1];
+
+            assert!(
+                !run_arg.contains('\''),
+                "`{tag}` -run arg must not shell-quote the regex; single quotes leak \
+                 literally into Delve's regex and break Debug Test (#53230), got {run_arg:?}"
+            );
+            assert!(
+                run_arg.starts_with("\\^") && run_arg.ends_with("\\$"),
+                "`{tag}` -run arg must escape its regex anchors as \\^...\\$ so the shell \
+                 and GoLocator both strip them, got {run_arg:?}"
+            );
+        }
     }
 
     #[gpui::test]
@@ -1949,6 +2026,89 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_go_outline_includes_methods_with_receiver_forms(cx: &mut TestAppContext) {
+        let language = go_language();
+
+        let source = r#"
+        package main
+
+        type v2 struct{}
+
+        func (v2) BrokenMethod() {
+            println("start")
+        }
+
+        func (_ v2) UnderscoreReceiverMethod() {
+            println("start")
+        }
+
+        func (v v2) NamedReceiverMethod() {
+            println("start")
+        }
+
+        func (v *v2) PointerReceiverMethod() {
+            println("start")
+        }
+
+        func WorkingFunction() {
+            println("start")
+        }
+        "#
+        .unindent();
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(source.clone(), cx).with_language(language, cx));
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let outline = snapshot.outline(None);
+
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            &[
+                "type v2",
+                "func (v2) BrokenMethod",
+                "func (_ v2) UnderscoreReceiverMethod",
+                "func (v v2) NamedReceiverMethod",
+                "func (v *v2) PointerReceiverMethod",
+                "func WorkingFunction",
+            ]
+        );
+
+        for (method_name, expected_symbol) in [
+            ("BrokenMethod", "func (v2) BrokenMethod"),
+            (
+                "UnderscoreReceiverMethod",
+                "func (_ v2) UnderscoreReceiverMethod",
+            ),
+            ("NamedReceiverMethod", "func (v v2) NamedReceiverMethod"),
+            (
+                "PointerReceiverMethod",
+                "func (v *v2) PointerReceiverMethod",
+            ),
+            ("WorkingFunction", "func WorkingFunction"),
+        ] {
+            let method_position = source
+                .find(&format!("{method_name}()"))
+                .expect("method should exist in source");
+            let body_position = source[method_position..]
+                .find("println")
+                .map(|body_offset| method_position + body_offset)
+                .expect("method should contain a body");
+            let symbols = snapshot.symbols_containing(body_position, None);
+            assert_eq!(
+                symbols
+                    .last()
+                    .map(|item| item.text.as_str())
+                    .expect("method should have an outline symbol"),
+                expected_symbol
+            );
+        }
+    }
+
     #[test]
     fn test_extract_subtest_name() {
         // Interpreted string literal
@@ -1984,5 +2144,46 @@ mod tests {
         let input_with_double_quotes = r#"`test with "double quotes"`"#;
         let result = extract_subtest_name(input_with_double_quotes);
         assert_eq!(result, Some(r#"test_with_\"double_quotes\""#.to_string()));
+    }
+
+    #[gpui::test]
+    fn test_go_package_test_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let source = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            // test code
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(source, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..source.len()).collect()
+        });
+
+        let tag_strings: Vec<_> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-package-test".to_string()),
+            "Should find go-package-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
     }
 }

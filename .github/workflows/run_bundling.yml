@@ -9,6 +9,8 @@ on:
     types:
     - labeled
     - synchronize
+permissions:
+  contents: read
 jobs:
   bundle_linux_aarch64:
     if: |-
@@ -21,6 +23,7 @@ jobs:
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       CC: clang-18
       CXX: clang++-18
+      LLD: /usr/bin/ld.lld-18
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -65,6 +68,7 @@ jobs:
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       CC: clang-18
       CXX: clang++-18
+      LLD: /usr/bin/ld.lld-18
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -99,6 +103,9 @@ jobs:
         if-no-files-found: error
     timeout-minutes: 60
   build_static_bwrap_linux_aarch64:
+    if: |-
+      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     steps:
     - name: steps::cache_nix_dependencies_namespace
@@ -130,6 +137,9 @@ jobs:
         if-no-files-found: error
     timeout-minutes: 60
   build_static_bwrap_linux_x86_64:
+    if: |-
+      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: namespace-profile-32x64-ubuntu-2004
     steps:
     - name: steps::cache_nix_dependencies_namespace
@@ -185,15 +195,28 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
-        node-version: '20'
+        node-version: '24'
+        check-latest: true
+        package-manager-cache: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
+    - name: run_bundling::bundle_mac::print_macos_toolchain
+      run: |
+        sw_vers
+        xcode-select -p
+        xcodebuild -version
+        xcrun --sdk macosx --show-sdk-version
+        xcrun --sdk macosx --show-sdk-path
+        xcrun clang --version
+        printf 'DEVELOPER_DIR=%s\n' "${DEVELOPER_DIR-<unset>}"
+        printf 'SDKROOT=%s\n' "${SDKROOT-<unset>}"
+        printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "${MACOSX_DEPLOYMENT_TARGET-<unset>}"
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
     - name: run_bundling::upload_artifact
@@ -234,15 +257,28 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
-        node-version: '20'
+        node-version: '24'
+        check-latest: true
+        package-manager-cache: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
+    - name: run_bundling::bundle_mac::print_macos_toolchain
+      run: |
+        sw_vers
+        xcode-select -p
+        xcodebuild -version
+        xcrun --sdk macosx --show-sdk-version
+        xcrun --sdk macosx --show-sdk-path
+        xcrun clang --version
+        printf 'DEVELOPER_DIR=%s\n' "${DEVELOPER_DIR-<unset>}"
+        printf 'SDKROOT=%s\n' "${SDKROOT-<unset>}"
+        printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "${MACOSX_DEPLOYMENT_TARGET-<unset>}"
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
     - name: run_bundling::upload_artifact

@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/cloud_api_types.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
@@ -19,7 +20,6 @@ cloud_llm_client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
-uuid.workspace = true
 zeta_prompt.workspace = true
 
 [dev-dependencies]

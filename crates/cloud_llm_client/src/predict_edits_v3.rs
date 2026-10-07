@@ -31,7 +31,7 @@ pub struct RawCompletionRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PredictEditsV3Request {
     #[serde(flatten)]
-    pub input: zeta_prompt::ZetaPromptInput,
+    pub input: zeta_prompt::Zeta2PromptInput,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

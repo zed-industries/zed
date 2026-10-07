@@ -85,6 +85,16 @@ impl IconButton {
         self
     }
 
+    pub fn active_background(mut self, background: Hsla) -> Self {
+        self.base.active_background = Some(background);
+        self
+    }
+
+    pub fn hover_background(mut self, background: Hsla) -> Self {
+        self.base.hover_background = Some(background);
+        self
+    }
+
     pub fn icon_color(mut self, icon_color: Color) -> Self {
         self.icon_color = icon_color;
         self
@@ -124,6 +134,17 @@ impl IconButton {
 
         self
     }
+
+    /// Use the given callback to construct a new tooltip view when the mouse hovers over this
+    /// button. The tooltip itself is also hoverable and won't disappear when the user moves the
+    /// mouse into the tooltip, allowing it to contain interactive elements like links or buttons.
+    pub fn hoverable_tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        self.base = self.base.hoverable_tooltip(tooltip);
+        self
+    }
 }
 
 impl Disableable for IconButton {
@@ -149,6 +170,7 @@ impl SelectableButton for IconButton {
 }
 
 impl Clickable for IconButton {
+    #[inline(always)]
     fn on_click(
         mut self,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
@@ -190,6 +212,7 @@ impl ButtonCommon for IconButton {
         self
     }
 
+    #[inline(always)]
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self

@@ -9,7 +9,7 @@
 //! the format we persist.
 
 use agent::ZED_AGENT_ID;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Context as _;
 use db::kvp::KeyValueStore;
 use gpui::{App, AppContext as _, Entity, Task};
@@ -27,7 +27,7 @@ const NAMESPACE: &str = "agent_draft_prompts";
 /// Maximum length (in characters) of a draft label rendered in the sidebar.
 const MAX_LABEL_CHARS: usize = 250;
 
-pub fn read(thread_id: ThreadId, cx: &App) -> Option<Vec<acp::ContentBlock>> {
+pub fn read(thread_id: ThreadId, cx: &App) -> Option<Vec<acp_v2::ContentBlock>> {
     let kvp = KeyValueStore::global(cx);
     let raw = kvp
         .scoped(NAMESPACE)
@@ -39,7 +39,7 @@ pub fn read(thread_id: ThreadId, cx: &App) -> Option<Vec<acp::ContentBlock>> {
 
 pub fn write(
     thread_id: ThreadId,
-    prompt: &[acp::ContentBlock],
+    prompt: &[acp_v2::ContentBlock],
     cx: &App,
 ) -> Task<anyhow::Result<()>> {
     let kvp = KeyValueStore::global(cx);
@@ -85,9 +85,9 @@ pub fn draft_has_user_content<'a>(
     }
 }
 
-fn blocks_have_user_content(blocks: &[acp::ContentBlock]) -> bool {
+fn blocks_have_user_content(blocks: &[acp_v2::ContentBlock]) -> bool {
     blocks.iter().any(|block| match block {
-        acp::ContentBlock::Text(text) => !text.text.trim().is_empty(),
+        acp_v2::ContentBlock::Text(text) => !text.text.trim().is_empty(),
         _ => true,
     })
 }
@@ -158,8 +158,8 @@ pub fn display_label_for_draft(
     let raw = blocks
         .iter()
         .filter_map(|block| match block {
-            acp::ContentBlock::Text(text) => Some(text.text.as_str()),
-            acp::ContentBlock::ResourceLink(link) => Some(link.uri.as_str()),
+            acp_v2::ContentBlock::Text(text) => Some(text.text.as_str()),
+            acp_v2::ContentBlock::ResourceLink(link) => Some(link.uri.as_str()),
             _ => None,
         })
         .join(" ");

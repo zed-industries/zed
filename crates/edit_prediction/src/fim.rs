@@ -1,5 +1,5 @@
 use crate::{
-    EditPredictionId, EditPredictionModelInput, cursor_excerpt,
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, cursor_excerpt,
     open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
     prediction::EditPredictionResult,
 };
@@ -7,10 +7,10 @@ use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AppContext as _, Entity, Task};
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, ToOffset, ToPoint as _,
-    language_settings::all_language_settings,
+    ZetaVersion, language_settings::all_language_settings,
 };
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::{ZetaPromptInput, compute_editable_and_context_ranges};
+use zeta_prompt::{Zeta2PromptInput, compute_editable_and_context_ranges};
 
 const FIM_CONTEXT_TOKENS: usize = 512;
 
@@ -19,7 +19,7 @@ struct FimRequestOutput {
     edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
     editable_range: std::ops::Range<Anchor>,
     snapshot: BufferSnapshot,
-    inputs: ZetaPromptInput,
+    inputs: Zeta2PromptInput,
     buffer: Entity<Buffer>,
 }
 
@@ -78,7 +78,7 @@ pub fn request_prediction(
             0,
         );
 
-        let inputs = ZetaPromptInput {
+        let inputs = Zeta2PromptInput {
             events,
             related_files: Some(Vec::new()),
             active_buffer_diagnostics: Vec::new(),
@@ -154,7 +154,7 @@ pub fn request_prediction(
                 output.edits.into(),
                 None,
                 Some(output.editable_range),
-                output.inputs,
+                EditPredictionInputs::V2(output.inputs),
                 None,
                 trigger,
                 cx.background_executor().now() - request_start,
@@ -162,6 +162,30 @@ pub fn request_prediction(
             )
             .await,
         ))
+    })
+}
+
+/// Infers the FIM prompt format from an Ollama/OpenAI-compatible model name.
+/// Returns `None` if the model isn't a known FIM-capable model.
+pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
+    let model_base = model.split(':').next().unwrap_or(model);
+
+    Some(match model_base {
+        "zeta2" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2),
+        "zeta2.1" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2_1),
+        model_base if model_base.to_ascii_lowercase().contains("sweep-next-edit") => {
+            EditPredictionPromptFormat::Sweep
+        }
+        "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
+        "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
+        "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
+        "qwen2.5-coder" | "qwen-coder" | "qwen" => EditPredictionPromptFormat::Qwen,
+        "codegemma" => EditPredictionPromptFormat::CodeGemma,
+        "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
+        "glm" | "glm-4" | "glm-4.5" => EditPredictionPromptFormat::Glm,
+        _ => {
+            return None;
+        }
     })
 }
 
@@ -241,4 +265,60 @@ fn clean_fim_completion(response: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infer_prompt_format_matches_known_model_families() {
+        assert_eq!(
+            infer_prompt_format("qwen2.5-coder:3b"),
+            Some(EditPredictionPromptFormat::Qwen)
+        );
+        assert_eq!(
+            infer_prompt_format("codellama:7b"),
+            Some(EditPredictionPromptFormat::CodeLlama)
+        );
+        assert_eq!(
+            infer_prompt_format("deepseek-coder-v2:16b"),
+            Some(EditPredictionPromptFormat::DeepseekCoder)
+        );
+        assert_eq!(
+            infer_prompt_format("starcoder2:3b"),
+            Some(EditPredictionPromptFormat::StarCoder)
+        );
+        assert_eq!(
+            infer_prompt_format("codestral:latest"),
+            Some(EditPredictionPromptFormat::Codestral)
+        );
+        assert_eq!(
+            infer_prompt_format("glm-4:9b"),
+            Some(EditPredictionPromptFormat::Glm)
+        );
+    }
+
+    #[test]
+    fn infer_prompt_format_matches_zeta_and_sweep() {
+        assert_eq!(
+            infer_prompt_format("zeta2"),
+            Some(EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2))
+        );
+        assert_eq!(
+            infer_prompt_format("zeta2.1"),
+            Some(EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2_1))
+        );
+        assert_eq!(
+            infer_prompt_format("my-sweep-next-edit-v1"),
+            Some(EditPredictionPromptFormat::Sweep)
+        );
+    }
+
+    #[test]
+    fn infer_prompt_format_returns_none_for_unsupported_models() {
+        assert_eq!(infer_prompt_format("llama3:70b"), None);
+        assert_eq!(infer_prompt_format("phi3:mini"), None);
+        assert_eq!(infer_prompt_format("nomic-embed-text"), None);
+    }
 }

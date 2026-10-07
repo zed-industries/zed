@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp_thread::{
-    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk, ContentBlock,
-    ToolCallContent,
+    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk, ToolCallContent,
 };
 use collections::HashMap;
 use editor::{
@@ -12,19 +11,16 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Hsla, KeyContext,
-    SharedString, Subscription, Task, TextStyle, WeakEntity, Window, actions, relative, rems,
+    Action, Entity, EntityId, EventEmitter, FocusHandle, Focusable, KeyContext, Subscription, Task,
+    TextStyle, WeakEntity, actions, prelude::*,
 };
 use markdown::Markdown;
-use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot};
+use multi_buffer::{Anchor, Event as MultiBufferEvent, MultiBufferOffset, MultiBufferSnapshot};
 use project::search::SearchQuery;
 use search::{SearchOption, SearchOptions, SearchSource};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
-use ui::{
-    ActiveTheme, ButtonStyle, Color, IconButton, IconButtonShape, IconName, IntoElement, Label,
-    LabelSize, Tooltip, div, h_flex, prelude::*, v_flex,
-};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 use util::paths::PathMatcher;
 
 use crate::entry_view_state::EntryViewState;
@@ -148,6 +144,7 @@ pub struct ThreadSearchBar {
     _update_matches_task: Option<Task<()>>,
     _search_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    patch_buffer_subscriptions: HashMap<EntityId, Subscription>,
 }
 
 pub enum ThreadSearchBarEvent {
@@ -225,6 +222,7 @@ impl ThreadSearchBar {
             _update_matches_task: None,
             _search_task: None,
             _subscriptions: vec![editor_subscription, thread_subscription],
+            patch_buffer_subscriptions: HashMap::default(),
         }
     }
 
@@ -253,6 +251,19 @@ impl ThreadSearchBar {
     #[cfg(test)]
     pub(super) fn match_count(&self) -> usize {
         self.matches.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_patch_buffer_subscribed(&self, buffer_id: EntityId) -> bool {
+        self.patch_buffer_subscriptions.contains_key(&buffer_id)
+    }
+
+    #[cfg(test)]
+    pub(super) fn match_source_ranges(&self) -> Vec<Range<usize>> {
+        self.matches
+            .iter()
+            .map(|thread_match| thread_match.source_range.clone())
+            .collect()
     }
 
     #[cfg(test)]
@@ -322,12 +333,14 @@ impl ThreadSearchBar {
         self.query_error_message = err_msg;
 
         let Some(query) = query else {
+            self.patch_buffer_subscriptions.clear();
             self.clear_results(cx);
             cx.notify();
             return;
         };
 
         let mut targets: Vec<SearchTarget> = Vec::new();
+        let mut patch_buffers = Vec::new();
         let thread = self.thread.read(cx);
         let entry_view_state = self.entry_view_state.read(cx);
         for (entry_ix, entry) in thread.entries().iter().enumerate() {
@@ -357,9 +370,55 @@ impl ThreadSearchBar {
                             source,
                         });
                     }
+                    if let AgentThreadEntry::ToolCall(tool_call) = entry
+                        && entry_view_state.is_tool_call_content_visible(tool_call)
+                    {
+                        for content in tool_call.content() {
+                            if let ToolCallContent::DiffPatch { render, .. } = content {
+                                for hunk in render.files.iter().flat_map(|file| &file.hunks) {
+                                    if let Some(editor) = entry_view_state
+                                        .entry(entry_ix)
+                                        .and_then(|entry| entry.editor_for_patch_hunk(&hunk.buffer))
+                                    {
+                                        patch_buffers.push(hunk.buffer.clone());
+                                        let snapshot =
+                                            editor.read(cx).buffer().read(cx).snapshot(cx);
+                                        targets.push(SearchTarget::Editor {
+                                            entry_ix,
+                                            editor,
+                                            snapshot,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        let mut previous_subscriptions = std::mem::take(&mut self.patch_buffer_subscriptions);
+        for buffer in patch_buffers {
+            let id = buffer.entity_id();
+            self.patch_buffer_subscriptions
+                .entry(id)
+                .or_insert_with(|| {
+                    previous_subscriptions.remove(&id).unwrap_or_else(|| {
+                        cx.subscribe_in(
+                            &buffer,
+                            window,
+                            |this, _, event: &MultiBufferEvent, window, cx| {
+                                if this.is_active
+                                    && matches!(event, MultiBufferEvent::Edited { .. })
+                                {
+                                    this.schedule_update_matches(window, cx);
+                                }
+                            },
+                        )
+                    })
+                });
+        }
+        drop(previous_subscriptions);
 
         if targets.is_empty() {
             self.clear_results(cx);
@@ -644,6 +703,7 @@ impl ThreadSearchBar {
 
     fn clear_highlights_impl(&mut self, cx: &mut App) {
         self.clear_results(cx);
+        self.patch_buffer_subscriptions.clear();
         self.is_active = false;
         self._update_matches_task = None;
     }
@@ -715,20 +775,15 @@ impl Render for ThreadSearchBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.query_editor.focus_handle(cx);
         let theme = cx.theme().colors();
+
         let has_matches = !self.matches.is_empty();
         let query_empty = self.query_editor.read(cx).text(cx).is_empty();
         let in_error_state = self.query_error || (!query_empty && !has_matches);
-        let border_color = theme.border;
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AcpThreadSearchBar");
 
         let counter_text = self.active_match_text(cx).unwrap_or_default();
-        let counter_color = if has_matches {
-            Color::Default
-        } else {
-            Color::Muted
-        };
 
         let bar_row = h_flex()
             .track_focus(&focus_handle)
@@ -742,16 +797,17 @@ impl Render for ThreadSearchBar {
             .on_action(cx.listener(Self::focus_search))
             .w_full()
             .gap_2()
-            .px_2()
-            .py_1()
-            .border_b_1()
-            .border_color(theme.border)
-            .bg(theme.toolbar_background)
             .child(
-                input_box(border_color)
-                    .flex_1()
+                h_flex()
+                    .min_h_8()
                     .min_w_32()
-                    .child(div().flex_1().min_w_0().py_1().child(render_query_input(
+                    .flex_1()
+                    .px_1p5()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.editor_background)
+                    .rounded_md()
+                    .child(div().px_1().flex_1().child(render_query_input(
                         &self.query_editor,
                         in_error_state,
                         cx,
@@ -801,7 +857,7 @@ impl Render for ThreadSearchBar {
                         div().ml_1().min_w(rems(2.5)).child(
                             Label::new(counter_text)
                                 .size(LabelSize::Small)
-                                .color(counter_color),
+                                .when(!has_matches, |this| this.color(Color::Muted)),
                         ),
                     )
                     .child(nav_button(
@@ -814,51 +870,44 @@ impl Render for ThreadSearchBar {
                     )),
             );
 
-        let error_row = self.query_error_message.clone().map(|msg| {
-            div()
-                .w_full()
-                .px_2()
-                .py_0p5()
-                .border_b_1()
-                .border_color(theme.border)
-                .bg(theme.toolbar_background)
-                .child(Label::new(msg).size(LabelSize::Small).color(Color::Error))
-        });
+        let error_row = self
+            .query_error_message
+            .clone()
+            .map(|msg| Label::new(msg).size(LabelSize::Small).color(Color::Error));
 
-        v_flex().w_full().child(bar_row).children(error_row)
+        v_flex()
+            .w_full()
+            .p_1p5()
+            .bg(theme.panel_background)
+            .border_b_1()
+            .border_color(theme.border.opacity(0.6))
+            .child(bar_row)
+            .children(error_row)
     }
-}
-
-fn input_box(border_color: Hsla) -> gpui::Div {
-    h_flex()
-        .min_h_8()
-        .pl_2()
-        .pr_1()
-        .border_1()
-        .border_color(border_color)
-        .rounded_md()
 }
 
 fn render_query_input(editor: &Entity<Editor>, has_error: bool, app: &App) -> impl IntoElement {
     let theme = app.theme().colors();
     let (color, use_syntax) = if has_error {
-        (ui::Color::Error.color(app), false)
+        (Color::Error.color(app), false)
     } else {
         (theme.text, true)
     };
+
     let settings = ThemeSettings::get_global(app);
+
     let text_style = TextStyle {
         color,
-        font_family: settings.buffer_font.family.clone(),
-        font_features: settings.buffer_font.features.clone(),
-        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+        font_family: settings.ui_font.family.clone(),
+        font_features: settings.ui_font.features.clone(),
+        font_fallbacks: settings.ui_font.fallbacks.clone(),
         font_size: rems(0.875).into(),
-        font_weight: settings.buffer_font.weight,
+        font_weight: settings.ui_font.weight,
         line_height: relative(1.3),
         ..TextStyle::default()
     };
     let mut style = EditorStyle {
-        background: theme.toolbar_background,
+        background: theme.editor_background,
         local_player: app.theme().players().local(),
         text: text_style,
         ..EditorStyle::default()
@@ -879,7 +928,6 @@ fn nav_button(
 ) -> IconButton {
     let action_for_dispatch = action;
     IconButton::new(id, icon)
-        .style(ButtonStyle::Subtle)
         .shape(IconButtonShape::Square)
         .disabled(disabled)
         .on_click({
@@ -906,19 +954,15 @@ fn collect_markdowns(
         AgentThreadEntry::AssistantMessage(message) => {
             for (chunk_ix, chunk) in message.chunks.iter().enumerate() {
                 match chunk {
-                    AssistantMessageChunk::Message { block } => {
-                        if let Some(md) = block.markdown() {
-                            out.push(md.clone());
-                        }
+                    AssistantMessageChunk::Message { block, .. } => {
+                        out.extend(block.markdowns().cloned());
                     }
-                    AssistantMessageChunk::Thought { block }
+                    AssistantMessageChunk::Thought { block, .. }
                         if entry_view_state
                             .thinking_block_state((entry_ix, chunk_ix), cx)
                             .0 =>
                     {
-                        if let Some(md) = block.markdown() {
-                            out.push(md.clone());
-                        }
+                        out.extend(block.markdowns().cloned());
                     }
                     AssistantMessageChunk::Thought { .. } => {}
                 }
@@ -926,37 +970,76 @@ fn collect_markdowns(
         }
         AgentThreadEntry::ToolCall(tool_call) => {
             out.push(tool_call.label.clone());
-            if entry_view_state.is_tool_call_expanded(&tool_call.id) {
+            if entry_view_state.is_tool_call_content_visible(tool_call) {
                 out.extend(
                     tool_call
-                        .content
+                        .content()
                         .iter()
-                        .filter_map(|content| match content {
-                            ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
-                                Some(markdown.clone())
-                            }
-                            ToolCallContent::ContentBlock(
-                                ContentBlock::Empty
-                                | ContentBlock::ResourceLink { .. }
-                                | ContentBlock::Image { .. },
-                            )
-                            | ToolCallContent::Diff(_)
-                            | ToolCallContent::Terminal(_) => None,
-                        }),
+                        .filter_map(|content| content.markdown().cloned()),
                 );
             }
         }
-        AgentThreadEntry::CompletedPlan(entries) => {
-            out.extend(entries.iter().map(|e| e.content.clone()))
-        }
-        AgentThreadEntry::ContextCompaction(compaction)
-            if entry_view_state.is_compaction_expanded(entry_ix) =>
-        {
-            if let Some(summary) = &compaction.summary {
-                out.push(summary.clone());
-            }
-        }
-        AgentThreadEntry::ContextCompaction(_) => {}
+        AgentThreadEntry::ContextCompaction(compaction) => out.extend(compaction_markdowns(
+            compaction,
+            entry_view_state.is_compaction_expanded(entry_ix),
+        )),
+        AgentThreadEntry::Elicitation(_) => {}
     }
     out
+}
+
+fn compaction_markdowns(
+    compaction: &acp_thread::ContextCompaction,
+    is_expanded: bool,
+) -> impl Iterator<Item = Entity<Markdown>> + '_ {
+    compaction
+        .summary
+        .iter()
+        .filter_map(|content| content.markdown().cloned())
+        .chain(compaction.error.iter().cloned())
+        .filter(move |_| is_expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acp_thread::{
+        ContentBlock, ContextCompaction, ContextCompactionId, ContextCompactionStatus,
+    };
+    use agent_client_protocol::schema::v1 as acp_v1;
+    use language::LanguageRegistry;
+
+    #[gpui::test]
+    fn test_compaction_markdowns_include_summary_and_error(cx: &mut App) {
+        let summary = cx.new(|cx| Markdown::new("summary match".into(), None, None, cx));
+        let error = cx.new(|cx| Markdown::new("error match".into(), None, None, cx));
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        let unsupported_block = ContentBlock::new_output(
+            acp_thread::content::from_v1(acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new(
+                "YXVkaW8=",
+                "audio/wav",
+            )))
+            .expect("known v1 audio content"),
+            &language_registry,
+            cx,
+        );
+        let unsupported = unsupported_block
+            .markdown()
+            .expect("audio fallback")
+            .clone();
+        let compaction = ContextCompaction {
+            id: ContextCompactionId("compaction".into()),
+            status: ContextCompactionStatus::Failed,
+            summary: vec![
+                ContentBlock::from_markdown(summary.clone()),
+                unsupported_block,
+            ],
+            error: Some(error.clone()),
+        };
+
+        assert!(compaction_markdowns(&compaction, false).next().is_none());
+
+        let markdowns = compaction_markdowns(&compaction, true).collect::<Vec<_>>();
+        assert_eq!(markdowns, vec![summary, unsupported, error]);
+    }
 }

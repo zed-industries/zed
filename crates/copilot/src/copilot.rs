@@ -15,11 +15,11 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Subscription,
     Task, WeakEntity, actions,
 };
-use language::language_settings::{AllLanguageSettings, CopilotSettings};
+use language::language_settings::{AllLanguageSettings, CopilotEditPredictionSettings};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
     language_settings::{EditPredictionProvider, all_language_settings},
-    point_from_lsp, point_to_lsp,
+    point_to_lsp, range_from_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -46,20 +46,11 @@ use workspace::AppState;
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
 
 actions!(
-    copilot,
+    copilot_edit_predictions,
     [
-        /// Requests a code completion suggestion from Copilot.
-        Suggest,
-        /// Cycles to the next Copilot suggestion.
-        NextSuggestion,
-        /// Cycles to the previous Copilot suggestion.
-        PreviousSuggestion,
-        /// Reinstalls the Copilot language server.
+        /// Reinstalls the Copilot Edit Predictions language server.
+        #[action(deprecated_aliases = ["copilot::Reinstall"])]
         Reinstall,
-        /// Signs in to GitHub Copilot.
-        SignIn,
-        /// Signs out of GitHub Copilot.
-        SignOut
     ]
 );
 
@@ -488,7 +479,10 @@ impl Copilot {
         cx.notify();
     }
 
-    fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
+    fn build_env(
+        &self,
+        copilot_settings: &CopilotEditPredictionSettings,
+    ) -> Option<HashMap<String, String>> {
         let proxy_url = copilot_settings.proxy.clone()?;
         let no_verify = copilot_settings.proxy_no_verify;
         let http_or_https_proxy = if proxy_url.starts_with("http:") {
@@ -526,12 +520,20 @@ impl Copilot {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(cx: &mut gpui::TestAppContext) -> (Entity<Self>, lsp::FakeLanguageServer) {
+        Self::fake_with_initializer(cx, |_| {})
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_with_initializer(
+        cx: &mut gpui::TestAppContext,
+        initializer: impl FnOnce(&mut lsp::FakeLanguageServer),
+    ) -> (Entity<Self>, lsp::FakeLanguageServer) {
         use fs::FakeFs;
         use gpui::Subscription;
         use lsp::FakeLanguageServer;
         use node_runtime::NodeRuntime;
 
-        let (server, fake_server) = FakeLanguageServer::new(
+        let (server, mut fake_server) = FakeLanguageServer::new(
             LanguageServerId(0),
             LanguageServerBinary {
                 path: "path/to/copilot".into(),
@@ -542,6 +544,7 @@ impl Copilot {
             Default::default(),
             &mut cx.to_async(),
         );
+        initializer(&mut fake_server);
         let node_runtime = NodeRuntime::unavailable();
         let send_focus_notification = Subscription::new(|| {});
         let this = cx.new(|cx| Self {
@@ -842,10 +845,7 @@ impl Copilot {
                     anyhow::Ok(())
                 })
             }
-            CopilotServer::Disabled => cx.background_spawn(async {
-                clear_copilot_config_dir().await;
-                anyhow::Ok(())
-            }),
+            CopilotServer::Disabled => cx.background_spawn(async { anyhow::Ok(()) }),
             _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
@@ -1040,7 +1040,6 @@ impl Copilot {
         let pending_snapshot = registered_buffer.report_changes(buffer, cx);
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
-        let position = position.to_point_utf16(buffer);
         let snapshot = buffer.snapshot();
         let settings = snapshot.settings_at(0, cx);
         let tab_size = settings.tab_size.get();
@@ -1059,7 +1058,7 @@ impl Copilot {
 
         cx.background_spawn(async move {
             let (version, snapshot) = pending_snapshot.await?;
-            let lsp_position = point_to_lsp(position);
+            let lsp_position = point_to_lsp(position.to_point_utf16(&snapshot));
 
             let nes_fut = if nes_enabled {
                 lsp.request::<NextEditSuggestions>(
@@ -1080,14 +1079,9 @@ impl Copilot {
                                 .edits
                                 .into_iter()
                                 .map(|completion| {
-                                    let start = snapshot.clip_point_utf16(
-                                        point_from_lsp(completion.range.start),
-                                        Bias::Left,
-                                    );
-                                    let end = snapshot.clip_point_utf16(
-                                        point_from_lsp(completion.range.end),
-                                        Bias::Left,
-                                    );
+                                    let range = range_from_lsp(completion.range);
+                                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                                     CopilotEditPrediction {
                                         buffer: buffer_entity.clone(),
                                         range: snapshot.anchor_before(start)
@@ -1136,14 +1130,9 @@ impl Copilot {
                                 .items
                                 .into_iter()
                                 .map(|item| {
-                                    let start = snapshot.clip_point_utf16(
-                                        point_from_lsp(item.range.start),
-                                        Bias::Left,
-                                    );
-                                    let end = snapshot.clip_point_utf16(
-                                        point_from_lsp(item.range.end),
-                                        Bias::Left,
-                                    );
+                                    let range = range_from_lsp(item.range);
+                                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                                     CopilotEditPrediction {
                                         buffer: buffer_entity.clone(),
                                         range: snapshot.anchor_before(start)
@@ -1265,7 +1254,6 @@ impl Copilot {
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
                     cx.emit(Event::CopilotAuthSignedIn);
-                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
                             self.register_buffer(&buffer, cx);
@@ -1285,7 +1273,6 @@ impl Copilot {
                         };
                     }
                     cx.emit(Event::CopilotAuthSignedOut);
-                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }
@@ -1297,40 +1284,15 @@ impl Copilot {
     }
 
     fn update_action_visibilities(&self, cx: &mut App) {
-        let signed_in_actions = [
-            TypeId::of::<Suggest>(),
-            TypeId::of::<NextSuggestion>(),
-            TypeId::of::<PreviousSuggestion>(),
-            TypeId::of::<Reinstall>(),
-        ];
-        let auth_actions = [TypeId::of::<SignOut>()];
-        let no_auth_actions = [TypeId::of::<SignIn>()];
-        let status = self.status();
+        let signed_in_actions = [TypeId::of::<Reinstall>()];
 
         let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let filter = CommandPaletteFilter::global_mut(cx);
 
         if is_ai_disabled {
             filter.hide_action_types(&signed_in_actions);
-            filter.hide_action_types(&auth_actions);
-            filter.hide_action_types(&no_auth_actions);
         } else {
-            match status {
-                Status::Disabled => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.hide_action_types(&no_auth_actions);
-                }
-                Status::Authorized => {
-                    filter.hide_action_types(&no_auth_actions);
-                    filter.show_action_types(signed_in_actions.iter().chain(&auth_actions));
-                }
-                _ => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.show_action_types(&no_auth_actions);
-                }
-            }
+            filter.show_action_types(&signed_in_actions);
         }
     }
 }
@@ -1360,24 +1322,13 @@ fn notify_did_change_config_to_server(
         .copilot
         .clone();
 
-    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
-        copilot_chat.update(cx, |chat, cx| {
-            chat.set_configuration(
-                copilot_chat::CopilotChatConfiguration {
-                    enterprise_uri: copilot_settings.enterprise_uri.clone(),
-                },
-                cx,
-            );
-        });
-    }
-
     let settings = json!({
         "http": {
             "proxy": copilot_settings.proxy,
             "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
         },
         "github-enterprise": {
-            "uri": copilot_settings.enterprise_uri
+            "uri": settings::CopilotSettings::get_global(cx).enterprise_uri
         }
     });
 
@@ -1389,21 +1340,8 @@ fn notify_did_change_config_to_server(
     Ok(())
 }
 
-/// Notify Copilot Chat after the Copilot LSP reports an auth state change.
-/// This replaces watching the SDK's token files, which is unreliable for
-/// SQLite backed auth because writes may go through WAL files.
-fn notify_copilot_chat_auth_changed(cx: &mut Context<Copilot>) {
-    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
-        copilot_chat.update(cx, |chat, cx| chat.reload_auth(cx));
-    }
-}
-
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
-}
-
-async fn clear_copilot_config_dir() {
-    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
@@ -1888,6 +1826,70 @@ mod tests {
                 "Copilot should be starting after disable_ai is set to false"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_completion_position_tracks_reported_snapshot(cx: &mut TestAppContext) {
+        init_test(cx);
+        let positions = Arc::new(Mutex::new(Vec::new()));
+        let (copilot, _server) = Copilot::fake_with_initializer(cx, |server| {
+            server.set_request_handler::<NextEditSuggestions, _, _>({
+                let positions = positions.clone();
+                move |params, _| {
+                    positions
+                        .lock()
+                        .push((params.text_document.version, params.position));
+                    async { Ok(request::NextEditSuggestionsResult { edits: Vec::new() }) }
+                }
+            });
+            server.set_request_handler::<InlineCompletions, _, _>({
+                let positions = positions.clone();
+                move |params, _| {
+                    positions
+                        .lock()
+                        .push((params.text_document.version, params.position));
+                    async { Ok(request::InlineCompletionsResult { items: Vec::new() }) }
+                }
+            });
+        });
+
+        for (replacement, expected_position) in [
+            ("new\né\t", lsp::Position::new(1, 4)),
+            ("", lsp::Position::new(0, 2)),
+        ] {
+            let buffer = cx.new(|cx| Buffer::local("prefix\n😀target", cx));
+            copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer, cx));
+            let (release, pending) = oneshot::channel::<()>();
+            copilot.update(cx, |copilot, cx| {
+                let registered = copilot
+                    .server
+                    .as_authenticated()
+                    .unwrap()
+                    .registered_buffers
+                    .get_mut(&buffer.entity_id())
+                    .unwrap();
+                registered.pending_buffer_change =
+                    cx.background_spawn(async move { pending.await.ok() });
+            });
+            let position = buffer.update(cx, |buffer, cx| {
+                buffer.edit([(buffer.len()..buffer.len(), "!")], None, cx);
+                buffer.anchor_before("prefix\n😀".len())
+            });
+            let completions =
+                copilot.update(cx, |copilot, cx| copilot.completions(&buffer, position, cx));
+            cx.run_until_parked();
+            assert_eq!(positions.lock().len(), 0);
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..7, replacement)], None, cx)
+            });
+            release.send(()).unwrap();
+
+            assert_eq!(completions.await.unwrap().len(), 0);
+            assert_eq!(
+                positions.lock().drain(..).collect::<Vec<_>>(),
+                vec![(1, expected_position); 2]
+            );
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {

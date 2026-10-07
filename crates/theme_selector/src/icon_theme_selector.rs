@@ -162,6 +162,10 @@ impl IconThemeSelectorDelegate {
 impl PickerDelegate for IconThemeSelectorDelegate {
     type ListItem = ui::ListItem;
 
+    fn name() -> &'static str {
+        "icon theme selector"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select Icon Theme...".into()
     }
@@ -205,9 +209,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<IconThemeSelectorDelegate>>) {
         self.revert_theme(cx);
 
-        self.selector
-            .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+        self.selector.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
     }
 
     fn selected_index(&self) -> usize {

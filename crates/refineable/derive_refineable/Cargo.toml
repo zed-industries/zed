@@ -14,8 +14,9 @@ workspace = true
 path = "src/derive_refineable.rs"
 proc-macro = true
 doctest = false
+test = false
 
 [dependencies]
 proc-macro2.workspace = true
 quote.workspace = true
-syn.workspace = true
+syn = { workspace = true, default-features = true }

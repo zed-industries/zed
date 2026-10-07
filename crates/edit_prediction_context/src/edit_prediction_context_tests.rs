@@ -5,10 +5,11 @@ use gpui::TestAppContext;
 use indoc::indoc;
 use language::{Point, ToPoint as _, rust_lang};
 use lsp::FakeLanguageServer;
-use project::{FakeFs, LocationLink, Project};
+use project::{FakeFs, LocationLink, Project, ProjectPath};
 use serde_json::json;
 use settings::SettingsStore;
 use std::fmt::Write as _;
+use util::rel_path::rel_path;
 use util::{path, test::marked_text_ranges};
 
 #[gpui::test]
@@ -561,9 +562,10 @@ async fn test_type_definition_deduplication(cx: &mut TestAppContext) {
 
     // In this project the only identifier near the cursor whose type definition
     // resolves is `TypeA`, and its GotoTypeDefinition returns the exact same
-    // location as GotoDefinition. After deduplication the CacheEntry for `TypeA`
-    // should have an empty `type_definitions` vec, meaning the type-definition
-    // path contributes nothing extra to the related-file output.
+    // location as GotoDefinition. After the definitions and type definitions are
+    // merged and deduped, the type-definition location is dropped, so it
+    // contributes nothing extra to the related-file output (the target location
+    // appears only once).
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -635,6 +637,85 @@ async fn test_type_definition_deduplication(cx: &mut TestAppContext) {
                 ("root/src/main.rs", &["fn work() {", "}"]),
             ],
         );
+    });
+}
+
+#[gpui::test]
+async fn test_edit_prediction_filters_raw_definitions_before_opening_buffers(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "main.rs": indoc! {"
+                    // fake-definition-lsp-extra target /root/src/large.rs 0 0 0 129
+                    // fake-definition-lsp-extra target /root/src/valid.rs 0 3 0 9
+                    // fake-definition-lsp-extra target /outside.rs 0 3 0 10
+                    fn main() {
+                        target();
+                    }
+                "},
+                "valid.rs": "fn target() {}\n",
+                "large.rs": format!("{}\n", "a".repeat(MAX_TARGET_LEN + 16)),
+            },
+        }),
+    )
+    .await;
+    fs.insert_file(path!("/outside.rs"), "fn outside() {}\n".into())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let mut servers = setup_fake_lsp(&project, cx);
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_language_server = servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    let related_excerpt_store = cx.new(|cx| RelatedExcerptStore::new(&project, cx));
+    related_excerpt_store.update(cx, |store, cx| {
+        let position = {
+            let buffer = buffer.read(cx);
+            let offset = buffer
+                .text()
+                .find("target();")
+                .expect("target call not found");
+            buffer.anchor_before(offset)
+        };
+
+        store.set_identifier_line_count(0);
+        store.refresh(buffer.clone(), position, cx);
+    });
+
+    cx.executor().advance_clock(DEBOUNCE_DURATION);
+    related_excerpt_store.update(cx, |store, cx| {
+        assert_related_files(
+            &store.related_files(cx),
+            &[
+                ("root/src/valid.rs", &["fn target() {}"]),
+                ("root/src/main.rs", &["fn main() {\n    target();\n}"]),
+            ],
+        );
+    });
+
+    let worktree_id = buffer.read_with(cx, |buffer, cx| {
+        buffer.file().expect("buffer has file").worktree_id(cx)
+    });
+    let valid_path = ProjectPath {
+        worktree_id,
+        path: rel_path("src/valid.rs").into(),
+    };
+    project.read_with(cx, |project, cx| {
+        assert!(project.get_open_buffer(&valid_path, cx).is_some());
+        assert_eq!(project.worktrees(cx).count(), 1);
     });
 }
 

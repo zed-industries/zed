@@ -15,6 +15,8 @@ on:
         description: working-directory
         type: string
         default: .
+permissions:
+  contents: read
 jobs:
   orchestrate:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -97,7 +99,9 @@ jobs:
       env:
         PACKAGE_NAME: ${{ steps.get-package-name.outputs.package_name }}
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: nextest
     - name: extension_tests::run_nextest
       run: 'cargo nextest run -p "$PACKAGE_NAME" --no-fail-fast --no-tests=warn --target "$(rustc -vV | sed -n ''s|host: ||p'')"'
       env:
@@ -141,11 +145,9 @@ jobs:
         mkdir -p /tmp/ext-output
         "$GITHUB_WORKSPACE/zed-extension" --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
     - name: run_tests::fetch_ts_query_ls
-      uses: dsaltares/fetch-gh-release-asset@aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c
-      with:
-        repo: ribru17/ts_query_ls
-        version: tags/v3.15.1
-        file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+      run: gh release download v3.15.1 --repo ribru17/ts_query_ls --pattern ts_query_ls-x86_64-unknown-linux-gnu.tar.gz --dir "$GITHUB_WORKSPACE"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: run_tests::run_ts_query_ls
       run: |-
         tar -xf "$GITHUB_WORKSPACE/ts_query_ls-x86_64-unknown-linux-gnu.tar.gz" -C "$GITHUB_WORKSPACE"
