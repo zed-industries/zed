@@ -7840,6 +7840,21 @@ mod internal_tests {
 
         turn.fake.end_last(&turn.model);
         send.await.unwrap();
+        cx.run_until_parked();
+        let expected_usage = language_model::TokenUsage {
+            input_tokens: 100,
+            output_tokens: 30,
+            ..Default::default()
+        };
+        let saved_thread = turn.saved_thread().await;
+        assert_eq!(saved_thread.cumulative_token_usage, expected_usage);
+        assert_eq!(
+            saved_thread
+                .request_token_usage
+                .into_values()
+                .collect::<Vec<_>>(),
+            vec![expected_usage]
+        );
     }
 
     #[gpui::test]
