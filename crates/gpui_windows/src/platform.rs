@@ -98,7 +98,6 @@ pub(crate) struct WindowsPlatformState {
     /// thread; see [`DrawCoordinator`].
     pub(crate) draw_coordinator: Rc<DrawCoordinator>,
     directx_devices: RefCell<Option<DirectXDevices>>,
-    system_suspended: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -128,7 +127,6 @@ impl WindowsPlatformState {
             cursor_visible: Arc::new(AtomicBool::new(true)),
             draw_coordinator: Rc::new(DrawCoordinator::new()),
             directx_devices: RefCell::new(directx_devices),
-            system_suspended: Cell::new(false),
             menus: RefCell::new(Vec::new()),
         }
     }
@@ -1378,13 +1376,11 @@ impl WindowsPlatformInner {
     }
 
     fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
-        // A top-level window gets the broadcast as well as the notification
-        // registered by `on_system_wake`, so ignore repeats.
         match wparam.0 as u32 {
-            PBT_APMSUSPEND if !self.state.system_suspended.replace(true) => {
+            PBT_APMSUSPEND => {
                 self.with_callback(|callbacks| &callbacks.system_sleep, |callback| callback());
             }
-            PBT_APMRESUMEAUTOMATIC if self.state.system_suspended.replace(false) => {
+            PBT_APMRESUMEAUTOMATIC => {
                 self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
             }
             _ => {}
