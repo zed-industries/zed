@@ -27,7 +27,7 @@ async-task.workspace = true
 block2.workspace = true
 core-foundation.workspace = true
 core-graphics.workspace = true
-core-video.workspace = true
+core-video = { workspace = true, features = ["metal"] }
 derive_more.workspace = true
 dispatch2.workspace = true
 etagere.workspace = true
