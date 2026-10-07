@@ -47,14 +47,14 @@ use zed_actions::agent::{Chat, PasteRaw};
 
 #[derive(Default)]
 pub struct SessionCapabilities {
-    prompt_capabilities: acp_v1::PromptCapabilities,
+    prompt_capabilities: acp_v2::PromptCapabilities,
     available_commands: Vec<acp_v2::AvailableCommand>,
     available_skills: Vec<AvailableSkill>,
 }
 
 impl SessionCapabilities {
     pub fn new(
-        prompt_capabilities: acp_v1::PromptCapabilities,
+        prompt_capabilities: acp_v2::PromptCapabilities,
         available_commands: Vec<acp_v2::AvailableCommand>,
         available_skills: Vec<AvailableSkill>,
     ) -> Self {
@@ -66,18 +66,22 @@ impl SessionCapabilities {
     }
 
     pub fn from_acp_commands(
-        prompt_capabilities: acp_v1::PromptCapabilities,
+        prompt_capabilities: acp_v2::PromptCapabilities,
         available_commands: Vec<acp_v2::AvailableCommand>,
     ) -> Self {
         Self::new(prompt_capabilities, available_commands, Vec::new())
     }
 
+    pub fn prompt_capabilities(&self) -> &acp_v2::PromptCapabilities {
+        &self.prompt_capabilities
+    }
+
     pub fn supports_images(&self) -> bool {
-        self.prompt_capabilities.image
+        self.prompt_capabilities.image.is_some()
     }
 
     pub fn supports_embedded_context(&self) -> bool {
-        self.prompt_capabilities.embedded_context
+        self.prompt_capabilities.embedded_context.is_some()
     }
 
     pub fn available_commands(&self) -> &[acp_v2::AvailableCommand] {
@@ -94,7 +98,7 @@ impl SessionCapabilities {
 
     fn supported_modes(&self, has_thread_store: bool) -> Vec<PromptContextType> {
         let mut supported = vec![PromptContextType::File, PromptContextType::Symbol];
-        if self.prompt_capabilities.embedded_context {
+        if self.supports_embedded_context() {
             if has_thread_store {
                 supported.push(PromptContextType::Thread);
             }
@@ -128,7 +132,7 @@ impl SessionCapabilities {
         self.available_skills.clone()
     }
 
-    pub fn set_prompt_capabilities(&mut self, prompt_capabilities: acp_v1::PromptCapabilities) {
+    pub fn set_prompt_capabilities(&mut self, prompt_capabilities: acp_v2::PromptCapabilities) {
         self.prompt_capabilities = prompt_capabilities;
     }
 
@@ -670,6 +674,7 @@ impl MessageEditor {
                 padding_left: false,
                 padding_right: false,
                 tooltip: None,
+                text_edits: None,
                 resolve_state: project::ResolveState::Resolved,
             },
         ))
@@ -2338,7 +2343,7 @@ mod tests {
             warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![acp_v2::AvailableCommand::new("help", "Get help")],
             vec![skill],
         );
@@ -2353,7 +2358,7 @@ mod tests {
     #[test]
     fn test_completion_commands_derive_category_from_meta() {
         let session_capabilities = SessionCapabilities::new(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![
                 acp_v2::AvailableCommand::new("compact", "Built-in").meta(
                     acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
@@ -2681,7 +2686,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let thread_store = None;
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![],
         )));
 
@@ -2842,7 +2847,7 @@ mod tests {
 
         let thread_store = None;
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![
                 acp_v2::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
                 acp_v2::AvailableCommand::new("say-hello", "Say hello to whoever you want").input(
@@ -3011,7 +3016,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             Vec::new(),
         )));
 
@@ -3125,7 +3130,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![acp_v2::AvailableCommand::new("hello", "Say hello")],
         )));
 
@@ -3279,7 +3284,7 @@ mod tests {
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![],
         )));
 
@@ -3338,10 +3343,10 @@ mod tests {
 
         message_editor.update(&mut cx, |editor, _cx| {
             editor.session_capabilities.write().set_prompt_capabilities(
-                acp_v1::PromptCapabilities::new()
-                    .image(true)
-                    .audio(true)
-                    .embedded_context(true),
+                acp_v2::PromptCapabilities::new()
+                    .image(acp_v2::PromptImageCapabilities::new())
+                    .audio(acp_v2::PromptAudioCapabilities::new())
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
             );
         });
 
@@ -3794,7 +3799,8 @@ mod tests {
                 );
                 // Enable embedded context so files are actually included
                 editor.session_capabilities.write().set_prompt_capabilities(
-                    acp_v1::PromptCapabilities::new().embedded_context(true),
+                    acp_v2::PromptCapabilities::new()
+                        .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                 );
                 editor
             })
@@ -4015,10 +4021,10 @@ mod tests {
         });
 
         message_editor.update(cx, |editor, _cx| {
-            editor
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().embedded_context(true));
+            editor.session_capabilities.write().set_prompt_capabilities(
+                acp_v2::PromptCapabilities::new()
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+            );
         });
 
         let supported_modes = {
@@ -4071,10 +4077,10 @@ mod tests {
         });
 
         message_editor.update(cx, |editor, _cx| {
-            editor
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().embedded_context(true));
+            editor.session_capabilities.write().set_prompt_capabilities(
+                acp_v2::PromptCapabilities::new()
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+            );
         });
 
         let supported_modes = {
@@ -4234,10 +4240,10 @@ mod tests {
         );
 
         message_editor.update(cx, |editor, _cx| {
-            editor
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().embedded_context(true))
+            editor.session_capabilities.write().set_prompt_capabilities(
+                acp_v2::PromptCapabilities::new()
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+            )
         });
 
         let content = message_editor
@@ -4933,10 +4939,10 @@ mod tests {
         let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
 
         let blocks = fixture.message_editor.update(&mut cx, |editor, cx| {
-            editor
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().embedded_context(true));
+            editor.session_capabilities.write().set_prompt_capabilities(
+                acp_v2::PromptCapabilities::new()
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+            );
             editor.draft_content_blocks_snapshot(cx)
         });
 
@@ -5365,7 +5371,9 @@ mod tests {
             message_editor
                 .session_capabilities
                 .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().image(true));
+                .set_prompt_capabilities(
+                    acp_v2::PromptCapabilities::new().image(acp_v2::PromptImageCapabilities::new()),
+                );
         });
 
         let temporary_image_path = write_test_png_file(None);

@@ -79,6 +79,9 @@
   "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
+  // The font family for Mermaid diagrams in the agent panel and markdown preview.
+  // Falls back to the UI font family if unset.
+  "mermaid_font_family": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
