@@ -5724,6 +5724,167 @@ async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppCo
 }
 
 #[gpui::test]
+async fn test_shift_click_drag_moves_entire_folded_directories(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    for (source_path, target_path, copy) in [
+        ("project/root/a", "project/root/other", false),
+        ("project/root/other", "project/root/a", false),
+        ("project/root/a", "project/root/other", true),
+        ("project/root/other", "project/root/a", true),
+    ] {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "root": {
+                    "a": { "sample.txt": "sample" },
+                    "c": { "d": { "sample2.txt": "sample2" } },
+                    "e": { "f": {} },
+                    "other": {}
+                }
+            }),
+        )
+        .await;
+        let original_paths = fs.paths(false);
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (window, panel) = create_drag_test_panel(&project, cx);
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        toggle_expand_dir(&panel, "project/root", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project",
+                "    v root  <== selected",
+                "        > a",
+                "        > c/d",
+                "        > e/f",
+                "        > other",
+            ]
+        );
+
+        select_folded_path_with_mark(&panel, "project/root/c/d", "project/root/c/d", cx);
+        select_folded_path_with_mark(&panel, "project/root/e/f", "project/root/e/f", cx);
+        click_project_entry(&panel, source_path, Modifiers::none(), cx);
+        click_project_entry(
+            &panel,
+            target_path,
+            Modifiers {
+                shift: true,
+                ..Modifiers::none()
+            },
+            cx,
+        );
+
+        cx.simulate_modifiers_change(Modifiers {
+            alt: copy && cfg!(target_os = "macos"),
+            control: copy && cfg!(not(target_os = "macos")),
+            ..Modifiers::none()
+        });
+        drag_selection_to(&panel, "project", false, cx);
+
+        let mut expected_paths = [
+            path!("/"),
+            path!("/project"),
+            path!("/project/a"),
+            path!("/project/a/sample.txt"),
+            path!("/project/c"),
+            path!("/project/c/d"),
+            path!("/project/c/d/sample2.txt"),
+            path!("/project/e"),
+            path!("/project/e/f"),
+            path!("/project/other"),
+            path!("/project/root"),
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<BTreeSet<_>>();
+        if copy {
+            expected_paths.extend(original_paths);
+        }
+        assert_eq!(
+            fs.paths(false).into_iter().collect::<BTreeSet<_>>(),
+            expected_paths,
+            "dragging the range {source_path} to {target_path} with copy={copy} should include the entire folded directories"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_shift_click_preserves_folded_range_endpoints(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    for (source_path, target_path) in [("root/a/b/c", "root/g/h/i"), ("root/g/h/i", "root/a/b/c")] {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "a": { "b": { "c": {} } },
+                "d": { "e": { "f": {} } },
+                "g": { "h": { "i": {} } }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (window, panel) = create_drag_test_panel(&project, cx);
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        select_folded_path_with_mark(&panel, "root/a/b/c", "root/a/b", cx);
+        select_folded_path_with_mark(&panel, "root/d/e/f", "root/d/e/f", cx);
+        select_folded_path_with_mark(&panel, "root/g/h/i", "root/g/h", cx);
+        click_project_entry(&panel, source_path, Modifiers::none(), cx);
+        click_project_entry(
+            &panel,
+            target_path,
+            Modifiers {
+                shift: true,
+                ..Modifiers::none()
+            },
+            cx,
+        );
+
+        for (leaf_path, active_path) in [
+            ("root/a/b/c", "root/a/b"),
+            ("root/d/e/f", "root/d"),
+            ("root/g/h/i", "root/g/h"),
+        ] {
+            let leaf_entry =
+                find_project_entry(&panel, leaf_path, cx).expect("folded directory should exist");
+            let active_entry =
+                find_project_entry(&panel, active_path, cx).expect("active directory should exist");
+            panel.read_with(cx, |panel, _| {
+                assert_eq!(
+                    panel.resolve_entry(leaf_entry),
+                    active_entry,
+                    "range {source_path} to {target_path} should select {active_path}"
+                );
+            });
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_dragging_same_named_files_preserves_one_source_on_conflict(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -10813,6 +10974,45 @@ pub(crate) fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Vis
         }
         panic!("no worktree for path {:?}", path);
     });
+    cx.run_until_parked();
+}
+
+fn click_project_entry(
+    panel: &Entity<ProjectPanel>,
+    path: &str,
+    modifiers: Modifiers,
+    cx: &mut VisualTestContext,
+) {
+    let entry_id = find_project_entry(panel, path, cx).expect("clicked entry should exist");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let position = panel.read_with(cx, |panel, cx| {
+        let worktree_id = panel
+            .project
+            .read(cx)
+            .worktree_id_for_entry(entry_id, cx)
+            .expect("clicked entry should belong to a worktree");
+        let (_, _, index) = panel
+            .index_for_entry(entry_id, worktree_id)
+            .expect("clicked entry should be visible");
+        let item_count = panel
+            .state
+            .visible_entries
+            .iter()
+            .map(|worktree| worktree.entries.len())
+            .sum::<usize>();
+        let scroll = panel.scroll_handle.0.borrow();
+        let bounds = scroll.base_handle.bounds();
+        let item_height = scroll
+            .last_item_size
+            .expect("project entries should be rendered")
+            .contents
+            .height
+            / item_count as f32;
+        bounds.origin
+            + scroll.base_handle.offset()
+            + point(bounds.size.width / 2., item_height * (index as f32 + 0.5))
+    });
+    cx.simulate_click(position, modifiers);
     cx.run_until_parked();
 }
 

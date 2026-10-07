@@ -6356,9 +6356,23 @@ impl ProjectPanel {
                                 },
                             );
 
-                            for selection in &new_selections {
-                                if !project_panel.marked_entries.contains(selection) {
-                                    project_panel.marked_entries.push(*selection);
+                            for new_selection in &new_selections {
+                                if !project_panel.marked_entries.contains(new_selection) {
+                                    project_panel.marked_entries.push(*new_selection);
+                                }
+
+                                let is_intermediate_entry = new_selection.entry_id
+                                    != selection.entry_id
+                                    && new_selection.entry_id != clicked_entry.entry_id;
+
+                                if is_intermediate_entry {
+                                    if let Some(folds) = project_panel
+                                        .state
+                                        .ancestors
+                                        .get_mut(&new_selection.entry_id)
+                                    {
+                                        folds.set_active_index(0);
+                                    }
                                 }
                             }
 
