@@ -823,6 +823,14 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
+                label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+                command: "go".into(),
+                args: vec!["test".into()],
+                cwd: package_cwd.clone(),
+                tags: vec!["go-package-test".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
                 label: "go test ./...".into(),
                 command: "go".into(),
                 args: vec!["test".into(), "./...".into()],
@@ -2136,5 +2144,46 @@ mod tests {
         let input_with_double_quotes = r#"`test with "double quotes"`"#;
         let result = extract_subtest_name(input_with_double_quotes);
         assert_eq!(result, Some(r#"test_with_\"double_quotes\""#.to_string()));
+    }
+
+    #[gpui::test]
+    fn test_go_package_test_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let source = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            // test code
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(source, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..source.len()).collect()
+        });
+
+        let tag_strings: Vec<_> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-package-test".to_string()),
+            "Should find go-package-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
     }
 }

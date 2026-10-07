@@ -7,11 +7,11 @@ description: Compare Zed Agent, External Agents, and Terminal Threads.
 
 Zed supports three agent paths. Choose the path based on how you want agentic work to run.
 
-| Agent path                                | Runs in                         | Uses                                                                  | Best when                                                                              |
-| ----------------------------------------- | ------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| [Zed Agent](./zed-agent.md)               | Agent Panel and Threads Sidebar | Zed-configured LLM providers, native tools, skills, instructions, MCP | You want Zed's native agent integration                                                |
-| [External Agents](./external-agents.md)   | Agent Panel and Threads Sidebar | ACP agent process and its own auth/config                             | You want Claude, Codex, OpenCode, Copilot, Cursor, Pi, or another ACP-integrated agent |
-| [Terminal Threads](./terminal-threads.md) | Threads Sidebar and terminal    | Native CLI/TUI auth/config                                            | You want the tool's command-line experience organized in Zed                           |
+| Agent path                                | Runs in                                             | Uses                                                                                       | Best when                                                                              |
+| ----------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| [Zed Agent](./zed-agent.md)               | [Agent Panel](./agent-panel.md) and Threads Sidebar | Zed-configured LLM providers, native tools, skills, [instructions](./instructions.md), MCP | You want Zed's native agent integration                                                |
+| [External Agents](./external-agents.md)   | Agent Panel and Threads Sidebar                     | ACP agent process and its own auth/config                                                  | You want Claude, Codex, OpenCode, Copilot, Cursor, Pi, or another ACP-integrated agent |
+| [Terminal Threads](./terminal-threads.md) | Threads Sidebar and terminal                        | Native CLI/TUI auth/config                                                                 | You want the tool's command-line experience organized in Zed                           |
 
 An agent path is sometimes called a harness. It is the way agentic work is started, displayed, configured, and controlled in Zed.
 

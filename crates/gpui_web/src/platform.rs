@@ -1,18 +1,20 @@
+use crate::CanvasFontFallback;
 use crate::dispatcher::WebDispatcher;
 use crate::display::WebDisplay;
 use crate::events::EventListenerHandle;
 use crate::http_client::FetchHttpClient;
 use crate::keyboard::WebKeyboardLayout;
+use crate::text_system::WebTextSystem;
 use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardReadError,
-    ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor, GestureTuning, Image,
-    ImageFormat, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, ScrollPhysics, Task, ThermalState, WindowAppearance, WindowKind, WindowParams,
-    popup::PopupNotSupportedError,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
+    ClipboardReadError, ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor,
+    GestureTuning, Image, ImageFormat, Keymap, Menu, MenuItem, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, ScrollPhysics, Task, ThermalState, WindowAppearance,
+    WindowKind, WindowParams, popup::PopupNotSupportedError,
 };
 use gpui_wgpu::{PreparedWebGraphics, WebBackendPreference, WgpuContext, wgpu};
 use std::{
@@ -150,6 +152,22 @@ impl WebPlatform {
         allow_multi_threading: bool,
         backend_preference: WebBackendPreference,
     ) -> Self {
+        Self::new_with_backend_and_font_fallback(
+            allow_multi_threading,
+            backend_preference,
+            CanvasFontFallback::default(),
+        )
+    }
+
+    /// Configures browser fallback before any fonts or layouts are cached.
+    ///
+    /// Loaded fonts remain preferred, except when they cannot supply requested
+    /// emoji presentation. The policy cannot be changed after construction.
+    pub fn new_with_backend_and_font_fallback(
+        allow_multi_threading: bool,
+        backend_preference: WebBackendPreference,
+        canvas_font_fallback: CanvasFontFallback,
+    ) -> Self {
         let browser_window =
             web_sys::window().expect("must be running in a browser window context");
         let dispatcher = Arc::new(WebDispatcher::new(
@@ -158,9 +176,7 @@ impl WebPlatform {
         ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
-        let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
-            "IBM Plex Sans",
-        ));
+        let text_system = Arc::new(WebTextSystem::new("IBM Plex Sans", canvas_font_fallback));
         let text_system: Arc<dyn PlatformTextSystem> = text_system;
         let active_display: Rc<dyn PlatformDisplay> =
             Rc::new(WebDisplay::new(browser_window.clone()));
@@ -493,6 +509,10 @@ impl Platform for WebPlatform {
         self.callbacks.borrow_mut().reopen = Some(callback);
     }
 
+    // Browsers expose no system sleep or wake signal; the nearest thing is the
+    // Page Visibility API, which drives `WindowVisibility` instead.
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
@@ -517,6 +537,12 @@ impl Platform for WebPlatform {
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.borrow_mut().thermal_state_change = Some(callback);
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Idle sleep prevention for {reason:?} is not supported in the browser"
+        )))
     }
 
     fn compositor_name(&self) -> &'static str {

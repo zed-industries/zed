@@ -950,7 +950,7 @@ fn test_combined_injection_with_leading_content_layer_ordering(cx: &mut App) {
             LanguageConfig {
                 name: LanguageName::new_static("Elixir"),
                 matcher: Arc::new(LanguageMatcher {
-                    path_suffixes: vec![String::from("ex")],
+                    path_suffixes: vec!["ex".into()],
                     ..Default::default()
                 }),
                 ..LanguageConfig::default()
@@ -1341,6 +1341,48 @@ fn test_random_syntax_map_edits_with_heex(rng: StdRng, cx: &mut App) {
     test_random_edits(text, registry, language, rng);
 }
 
+#[test]
+fn test_flatten_capture_regions_with_nested_captures() {
+    let outer = capture_ref(1);
+    let inner = capture_ref(2);
+    assert_eq!(
+        flattened(0..12, &[(0..10, outer), (2..5, inner)]),
+        vec![
+            (0..2, vec![outer]),
+            (2..5, vec![outer, inner]),
+            (5..10, vec![outer]),
+        ],
+    );
+}
+
+#[test]
+fn test_flatten_capture_regions_with_overlapping_captures() {
+    let first = capture_ref(1);
+    let second = capture_ref(2);
+    assert_eq!(
+        flattened(0..25, &[(0..10, first), (2..20, second)]),
+        vec![
+            (0..2, vec![first]),
+            (2..10, vec![first, second]),
+            (10..20, vec![second]),
+        ],
+        "a capture must not extend past its own end when overlapping another capture"
+    );
+}
+
+#[test]
+fn test_flatten_capture_regions_clips_to_the_requested_range() {
+    let capture = capture_ref(1);
+    assert_eq!(
+        flattened(5..8, &[(0..10, capture)]),
+        vec![(5..8, vec![capture])],
+    );
+    assert_eq!(
+        flattened(0..6, &[(4..10, capture)]),
+        vec![(4..6, vec![capture])],
+    );
+}
+
 fn test_random_edits(
     text: String,
     registry: Arc<LanguageRegistry>,
@@ -1583,7 +1625,7 @@ fn html_lang() -> Language {
         LanguageConfig {
             name: "HTML".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["html".to_string()],
+                path_suffixes: vec!["html".into()],
                 ..Default::default()
             })
             .into(),
@@ -1606,7 +1648,7 @@ fn ruby_lang() -> Language {
         LanguageConfig {
             name: "Ruby".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rb".to_string()],
+                path_suffixes: vec!["rb".into()],
                 ..Default::default()
             })
             .into(),
@@ -1629,7 +1671,7 @@ fn erb_lang() -> Language {
         LanguageConfig {
             name: "ERB".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["erb".to_string()],
+                path_suffixes: vec!["erb".into()],
                 ..Default::default()
             })
             .into(),
@@ -1720,7 +1762,7 @@ fn python_lang() -> Language {
         LanguageConfig {
             name: "Python".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["py".to_string()],
+                path_suffixes: vec!["py".into()],
                 ..Default::default()
             })
             .into(),
@@ -1760,6 +1802,23 @@ fn sql_lang() -> Language {
         },
         Some(tree_sitter_json::LANGUAGE.into()),
     )
+}
+
+fn capture_ref(capture_id: u32) -> HighlightCaptureRef {
+    HighlightCaptureRef {
+        grammar_index: 0,
+        capture_id: CaptureId(capture_id),
+    }
+}
+
+fn flattened(
+    range: Range<usize>,
+    captures: &[(Range<usize>, HighlightCaptureRef)],
+) -> Vec<(Range<usize>, Vec<HighlightCaptureRef>)> {
+    flatten_capture_regions(range, captures.iter().cloned())
+        .into_iter()
+        .map(|region| (region.range, region.stack.to_vec()))
+        .collect()
 }
 
 fn range_for_text(buffer: &Buffer, text: &str) -> Range<usize> {

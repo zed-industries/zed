@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod reliability;
+mod watcher_debug;
 mod zed;
 
 // Ensure the binary name stays in sync with APP_NAME so that the paths used
@@ -297,6 +298,9 @@ fn main() {
         };
     }
     ztracing::init();
+
+    #[cfg(unix)]
+    util::increase_open_file_limit().log_err();
 
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
@@ -650,6 +654,7 @@ fn main() {
         });
         AppState::set_global(app_state.clone(), cx);
 
+        watcher_debug::init(app_state.clone(), cx);
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
@@ -671,9 +676,7 @@ fn main() {
         );
         command_palette::init(cx);
         let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
-            enterprise_uri: language::language_settings::all_language_settings(None, cx)
-                .edit_predictions
-                .copilot
+            enterprise_uri: settings::CopilotSettings::get_global(cx)
                 .enterprise_uri
                 .clone(),
         };
@@ -762,6 +765,7 @@ fn main() {
         encoding_selector::init(cx);
         language_selector::init(cx);
         line_ending_selector::init(cx);
+        lsp_command_selector::init(cx);
         toolchain_selector::init(cx);
         theme_selector::init(cx);
         settings_profile_selector::init(cx);

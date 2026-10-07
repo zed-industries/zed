@@ -443,11 +443,7 @@ impl LspAdapter for RustLspAdapter {
                     let run_start = prefix.len() + 1;
                     let runs = language.highlight_text(&source, run_start..run_start + text.len());
                     mk_label(text, &|| 0..label.len(), runs)
-                } else if completion
-                    .detail
-                    .as_ref()
-                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
-                {
+                } else if detail_right.is_some_and(|detail| detail.starts_with("macro_rules! ")) {
                     let text = completion.label.clone();
                     let len = text.len();
                     let source = Rope::from(text.as_str());
@@ -1575,6 +1571,58 @@ mod tests {
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
         let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
+        let macro_detail_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    detail: Some("macro_rules! println".to_string()),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        let macro_description_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        assert_eq!(macro_detail_label, macro_description_label);
+
+        let macro_label = macro_detail_label.unwrap();
+        assert_eq!(macro_label.text, "println!");
+        assert_eq!(macro_label.filter_range, 0..8);
+
+        let macro_import_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: Some("(use std::println)".to_string()),
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(macro_import_label.text, "println! (use std::println)");
+        assert_eq!(macro_import_label.filter_range, 0..8);
+
         assert_eq!(
             adapter
                 .label_for_completion(
@@ -1842,8 +1890,7 @@ mod tests {
                 vec![
                     (10..13, HighlightId::TABSTOP_INSERT_ID),
                     (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..7, HighlightId::new(2)),
-                    (7..8, HighlightId::new(2)),
+                    (0..8, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1870,8 +1917,7 @@ mod tests {
                 0..4,
                 vec![
                     (5..9, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId::new(2)),
-                    (3..4, HighlightId::new(2)),
+                    (0..4, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1956,8 +2002,7 @@ mod tests {
                 vec![
                     (15..20, HighlightId::TABSTOP_REPLACE_ID),
                     (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..13, HighlightId::new(2)),
-                    (13..14, HighlightId::new(2)),
+                    (0..14, HighlightId::new(2)),
                 ],
             ))
         );
