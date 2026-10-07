@@ -1577,15 +1577,22 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                         // Painted separately because the crop would remove a border on the extended quad.
                         if has_border {
-                            let border_bounds = Bounds::new(
-                                track_bounds.origin,
-                                track_bounds
-                                    .size
-                                    .apply_along(axis.invert(), |_| BORDER_WIDTH),
-                            );
-                            window.paint_quad(fill(
-                                border_bounds,
+                            window.paint_quad(quad(
+                                *track_bounds,
+                                Corners::default(),
+                                Hsla::transparent_black(),
+                                match axis {
+                                    ScrollbarAxis::Horizontal => Edges {
+                                        top: BORDER_WIDTH,
+                                        ..Default::default()
+                                    },
+                                    ScrollbarAxis::Vertical => Edges {
+                                        left: BORDER_WIDTH,
+                                        ..Default::default()
+                                    },
+                                },
                                 cx.theme().colors().border_variant.opacity(0.6),
+                                BorderStyle::Solid,
                             ));
                         }
                     }
