@@ -3158,7 +3158,6 @@ mod tests {
         })
     }
 
-    #[cfg(debug_assertions)]
     #[gpui::test]
     async fn test_ssh_config_changes_refresh_rendered_hosts(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
@@ -3201,7 +3200,6 @@ mod tests {
         assert!(cx.debug_bounds("remote-server-beta").is_none());
     }
 
-    #[cfg(debug_assertions)]
     #[gpui::test]
     async fn test_ssh_config_changes_refresh_filtered_hosts(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
