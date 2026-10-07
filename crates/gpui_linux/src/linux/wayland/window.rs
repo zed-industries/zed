@@ -1807,14 +1807,18 @@ impl PlatformWindow for WaylandWindow {
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         let state = self.borrow();
-        state.display.as_ref().map(|(id, display)| {
-            Rc::new(WaylandDisplay {
-                id: id.clone(),
-                name: display.name.clone(),
-                bounds: display.bounds.to_pixels(state.scale),
-                refresh_interval: display.refresh_interval,
-            }) as Rc<dyn PlatformDisplay>
-        })
+        // The compositor only names the window's output after mapping it. With
+        // one output the window can only be there, so don't wait for `enter`.
+        let (id, display) = state
+            .display
+            .clone()
+            .or_else(|| state.client.sole_output())?;
+        Some(Rc::new(WaylandDisplay {
+            id,
+            name: display.name.clone(),
+            bounds: display.bounds.to_pixels(state.scale),
+            refresh_interval: display.refresh_interval,
+        }))
     }
 
     fn mouse_position(&self) -> Point<Pixels> {

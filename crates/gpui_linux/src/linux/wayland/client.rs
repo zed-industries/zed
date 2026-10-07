@@ -599,6 +599,18 @@ impl WaylandClientStatePtr {
         self.0.upgrade()
     }
 
+    /// The only output, when exactly one is connected.
+    pub fn sole_output(&self) -> Option<(ObjectId, Output)> {
+        let client = self.try_get_client()?;
+        let state = client.try_borrow().ok()?;
+        let mut outputs = state.outputs.iter();
+        let (id, output) = outputs.next()?;
+        if outputs.next().is_some() {
+            return None;
+        }
+        Some((id.clone(), output.clone()))
+    }
+
     pub fn dispatch_scheduled_frames(&self) {
         let Some(client) = self.0.upgrade() else {
             return;
@@ -975,7 +987,7 @@ impl WaylandConnection {
         };
         let conn =
             Connection::from_socket(stream).context("failed to connect to Wayland compositor")?;
-        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
+        let (globals, mut event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
             .context("failed to initialize Wayland registry")?;
         let qh = event_queue.handle();
 
@@ -1181,6 +1193,14 @@ impl WaylandConnection {
             }),
             "failed to register desktop portal source",
         )?;
+
+        // Receive the outputs' descriptions now, so displays are known before
+        // the app's first windows open.
+        let mut pointer = pointer;
+        event_queue
+            .roundtrip(&mut pointer)
+            .context("failed to receive initial Wayland state")
+            .log_err();
 
         client.register_source(
             handle.insert_source(WaylandSource::new(conn, event_queue), {
