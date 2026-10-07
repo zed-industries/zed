@@ -20,6 +20,7 @@ use editor::{
 };
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
+use futures::FutureExt as _;
 use git::{
     Oid,
     repository::{CommitData, GitCommitTemplate, RepoPath, Worktree as GitWorktree},
@@ -42,6 +43,7 @@ use node_runtime::NodeRuntime;
 use project::{
     CompletionSource, LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
+    buffer_store::BufferStoreEvent,
     image_store,
     lsp_store::log_store::{
         GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
@@ -66,7 +68,12 @@ use std::{
     },
 };
 use unindent::Unindent as _;
-use util::{path, path_list::PathList, paths::PathMatcher, rel_path::rel_path};
+use util::{
+    path,
+    path_list::PathList,
+    paths::{PathMatcher, PathStyle},
+    rel_path::rel_path,
+};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -596,6 +603,221 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
         cx.clone(),
     )
     .await;
+}
+
+#[gpui::test]
+async fn test_remote_project_search_backpressure_survives_cancellation(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let files = (0..4)
+        .map(|directory| {
+            let files = (0..128)
+                .map(|index| (format!("{index:03}.txt"), json!("testing rust-analyzer")))
+                .collect::<serde_json::Map<_, _>>();
+            (directory.to_string(), serde_json::Value::Object(files))
+        })
+        .collect::<serde_json::Map<_, _>>();
+    fs.insert_tree(path!("/code/project"), serde_json::Value::Object(files))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("remote worktree should open");
+    cx.run_until_parked();
+
+    let client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    let pause_incoming = client.request(proto::Ping {});
+    cx.run_until_parked();
+    let received_buffers = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = cx.update(|cx| {
+        let received_buffers = received_buffers.clone();
+        let buffer_store = project.read(cx).buffer_store().clone();
+        cx.subscribe(&buffer_store, move |_, event, cx| {
+            if let BufferStoreEvent::BufferAdded(buffer) = event {
+                received_buffers
+                    .borrow_mut()
+                    .push(buffer.read(cx).remote_id());
+            }
+        })
+    });
+
+    let shared_buffers = |cx: &mut TestAppContext| {
+        headless.read_with(cx, |headless, cx| {
+            let store = headless.buffer_store.read(cx);
+            let mut ids = store
+                .buffers()
+                .filter_map(|buffer| {
+                    let id = buffer.read(cx).remote_id();
+                    store.is_shared(id, cx).then_some(id)
+                })
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        })
+    };
+    let mut first_batch = None;
+    let mut searches = Vec::new();
+    for directory in 0..4 {
+        let query = SearchQuery::text(
+            "testing".to_string(),
+            false,
+            true,
+            false,
+            PathMatcher::new([format!("{directory}/**")], PathStyle::local()).unwrap(),
+            PathMatcher::default(),
+            false,
+            None,
+        )
+        .unwrap();
+        searches.push(project.update(cx, |project, cx| project.search(query, cx)));
+        cx.run_until_parked();
+        let shared = shared_buffers(server_cx);
+        if let Some(first_batch) = &first_batch {
+            assert_eq!(&shared, first_batch);
+        } else {
+            assert!(!shared.is_empty());
+            assert!(
+                shared.len() <= 64,
+                "queued {} buffers without an acknowledgement",
+                shared.len()
+            );
+            first_batch = Some(shared);
+        }
+        if directory >= 2 {
+            searches.clear();
+            cx.run_until_parked();
+        }
+    }
+
+    let mut replacement = std::pin::pin!(do_search_and_assert(
+        &project,
+        "rust-analyzer",
+        PathMatcher::new(["3/127.txt"], PathStyle::local()).unwrap(),
+        false,
+        &[path!("project/3/127.txt")],
+        cx.clone(),
+    ));
+    assert!(replacement.as_mut().now_or_never().is_none());
+    cx.run_until_parked();
+    let mut expected_buffers = first_batch.unwrap();
+    assert_eq!(shared_buffers(server_cx), expected_buffers);
+    drop(pause_incoming);
+    let buffers = replacement.await;
+    expected_buffers.extend(
+        buffers
+            .iter()
+            .map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id())),
+    );
+    expected_buffers.sort();
+    cx.run_until_parked();
+    received_buffers.borrow_mut().sort();
+    assert_eq!(*received_buffers.borrow(), expected_buffers);
+}
+
+#[gpui::test]
+async fn test_remote_project_search_limits_unacknowledged_bytes(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let text = format!("needle{}", "a".repeat(64 * 1024));
+    let files = (0..64)
+        .map(|index| (format!("{index:03}.txt"), json!(text)))
+        .collect::<serde_json::Map<_, _>>();
+    fs.insert_tree(path!("/code/project"), serde_json::Value::Object(files))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("remote worktree should open");
+    cx.run_until_parked();
+
+    let client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    let pause_incoming = client.request(proto::Ping {});
+    cx.run_until_parked();
+    let expected_paths = (0..64)
+        .map(|index| format!("project{}{index:03}.txt", std::path::MAIN_SEPARATOR))
+        .collect::<Vec<_>>();
+    let expected_paths = expected_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut search = std::pin::pin!(do_search_and_assert(
+        &project,
+        "needle",
+        PathMatcher::default(),
+        false,
+        &expected_paths,
+        cx.clone(),
+    ));
+    let shared_bytes = |cx: &mut TestAppContext| {
+        headless.read_with(cx, |headless, cx| {
+            let store = headless.buffer_store.read(cx);
+            store
+                .buffers()
+                .filter(|buffer| store.is_shared(buffer.read(cx).remote_id(), cx))
+                .map(|buffer| buffer.read(cx).len())
+                .sum::<usize>()
+        })
+    };
+    assert!(search.as_mut().now_or_never().is_none());
+    cx.run_until_parked();
+    let first_batch_bytes = shared_bytes(server_cx);
+    let pause_second_batch = client.request(proto::Ping {});
+    cx.run_until_parked();
+    drop(pause_incoming);
+    cx.run_until_parked();
+    let second_batch_bytes = shared_bytes(server_cx) - first_batch_bytes;
+    assert!(
+        (text.len()..1024 * 1024 + text.len()).contains(&second_batch_bytes),
+        "shared {second_batch_bytes} bytes without an acknowledgement"
+    );
+    drop(pause_second_batch);
+    search.await;
+}
+
+#[gpui::test]
+async fn test_remote_buffer_transfer_owned_by_buffer_store(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let buffer_store = headless.read_with(server_cx, |headless, _| headless.buffer_store.clone());
+    let buffer = buffer_store.update(server_cx, |store, cx| {
+        store.create_local_buffer("needle", None, false, cx)
+    });
+    let buffer_id = buffer.read_with(server_cx, |buffer, _| buffer.remote_id());
+    buffer.update(server_cx, |buffer, cx| buffer.edit([(6..6, "!")], None, cx));
+    let remote_buffer = project.update(cx, |project, cx| {
+        project
+            .buffer_store()
+            .update(cx, |store, cx| store.wait_for_remote_buffer(buffer_id, cx))
+    });
+    let transfer = buffer_store.update(server_cx, |store, cx| {
+        store.create_buffer_for_peer(&buffer, proto::REMOTE_SERVER_PEER_ID, cx)
+    });
+    drop(transfer);
+    server_cx.update(|_| drop(buffer));
+    cx.run_until_parked();
+
+    let remote_buffer = remote_buffer
+        .now_or_never()
+        .expect("the transfer should survive dropping its caller")
+        .expect("the transferred buffer should load");
+    remote_buffer.read_with(cx, |buffer, _| assert_eq!(buffer.text(), "needle!"));
 }
 
 #[gpui::test]
@@ -2871,7 +3093,15 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
                     "lib.rs": "fn one() -> usize { 1 }"
                 }
             },
+            "project2": {
+                "README.md": "# project 2",
+            },
         }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/code/project1/linked"),
+        PathBuf::from(path!("/code/project2")),
     )
     .await;
 
@@ -2903,6 +3133,152 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
         })
         .await;
     assert!(path.is_none());
+
+    for path in [
+        path!("/code/project1/../project2/README.md"),
+        path!("/code/project1/linked/README.md"),
+    ] {
+        let resolved_path = project
+            .update(cx, |project, cx| project.resolve_abs_path(path, cx))
+            .await
+            .expect("existing path should resolve without canonicalization");
+        assert_eq!(resolved_path.abs_path(), Some(path));
+        let resolved_file_path = project
+            .update(cx, |project, cx| project.resolve_abs_file_path(path, cx))
+            .await
+            .expect("existing file path should resolve without canonicalization");
+        assert_eq!(resolved_file_path.abs_path(), Some(path));
+    }
+}
+
+#[gpui::test]
+async fn test_resolve_abs_file_path_canonical(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {},
+            "project2": {"README.md": "# project 2"},
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/code/project1/linked"),
+        PathBuf::from(path!("/code/project2")),
+    )
+    .await;
+
+    let (remote_project, _headless) = init_test(&fs, cx, server_cx).await;
+    let local_project = Project::test(fs, [], cx).await;
+    for project in [remote_project, local_project] {
+        let path = path!("/code/project1/linked/README.md");
+        let resolved_path = project
+            .update(cx, |project, cx| project.resolve_abs_path(path, cx))
+            .await
+            .expect("existing path should resolve without canonicalization");
+        assert_eq!(resolved_path.abs_path(), Some(path));
+
+        for path in [
+            path!("/code/project1/linked"),
+            path!("/code/project1/linked/missing.md"),
+        ] {
+            let resolved_path = project
+                .update(cx, |project, cx| {
+                    project.resolve_abs_file_path_canonical(path, cx)
+                })
+                .await
+                .expect("missing files and directories should not cause resolution errors");
+            assert!(resolved_path.is_none(), "{path}");
+        }
+
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/code/project2/README.md"), false, cx)
+            })
+            .await
+            .expect("canonical file worktree should open");
+        worktree.read_with(cx, |worktree, _| {
+            assert!(!worktree.is_visible());
+            assert!(worktree.is_single_file());
+        });
+
+        for path in [
+            path!("/code/project1/../project2/README.md"),
+            path!("/code/project1/linked/README.md"),
+        ] {
+            let resolved_path = project
+                .update(cx, |project, cx| {
+                    project.resolve_abs_file_path_canonical(path, cx)
+                })
+                .await
+                .expect("existing file path should canonicalize without errors")
+                .expect("existing path should resolve");
+            assert!(resolved_path.is_file());
+            assert_eq!(
+                resolved_path.abs_path(),
+                Some(path!("/code/project2/README.md")),
+                "{path}"
+            );
+            let (opened_worktree, relative_path) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_worktree(
+                        resolved_path.abs_path().expect("path should be absolute"),
+                        false,
+                        cx,
+                    )
+                })
+                .await
+                .expect("resolved file worktree should open");
+            assert!(relative_path.is_empty());
+            opened_worktree.read_with(cx, |opened_worktree, cx| {
+                assert_eq!(opened_worktree.id(), worktree.read(cx).id(), "{path}");
+                assert_eq!(project.read(cx).worktrees(cx).count(), 1);
+            });
+        }
+
+        let (project_worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/code/project1"), true, cx)
+            })
+            .await
+            .unwrap();
+        let alias = project_worktree.read_with(cx, |worktree, _| {
+            ProjectPath::from((worktree.id(), rel_path("linked/README.md")))
+        });
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(alias.clone(), cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "unsaved ")], None, cx);
+        });
+
+        let resolved = project
+            .update(cx, |project, cx| {
+                project.resolve_abs_file_link(path!("/code/project1//linked/README.md"), cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.project_path(), Some(&alias));
+        let reopened = project
+            .update(cx, |project, cx| {
+                project.open_buffer(resolved.project_path().unwrap().clone(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(reopened, buffer);
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), "unsaved # project 2");
+            assert!(buffer.is_dirty());
+        });
+        project.read_with(cx, |project, cx| {
+            assert_eq!(project.worktrees(cx).count(), 2);
+        });
+    }
 }
 
 #[gpui::test(iterations = 10)]
