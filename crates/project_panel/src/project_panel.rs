@@ -1886,9 +1886,10 @@ impl ProjectPanel {
             });
             return;
         }
-        if let Some(selection) = self.selection {
-            let (mut worktree_ix, mut entry_ix, _) =
-                self.index_for_selection(selection).unwrap_or_default();
+        if let Some(previous_selection) = self.selection {
+            let (mut worktree_ix, mut entry_ix, _) = self
+                .index_for_selection(previous_selection)
+                .unwrap_or_default();
             if entry_ix > 0 {
                 entry_ix -= 1;
             } else if worktree_ix > 0 {
@@ -1909,12 +1910,36 @@ impl ProjectPanel {
             };
             self.selection = Some(selection);
             if window.modifiers().shift {
-                self.marked_entries.push(selection);
+                self.extend_marked_entries(previous_selection, selection);
             }
             self.autoscroll(cx);
             cx.notify();
         } else {
             self.select_first(&SelectFirst {}, window, cx);
+        }
+    }
+
+    fn extend_marked_entries(
+        &mut self,
+        previous_selection: SelectedEntry,
+        selection: SelectedEntry,
+    ) {
+        // Mark the entry the selection started from too, so that extending a selection
+        // with the keyboard includes it, the same as a shift-click range does.
+        if !self.marked_entries.contains(&previous_selection) {
+            self.marked_entries.push(previous_selection);
+        }
+        if !self.marked_entries.contains(&selection) {
+            self.marked_entries.push(selection);
+        }
+        self.select_outermost_folded_ancestor(selection.entry_id);
+    }
+
+    // A vertical selection gesture says nothing about which segment of a folded
+    // directory is meant, so select the whole folded directory.
+    fn select_outermost_folded_ancestor(&mut self, entry_id: ProjectEntryId) {
+        if let Some(folds) = self.state.ancestors.get_mut(&entry_id) {
+            folds.set_active_index(0);
         }
     }
 
@@ -3210,9 +3235,10 @@ impl ProjectPanel {
             });
             return;
         }
-        if let Some(selection) = self.selection {
-            let (mut worktree_ix, mut entry_ix, _) =
-                self.index_for_selection(selection).unwrap_or_default();
+        if let Some(previous_selection) = self.selection {
+            let (mut worktree_ix, mut entry_ix, _) = self
+                .index_for_selection(previous_selection)
+                .unwrap_or_default();
             if let Some(worktree_entries) = self
                 .state
                 .visible_entries
@@ -3240,7 +3266,7 @@ impl ProjectPanel {
                 };
                 self.selection = Some(selection);
                 if window.modifiers().shift {
-                    self.marked_entries.push(selection);
+                    self.extend_marked_entries(previous_selection, selection);
                 }
 
                 self.autoscroll(cx);
@@ -6356,9 +6382,18 @@ impl ProjectPanel {
                                 },
                             );
 
-                            for selection in &new_selections {
-                                if !project_panel.marked_entries.contains(selection) {
-                                    project_panel.marked_entries.push(*selection);
+                            for new_selection in &new_selections {
+                                if !project_panel.marked_entries.contains(new_selection) {
+                                    project_panel.marked_entries.push(*new_selection);
+                                }
+
+                                let is_intermediate_entry = new_selection.entry_id
+                                    != selection.entry_id
+                                    && new_selection.entry_id != clicked_entry.entry_id;
+
+                                if is_intermediate_entry {
+                                    project_panel
+                                        .select_outermost_folded_ancestor(new_selection.entry_id);
                                 }
                             }
 
