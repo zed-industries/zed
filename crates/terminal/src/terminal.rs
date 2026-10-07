@@ -2486,8 +2486,16 @@ impl Terminal {
 
     ///Paste text into the terminal
     pub fn paste(&mut self, text: &str) {
-        let bracketed_paste = self.last_content.mode.contains(Modes::BRACKETED_PASTE);
-        self.input(prepare_paste_text(text, bracketed_paste).into_bytes());
+        let paste_text = if self.last_content.mode.contains(Modes::BRACKETED_PASTE) {
+            // Line breaks are forwarded as they are, except `\r\n` (Windows clipboards),
+            // which programs would otherwise see as two line breaks.
+            let text = text.replace("\r\n", "\r").replace('\x1b', "");
+            format!("{}{}{}", "\x1b[200~", text, "\x1b[201~")
+        } else {
+            text.replace("\r\n", "\r").replace('\n', "\r")
+        };
+
+        self.input(paste_text.into_bytes());
     }
 
     pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3362,20 +3370,6 @@ fn convert_lf_to_crlf(bytes: &[u8], previous_byte_was_cr: &mut bool) -> Vec<u8> 
     converted
 }
 
-/// Prepares pasted text for the PTY. Line endings become `\r` (what Enter
-/// sends) in both modes, matching xterm.js: Windows clipboards hold `\r\n`,
-/// and forwarding that inside a bracketed paste makes applications see two
-/// line breaks per line. In bracketed paste mode `ESC` is also removed, so the
-/// pasted text can't end the paste early with its own `\x1b[201~`.
-fn prepare_paste_text(text: &str, bracketed_paste: bool) -> String {
-    let text = text.replace("\r\n", "\r").replace('\n', "\r");
-    if bracketed_paste {
-        format!("{}{}{}", "\x1b[200~", text.replace('\x1b', ""), "\x1b[201~")
-    } else {
-        text
-    }
-}
-
 /// Owns a non-PTY task subprocess and the background task pumping its output
 /// into the terminal emulator. Used by headless hosts (e.g. the eval CLI) where
 /// PTY allocation fails with `ENOTTY`. Dropping this kills the child.
@@ -3928,25 +3922,41 @@ mod tests {
         assert!(!previous_byte_was_cr);
     }
 
-    #[test]
-    fn test_prepare_paste_text_normalizes_line_endings_in_both_modes() {
-        assert_eq!(
-            prepare_paste_text("one\r\ntwo\nthree\r", false),
-            "one\rtwo\rthree\r"
-        );
-        assert_eq!(
-            prepare_paste_text("one\r\ntwo\nthree\r", true),
-            "\x1b[200~one\rtwo\rthree\r\x1b[201~"
-        );
+    #[gpui::test]
+    async fn test_paste_converts_line_endings_to_cr(cx: &mut TestAppContext) {
+        let terminal = init_terminal_test(cx, b"");
+
+        terminal.update(cx, |terminal, _cx| {
+            terminal.paste("one\r\ntwo\nthree\r");
+            assert_eq!(
+                terminal.take_pty_write_log(),
+                vec![b"one\rtwo\rthree\r".to_vec()]
+            );
+        });
     }
 
-    #[test]
-    fn test_prepare_paste_text_strips_escape_only_in_bracketed_paste() {
-        assert_eq!(
-            prepare_paste_text("a\x1b[201~b", true),
-            "\x1b[200~a[201~b\x1b[201~"
-        );
-        assert_eq!(prepare_paste_text("a\x1bb", false), "a\x1bb");
+    #[gpui::test]
+    async fn test_bracketed_paste_converts_only_crlf(cx: &mut TestAppContext) {
+        // `?2004h` enables bracketed paste mode.
+        let terminal = init_terminal_test(cx, b"\x1b[?2004h");
+
+        terminal.update(cx, |terminal, _cx| {
+            assert!(terminal.last_content.mode.contains(Modes::BRACKETED_PASTE));
+
+            // `\r\n` from Windows clipboards becomes one line break; `\n` and `\r` are kept.
+            terminal.paste("one\r\ntwo\nthree\r");
+            assert_eq!(
+                terminal.take_pty_write_log(),
+                vec![b"\x1b[200~one\rtwo\nthree\r\x1b[201~".to_vec()]
+            );
+
+            // ESC is removed, so the pasted text can't end the paste early.
+            terminal.paste("a\x1b[201~b");
+            assert_eq!(
+                terminal.take_pty_write_log(),
+                vec![b"\x1b[200~a[201~b\x1b[201~".to_vec()]
+            );
+        });
     }
 
     /// Regression test for the agent terminal failing with `Not a tty (os error
