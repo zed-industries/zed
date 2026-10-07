@@ -5355,7 +5355,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             "v project_root",
             "    v dir_1",
             "        v nested_dir",
-            "              file_a.py",
+            "              file_a.py  <== marked",
             "      file_1.py  <== selected  <== marked",
         ]
     );
@@ -5470,6 +5470,77 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             "v project_root",
             "    v dir_1",
             "        v nested_dir  <== selected",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_shift_arrow_marks_starting_entry(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {},
+            "b": {},
+            "c.txt": "",
+            "d.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/b", cx);
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        shift: true,
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&SelectNext, window, cx);
+            panel.select_next(&SelectNext, window, cx);
+        })
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a",
+            "    > b  <== marked",
+            "      c.txt  <== marked",
+            "      d.txt  <== selected  <== marked",
+        ]
+    );
+
+    cx.simulate_modifiers_change(Default::default());
+    cx.update(|window, cx| panel.update(cx, |panel, cx| panel.cancel(&menu::Cancel, window, cx)));
+    select_path(&panel, "root/c.txt", cx);
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        shift: true,
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.select_previous(&SelectPrevious, window, cx);
+            panel.select_previous(&SelectPrevious, window, cx);
+        })
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a  <== selected  <== marked",
+            "    > b  <== marked",
+            "      c.txt  <== marked",
+            "      d.txt",
         ]
     );
 }
