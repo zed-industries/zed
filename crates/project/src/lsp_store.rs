@@ -5891,54 +5891,44 @@ impl LspStore {
         });
     }
 
-    fn notify_server_memory_usage(&self, server: &LanguageServer, cx: &mut Context<Self>) {
-        let Some(process_id) = server.process_id() else {
-            return;
-        };
+    fn process_tree_memory(system: &sysinfo::System, root: sysinfo::Pid) -> u64 {
+        let mut children: HashMap<sysinfo::Pid, Vec<sysinfo::Pid>> = HashMap::default();
 
-        let mut system = sysinfo::System::new();
-        let refresh_kind = sysinfo::RefreshKind::nothing().with_processes(
-            sysinfo::ProcessRefreshKind::nothing()
-                .without_tasks()
-                .with_memory(),
-        );
-        system.refresh_specifics(refresh_kind);
+        for (&pid, process) in system.processes() {
+            if let Some(parent) = process.parent() {
+                children.entry(parent).or_default().push(pid);
+            }
+        }
 
-        let root_pid = sysinfo::Pid::from_u32(process_id);
+        let mut total = 0;
+        let mut stack = vec![root];
+        let mut seen = HashSet::default();
 
-        let parent_map: HashMap<sysinfo::Pid, sysinfo::Pid> = system
-            .processes()
-            .iter()
-            .filter_map(|(&pid, process)| Some((pid, process.parent()?)))
-            .collect();
+        while let Some(pid) = stack.pop() {
+            if !seen.insert(pid) {
+                continue;
+            }
 
-        let total_memory = system
-            .processes()
-            .iter()
-            .filter(|(pid, _)| {
-                let mut current = **pid;
-                let mut visited = HashSet::default();
+            if let Some(process) = system.process(pid) {
+                total += process.memory();
+            }
 
-                while current != root_pid {
-                    if !visited.insert(current) {
-                        return false;
-                    }
+            if let Some(kids) = children.get(&pid) {
+                stack.extend(kids.iter().copied());
+            }
+        }
 
-                    match parent_map.get(&current) {
-                        Some(&parent) => current = parent,
-                        None => return false,
-                    }
-                }
+        total
+    }
 
-                true
-            })
-            .map(|(_, process)| process.memory())
-            .sum();
-
+    fn notify_server_memory_usage(
+        &self,
+        server: &LanguageServer,
+        memory_usage: u64,
+        cx: &mut Context<Self>,
+    ) {
         let message = proto::update_language_server::Variant::MemoryUsageUpdated(
-            proto::ServerMemoryUsageUpdated {
-                memory_usage: total_memory,
-            },
+            proto::ServerMemoryUsageUpdated { memory_usage },
         );
 
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
@@ -11512,7 +11502,11 @@ impl LspStore {
         lsp_store.update(&mut cx, |lsp_store, cx| {
             let language_server_id = LanguageServerId(envelope.payload.language_server_id as usize);
 
-            match envelope.payload.variant.context("invalid variant")? {
+            let Some(variant) = envelope.payload.variant else {
+                log::debug!("ignoring UpdateLanguageServer with unknown or missing variant");
+                return Ok(());
+            };
+            match variant {
                 proto::update_language_server::Variant::WorkStart(payload) => {
                     lsp_store.on_lsp_work_start(
                         language_server_id,
@@ -11591,7 +11585,7 @@ impl LspStore {
                         .get_mut(&language_server_id)
                     {
                         status.server_readable_version =
-                            metadata.server_version.map(SharedString::new);
+                            metadata.server_version.as_ref().map(SharedString::new);
                     }
 
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
@@ -13594,19 +13588,60 @@ impl LspStore {
             .into_iter()
             .collect();
 
-        let memory_usage_task = cx.spawn({
+        let memory_usage_task = Some(cx.spawn({
             let language_server = language_server.clone();
             async move |this, cx| {
-                loop {
-                    cx.background_executor().timer(Duration::from_secs(5)).await;
+                let mut system = sysinfo::System::new();
+                let mut last_memory_usage = None;
 
-                    this.update(cx, |this, cx| {
-                        this.notify_server_memory_usage(&language_server, cx);
-                    })
-                    .ok();
+                while let Some(has_downstream_client) = this
+                    .update(cx, |this, _| this.downstream_client.is_some())
+                    .ok()
+                {
+                    if has_downstream_client {
+                        let Some(process_id) = this
+                            .update(cx, |_, _| language_server.process_id())
+                            .ok()
+                            .flatten()
+                        else {
+                            continue;
+                        };
+
+                        let refresh_kind = sysinfo::RefreshKind::nothing().with_processes(
+                            sysinfo::ProcessRefreshKind::nothing()
+                                .without_tasks()
+                                .with_memory(),
+                        );
+                        system.refresh_specifics(refresh_kind);
+
+                        let total_memory =
+                            Self::process_tree_memory(&system, sysinfo::Pid::from_u32(process_id));
+
+                        if last_memory_usage
+                            .is_some_and(|last| total_memory.abs_diff(last) < 1024 * 1024)
+                        {
+                            continue;
+                        }
+
+                        last_memory_usage = Some(total_memory);
+
+                        if this
+                            .update(cx, |this, cx| {
+                                this.notify_server_memory_usage(&language_server, total_memory, cx);
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    } else {
+                        // a very unlikely edge case can come here not sure though. when one is swapped fo anothr and he old value is still there.
+                        last_memory_usage = None;
+                    }
+
+                    cx.background_executor().timer(Duration::from_secs(5)).await;
                 }
             }
-        });
+        }));
         local.language_servers.insert(
             server_id,
             LanguageServerState::Running {
@@ -17024,7 +17059,6 @@ fn extend_formatting_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn should_log_lsp_request_failure_suppresses_known_noise() {
         // Suppressed: rust-analyzer's superseded/denied request signals.
@@ -17253,5 +17287,59 @@ mod tests {
         let mut response_error = lsp::ResponseError::server_cancelled();
         response_error.data = data;
         anyhow::Error::new(response_error)
+    }
+
+    #[test]
+    fn process_tree_memory_includes_root_process() {
+        let mut system = sysinfo::System::new_all();
+        system.refresh_all();
+
+        let pid = sysinfo::Pid::from_u32(std::process::id());
+        let process_memory = system
+            .process(pid)
+            .map(|process| process.memory())
+            .unwrap_or(0);
+
+        let tree_memory = LspStore::process_tree_memory(&system, pid);
+
+        assert!(tree_memory >= process_memory);
+        assert!(tree_memory > 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_tree_memory_includes_child_process() {
+        let mut system = sysinfo::System::new_all();
+        system.refresh_all();
+
+        let parent_pid = sysinfo::Pid::from_u32(std::process::id());
+        let parent_memory = system
+            .process(parent_pid)
+            .map(|process| process.memory())
+            .unwrap_or(0);
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("2")
+            .spawn()
+            .expect("failed to spawn child process");
+
+        std::thread::sleep(Duration::from_millis(100));
+
+        system.refresh_all();
+
+        let child_pid = sysinfo::Pid::from_u32(child.id());
+
+        let child_memory = system
+            .process(child_pid)
+            .map(|process| process.memory())
+            .unwrap_or(0);
+
+        let tree_memory = LspStore::process_tree_memory(&system, parent_pid);
+
+        assert!(tree_memory >= parent_memory);
+        assert!(tree_memory >= parent_memory + child_memory);
+
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
