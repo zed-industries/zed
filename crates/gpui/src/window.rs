@@ -7944,26 +7944,44 @@ mod tests {
             cx.add_window(|_, _| EmptyView),
             cx.add_window(|_, _| EmptyView),
             cx.add_window(|_, _| EmptyView),
+            cx.add_window(|_, _| EmptyView),
+            cx.add_window(|_, _| EmptyView),
         ];
-        let (handle, survivor) = cx.update(|cx| (cx.focus_handle(), cx.focus_handle()));
+        let (handle, other_handle, survivor) =
+            cx.update(|cx| (cx.focus_handle(), cx.focus_handle(), cx.focus_handle()));
         for window in &windows[..2] {
             window
                 .update(cx, |_, window, cx| window.focus(&handle, cx))
                 .expect("window exists");
         }
         windows[2]
+            .update(cx, |_, window, cx| window.focus(&other_handle, cx))
+            .expect("window exists");
+        windows[3]
             .update(cx, |_, window, cx| window.focus(&survivor, cx))
             .expect("window exists");
 
-        cx.update(|_| drop(handle));
-        for window in &windows[..2] {
+        cx.update(|cx| {
+            for _ in 0..1_000 {
+                drop(cx.focus_handle());
+            }
+            drop((handle, other_handle));
+        });
+        for window in &windows[..3] {
             window
                 .update(cx, |_, window, _| assert_eq!(window.focus, None))
                 .expect("window exists");
         }
-        windows[2]
+        windows[3]
             .update(cx, |_, window, cx| {
                 assert_eq!(window.focused(cx).as_ref(), Some(&survivor));
+                assert_eq!(window.focus_generation, 1);
+            })
+            .expect("window exists");
+        windows[4]
+            .update(cx, |_, window, _| {
+                assert_eq!(window.focus, None);
+                assert_eq!(window.focus_generation, 0);
             })
             .expect("window exists");
     }
