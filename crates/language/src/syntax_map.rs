@@ -1642,7 +1642,8 @@ fn parse_text(
             .parse_with_options(
                 &mut move |offset, _| {
                     chunks.seek(start_byte + offset);
-                    chunks.next().unwrap_or("").as_bytes()
+                    // Tree-sitter can request bytes inside a UTF-8 character.
+                    chunks.peek_bytes().unwrap_or_default()
                 },
                 old_tree,
                 progress_callback
