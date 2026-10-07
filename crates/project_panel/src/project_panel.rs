@@ -7755,10 +7755,12 @@ impl Render for ProjectPanel {
                                         let new_offset = (current_offset + delta)
                                             .clamp(&max_offset.neg(), &Point::default());
 
-                                        if new_offset != current_offset {
-                                            base_handle.set_offset(new_offset);
-                                            cx.notify(entity_id);
+                                        if new_offset == current_offset {
+                                            return event.delta;
                                         }
+                                        base_handle.set_offset(new_offset);
+                                        cx.notify(entity_id);
+                                        gpui::ScrollDelta::Pixels(delta - (new_offset - current_offset))
                                     }
                                 })
                                 .when(

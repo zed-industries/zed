@@ -16,13 +16,14 @@ use crate::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, ScrollDelta, ScrollWheelEvent,
+    Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet,
+    Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -5354,6 +5355,28 @@ impl Window {
         )));
     }
 
+    /// Register a scroll wheel listener on this node for the next frame. The listener returns
+    /// the part of the delta that it did not use. Listeners that run after it see only that
+    /// part, so a scroll container leaves to its ancestors only what it could not scroll.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn on_scroll_wheel_event(
+        &mut self,
+        mut listener: impl FnMut(&ScrollWheelEvent, DispatchPhase, &mut Window, &mut App) -> ScrollDelta
+        + 'static,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        self.next_frame.mouse_listeners.push(Some(Box::new(
+            move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
+                if let Some(event) = event.downcast_ref::<RefCell<ScrollWheelEvent>>() {
+                    let current = event.borrow().clone();
+                    event.borrow_mut().delta = listener(&current, phase, window, cx);
+                }
+            },
+        )));
+    }
+
     /// Register a key event listener on this node for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -5850,6 +5873,14 @@ impl Window {
             // When inspector is picking, all other mouse handling is skipped.
             return;
         }
+
+        let scroll_wheel = event
+            .downcast_ref::<ScrollWheelEvent>()
+            .map(|event| RefCell::new(event.clone()));
+        let event = match &scroll_wheel {
+            Some(scroll_wheel) => scroll_wheel as &dyn Any,
+            None => event,
+        };
 
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 

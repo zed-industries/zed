@@ -23,8 +23,8 @@ use crate::{
     KeyboardClickEvent, LayoutId, LongPressEvent, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
     MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
+    ScrollDelta, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -389,12 +389,14 @@ impl Interactivity {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_scroll_wheel(
         &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
     ) {
         self.scroll_wheel_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    (listener)(event, window, cx);
+                    (listener)(event, window, cx)
+                } else {
+                    event.delta
                 }
             }));
     }
@@ -1059,7 +1061,7 @@ pub trait InteractiveElement: Sized {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_scroll_wheel(
         mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
     ) -> Self {
         self.interactivity().on_scroll_wheel(listener);
         self
@@ -1728,8 +1730,10 @@ pub(crate) type MouseExitListener =
 pub(crate) type FileDropExitListener =
     Box<dyn Fn(&FileDropEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ScrollWheelListener =
-    Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+pub(crate) type ScrollWheelListener = Box<
+    dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) -> ScrollDelta
+        + 'static,
+>;
 
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
@@ -2140,6 +2144,8 @@ pub struct Interactivity {
     pub hovered: Option<bool>,
     pub(crate) tooltip_id: Option<TooltipId>,
     pub(crate) content_size: Size<Pixels>,
+    /// The scroll range this frame, from `clamp_scroll_position`.
+    pub(crate) scroll_max: Point<Pixels>,
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
@@ -2432,7 +2438,7 @@ impl Interactivity {
     }
 
     fn clamp_scroll_position(
-        &self,
+        &mut self,
         bounds: Bounds<Pixels>,
         style: &Style,
         window: &mut Window,
@@ -2474,6 +2480,7 @@ impl Interactivity {
             let scroll_max = Point::from(padded_content_size - bounds.size)
                 .map(round_to_two_decimals)
                 .max(&Default::default());
+            self.scroll_max = scroll_max;
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -2830,8 +2837,8 @@ impl Interactivity {
 
         for listener in self.scroll_wheel_listeners.drain(..) {
             let hitbox = hitbox.clone();
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                listener(event, phase, &hitbox, window, cx);
+            window.on_scroll_wheel_event(move |event, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx)
             })
         }
 
@@ -3333,10 +3340,11 @@ impl Interactivity {
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
+            let scroll_max = self.scroll_max;
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+            window.on_scroll_wheel_event(move |event, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
@@ -3351,6 +3359,14 @@ impl Interactivity {
                             .filter(&mut delta, event.touch_phase);
                     }
 
+                    let x_from_y = overflow.x == Overflow::Scroll
+                        && delta.x.is_zero()
+                        && !restrict_scroll_to_axis
+                        && overflow.y != Overflow::Scroll;
+                    let y_from_x = overflow.y == Overflow::Scroll
+                        && delta.y.is_zero()
+                        && !restrict_scroll_to_axis
+                        && overflow.x != Overflow::Scroll;
                     let mut delta_x = match overflow.x {
                         Overflow::Scroll if !delta.x.is_zero() => delta.x,
                         Overflow::Scroll
@@ -3376,12 +3392,26 @@ impl Interactivity {
                             delta_x = Pixels::ZERO;
                         }
                     }
-                    scroll_offset.y += delta_y;
-                    scroll_offset.x += delta_x;
-                    if *scroll_offset != old_scroll_offset {
+                    scroll_offset.y = (scroll_offset.y + delta_y).clamp(-scroll_max.y, px(0.));
+                    scroll_offset.x = (scroll_offset.x + delta_x).clamp(-scroll_max.x, px(0.));
+                    let moved = *scroll_offset - old_scroll_offset;
+                    if !moved.is_zero() {
                         cx.notify(current_view);
+                        let mut rest = delta;
+                        if x_from_y {
+                            rest.y -= moved.x;
+                        } else {
+                            rest.x -= moved.x;
+                        }
+                        if y_from_x {
+                            rest.x -= moved.y;
+                        } else {
+                            rest.y -= moved.y;
+                        }
+                        return ScrollDelta::Pixels(rest);
                     }
                 }
+                event.delta
             });
         }
     }
@@ -3790,12 +3820,13 @@ pub(crate) fn register_tooltip_mouse_handlers(
         }
     });
 
-    window.on_mouse_event({
+    window.on_scroll_wheel_event({
         let active_tooltip = active_tooltip.clone();
-        move |_: &ScrollWheelEvent, _phase, window: &mut Window, _cx| {
+        move |event: &ScrollWheelEvent, _phase, window: &mut Window, _cx| {
             if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
                 clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
             }
+            event.delta
         }
     });
 }
@@ -4443,7 +4474,8 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, Keystroke,
-        MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
+        MouseMoveEvent, ScrollDelta, TestAppContext, TouchEvent, TouchId, VisualTestContext,
+        canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -5636,5 +5668,98 @@ mod tests {
         assert_eq!(bounds("cell-0").origin.x, px(0.));
         assert_eq!(bounds("cell-1").origin.x, px(100.));
         assert_eq!(bounds("cell-2").origin.x, px(300.));
+    }
+
+    struct RenderWith(Box<dyn Fn(&mut Window, &mut App) -> AnyElement>);
+
+    impl Render for RenderWith {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            (self.0)(window, cx)
+        }
+    }
+
+    fn draw_view(
+        cx: &mut VisualTestContext,
+        render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) {
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(px(100.), px(100.)),
+            move |_, cx| cx.new(|_| RenderWith(Box::new(render))).into_any_element(),
+        );
+    }
+
+    fn wheel(dy: f32) -> ScrollWheelEvent {
+        ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+            ..Default::default()
+        }
+    }
+
+    struct NestedScroll {
+        outer: ScrollHandle,
+        inner: ScrollHandle,
+        outer_saw: Rc<Cell<usize>>,
+    }
+
+    impl NestedScroll {
+        fn new() -> Self {
+            Self {
+                outer: ScrollHandle::new(),
+                inner: ScrollHandle::new(),
+                outer_saw: Rc::new(Cell::new(0)),
+            }
+        }
+
+        fn draw(&self, cx: &mut VisualTestContext) {
+            let outer = self.outer.clone();
+            let inner = self.inner.clone();
+            let outer_saw = self.outer_saw.clone();
+            draw_view(cx, move |_, _| {
+                let outer_saw = outer_saw.clone();
+                div()
+                    .id("outer")
+                    .size(px(100.))
+                    .overflow_y_scroll()
+                    .track_scroll(&outer)
+                    .on_scroll_wheel(move |event, _, _| {
+                        outer_saw.set(outer_saw.get() + 1);
+                        event.delta
+                    })
+                    .child(
+                        div()
+                            .id("inner")
+                            .w_full()
+                            .h(px(50.))
+                            .overflow_y_scroll()
+                            .track_scroll(&inner)
+                            .child(div().w_full().h(px(100.))),
+                    )
+                    .child(div().w_full().h(px(200.)))
+                    .into_any_element()
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn the_outer_scroll_container_gets_what_the_inner_one_did_not_use(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let nested = NestedScroll::new();
+        nested.draw(cx);
+
+        cx.simulate_event(wheel(-30.));
+        assert_eq!(nested.inner.offset().y, px(-30.));
+        assert_eq!(nested.outer.offset().y, px(0.));
+
+        cx.simulate_event(wheel(-30.));
+        assert_eq!(nested.inner.offset().y, px(-50.));
+        assert_eq!(nested.outer.offset().y, px(-10.));
+
+        cx.simulate_event(wheel(-30.));
+        assert_eq!(nested.inner.offset().y, px(-50.));
+        assert_eq!(nested.outer.offset().y, px(-40.));
+
+        assert_eq!(nested.outer_saw.get(), 3);
     }
 }
