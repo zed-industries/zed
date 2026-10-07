@@ -15455,18 +15455,36 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let checkpoint_jobs = |cx: &mut TestAppContext| {
+            project.read_with(cx, |project, cx| {
+                let repository = project.git_store().read(cx).active_repository().unwrap();
+                let queue = repository.read(cx).job_debug_queue().to_debug_value();
+                queue["entries"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|job| job["description"] == "checkpoint")
+                    .count()
+            })
+        };
 
         let next_filename = Arc::new(AtomicUsize::new(0));
+        let finish_turn_rx_slot = Rc::new(RefCell::new(None::<oneshot::Receiver<()>>));
         let write_file_on_prompt = {
             let fs = fs.clone();
+            let finish_turn_rx_slot = finish_turn_rx_slot.clone();
             move |_request: acp_v2::PromptRequest,
                   _thread: WeakEntity<AcpThread>,
                   _cx: AsyncApp|
                   -> LocalBoxFuture<'static, Result<acp_v1::PromptResponse>> {
                 let fs = fs.clone();
                 let filename = format!("/test/file-{}", next_filename.fetch_add(1, SeqCst));
+                let finish_turn_rx = finish_turn_rx_slot.borrow_mut().take();
                 async move {
                     fs.write(Path::new(&filename), b"").await?;
+                    if let Some(finish_turn_rx) = finish_turn_rx {
+                        finish_turn_rx.await.ok();
+                    }
                     Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
@@ -15522,40 +15540,56 @@ mod tests {
             .lock()
             .insert(subagent_session_id, subagent.downgrade());
 
-        for thread in [thread_without_truncate, subagent] {
-            assert!(!thread.read_with(cx, |thread, cx| {
-                thread.can_rewind_to(Some(&ClientUserMessageId::new()), cx)
-            }));
-            cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx)))
-                .await
-                .unwrap();
+        // The parent shows that sending, repository updates during the turn, and
+        // turn completion each take checkpoints, so zero counts elsewhere mean
+        // those paths ran without taking any.
+        for (thread, can_rewind) in [
+            (thread_without_truncate, false),
+            (subagent, false),
+            (parent, true),
+        ] {
+            assert_eq!(
+                thread.read_with(cx, |thread, cx| {
+                    thread.can_rewind_to(Some(&ClientUserMessageId::new()), cx)
+                }),
+                can_rewind
+            );
+            let jobs_before_send = checkpoint_jobs(cx);
+            let (finish_turn_tx, finish_turn_rx) = oneshot::channel();
+            finish_turn_rx_slot.replace(Some(finish_turn_rx));
+            let send = thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+            let send_task = cx.background_executor.spawn(send);
             cx.run_until_parked();
-            thread.read_with(cx, |thread, cx| {
+
+            assert!(thread.read_with(cx, |thread, _| thread.running_turn.is_some()));
+            let jobs_while_running = checkpoint_jobs(cx);
+            finish_turn_tx.send(()).ok();
+            send_task.await.unwrap();
+            cx.run_until_parked();
+            let jobs_after_turn = checkpoint_jobs(cx);
+
+            if can_rewind {
+                assert_eq!(jobs_while_running, jobs_before_send + 2);
+                assert_eq!(jobs_after_turn, jobs_while_running + 1);
+            } else {
+                assert_eq!(jobs_while_running, jobs_before_send);
+                assert_eq!(jobs_after_turn, jobs_before_send);
+            }
+            thread.read_with(cx, |thread, _| {
                 let AgentThreadEntry::UserMessage(message) = &thread.entries[0] else {
                     panic!("unexpected entries {:?}", thread.entries)
                 };
-                assert!(message.checkpoint.is_none());
-                assert_eq!(
-                    thread.to_markdown(cx),
-                    indoc! {"
-                        ## User
-
-                        hello
-
-                    "}
-                );
+                assert_eq!(message.checkpoint.is_some(), can_rewind);
             });
         }
         assert_eq!(
             fs.files(),
             vec![
                 Path::new(path!("/test/file-0")),
-                Path::new(path!("/test/file-1"))
+                Path::new(path!("/test/file-1")),
+                Path::new(path!("/test/file-2"))
             ]
         );
-        assert!(parent.read_with(cx, |thread, cx| {
-            thread.can_rewind_to(Some(&ClientUserMessageId::new()), cx)
-        }));
     }
 
     #[gpui::test]
