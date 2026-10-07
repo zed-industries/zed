@@ -349,8 +349,6 @@ struct ChangeRegionSet(Vec<ChangedRegion>);
 
 struct TextProvider<'a>(&'a Rope);
 
-struct ByteChunks<'a>(text::Chunks<'a>);
-
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 impl SyntaxMap {
@@ -2249,18 +2247,10 @@ impl std::fmt::Debug for SyntaxLayerEntry {
 }
 
 impl<'a> tree_sitter::TextProvider<&'a [u8]> for TextProvider<'a> {
-    type I = ByteChunks<'a>;
+    type I = text::Bytes<'a>;
 
     fn text(&mut self, node: tree_sitter::Node) -> Self::I {
-        ByteChunks(self.0.chunks_in_range(node.byte_range()))
-    }
-}
-
-impl<'a> Iterator for ByteChunks<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(str::as_bytes)
+        self.0.bytes_in_range(node.byte_range())
     }
 }
 
