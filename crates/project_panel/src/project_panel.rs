@@ -222,7 +222,7 @@ enum DragTarget {
     Background,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 struct FoldedDirectoryDragTarget {
     entry_id: ProjectEntryId,
     index: usize,
@@ -5027,16 +5027,7 @@ impl ProjectPanel {
     ) {
         if is_hovered {
             self.folded_directory_drag_target = Some(target);
-            return;
-        }
-        let is_current_target = self
-            .folded_directory_drag_target
-            .is_some_and(|current_target| {
-                current_target.entry_id == target.entry_id
-                    && current_target.index == target.index
-                    && current_target.is_delimiter_target == target.is_delimiter_target
-            });
-        if is_current_target {
+        } else if self.folded_directory_drag_target == Some(target) {
             self.folded_directory_drag_target = None;
         }
     }
