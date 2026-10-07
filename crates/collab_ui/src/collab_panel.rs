@@ -2733,7 +2733,6 @@ impl CollabPanel {
         v_flex()
             .p_4()
             .gap_1()
-            .gap_4()
             .size_full()
             .text_center()
             .justify_center()
