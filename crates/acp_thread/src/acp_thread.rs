@@ -3398,6 +3398,8 @@ pub struct AcpThread {
     had_error: bool,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
+    /// Lets observers detect draft changes without comparing prompts.
+    draft_prompt_revision: usize,
     /// The initial scroll position for the thread view, set during session registration.
     ui_scroll_position: Option<gpui::ListOffset>,
     /// A cursor over retained source, rather than a second text store, lets the UI
@@ -3733,6 +3735,7 @@ impl AcpThread {
             pending_terminal_exit: HashMap::default(),
             had_error: false,
             draft_prompt: None,
+            draft_prompt_revision: 0,
             ui_scroll_position: None,
             streaming_text_buffer: None,
             idle_sleep_prevention: IdleSleepPrevention::Inactive,
@@ -3768,6 +3771,10 @@ impl AcpThread {
         self.draft_prompt.as_deref()
     }
 
+    pub fn draft_prompt_revision(&self) -> usize {
+        self.draft_prompt_revision
+    }
+
     pub fn set_draft_prompt(
         &mut self,
         prompt: Option<Vec<acp_v2::ContentBlock>>,
@@ -3775,6 +3782,7 @@ impl AcpThread {
     ) {
         cx.emit(AcpThreadEvent::PromptUpdated);
         self.draft_prompt = prompt;
+        self.draft_prompt_revision += 1;
     }
 
     pub fn ui_scroll_position(&self) -> Option<gpui::ListOffset> {
