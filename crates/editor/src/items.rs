@@ -1589,41 +1589,69 @@ fn serialized_editor_for_restore(
 ///
 /// `source_item_id` is the editor the caller recorded when it persisted, or `None`
 /// for rows persisted before that id was recorded, or when no canonical editor was
-/// open at serialize time. In either `None` case the source is matched from the
-/// saved layout — every editor persisted for `abs_path` that the layout still
-/// contains — so a migrated row is associated only with an editor the restore will
-/// actually reopen, never with an arbitrary id, and a closed editor's surviving row
-/// cannot make the preview restorable.
+/// open at serialize time.
+///
+/// The recorded id is an association hint, not the identity of the source across a
+/// restore: item ids name entities of the session that persisted them, and the
+/// editor it names may have been closed while a clone of the same buffer — a second
+/// editor over the same file, such as the one splitting its pane creates — survived
+/// in another pane. That clone renders the same buffer and is a valid source, but the
+/// recorded id no longer resolves to it. So the recorded editor is used while restore
+/// will actually reopen it, and otherwise the source is resolved the way a row
+/// persisted before the id was recorded is resolved: from the saved layout — every
+/// editor persisted for `abs_path` that the layout still contains and that restore
+/// will apply unsaved contents to. Both branches require layout membership, so a
+/// closed editor's surviving row cannot make the preview restorable, and the path
+/// and unsaved-contents requirements keep an unrelated editor from being adopted as
+/// the source.
 pub fn restores_unsaved_contents(
     source_item_id: Option<ItemId>,
     workspace_id: WorkspaceId,
     abs_path: &Path,
     cx: &App,
 ) -> bool {
-    let candidates = match source_item_id {
-        Some(item_id) => vec![item_id],
-        None => {
-            match EditorDb::global(cx).serialized_editor_ids_for_path(workspace_id, abs_path) {
-                Ok(item_ids) => item_ids,
-                // A read error fails closed: the derived item is refused rather
-                // than restored against unverifiable state.
-                Err(_) => return false,
-            }
-        }
-    };
+    if source_item_id.is_some_and(|item_id| {
+        editor_restores_unsaved_contents(item_id, workspace_id, abs_path, cx)
+    }) {
+        return true;
+    }
 
-    candidates.into_iter().any(|item_id| {
-        // Only an editor still in the pane layout is part of the restore.
-        WorkspaceDb::global(cx)
-            .contains_serialized_item(workspace_id, item_id)
-            .unwrap_or(false)
-            && serialized_editor_for_restore(item_id, workspace_id, cx)
-                .ok()
-                .flatten()
-                .is_some_and(|editor| {
-                    editor.contents.is_some() && editor.abs_path.as_deref() == Some(abs_path)
-                })
-    })
+    let item_ids = match EditorDb::global(cx).serialized_editor_ids_for_path(workspace_id, abs_path)
+    {
+        Ok(item_ids) => item_ids,
+        // A read error fails closed: the derived item is refused rather
+        // than restored against unverifiable state.
+        Err(_) => return false,
+    };
+    item_ids
+        .into_iter()
+        // The recorded id was just checked above, and this predicate reads only
+        // persisted state, so re-reading its row cannot change the outcome;
+        // skipping it saves the repeated reads.
+        .filter(|item_id| Some(*item_id) != source_item_id)
+        .any(|item_id| editor_restores_unsaved_contents(item_id, workspace_id, abs_path, cx))
+}
+
+/// Whether session restore will reopen the editor `item_id` for `abs_path` with its
+/// saved unsaved contents: the editor is still part of the pane layout being
+/// restored, its persisted state carries contents that restore will apply, and its
+/// persisted path is `abs_path`.
+fn editor_restores_unsaved_contents(
+    item_id: ItemId,
+    workspace_id: WorkspaceId,
+    abs_path: &Path,
+    cx: &App,
+) -> bool {
+    // Only an editor still in the pane layout is part of the restore.
+    WorkspaceDb::global(cx)
+        .contains_serialized_item(workspace_id, item_id)
+        .unwrap_or(false)
+        && serialized_editor_for_restore(item_id, workspace_id, cx)
+            .ok()
+            .flatten()
+            .is_some_and(|editor| {
+                editor.contents.is_some() && editor.abs_path.as_deref() == Some(abs_path)
+            })
 }
 
 #[derive(Debug, Default)]
