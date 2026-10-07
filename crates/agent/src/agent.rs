@@ -2360,12 +2360,12 @@ impl NativeAgentConnection {
                                 response,
                             }) => {
                                 let request_result = acp_thread.update(cx, |thread, cx| {
-                                    let scope = acp_v1::ElicitationSessionScope::new(
-                                        thread.session_id().clone(),
+                                    let scope = acp_v2::ElicitationSessionScope::new(
+                                        acp_v2::SessionId::new(thread.session_id().0.clone()),
                                     )
                                     .tool_call_id(tool_call_id);
-                                    let request = acp_v1::CreateElicitationRequest::new(
-                                        acp_v1::ElicitationFormMode::new(scope, schema),
+                                    let request = acp_v2::CreateElicitationRequest::new(
+                                        acp_v2::ElicitationFormMode::new(scope, schema),
                                         message,
                                     );
                                     thread.request_elicitation(request, cx)
@@ -2389,8 +2389,8 @@ impl NativeAgentConnection {
                                         // doesn't hang waiting on a form that will
                                         // never render.
                                         response
-                                            .send(acp_v1::CreateElicitationResponse::new(
-                                                acp_v1::ElicitationAction::Cancel,
+                                            .send(acp_v2::CreateElicitationResponse::new(
+                                                acp_v2::ElicitationAction::Cancel,
                                             ))
                                             .ok();
                                     }
@@ -2809,11 +2809,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .update(cx, |agent, cx| agent.open_thread(session_id, project, cx))
     }
 
-    fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+    fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
         &[] // No auth for in-process
     }
 
-    fn authenticate(&self, _method: acp_v1::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, _method: acp_v2::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 
