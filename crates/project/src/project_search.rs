@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::Context;
 use async_channel::{Receiver, Sender, bounded, unbounded};
-use collections::HashSet;
+use collections::HashMap;
 use fs::Fs;
 use futures::FutureExt as _;
 use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
@@ -20,6 +20,7 @@ use language::{Buffer, BufferSnapshot, Point};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
+use text::Rope;
 
 use language::ByteContent;
 use util::{ResultExt, maybe, rel_path::RelPath};
@@ -167,7 +168,7 @@ impl Search {
     /// Prepares a project search run. The resulting [`SearchResultsHandle`] has to be used to specify whether you're interested in matching buffers
     /// or full search results.
     pub fn into_handle(mut self, query: SearchQuery, cx: &mut App) -> SearchResultsHandle {
-        let mut open_buffers = HashSet::default();
+        let mut open_buffers = HashMap::default();
         let mut unnamed_buffers = Vec::new();
         let mut entryless_file_buffers = Vec::new();
         const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
@@ -183,7 +184,7 @@ impl Search {
             {
                 continue;
             } else if let Some(entry_id) = buffer.entry_id(cx) {
-                open_buffers.insert(entry_id);
+                open_buffers.insert(entry_id, buffer.as_rope().clone());
             } else if searches_all_unnamed_buffers {
                 match (&self.kind, buffer.file()) {
                     (SearchKind::Local { .. }, Some(file)) => {
@@ -713,7 +714,7 @@ fn path_key_sort_key(
 
 struct Worker {
     query: Arc<SearchQuery>,
-    open_buffers: Arc<HashSet<ProjectEntryId>>,
+    open_buffers: Arc<HashMap<ProjectEntryId, Rope>>,
     candidates: FindSearchCandidates,
     /// Ok, we're back in background: run full scan & find all matches in a given buffer snapshot.
     /// Then, when you're done, share them via the channel you were given.
@@ -793,7 +794,7 @@ impl Worker {
 struct RequestHandler<'worker> {
     query: &'worker SearchQuery,
     fs: Option<&'worker dyn Fs>,
-    open_entries: &'worker HashSet<ProjectEntryId>,
+    open_entries: &'worker HashMap<ProjectEntryId, Rope>,
     confirm_contents_will_match_tx: &'worker Sender<MatchingEntry>,
 }
 
@@ -911,9 +912,15 @@ impl RequestHandler<'_> {
                 }
             }
 
-            if self.open_entries.contains(&entry.id) {
-                // The buffer is already in memory and that's the version we want to scan;
-                // hence skip the dilly-dally and look for all matches straight away.
+            if let Some(text) = self.open_entries.get(&entry.id) {
+                if self
+                    .query
+                    .detect(&mut text.bytes_in_range(0..text.len()))
+                    .await?
+                    .is_none()
+                {
+                    return Ok(());
+                }
                 should_scan_tx
                     .send((
                         ProjectPath {
