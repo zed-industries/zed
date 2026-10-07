@@ -354,6 +354,7 @@ impl Render for PendingKeystrokesIndicator {
                                         popover_render_state.keystrokes.clone(),
                                         popover_render_state.bindings.clone(),
                                         self.popover_scroll_handle.clone(),
+                                        max_panel_width,
                                         max_content_height,
                                     ),
                                 )
