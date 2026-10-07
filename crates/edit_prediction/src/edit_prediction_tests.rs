@@ -1,12 +1,9 @@
-use client::{
-    RefreshLlmTokenListener, UserStore,
-    test::{FakeServer, make_get_authenticated_user_response},
-};
+use client::{RefreshLlmTokenListener, UserStore, test::FakeServer};
 use clock::FakeSystemClock;
 use clock::ReplicaId;
 use cloud_api_types::{
-    CreateLlmTokenResponse, KnownOrUnknown, LlmToken, Organization, OrganizationConfiguration,
-    OrganizationEditPredictionConfiguration, OrganizationId, Plan, SettledEditPrediction,
+    CreateLlmTokenResponse, LlmToken, Organization, OrganizationConfiguration,
+    OrganizationEditPredictionConfiguration, OrganizationId, SettledEditPrediction,
     SubmitEditPredictionSettledBatchBody, SubmitEditPredictionSettledResponse,
 };
 use cloud_llm_client::{
@@ -2139,200 +2136,6 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_zed_cloud_predictions_skip_organizations_without_subscriptions(
-    cx: &mut TestAppContext,
-) {
-    let (ep_store, mut requests) = init_test_with_fake_client(cx);
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "foo.md": "Hello!\nHow\nBye\n"
-        }),
-    )
-    .await;
-    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
-            project.open_buffer(path, cx)
-        })
-        .await
-        .unwrap();
-    let position = buffer
-        .read_with(cx, |buffer, _cx| buffer.snapshot())
-        .anchor_before(language::Point::new(1, 3));
-    let user_store = ep_store.read_with(cx, |store, _cx| store.user_store.clone());
-    assert!(!user_store.read_with(cx, |user_store, _cx| {
-        user_store.current_organization_has_no_active_subscription()
-    }));
-
-    let loading_request = ep_store.update(cx, |store, cx| {
-        store.request_prediction(
-            &project,
-            &buffer,
-            position,
-            PredictEditsRequestTrigger::Other,
-            cx,
-        )
-    });
-    let (_, loading_response) = requests.predict.next().await.unwrap();
-    loading_response.send(empty_response()).unwrap();
-    loading_request.await.unwrap();
-
-    let personal_organization = Arc::new(Organization {
-        id: OrganizationId("personal".into()),
-        name: "Personal".into(),
-        is_personal: true,
-    });
-    let unsubscribed_organization = Arc::new(Organization {
-        id: OrganizationId("unsubscribed".into()),
-        name: "Unsubscribed".into(),
-        is_personal: false,
-    });
-    let paid_organization = Arc::new(Organization {
-        id: OrganizationId("paid".into()),
-        name: "Paid".into(),
-        is_personal: false,
-    });
-    user_store.update(cx, |user_store, cx| {
-        let mut response =
-            make_get_authenticated_user_response(1, "edit-prediction-user".to_string());
-        response.organizations = vec![
-            Organization {
-                id: personal_organization.id.clone(),
-                name: personal_organization.name.clone(),
-                is_personal: personal_organization.is_personal,
-            },
-            Organization {
-                id: unsubscribed_organization.id.clone(),
-                name: unsubscribed_organization.name.clone(),
-                is_personal: unsubscribed_organization.is_personal,
-            },
-            Organization {
-                id: paid_organization.id.clone(),
-                name: paid_organization.name.clone(),
-                is_personal: paid_organization.is_personal,
-            },
-        ];
-        response.default_organization_id = Some(unsubscribed_organization.id.clone());
-        response.plans_by_organization.insert(
-            personal_organization.id.clone(),
-            KnownOrUnknown::Known(Plan::ZedPro),
-        );
-        response.plans_by_organization.insert(
-            paid_organization.id.clone(),
-            KnownOrUnknown::Known(Plan::ZedBusiness),
-        );
-        user_store.set_authenticated_user_response_for_test(response, cx);
-    });
-    assert!(user_store.read_with(cx, |user_store, _cx| {
-        user_store.current_organization_has_no_active_subscription()
-            && user_store.edit_prediction_usage().is_none()
-    }));
-
-    let blocked_request = ep_store.update(cx, |store, cx| {
-        store.request_prediction(
-            &project,
-            &buffer,
-            position,
-            PredictEditsRequestTrigger::Other,
-            cx,
-        )
-    });
-    assert!(blocked_request.await.unwrap().is_none());
-    assert_no_predict_request_ready(&mut requests.predict);
-
-    cx.update_global::<SettingsStore, _>(|settings_store, cx| {
-        settings_store.update_user_settings(cx, |settings| {
-            settings.project.all_languages.edit_predictions =
-                Some(settings::EditPredictionSettingsContent {
-                    provider: Some(settings::EditPredictionProvider::OpenAiCompatibleApi),
-                    open_ai_compatible_api: Some(
-                        settings::CustomEditPredictionProviderSettingsContent {
-                            api_url: Some("http://localhost:8080/v1/completions".to_string()),
-                            model: Some("local-model".to_string()),
-                            prompt_format: Some(settings::EditPredictionPromptFormatContent::Zeta2),
-                            max_output_tokens: Some(64),
-                            prediction_debounce: None,
-                        },
-                    ),
-                    ..Default::default()
-                });
-        });
-    });
-    cx.update(|cx| {
-        cx.set_http_client(ep_store.read(cx).client.http_client());
-    });
-    ep_store
-        .update(cx, |store, cx| {
-            store.request_prediction(
-                &project,
-                &buffer,
-                position,
-                PredictEditsRequestTrigger::Other,
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-    cx.update_global::<SettingsStore, _>(|settings_store, cx| {
-        settings_store.update_user_settings(cx, |settings| {
-            settings
-                .project
-                .all_languages
-                .edit_predictions
-                .get_or_insert_default()
-                .provider = Some(settings::EditPredictionProvider::Zed);
-        });
-    });
-
-    user_store
-        .update(cx, |user_store, cx| {
-            user_store.set_current_organization(personal_organization, cx)
-        })
-        .await
-        .unwrap();
-    assert!(!user_store.read_with(cx, |user_store, _cx| {
-        user_store.current_organization_has_no_active_subscription()
-    }));
-    let personal_request = ep_store.update(cx, |store, cx| {
-        store.request_prediction(
-            &project,
-            &buffer,
-            position,
-            PredictEditsRequestTrigger::Other,
-            cx,
-        )
-    });
-    let (_, personal_response) = requests.predict.next().await.unwrap();
-    personal_response.send(empty_response()).unwrap();
-    personal_request.await.unwrap();
-
-    user_store
-        .update(cx, |user_store, cx| {
-            user_store.set_current_organization(paid_organization, cx)
-        })
-        .await
-        .unwrap();
-    assert!(!user_store.read_with(cx, |user_store, _cx| {
-        user_store.current_organization_has_no_active_subscription()
-    }));
-    let paid_request = ep_store.update(cx, |store, cx| {
-        store.request_prediction(
-            &project,
-            &buffer,
-            position,
-            PredictEditsRequestTrigger::Other,
-            cx,
-        )
-    });
-    let (_, paid_response) = requests.predict.next().await.unwrap();
-    paid_response.send(empty_response()).unwrap();
-    paid_request.await.unwrap();
-}
-
-#[gpui::test]
 async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
@@ -2925,22 +2728,6 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                         "/client/llm_tokens" => serde_json::to_string(&json!({
                             "token": "test"
                         }))
-                        .unwrap(),
-                        "/v1/completions" => serde_json::to_string(&RawCompletionResponse {
-                            id: "local-request".to_string(),
-                            object: "text_completion".to_string(),
-                            created: 0,
-                            model: "local-model".to_string(),
-                            choices: vec![RawCompletionChoice {
-                                text: String::new(),
-                                finish_reason: Some("stop".to_string()),
-                            }],
-                            usage: RawCompletionUsage {
-                                prompt_tokens: 0,
-                                completion_tokens: 0,
-                                total_tokens: 0,
-                            },
-                        })
                         .unwrap(),
                         "/predict_edits/v3" => {
                             let mut buf = Vec::new();

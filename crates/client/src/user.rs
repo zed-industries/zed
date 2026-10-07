@@ -762,15 +762,6 @@ impl UserStore {
         cx.notify();
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_authenticated_user_response_for_test(
-        &mut self,
-        response: GetAuthenticatedUserResponse,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_authenticated_user(response, cx);
-    }
-
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -849,11 +840,7 @@ impl UserStore {
     }
 
     pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
-        if self.current_organization_has_no_active_subscription() {
-            None
-        } else {
-            self.edit_prediction_usage
-        }
+        self.edit_prediction_usage
     }
 
     pub fn update_edit_prediction_usage(
@@ -1105,5 +1092,75 @@ impl EditPredictionUsage {
             EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME,
             headers,
         )?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::make_get_authenticated_user_response;
+    use clock::FakeSystemClock;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_current_organization_has_no_active_subscription(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::new()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
+        let user_store = cx.new(|cx| UserStore::new(client, cx));
+
+        let organization = |id: &str, is_personal| Organization {
+            id: OrganizationId(id.into()),
+            name: id.into(),
+            is_personal,
+        };
+
+        assert!(!user_store.read_with(cx, |store, _| {
+            store.current_organization_has_no_active_subscription()
+        }));
+
+        user_store.update(cx, |store, cx| {
+            let mut response = make_get_authenticated_user_response(1, "user".into());
+            response.organizations = vec![
+                organization("personal", true),
+                organization("unsubscribed", false),
+                organization("paid", false),
+            ];
+            response.default_organization_id = Some(OrganizationId("unsubscribed".into()));
+            response.plans_by_organization.insert(
+                OrganizationId("personal".into()),
+                KnownOrUnknown::Known(Plan::ZedPro),
+            );
+            response.plans_by_organization.insert(
+                OrganizationId("paid".into()),
+                KnownOrUnknown::Known(Plan::ZedBusiness),
+            );
+            store.update_authenticated_user(response, cx);
+        });
+        assert!(user_store.read_with(cx, |store, _| {
+            store.current_organization_has_no_active_subscription()
+        }));
+
+        for organization in [organization("personal", true), organization("paid", false)] {
+            user_store
+                .update(cx, |store, cx| {
+                    store.set_current_organization(Arc::new(organization), cx)
+                })
+                .await
+                .unwrap();
+            assert!(!user_store.read_with(cx, |store, _| {
+                store.current_organization_has_no_active_subscription()
+            }));
+        }
     }
 }
