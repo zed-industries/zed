@@ -961,7 +961,7 @@ struct Shadow {
     element_corner_radii: Corners,
     // 0 = drop shadow, 1 = inset shadow.
     inset: u32,
-    pad: u32, // align to 8 bytes
+    pad: u32, // size must be divisible by 16 for downlevel buffer bindings
 }
 
 struct ShadowVarying {
@@ -1052,6 +1052,7 @@ struct PathRasterizationVertex {
     st_position: vec2<f32>,
     color: Background,
     bounds: Bounds,
+    pad: vec2<u32>,
 }
 
 

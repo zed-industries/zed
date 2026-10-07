@@ -582,7 +582,9 @@ pub struct Shadow {
     pub element_corner_radii: Corners<ScaledPixels>,
     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
     pub inset: u32,
-    pub pad: u32, // align to 8 bytes
+    // Downlevel GPU buffer bindings require a size divisible by 16. Keep padding
+    // explicit so uploading the raw bytes never reads uninitialized padding.
+    pub pad: u32,
 }
 
 impl From<Shadow> for Primitive {

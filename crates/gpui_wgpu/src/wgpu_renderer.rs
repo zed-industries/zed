@@ -109,6 +109,9 @@ struct PathRasterizationVertex {
     st_position: Point<f32>,
     color: Background,
     bounds: Bounds<ScaledPixels>,
+    // Downlevel GPU buffer bindings require a size divisible by 16. Keep padding
+    // explicit so uploading the raw bytes never reads uninitialized padding.
+    _pad: [u32; 2],
 }
 
 pub struct WgpuSurfaceConfig {
@@ -1847,6 +1850,7 @@ impl WgpuRendererCore {
                 st_position: v.st_position,
                 color: path.color,
                 bounds,
+                _pad: [0; 2],
             }));
         }
 
@@ -2801,12 +2805,55 @@ mod tests {
     fn webgl_record_sizes_match_shader_word_strides() {
         assert_eq!(std::mem::size_of::<Quad>(), 40 * 4);
         assert_eq!(std::mem::size_of::<Shadow>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), 26 * 4);
+        assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), 28 * 4);
         assert_eq!(std::mem::size_of::<PathSprite>(), 4 * 4);
         assert_eq!(std::mem::size_of::<Underline>(), 16 * 4);
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
+    }
+
+    #[test]
+    fn downlevel_record_sizes_match_shader_layouts() {
+        let module =
+            naga::front::wgsl::parse_str(STORAGE_BUFFER_SHADERS).expect("shader should parse");
+        for (name, size, padding_offset) in [
+            (
+                "Shadow",
+                std::mem::size_of::<Shadow>(),
+                std::mem::offset_of!(Shadow, pad),
+            ),
+            (
+                "PathRasterizationVertex",
+                std::mem::size_of::<PathRasterizationVertex>(),
+                std::mem::offset_of!(PathRasterizationVertex, _pad),
+            ),
+        ] {
+            assert_eq!(
+                size % 16,
+                0,
+                "{name} must support downlevel buffer bindings"
+            );
+            let shader_type = module
+                .types
+                .iter()
+                .find_map(|(_, shader_type)| {
+                    (shader_type.name.as_deref() == Some(name)).then_some(shader_type)
+                })
+                .expect("shader should contain the record type");
+            let naga::TypeInner::Struct { members, span } = &shader_type.inner else {
+                panic!("{name} should be a struct");
+            };
+            assert_eq!(*span as usize, size, "{name} size must match WGSL");
+            let padding = members
+                .iter()
+                .find(|member| member.name.as_deref() == Some("pad"))
+                .expect("shader should contain explicit padding");
+            assert_eq!(
+                padding.offset as usize, padding_offset,
+                "{name} padding offset"
+            );
+        }
     }
 
     #[test]
