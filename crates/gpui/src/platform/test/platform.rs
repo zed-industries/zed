@@ -146,10 +146,20 @@ impl TestPlatform {
         display_id: DisplayId,
         refresh_interval: Option<Duration>,
     ) {
+        self.connect_display(display_id, refresh_interval);
+        self.report_displays_changed();
+    }
+
+    /// Adds a display without telling App yet, as when the platform's
+    /// notifications about a window arrive before those about displays.
+    pub(crate) fn connect_display(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
         let mut display = TestDisplay::with_id(display_id);
         display.refresh_interval = refresh_interval;
         self.displays.borrow_mut().push(display);
-        self.report_displays_changed();
     }
 
     pub(crate) fn simulate_display_removed(&self, display_id: DisplayId) {

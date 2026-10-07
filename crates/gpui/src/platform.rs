@@ -621,9 +621,7 @@ pub trait PlatformDisplay: Debug {
     ///
     /// May query the operating system; GPUI caches it per display, see
     /// [`Window::refresh_interval`](crate::Window::refresh_interval).
-    fn refresh_interval(&self) -> Option<Duration> {
-        None
-    }
+    fn refresh_interval(&self) -> Option<Duration>;
 
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
     /// This is the usable area where windows can be placed without being obscured.

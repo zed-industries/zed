@@ -482,6 +482,11 @@ impl TestAppContext {
             .simulate_display_added(display_id, refresh_interval);
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_platform(&self) -> &TestPlatform {
+        &self.test_platform
+    }
+
     /// Simulates disconnecting a display.
     pub fn simulate_display_removed(&self, display_id: DisplayId) {
         self.test_platform.simulate_display_removed(display_id);

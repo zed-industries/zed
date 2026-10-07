@@ -1963,12 +1963,8 @@ impl Window {
             }
         }));
         platform_window.on_display_changed(Box::new({
-            let mut cx = cx.to_async();
-            move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.display_changed(cx))
-                    .log_err();
-            }
+            let cx = cx.to_async();
+            move || cx.update(|cx| Window::display_changed(handle, cx))
         }));
         platform_window.on_appearance_changed(Box::new({
             let cx = cx.to_async();
@@ -2798,13 +2794,30 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
-    fn display_changed(&mut self, cx: &mut App) {
-        let display_id = self.platform_window.display().map(|display| display.id());
-        if display_id == self.display_id {
+    fn display_changed(handle: AnyWindowHandle, cx: &mut App) {
+        let moved_to = handle
+            .update(cx, |_, window, _| {
+                let display_id = window.platform_window.display().map(|display| display.id());
+                let moved = display_id != window.display_id;
+                window.display_id = display_id;
+                moved.then_some(display_id)
+            })
+            .log_err()
+            .flatten();
+        let Some(display_id) = moved_to else {
             return;
+        };
+        // The platform's notifications about the window and about displays
+        // arrive in no guaranteed order, so make sure App knows the display
+        // before the window's observers read its state.
+        if let Some(display_id) = display_id
+            && !cx.knows_display(display_id)
+        {
+            cx.displays_changed();
         }
-        self.display_id = display_id;
-        self.notify_display_observers(cx);
+        handle
+            .update(cx, |_, window, cx| window.notify_display_observers(cx))
+            .log_err();
     }
 
     pub(crate) fn notify_display_observers(&mut self, cx: &mut App) {
@@ -8095,14 +8108,19 @@ mod tests {
         let test_window = cx.test_window(window.into());
 
         // The window may hear that it moved before App hears the display was
-        // connected; it is notified again once the interval is known.
+        // connected. App learns about the display before the window's
+        // observers run, and the platform's later notification changes
+        // nothing.
+        cx.test_platform()
+            .connect_display(DisplayId(2), Some(one_hundred_twenty_hertz));
         test_window.simulate_move_to_display(DisplayId(2));
-        assert_eq!(window_notifications.take(), [(Some(DisplayId(2)), None)]);
-        cx.simulate_display_added(DisplayId(2), Some(one_hundred_twenty_hertz));
         assert_eq!(
             window_notifications.take(),
             [(Some(DisplayId(2)), Some(one_hundred_twenty_hertz))]
         );
+        assert_eq!(display_events.take(), [DisplayEvent::Added(DisplayId(2))]);
+        cx.simulate_display_refresh_interval_change(DisplayId(2), Some(one_hundred_twenty_hertz));
+        assert!(window_notifications.borrow().is_empty());
 
         // Platforms may report a move that isn't one.
         test_window.simulate_move_to_display(DisplayId(2));
@@ -8125,7 +8143,6 @@ mod tests {
         assert_eq!(
             display_events.take(),
             [
-                DisplayEvent::Added(DisplayId(2)),
                 DisplayEvent::Changed {
                     id: DisplayId(2),
                     changes: DisplayChanges::REFRESH_INTERVAL,
@@ -8142,7 +8159,6 @@ mod tests {
                 assert_eq!(
                     tracker.refresh_intervals,
                     [
-                        None,
                         Some(one_hundred_twenty_hertz),
                         Some(one_hundred_forty_four_hertz)
                     ]

@@ -1627,14 +1627,12 @@ impl App {
         subscription
     }
 
-    fn displays_changed(&mut self) {
+    pub(crate) fn displays_changed(&mut self) {
         let current = read_displays(self.platform.as_ref());
         let events = display_events(&self.displays, &current);
         self.displays = current;
         for event in &events {
-            // A window can move to a display before App learns that it was
-            // connected, so windows also hear about displays being added.
-            let (DisplayEvent::Added(id) | DisplayEvent::Changed { id, .. }) = *event else {
+            let DisplayEvent::Changed { id, .. } = *event else {
                 continue;
             };
             for handle in self.windows() {
@@ -1651,6 +1649,10 @@ impl App {
                 .clone()
                 .retain(&(), |callback| (callback)(event, self));
         }
+    }
+
+    pub(crate) fn knows_display(&self, id: DisplayId) -> bool {
+        self.displays.contains_key(&id)
     }
 
     /// The refresh interval of a connected display, as of the platform's last
