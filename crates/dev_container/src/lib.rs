@@ -9,6 +9,7 @@ use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
 use project::ProjectEnvironment;
+use remote::{RemoteClient, RemoteConnection};
 use settings::RegisterSetting;
 use settings::Settings;
 use std::collections::HashMap;
@@ -95,8 +96,304 @@ fn get_safe_id(input: &str) -> String {
     result
 }
 
+/// The machine whose container engine builds and runs a dev container, and on
+/// whose filesystem the project being opened lives.
+///
+/// These are deliberately the same choice: the engine has to be able to bind
+/// mount the project directory, so a container cannot be built by one machine
+/// for a project that lives on another.
+#[derive(Clone, Default)]
+pub enum DevContainerHost {
+    /// The machine running Zed.
+    #[default]
+    Local,
+    /// A machine already reached by an open remote project, whose connection
+    /// carries the engine invocations.
+    Remote(Arc<dyn RemoteConnection>),
+}
+
+impl DevContainerHost {
+    /// How a connection to a container on this host is addressed.
+    ///
+    /// Provisioning and connecting are separate steps that must agree on the
+    /// machine: a container built here can only be reached by a connection
+    /// that names the same host.
+    pub fn docker_host(&self) -> Result<remote::DockerHost, DevContainerError> {
+        let DevContainerHost::Remote(connection) = self else {
+            return Ok(remote::DockerHost::Local);
+        };
+        match connection.connection_options() {
+            remote::RemoteConnectionOptions::Ssh(options) => Ok(remote::DockerHost::Ssh(options)),
+            remote::RemoteConnectionOptions::Wsl(options) => Ok(remote::DockerHost::Wsl(options)),
+            #[cfg(any(test, feature = "test-support"))]
+            remote::RemoteConnectionOptions::Mock(options) => Ok(remote::DockerHost::Mock(options)),
+            other => Err(DevContainerError::UnsupportedHost(
+                other.connection_type().to_string(),
+            )),
+        }
+    }
+
+    /// How the host writes paths.
+    ///
+    /// Every path that reaches an engine command, a bind mount, or a container
+    /// label describes the host's filesystem, so it must be rendered in this
+    /// style rather than the style of the machine running Zed.
+    pub(crate) fn path_style(&self) -> util::paths::PathStyle {
+        match self {
+            DevContainerHost::Local => util::paths::PathStyle::local(),
+            DevContainerHost::Remote(connection) => connection.path_style(),
+        }
+    }
+
+    /// Joins a relative path onto a host path.
+    ///
+    /// `Path::join` and `Path::parent` split on the separators of the machine
+    /// running Zed, which mangles a host path written in the other style.
+    pub(crate) fn join(&self, base: &Path, relative: &Path) -> std::path::PathBuf {
+        let DevContainerHost::Remote(_) = self else {
+            return base.join(relative);
+        };
+        let path_style = self.path_style();
+        match path_style.join(base, relative) {
+            Some(joined) => std::path::PathBuf::from(path_style.normalize(&joined)),
+            None => base.join(relative),
+        }
+    }
+
+    /// The directory containing `path`, split in the host's style.
+    pub(crate) fn parent(&self, path: &Path) -> Option<std::path::PathBuf> {
+        let DevContainerHost::Remote(_) = self else {
+            return path.parent().map(Path::to_path_buf);
+        };
+        let path = path.display().to_string();
+        let index = path.rfind(self.path_style().separators_ch())?;
+        if index == 0 {
+            return Some(std::path::PathBuf::from(&path[..1]));
+        }
+        Some(std::path::PathBuf::from(&path[..index]))
+    }
+
+    /// Builds the process Zed spawns in order to run `program args` on this
+    /// host, with `working_dir` interpreted as a path on the host.
+    ///
+    /// For a remote host the returned command is the transport's, wrapping the
+    /// requested one; the transport owns quoting, so callers must pass
+    /// arguments unquoted and must not join them into a shell string.
+    pub(crate) fn command(
+        &self,
+        program: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+        working_dir: Option<&Path>,
+    ) -> Result<util::command::Command, DevContainerError> {
+        match self {
+            DevContainerHost::Local => {
+                let mut command = util::command::Command::new(program);
+                command.args(args);
+                command.envs(env);
+                if let Some(working_dir) = working_dir {
+                    command.current_dir(working_dir);
+                }
+                Ok(command)
+            }
+            DevContainerHost::Remote(connection) => {
+                let template = connection
+                    .build_command(
+                        Some(program.to_string()),
+                        args,
+                        &env.iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect(),
+                        working_dir.map(|dir| dir.display().to_string()),
+                        None,
+                        remote::Interactive::No,
+                    )
+                    .map_err(|e| {
+                        log::error!("Failed to build a remote `{program}` invocation: {e}");
+                        DevContainerError::CommandFailed(program.to_string())
+                    })?;
+                let mut command = util::command::Command::new(&template.program);
+                command.args(&template.args);
+                command.envs(&template.env);
+                Ok(command)
+            }
+        }
+    }
+}
+
+/// Stands in for a connected host. Only command construction matters here,
+/// and it mimics the POSIX SSH transport: a `cd` into the working directory
+/// followed by single-quoted arguments, so a test can see whether quoting and
+/// the working directory were applied by the transport rather than by the
+/// caller.
+#[cfg(test)]
+pub(crate) struct FakeRemoteConnection {
+    /// Every `(source, destination)` pair handed to [`RemoteConnection::upload_directory`].
+    pub(crate) uploads: std::sync::Mutex<Vec<(std::path::PathBuf, String)>>,
+    path_style: util::paths::PathStyle,
+    connection_options: remote::RemoteConnectionOptions,
+}
+
+#[cfg(test)]
+impl Default for FakeRemoteConnection {
+    fn default() -> Self {
+        Self::with_path_style(util::paths::PathStyle::Unix)
+    }
+}
+
+#[cfg(test)]
+impl FakeRemoteConnection {
+    pub(crate) fn with_path_style(path_style: util::paths::PathStyle) -> Self {
+        Self {
+            uploads: std::sync::Mutex::new(Vec::new()),
+            path_style,
+            connection_options: remote::RemoteConnectionOptions::Ssh(Default::default()),
+        }
+    }
+
+    pub(crate) fn with_connection_options(options: remote::RemoteConnectionOptions) -> Self {
+        Self {
+            connection_options: options,
+            ..Self::default()
+        }
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait(?Send)]
+impl RemoteConnection for FakeRemoteConnection {
+    fn start_proxy(
+        &self,
+        _unique_identifier: String,
+        _reconnect: bool,
+        _incoming_tx: futures::channel::mpsc::UnboundedSender<rpc::proto::Envelope>,
+        _outgoing_rx: futures::channel::mpsc::UnboundedReceiver<rpc::proto::Envelope>,
+        _connection_activity_tx: futures::channel::mpsc::Sender<()>,
+        _delegate: Arc<dyn remote::RemoteClientDelegate>,
+        _cx: &mut gpui::AsyncApp,
+    ) -> gpui::Task<anyhow::Result<i32>> {
+        gpui::Task::ready(Err(anyhow::anyhow!("not supported in tests")))
+    }
+
+    fn upload_directory(
+        &self,
+        src_path: std::path::PathBuf,
+        dest_path: util::paths::RemotePathBuf,
+        _cx: &gpui::App,
+    ) -> gpui::Task<anyhow::Result<()>> {
+        match self.uploads.lock() {
+            Ok(mut uploads) => {
+                uploads.push((src_path, dest_path.to_string()));
+                gpui::Task::ready(Ok(()))
+            }
+            Err(e) => gpui::Task::ready(Err(anyhow::anyhow!("uploads lock poisoned: {e}"))),
+        }
+    }
+
+    async fn kill(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn has_been_killed(&self) -> bool {
+        false
+    }
+
+    fn build_command(
+        &self,
+        program: Option<String>,
+        args: &[String],
+        env: &collections::HashMap<String, String>,
+        working_dir: Option<String>,
+        _port_forward: Option<(u16, String, u16)>,
+        _interactive: remote::Interactive,
+    ) -> anyhow::Result<remote::CommandTemplate> {
+        let mut wrapped = vec!["host".to_string(), "--".to_string()];
+        if let Some(working_dir) = working_dir {
+            wrapped.push(format!("cd {working_dir} &&"));
+        }
+        wrapped.extend(env.iter().map(|(key, value)| format!("{key}={value}")));
+        if let Some(program) = program {
+            wrapped.push(format!("'{program}'"));
+        }
+        wrapped.extend(args.iter().map(|arg| format!("'{arg}'")));
+        Ok(remote::CommandTemplate {
+            program: "ssh".to_string(),
+            args: wrapped,
+            env: Default::default(),
+        })
+    }
+
+    fn build_forward_ports_command(
+        &self,
+        _forwards: Vec<(u16, String, u16)>,
+    ) -> anyhow::Result<remote::CommandTemplate> {
+        Err(anyhow::anyhow!("not supported in tests"))
+    }
+
+    fn connection_options(&self) -> remote::RemoteConnectionOptions {
+        self.connection_options.clone()
+    }
+
+    fn path_style(&self) -> util::paths::PathStyle {
+        self.path_style
+    }
+
+    fn remote_platform(&self) -> remote::RemotePlatform {
+        remote::RemotePlatform {
+            os: remote::RemoteOs::Linux,
+            arch: remote::RemoteArch::X86_64,
+        }
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        None
+    }
+
+    fn shell(&self) -> String {
+        "sh".to_string()
+    }
+
+    fn default_system_shell(&self) -> String {
+        "sh".to_string()
+    }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
+}
+
+/// Which machine's shell environment applies to a dev container's
+/// configuration — the environment that `${localEnv:...}` resolves against and
+/// that lifecycle commands inherit.
+#[derive(Debug, PartialEq, Eq)]
+enum EnvironmentSource {
+    /// The machine running Zed.
+    Local,
+    /// The machine whose engine builds the container.
+    Host,
+    /// The host's environment cannot be reached, so no environment applies.
+    /// Falling back to this machine's would be wrong: it would resolve
+    /// `${localEnv:PATH}` against a filesystem the container never sees.
+    Unavailable,
+}
+
+/// `has_remote_client` is whether a proto connection to the host's Zed server
+/// is available; reading the host's environment is an RPC, so a remote host
+/// without one has no environment to offer.
+fn environment_source(host: &DevContainerHost, has_remote_client: bool) -> EnvironmentSource {
+    match (host, has_remote_client) {
+        (DevContainerHost::Local, _) => EnvironmentSource::Local,
+        (DevContainerHost::Remote(_), true) => EnvironmentSource::Host,
+        (DevContainerHost::Remote(_), false) => EnvironmentSource::Unavailable,
+    }
+}
+
 pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
+    pub host: DevContainerHost,
+    /// The connection to the host's Zed server, when the project is remote.
+    /// Used for host operations that are proto requests rather than commands.
+    pub remote_client: Option<Entity<RemoteClient>>,
     pub use_podman: bool,
     pub use_buildkit: Option<bool>,
     pub fs: Arc<dyn Fs>,
@@ -113,8 +410,20 @@ impl DevContainerContext {
         let http_client = cx.http_client().clone();
         let fs = workspace.app_state().fs.clone();
         let environment = workspace.project().read(cx).environment().downgrade();
+        let remote_client = workspace.project().read(cx).remote_client();
+        // A remote project's files only exist on its host, so that is the only
+        // machine whose engine can bind mount them.
+        let host = match remote_client
+            .as_ref()
+            .and_then(|client| client.read(cx).remote_connection())
+        {
+            Some(connection) => DevContainerHost::Remote(connection),
+            None => DevContainerHost::Local,
+        };
         Some(Self {
             project_directory,
+            host,
+            remote_client,
             use_podman,
             use_buildkit,
             fs,
@@ -123,15 +432,125 @@ impl DevContainerContext {
         })
     }
 
+    /// The shell environment the configuration is resolved against.
+    ///
+    /// It has to come from the machine the container is built on: a remote dev
+    /// container's `${localEnv:...}` references and lifecycle commands see the
+    /// host's environment, not this machine's.
     pub async fn environment(&self, cx: &mut impl AppContext) -> HashMap<String, String> {
-        let Ok(task) = self.environment.update(cx, |this, cx| {
-            this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
-        }) else {
+        let task = match environment_source(&self.host, self.remote_client.is_some()) {
+            EnvironmentSource::Local => self.environment.update(cx, |this, cx| {
+                this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
+            }),
+            EnvironmentSource::Host => {
+                let Some(remote_client) = self.remote_client.clone() else {
+                    return HashMap::default();
+                };
+                self.environment.update(cx, |this, cx| {
+                    this.remote_directory_environment(
+                        &Shell::System,
+                        self.project_directory.clone(),
+                        remote_client,
+                        cx,
+                    )
+                })
+            }
+            EnvironmentSource::Unavailable => {
+                log::warn!(
+                    "No connection to the dev container host, so its shell environment is unavailable"
+                );
+                return HashMap::default();
+            }
+        };
+        let Ok(task) = task else {
             return HashMap::default();
         };
         task.await
             .map(|env| env.into_iter().collect::<std::collections::HashMap<_, _>>())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod environment_source_tests {
+    use super::{DevContainerHost, EnvironmentSource, FakeRemoteConnection, environment_source};
+    use std::sync::Arc;
+
+    /// A remote dev container's configuration must resolve against the host's
+    /// environment. Falling back to this machine's would silently substitute
+    /// paths and versions that do not exist over there.
+    #[test]
+    fn environment_follows_the_host() {
+        assert_eq!(
+            environment_source(&DevContainerHost::Local, false),
+            EnvironmentSource::Local
+        );
+        assert_eq!(
+            environment_source(&DevContainerHost::Local, true),
+            EnvironmentSource::Local,
+            "an open remote project does not move a local container's environment"
+        );
+
+        let remote = DevContainerHost::Remote(Arc::new(FakeRemoteConnection::default()));
+        assert_eq!(environment_source(&remote, true), EnvironmentSource::Host);
+        assert_eq!(
+            environment_source(&remote, false),
+            EnvironmentSource::Unavailable,
+            "reading the host environment is an RPC, so it needs the server connection"
+        );
+    }
+
+    /// Provisioning and connecting are separate steps. If the connection does
+    /// not name the machine the container was built on, it reaches this
+    /// machine's daemon and finds nothing.
+    #[test]
+    fn the_connection_names_the_machine_the_container_was_built_on() {
+        assert_eq!(
+            DevContainerHost::Local.docker_host().unwrap(),
+            remote::DockerHost::Local
+        );
+
+        let host = DevContainerHost::Remote(Arc::new(FakeRemoteConnection::default()));
+        assert!(matches!(
+            host.docker_host().unwrap(),
+            remote::DockerHost::Ssh(_)
+        ));
+
+        let distro = remote::WslConnectionOptions {
+            distro_name: "ubuntu".to_string(),
+            user: Some("zed".to_string()),
+        };
+        let host =
+            DevContainerHost::Remote(Arc::new(FakeRemoteConnection::with_connection_options(
+                remote::RemoteConnectionOptions::Wsl(distro.clone()),
+            )));
+        assert_eq!(
+            host.docker_host().unwrap(),
+            remote::DockerHost::Wsl(distro),
+            "a project in a WSL distro is built by that distro's engine"
+        );
+    }
+
+    /// The engine is on whichever machine will build the container, so the
+    /// probe for it has to travel the same path every other engine command
+    /// does rather than running here.
+    #[test]
+    fn the_engine_is_probed_on_the_host() {
+        let host = DevContainerHost::Remote(Arc::new(FakeRemoteConnection::default()));
+        let command = host
+            .command(
+                "docker",
+                &["--version".to_string()],
+                &std::collections::HashMap::default(),
+                None,
+            )
+            .expect("a remote host can build a command");
+
+        assert_ne!(
+            command.get_program(),
+            "docker",
+            "the probe must be wrapped by the transport, not run locally"
+        );
     }
 }
 

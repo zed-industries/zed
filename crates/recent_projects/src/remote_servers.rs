@@ -645,7 +645,7 @@ impl RemoteEntry {
             Self::Project { connection, .. } => match connection {
                 Connection::Ssh(c) => c.nickname.as_deref().unwrap_or(&c.host),
                 Connection::Wsl(c) => &c.distro_name,
-                Connection::DevContainer(c) => &c.name,
+                Connection::DevContainer(c, _) => &c.name,
             },
             Self::SshConfig { host, .. } => host,
         }
@@ -1007,7 +1007,7 @@ impl RemoteServerPickerDelegate {
                 }
             }
             Connection::Wsl(connection) => (connection.distro_name.clone(), None, true),
-            Connection::DevContainer(connection) => (connection.name.clone(), None, false),
+            Connection::DevContainer(connection, _) => (connection.name.clone(), None, false),
         };
         Some(
             h_flex()
@@ -2246,9 +2246,9 @@ impl RemoteServerProjects {
         cx.spawn_in(window, async move |entity, cx| {
             let environment = context.environment(cx).await;
 
-            let (dev_container_connection, starting_dir) =
-                match start_dev_container_with_config(context, config, environment).await {
-                    Ok((c, s)) => (c, s),
+            let (dev_container_connection, docker_host, starting_dir) =
+                match start_dev_container_with_config(context, config, environment, cx).await {
+                    Ok(started) => started,
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);
                         cx.prompt(
@@ -2294,7 +2294,7 @@ impl RemoteServerProjects {
                 return;
             };
             let result = open_remote_project(
-                Connection::DevContainer(dev_container_connection).into(),
+                Connection::DevContainer(dev_container_connection, docker_host).into(),
                 vec![starting_dir].into_iter().map(PathBuf::from).collect(),
                 app_state,
                 OpenOptions {
