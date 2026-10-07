@@ -243,6 +243,12 @@ fn yaml_frontmatter_candidate(text: &str) -> Option<&str> {
         .get(opening_whitespace_length..)?
         .strip_prefix('\n')?;
 
+    // Reject blank first content lines before scanning, matching pulldown-cmark's rule.
+    let first_content = after_opening_line.trim_start_matches([' ', '\t', '\u{b}', '\u{c}']);
+    if first_content.is_empty() || first_content.starts_with(['\r', '\n']) {
+        return None;
+    }
+
     // Keep offsets relative to the original text, including the stripped opening line.
     let mut line_start = text.len() - after_opening_line.len();
     let lines = after_opening_line.split_inclusive('\n');
@@ -1170,6 +1176,19 @@ mod tests {
             }
             let heading_offset = parsed.heading_slugs["first-section"];
             assert!(source[heading_offset..].starts_with("First section"));
+        }
+    }
+
+    #[test]
+    fn test_yaml_frontmatter_rejects_blank_first_content_line() {
+        for blank_line in ["\n", "\r\n", " \t\n", " \t\r\n", "\u{b}\n", "\u{c}\n"] {
+            let source = format!("---\n{blank_line}# Body\n\n**Bold**\n---\n");
+            assert_eq!(yaml_frontmatter_candidate(&source), None, "{blank_line:?}");
+            assert_eq!(
+                parse_markdown_with_options(&source, false, true, true),
+                parse_markdown_with_options(&source, false, true, false),
+                "{blank_line:?}"
+            );
         }
     }
 
