@@ -15478,10 +15478,11 @@ mod tests {
                   _cx: AsyncApp|
                   -> LocalBoxFuture<'static, Result<acp_v1::PromptResponse>> {
                 let fs = fs.clone();
-                let filename = format!("/test/file-{}", next_filename.fetch_add(1, SeqCst));
+                let path = Path::new(path!("/test"))
+                    .join(format!("file-{}", next_filename.fetch_add(1, SeqCst)));
                 let finish_turn_rx = finish_turn_rx_slot.borrow_mut().take();
                 async move {
-                    fs.write(Path::new(&filename), b"").await?;
+                    fs.write(&path, b"").await?;
                     if let Some(finish_turn_rx) = finish_turn_rx {
                         finish_turn_rx.await.ok();
                     }
