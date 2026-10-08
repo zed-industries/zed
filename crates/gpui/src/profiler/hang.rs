@@ -45,12 +45,17 @@ pub struct HangDetector {
     activity: ActiveUse,
 }
 
-/// The user counts as actively using the app for this long after any input.
+/// The user counts as actively using the app for this long after deliberate
+/// input.
 pub const ACTIVE_USE_WINDOW: Duration = Duration::from_secs(60);
 
+/// Input that doesn't show the user is using the app: platforms deliver
+/// pointer movement to background windows the pointer merely passes over.
+const PASSIVE_INPUT_KINDS: [&str; 3] = ["mouse_move", "mouse_exited", "mouse_pressure"];
+
 /// Accumulates the time the user was actively using the app: within
-/// [`ACTIVE_USE_WINDOW`] of input, excluding stretches interrupted by a system
-/// suspend.
+/// [`ACTIVE_USE_WINDOW`] of deliberate input, excluding stretches interrupted
+/// by a system suspend.
 #[derive(Default)]
 struct ActiveUse {
     accounted_until: Option<Instant>,
@@ -63,7 +68,9 @@ struct ActiveUse {
 impl ActiveUse {
     fn observe(&mut self, entry: &ForegroundJournalEntry) {
         match entry {
-            ForegroundJournalEntry::Event(ForegroundEvent::Input(input)) => {
+            ForegroundJournalEntry::Event(ForegroundEvent::Input(input))
+                if !PASSIVE_INPUT_KINDS.contains(&input.kind) =>
+            {
                 self.first_input_since_accounted.get_or_insert(input.start);
                 self.last_input_since_accounted = Some(
                     self.last_input_since_accounted
@@ -146,7 +153,8 @@ impl HangDetector {
 
     /// The time since the previous call that the user was actively using
     /// the app, as of the journal entries polled so far: within
-    /// [`ACTIVE_USE_WINDOW`] of input, excluding polls that observed a system
+    /// [`ACTIVE_USE_WINDOW`] of deliberate input, such as key presses, clicks,
+    /// and scrolling, excluding polls that observed a system
     /// suspend. Capped at `max_elapsed`, so time this thread spent suspended
     /// isn't counted.
     pub fn take_active_time(&mut self, now: Instant, max_elapsed: Duration) -> Duration {
@@ -1167,20 +1175,25 @@ mod tests {
     }
 
     #[test]
-    fn active_use_counts_time_within_a_minute_of_input() {
+    fn active_use_counts_time_within_a_minute_of_deliberate_input() {
         let start = scheduler::Instant::now();
         let at = |seconds: u64| start + Duration::from_secs(seconds);
-        let input = |seconds: u64| {
+        let input_of_kind = |kind: &'static str, seconds: u64| {
             ForegroundJournalEntry::Event(ForegroundEvent::Input(InputTiming {
-                kind: "test",
+                kind,
                 start: at(seconds),
                 end: at(seconds),
                 caused_invalidation: true,
             }))
         };
+        let input = |seconds: u64| input_of_kind("key_down", seconds);
         let max = Duration::from_secs(10);
         let mut activity = super::ActiveUse::default();
         assert_eq!(activity.take(at(0), max), Duration::ZERO);
+        // The pointer passing over a window isn't use.
+        activity.observe(&input_of_kind("mouse_move", 1));
+        activity.observe(&input_of_kind("mouse_exited", 2));
+        assert_eq!(activity.take(at(4), max), Duration::ZERO);
         // Idle until input at 5 s.
         activity.observe(&input(5));
         assert_eq!(activity.take(at(8), max), Duration::from_secs(3));

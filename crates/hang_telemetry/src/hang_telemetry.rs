@@ -233,7 +233,8 @@ struct HangIncidentsEvent {
     stall_max_ms: u64,
     report_window_seconds: u64,
     /// Of `report_window_seconds`, how long the user was actively using the
-    /// app, for rates such as hangs per active hour.
+    /// app (within a minute of a key press, click, or scroll), for rates such
+    /// as hangs per active hour.
     active_seconds: u64,
 }
 
