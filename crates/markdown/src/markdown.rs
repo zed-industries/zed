@@ -2819,10 +2819,26 @@ impl Element for MarkdownElement {
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
                                     // This is a parent container that we can position the copy button inside.
-                                    let parent_container =
-                                        div().group("code_block").relative().w_full();
+                                    let mut parent_container = div()
+                                        .group("code_block")
+                                        .relative()
+                                        .w_full()
+                                        .when(scroll_handle.is_some(), |this| this.rounded_lg());
 
-                                    let mut parent_container: AnyDiv = if let Some(scroll_handle) =
+                                    if let CodeBlockRenderer::Default { border: true, .. } =
+                                        &self.code_block_renderer
+                                    {
+                                        parent_container = parent_container
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border_variant);
+                                    }
+
+                                    // Styles must be final before `custom_scrollbars`, which reads the
+                                    // corner radii and borders to round the scrollbar track.
+                                    parent_container.style().refine(&self.style.code_block);
+
+                                    let parent_container: AnyDiv = if let Some(scroll_handle) =
                                         scroll_handle.as_ref()
                                     {
                                         let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
@@ -2834,24 +2850,18 @@ impl Element for MarkdownElement {
                                             )
                                             .notify_content();
 
+                                        let mut parent_container = parent_container
+                                            .custom_scrollbars(scrollbars, window, cx);
+                                        // Keep the code block's padding over the space reserved for the scrollbar track.
                                         parent_container
-                                            .rounded_lg()
-                                            .custom_scrollbars(scrollbars, window, cx)
-                                            .into()
+                                            .style()
+                                            .padding
+                                            .refine(&self.style.code_block.padding);
+                                        parent_container.into()
                                     } else {
                                         parent_container.into()
                                     };
 
-                                    if let CodeBlockRenderer::Default { border: true, .. } =
-                                        &self.code_block_renderer
-                                    {
-                                        parent_container = parent_container
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(cx.theme().colors().border_variant);
-                                    }
-
-                                    parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
                                     let code_block = div()
@@ -3960,6 +3970,7 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
+        let text_align = self.text_style().text_align;
         let table_cell_alignment = self
             .table
             .in_cell
@@ -3978,7 +3989,14 @@ impl MarkdownElementBuilder {
                         _ => el.justify_start(),
                     }
                 }
-                None => el.items_start(),
+                None => {
+                    let el = el.items_start();
+                    match text_align {
+                        TextAlign::Left => el.justify_start(),
+                        TextAlign::Center => el.justify_center(),
+                        TextAlign::Right => el.justify_end(),
+                    }
+                }
             }
         });
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
@@ -6393,6 +6411,96 @@ mod tests {
         assert!(icon.left() < tall_image.left());
     }
 
+    fn leading_image_and_container_bounds(
+        source: &'static str,
+        cx: &mut TestAppContext,
+    ) -> (Bounds<Pixels>, Bounds<Pixels>) {
+        let mut cx = render_image_layout(source, cx);
+        let image = cx
+            .debug_bounds("markdown_image_0")
+            .expect("image should be rendered");
+        let container = cx
+            .debug_bounds("inner")
+            .expect("markdown container should be rendered");
+        (image, container)
+    }
+
+    #[gpui::test]
+    fn test_images_in_html_blocks_follow_text_align(cx: &mut TestAppContext) {
+        for (source, expected_alignment) in [
+            (r#"<p><img src="icon.png"></p>"#, TextAlign::Left),
+            (
+                r#"<p align="center"><img src="icon.png"></p>"#,
+                TextAlign::Center,
+            ),
+            (
+                r#"<p align="right"><img src="icon.png"></p>"#,
+                TextAlign::Right,
+            ),
+            (
+                r#"<p style="text-align: center"><a href="https://zed.dev"><img src="icon.png"></a></p>"#,
+                TextAlign::Center,
+            ),
+        ] {
+            let (image, container) = leading_image_and_container_bounds(source, cx);
+            let left_gap = image.left() - container.left();
+            let right_gap = container.right() - image.right();
+            let aligned = match expected_alignment {
+                TextAlign::Left => left_gap < px(1.) && right_gap > px(100.),
+                TextAlign::Center => (left_gap - right_gap).abs() <= px(1.5) && left_gap > px(100.),
+                TextAlign::Right => right_gap < px(1.) && left_gap > px(100.),
+            };
+            assert!(
+                aligned,
+                "image in {source:?} should be {expected_alignment:?} aligned: \
+                 left gap {left_gap:?}, right gap {right_gap:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_wide_images_shrink_to_fit_container(cx: &mut TestAppContext) {
+        for source in [
+            "![](wide.png)",
+            r#"<p align="center"><img src="wide.png"></p>"#,
+        ] {
+            let (image, container) = leading_image_and_container_bounds(source, cx);
+            assert!(
+                image.left() >= container.left() && image.right() <= container.right(),
+                "image in {source:?} should not overflow its container: \
+                 image {image:?}, container {container:?}"
+            );
+            // The wrapper is clamped to the container even when the image inside it overflows,
+            // so check that the 10px tall image was scaled down along with its width.
+            assert!(
+                image.size.height < px(10.),
+                "image in {source:?} should scale down proportionally: image {image:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_image_alt_text() {
+        let alt_text = |markdown: &str| {
+            let events = parse_markdown_with_options(markdown, false, false, false).events;
+            let image_start = events
+                .iter()
+                .position(|(_, event)| {
+                    matches!(event, MarkdownEvent::Start(MarkdownTag::Image { .. }))
+                })
+                .expect("markdown should contain an image");
+            collect_image_alt_text(&events[image_start..], markdown)
+        };
+
+        assert_eq!(alt_text("![Zed logo](logo.png)"), Some("Zed logo".into()));
+        assert_eq!(alt_text("![Zed *logo*](logo.png)"), Some("Zed logo".into()));
+        assert_eq!(
+            alt_text("![logo](logo.png) trailing text"),
+            Some("logo".into())
+        );
+        assert_eq!(alt_text("![](logo.png) trailing text"), None);
+    }
+
     #[test]
     fn test_task_list_marker_for_item() {
         // Small helper that takes the Markdown contents and returns a vector of
@@ -8179,19 +8287,21 @@ mod tests {
         markdown: Entity<Markdown>,
         icon: Arc<RenderImage>,
         tall_image: Arc<RenderImage>,
+        wide_image: Arc<RenderImage>,
     }
 
     impl Render for ImageLayoutView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let icon = self.icon.clone();
             let tall_image = self.tall_image.clone();
+            let wide_image = self.wide_image.clone();
             div().size_full().child(
                 MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
                     .image_resolver(move |dest_url, _| {
-                        let image = if dest_url == "tall.png" {
-                            tall_image.clone()
-                        } else {
-                            icon.clone()
+                        let image = match dest_url {
+                            "tall.png" => tall_image.clone(),
+                            "wide.png" => wide_image.clone(),
+                            _ => icon.clone(),
                         };
                         Some(ImageSource::Render(image))
                     }),
@@ -8216,12 +8326,28 @@ mod tests {
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="80"></svg>"#,
             cx,
         );
+        let wide_image = render_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="10"></svg>"#,
+            cx,
+        );
         let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
-            let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+            let markdown = cx.new(|cx| {
+                Markdown::new_with_options(
+                    source.into(),
+                    None,
+                    None,
+                    MarkdownOptions {
+                        parse_html: true,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            });
             ImageLayoutView {
                 markdown,
                 icon,
                 tall_image,
+                wide_image,
             }
         });
         cx.run_until_parked();
