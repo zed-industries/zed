@@ -3430,6 +3430,11 @@ impl ThreadView {
     pub fn restore_checkpoint(&mut self, client_id: &ClientUserMessageId, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| {
+                telemetry::event!(
+                    "Agent Checkpoint Restored",
+                    agent = thread.connection().telemetry_id(),
+                    session = thread.session_id().clone(),
+                );
                 thread.restore_checkpoint(client_id.clone(), cx)
             })
             .detach_and_log_err(cx);
