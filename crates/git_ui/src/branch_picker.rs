@@ -865,6 +865,19 @@ impl DeleteBranchTooltip {
 
 impl Render for DeleteBranchTooltip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Git always force-deletes remote-tracking refs (`git branch -dr` skips the
+        // merged check), so there is no separate force delete to offer for them.
+        if self.is_remote {
+            return Tooltip::with_meta_in(
+                "Delete Local Tracking Branch",
+                Some(&branch_picker::DeleteBranch),
+                "Does not delete the branch on the remote",
+                &self.focus_handle,
+                cx,
+            )
+            .into_any_element();
+        }
+
         let force_delete = self
             .picker
             .read_with(cx, |picker, _| {
@@ -874,29 +887,9 @@ impl Render for DeleteBranchTooltip {
             })
             .unwrap_or(false);
         if force_delete {
-            if self.is_remote {
-                Tooltip::with_meta_in(
-                    "Force Delete Local Tracking Branch",
-                    Some(&branch_picker::ForceDeleteBranch),
-                    "Does not delete the branch on the remote",
-                    &self.focus_handle,
-                    cx,
-                )
-                .into_any_element()
-            } else {
-                Tooltip::for_action_in(
-                    "Force Delete Branch",
-                    &branch_picker::ForceDeleteBranch,
-                    &self.focus_handle,
-                    cx,
-                )
-                .into_any_element()
-            }
-        } else if self.is_remote {
-            Tooltip::with_meta_in(
-                "Delete Local Tracking Branch",
-                Some(&branch_picker::DeleteBranch),
-                "Does not delete the branch on the remote",
+            Tooltip::for_action_in(
+                "Force Delete Branch",
+                &branch_picker::ForceDeleteBranch,
                 &self.focus_handle,
                 cx,
             )
@@ -1739,7 +1732,7 @@ impl PickerDelegate for BranchListDelegate {
         let deleted_branch_icon = |entry_ix: usize, is_remote: bool| {
             let picker = picker.clone();
             let focus_handle = focus_handle.clone();
-            let force_delete = self.is_force_delete_hovering_index(entry_ix);
+            let force_delete = !is_remote && self.is_force_delete_hovering_index(entry_ix);
 
             div()
                 .id(("delete-hover", entry_ix))
