@@ -390,6 +390,7 @@ impl LanguageServerState {
                 server_version,
                 binary_display_path,
                 process_id,
+                memory_usage,
             } = server_metadata
                 .get(&server_info.id)
                 .cloned()
@@ -609,7 +610,7 @@ impl LanguageServerState {
                             let server_message = server_message.clone();
                             let process_memory_cache = process_memory_cache.clone();
                             move |_, cx| {
-                                let memory_usage = server_info.memory_usage.or_else(|| {
+                                let memory_usage = memory_usage.or_else(|| {
                                     process_id.map(|pid| {
                                         process_memory_cache.borrow_mut().get_memory_usage(pid)
                                     })
@@ -1059,6 +1060,15 @@ impl LspButton {
                 });
                 updated = true;
             }
+            LspStoreEvent::LanguageServerUpdate {
+                message:
+                    proto::update_language_server::Variant::MetadataUpdated(_)
+                    | proto::update_language_server::Variant::MemoryUsageUpdated(_),
+                ..
+            } => {
+                updated = true;
+            }
+
             LspStoreEvent::LanguageServerRemoved(server_id) => {
                 self.server_state.update(cx, |state, _| {
                     state.language_servers.remove_server(*server_id);

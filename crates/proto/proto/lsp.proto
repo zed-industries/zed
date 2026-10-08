@@ -729,6 +729,7 @@ message LanguageServer {
   string name = 2;
   optional uint64 worktree_id = 3;
   optional string language_name = 4;
+  optional string server_version = 5;
 }
 
 message StartLanguageServer {

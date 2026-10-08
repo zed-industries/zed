@@ -13933,6 +13933,7 @@ dependencies = [
  "snippet",
  "snippet_provider",
  "sum_tree",
+ "sysinfo 0.39.6",
  "task",
  "tempfile",
  "terminal",

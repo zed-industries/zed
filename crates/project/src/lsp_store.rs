@@ -10077,6 +10077,9 @@ impl LspStore {
                                 .language_name
                                 .as_ref()
                                 .map(|name| name.to_proto()),
+                            server_version: server
+                                .readable_version()
+                                .map(|version| version.to_string()),
                         }),
                         capabilities,
                     })
@@ -11503,8 +11506,8 @@ impl LspStore {
                 LanguageServerStatus {
                     name: server_name.clone(),
                     language_name,
-                    server_version: None,
-                    server_readable_version: None,
+                    server_version: server.server_version.as_ref().map(SharedString::new),
+                    server_readable_version: server.server_version.as_ref().map(SharedString::new),
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
@@ -13631,42 +13634,43 @@ impl LspStore {
                     .ok()
                 {
                     if has_downstream_client {
-                        let Some(process_id) = this
+                        if let Some(process_id) = this
                             .update(cx, |_, _| language_server.process_id())
                             .ok()
                             .flatten()
-                        else {
-                            continue;
-                        };
-
-                        let refresh_kind = sysinfo::RefreshKind::nothing().with_processes(
-                            sysinfo::ProcessRefreshKind::nothing()
-                                .without_tasks()
-                                .with_memory(),
-                        );
-                        system.refresh_specifics(refresh_kind);
-
-                        let total_memory =
-                            Self::process_tree_memory(&system, sysinfo::Pid::from_u32(process_id));
-
-                        if last_memory_usage
-                            .is_some_and(|last| total_memory.abs_diff(last) < 1024 * 1024)
                         {
-                            continue;
-                        }
+                            let refresh_kind = sysinfo::RefreshKind::nothing().with_processes(
+                                sysinfo::ProcessRefreshKind::nothing()
+                                    .without_tasks()
+                                    .with_memory(),
+                            );
+                            system.refresh_specifics(refresh_kind);
 
-                        last_memory_usage = Some(total_memory);
+                            let total_memory = Self::process_tree_memory(
+                                &system,
+                                sysinfo::Pid::from_u32(process_id),
+                            );
 
-                        if this
-                            .update(cx, |this, cx| {
-                                this.notify_server_memory_usage(&language_server, total_memory, cx);
-                            })
-                            .is_err()
-                        {
-                            break;
+                            if !last_memory_usage
+                                .is_some_and(|last| total_memory.abs_diff(last) < 1024 * 1024)
+                            {
+                                last_memory_usage = Some(total_memory);
+
+                                if this
+                                    .update(cx, |this, cx| {
+                                        this.notify_server_memory_usage(
+                                            &language_server,
+                                            total_memory,
+                                            cx,
+                                        );
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
                         }
                     } else {
-                        // a very unlikely edge case can come here not sure though. when one is swapped fo anothr and he old value is still there.
                         last_memory_usage = None;
                     }
 
@@ -13741,6 +13745,9 @@ impl LspStore {
                         name: language_server.name().to_string(),
                         worktree_id: Some(key.worktree_id.to_proto()),
                         language_name: Some(language_name.to_proto()),
+                        server_version: language_server
+                            .readable_version()
+                            .map(|version| version.to_string()),
                     }),
                     capabilities,
                 })
@@ -17723,6 +17730,8 @@ mod tests {
 
         let _ = child.kill();
         let _ = child.wait();
+    }
+
     fn inlay_hint_for_test(position: Anchor, label: &str) -> InlayHint {
         InlayHint {
             position,
