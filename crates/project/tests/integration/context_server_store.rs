@@ -1336,21 +1336,128 @@ async fn test_restart_reclaims_transport_from_retained_client(cx: &mut TestAppCo
 // Some streamable-HTTP servers expire sessions aggressively: after the
 // session TTL they answer 400 with an "initialize required" error (or 404,
 // as the spec allows) instead of letting the request hang. The client must
-// tear down on such a response so the store restarts it with a fresh
-// initialize handshake, instead of staying `Running` with a session the
-// server will keep rejecting.
+// recover transparently: re-initialize the session inside the transport and
+// resend the original request, so the caller never sees the expiry. No
+// store-level restart may happen — the client stays alive throughout.
 #[gpui::test]
-async fn test_http_server_reinitializes_after_session_rejection(cx: &mut TestAppContext) {
+async fn test_http_server_request_survives_session_rejection(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     const SERVER_ID: &str = "ttl-server";
     let server_id = ContextServerId(SERVER_ID.into());
 
-    set_fake_mcp_http_client(cx, |message| {
-        if message.contains("\"method\":\"initialize\"") {
-            Ok(initialize_response_with_session())
-        } else if message.contains("notifications/initialized") {
-            Ok(notification_accepted_response())
-        } else {
-            Ok(session_expired_response())
+    let initialize_count = Arc::new(AtomicUsize::new(0));
+    set_fake_mcp_http_client(cx, {
+        let initialize_count = initialize_count.clone();
+        move |message| {
+            if message.contains("\"method\":\"initialize\"") {
+                initialize_count.fetch_add(1, Ordering::SeqCst);
+                Ok(initialize_response_with_session())
+            } else if message.contains("notifications/initialized") {
+                Ok(notification_accepted_response())
+            } else if initialize_count.load(Ordering::SeqCst) >= 2 {
+                let id = serde_json::from_str::<serde_json::Value>(message)
+                    .ok()
+                    .and_then(|value| value.get("id").cloned())
+                    .unwrap_or(serde_json::Value::Null);
+                Ok(json_response(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "tools": [] }
+                })))
+            } else {
+                // The first session expired while the client was idle.
+                Ok(session_expired_response())
+            }
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    {
+        // Only the initial start: the session recovery must not cycle the
+        // server through Stopped/Starting.
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+
+        let client = store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running")
+                .client()
+                .expect("running server should have a client")
+        });
+
+        client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect("request should succeed via transparent session recovery");
+
+        assert_eq!(
+            initialize_count.load(Ordering::SeqCst),
+            2,
+            "the transport should have re-initialized the session in-band"
+        );
+        // Dropping the events guard asserts no further status change happened.
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+        );
+    });
+}
+
+// The streamable-HTTP spec also lets a server answer 404 when it no longer
+// knows the session (e.g. it expired while the client was idle for a long
+// time). Like the 400 "initialize required" variant above, the transport
+// must recover transparently and the original request must succeed. The old
+// client handle is deliberately retained across the recovery, as production
+// callers (e.g. an agent awaiting a tool call) legitimately do.
+#[gpui::test]
+async fn test_http_server_request_survives_404_session_expiry(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const SERVER_ID: &str = "ttl-404-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    let initialize_count = Arc::new(AtomicUsize::new(0));
+    let initialized_notification_count = Arc::new(AtomicUsize::new(0));
+    set_fake_mcp_http_client(cx, {
+        let initialize_count = initialize_count.clone();
+        let initialized_notification_count = initialized_notification_count.clone();
+        move |message| {
+            if message.contains("\"method\":\"initialize\"") {
+                initialize_count.fetch_add(1, Ordering::SeqCst);
+                Ok(initialize_response_with_session())
+            } else if message.contains("notifications/initialized") {
+                initialized_notification_count.fetch_add(1, Ordering::SeqCst);
+                Ok(notification_accepted_response())
+            } else if initialize_count.load(Ordering::SeqCst) >= 2 {
+                let id = serde_json::from_str::<serde_json::Value>(message)
+                    .ok()
+                    .and_then(|value| value.get("id").cloned())
+                    .unwrap_or(serde_json::Value::Null);
+                Ok(json_response(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "tools": [] }
+                })))
+            } else {
+                // The first session expired while the client was idle.
+                Ok(session_not_found_404_response())
+            }
         }
     });
 
@@ -1365,7 +1472,112 @@ async fn test_http_server_reinitializes_after_session_rejection(cx: &mut TestApp
             vec![
                 (server_id.clone(), ContextServerStatus::Starting),
                 (server_id.clone(), ContextServerStatus::Running),
-                // Restart after the session was rejected.
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+
+        // Retain the protocol handle across the recovery, as production
+        // callers (e.g. an agent awaiting a tool call) legitimately do.
+        let old_client = store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running")
+                .client()
+                .expect("running server should have a client")
+        });
+
+        old_client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect("request on the expired session should succeed via recovery");
+        // Deliberately do NOT drop the old handle.
+
+        assert_eq!(
+            initialize_count.load(Ordering::SeqCst),
+            2,
+            "the transport should have re-initialized the session after the 404"
+        );
+        assert_eq!(
+            initialized_notification_count.load(Ordering::SeqCst),
+            2,
+            "the recovery handshake should have completed with notifications/initialized"
+        );
+
+        // A second request goes through the recovered session without any
+        // further initialize handshake.
+        old_client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect("a request through the recovered session should succeed");
+        assert_eq!(initialize_count.load(Ordering::SeqCst), 2);
+        assert_eq!(initialized_notification_count.load(Ordering::SeqCst), 2);
+        // Dropping the events guard asserts no further status change happened.
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+        );
+    });
+}
+
+// When the in-band session recovery itself fails (here: the server rejects
+// the recovery initialize), the send fails and the owning store restarts the
+// client with a fresh initialize handshake as the fallback.
+#[gpui::test]
+async fn test_http_server_restarts_when_session_recovery_fails(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const SERVER_ID: &str = "ttl-unrecoverable-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    let initialize_count = Arc::new(AtomicUsize::new(0));
+    set_fake_mcp_http_client(cx, {
+        let initialize_count = initialize_count.clone();
+        move |message| {
+            let count = initialize_count.load(Ordering::SeqCst);
+            if message.contains("\"method\":\"initialize\"") {
+                initialize_count.fetch_add(1, Ordering::SeqCst);
+                // The recovery initialize (the second one) is rejected; the
+                // initial one and the one after the store restart succeed.
+                if count == 1 {
+                    Ok(server_error_response())
+                } else {
+                    Ok(initialize_response_with_session())
+                }
+            } else if message.contains("notifications/initialized") {
+                Ok(notification_accepted_response())
+            } else if count >= 3 {
+                let id = serde_json::from_str::<serde_json::Value>(message)
+                    .ok()
+                    .and_then(|value| value.get("id").cloned())
+                    .unwrap_or(serde_json::Value::Null);
+                Ok(json_response(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "tools": [] }
+                })))
+            } else {
+                // The first session expired while the client was idle.
+                Ok(session_not_found_404_response())
+            }
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+                // Restart after the session rejection could not be recovered.
                 (server_id.clone(), ContextServerStatus::Stopped),
                 (server_id.clone(), ContextServerStatus::Starting),
                 (server_id.clone(), ContextServerStatus::Running),
@@ -1382,34 +1594,38 @@ async fn test_http_server_reinitializes_after_session_rejection(cx: &mut TestApp
                 .expect("running server should have a client")
         });
 
-        old_client
+        let error = old_client
             .request::<context_server::types::requests::ListTools>(())
             .await
-            .expect_err("request rejected with an expired session should fail");
-        // Drop our handle so the dead client fully goes away: a lingering
-        // client would compete with its successor for the reused transport's
-        // response channel and starve the restart's initialize handshake.
+            .expect_err("request should fail when session recovery is rejected");
+        assert!(
+            format!("{error:#}").contains("session recovery failed"),
+            "unexpected error: {error:#}"
+        );
         drop(old_client);
 
         cx.run_until_parked();
 
-        store.read_with(cx, |store, _| {
+        assert_eq!(
+            initialize_count.load(Ordering::SeqCst),
+            3,
+            "the store should have restarted the client with a fresh handshake"
+        );
+
+        let new_client = store.read_with(cx, |store, _| {
             store
                 .get_running_server(&server_id)
                 .expect("server should be running again")
                 .client()
                 .expect("restarted server should have a client")
         });
+
+        new_client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect("a request through the restarted client should succeed");
         // Dropping the events guard asserts no further status change happened.
     }
-
-    cx.update(|cx| {
-        assert_eq!(
-            store.read(cx).status_for_server(&server_id),
-            Some(ContextServerStatus::Running),
-            "server should recover via re-initialization after a session rejection"
-        );
-    });
 }
 
 // A server may also require authentication on `initialize` itself. The
@@ -1751,6 +1967,26 @@ fn session_expired_response() -> Response<http_client::AsyncBody> {
                 "id": null
             })
             .to_string(),
+        ))
+        .unwrap()
+}
+
+fn session_not_found_404_response() -> Response<http_client::AsyncBody> {
+    Response::builder()
+        .status(404)
+        .header("Content-Type", "application/json")
+        .body(http_client::AsyncBody::from(
+            json!({ "error": "Session not found" }).to_string(),
+        ))
+        .unwrap()
+}
+
+fn server_error_response() -> Response<http_client::AsyncBody> {
+    Response::builder()
+        .status(500)
+        .header("Content-Type", "application/json")
+        .body(http_client::AsyncBody::from(
+            json!({ "error": "Internal server error" }).to_string(),
         ))
         .unwrap()
 }

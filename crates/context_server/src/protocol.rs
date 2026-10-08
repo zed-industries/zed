@@ -25,7 +25,7 @@ impl ModelContextProtocol {
         Self { inner }
     }
 
-    fn supported_protocols() -> Vec<types::ProtocolVersion> {
+    pub(crate) fn supported_protocols() -> Vec<types::ProtocolVersion> {
         vec![
             types::ProtocolVersion(types::LATEST_PROTOCOL_VERSION.to_string()),
             types::ProtocolVersion(types::VERSION_2025_06_18.to_string()),

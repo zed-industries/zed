@@ -13,7 +13,7 @@ use std::{
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
-use crate::types;
+use crate::types::{self, Notification as _, Request as _};
 
 /// Typed errors returned by the HTTP transport that callers can downcast from
 /// `anyhow::Error` to handle specific failure modes.
@@ -38,7 +38,20 @@ impl std::error::Error for TransportError {}
 
 // Constants from MCP spec
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
-const HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
+const HEADER_PROTOCOL_VERSION: &str = "Mcp-Protocol-Version";
+/// Synthetic JSON-RPC id for the inline initialize request the transport
+/// sends when recovering an expired session. It never reaches the client's
+/// response channel, so it cannot collide with client-assigned ids.
+const SESSION_RECOVERY_REQUEST_ID: &str = "zed-internal-session-recovery";
+
+/// Whether an HTTP status/body pair is the server rejecting our session:
+/// 404 as the streamable-HTTP spec prescribes for unknown sessions, or 400
+/// with an "initialize required" error from servers that predate that
+/// clarification. Callers must additionally require a session id to have been
+/// in use — a sessionless request answered this way is not a rejection.
+fn is_session_rejection(status: u16, error_body: &str) -> bool {
+    status == 404 || (status == 400 && error_body.to_lowercase().contains("initialize required"))
+}
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
 
@@ -264,7 +277,56 @@ impl HttpTransport {
             }
         }
 
-        let request = self.build_request(message.as_bytes(), is_initialize)?;
+        let mut response = self.send_request(message.as_bytes(), is_initialize).await?;
+
+        // A server that expired our session rejects requests carrying the old
+        // session ID: 404 as the streamable-HTTP spec prescribes for unknown
+        // sessions, or 400 with an "initialize required" error from servers
+        // that predate that clarification. Recover transparently instead of
+        // failing the caller's request: run a fresh initialize handshake over
+        // this transport and resend the message, so an idle session expiry
+        // costs one extra round trip instead of a user-visible failure of the
+        // request that discovered it.
+        let (session_rejected, error_body) = if is_initialize {
+            (false, None)
+        } else {
+            self.session_rejection(&mut response).await?
+        };
+        if session_rejected {
+            let status = response.status().as_u16();
+            log::info!(
+                "server rejected the MCP session (HTTP {status}); \
+                 re-initializing the session and retrying the request"
+            );
+            if let Err(err) = self.reinitialize().await {
+                log::error!(
+                    "session recovery failed: {err:#}; failing the transport so the \
+                     owning store restarts the client"
+                );
+                return Err(err.context(format!(
+                    "MCP session no longer valid (HTTP {status}); session recovery failed"
+                )));
+            }
+            // If the resent message is rejected again, `process_response`
+            // fails the send so the owning store restarts the client.
+            response = self.send_request(message.as_bytes(), false).await?;
+            return self.process_response(response, is_notification, None).await;
+        }
+
+        self.process_response(response, is_notification, error_body)
+            .await
+    }
+
+    /// Build and send the HTTP request for `message`, handling a 401 by
+    /// refreshing the OAuth token when a provider is configured and retrying
+    /// once. A 401 that refresh could not resolve becomes an `AuthRequired`
+    /// error.
+    async fn send_request(
+        &self,
+        message: &[u8],
+        is_initialize: bool,
+    ) -> Result<Response<AsyncBody>> {
+        let request = self.build_request(message, is_initialize)?;
         let mut response = self.http_client.send(request).await?;
 
         // On 401, try refreshing the token and retry once.
@@ -286,7 +348,7 @@ impl HttpTransport {
             if let Some(ref provider) = self.token_provider {
                 if provider.try_refresh().await.unwrap_or(false) {
                     // Retry with the refreshed token.
-                    let retry_request = self.build_request(message.as_bytes(), is_initialize)?;
+                    let retry_request = self.build_request(message, is_initialize)?;
                     response = self.http_client.send(retry_request).await?;
 
                     // If still 401 after refresh, give up.
@@ -301,6 +363,156 @@ impl HttpTransport {
             }
         }
 
+        Ok(response)
+    }
+
+    /// Whether `response` is the server rejecting our session: HTTP 404 as the
+    /// streamable-HTTP spec prescribes for unknown sessions, or 400 with an
+    /// "initialize required" error. For a 400 the body must be read to tell a
+    /// rejection from other client errors; it is returned alongside so the
+    /// generic error path need not re-read an already-consumed body.
+    async fn session_rejection(
+        &self,
+        response: &mut Response<AsyncBody>,
+    ) -> Result<(bool, Option<String>)> {
+        if self.session_id.lock().is_none() {
+            return Ok((false, None));
+        }
+        match response.status().as_u16() {
+            404 => {
+                // Drain the body so the connection stays reusable by the
+                // recovery requests that follow.
+                self.read_body_with_idle_timeout(response).await?;
+                Ok((true, None))
+            }
+            400 => {
+                let body = self.read_body_with_idle_timeout(response).await?;
+                let rejected = is_session_rejection(400, &body);
+                Ok((rejected, Some(body)))
+            }
+            _ => Ok((false, None)),
+        }
+    }
+
+    /// Run a fresh MCP initialize handshake over this transport to recover
+    /// from the server expiring our session, updating the session id and the
+    /// negotiated protocol version in place. The handshake messages use a
+    /// synthetic request id and their responses are answered inline; they are
+    /// never forwarded to the client's response channel, so the client
+    /// generation using this transport never sees the recovery.
+    async fn reinitialize(&self) -> Result<()> {
+        let negotiated_version = self.protocol_version.lock().clone();
+        let request = crate::client::Request {
+            jsonrpc: "2.0",
+            id: crate::client::RequestId::Str(SESSION_RECOVERY_REQUEST_ID.to_string()),
+            method: types::requests::Initialize::METHOD,
+            params: types::InitializeParams {
+                protocol_version: types::ProtocolVersion(
+                    negotiated_version
+                        .unwrap_or_else(|| types::LATEST_PROTOCOL_VERSION.to_string()),
+                ),
+                capabilities: types::ClientCapabilities {
+                    experimental: None,
+                    sampling: None,
+                    roots: None,
+                },
+                meta: None,
+                client_info: types::Implementation {
+                    name: "Zed".to_string(),
+                    title: None,
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    description: None,
+                },
+            },
+        };
+        let mut response = self
+            .send_request(serde_json::to_string(&request)?.as_bytes(), true)
+            .await?;
+        if !response.status().is_success() {
+            anyhow::bail!("initialize failed with HTTP {}", response.status().as_u16());
+        }
+
+        // The recovery handshake cannot consume an SSE answer inline — that
+        // requires the client's streaming machinery. Bail so the send fails
+        // and the owning store restarts the client, whose normal initialize
+        // path does support SSE responses.
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok());
+        if content_type.is_some_and(|ct| ct.starts_with(EVENT_STREAM_MIME_TYPE)) {
+            anyhow::bail!(
+                "initialize answered with an SSE stream; falling back to a client restart"
+            );
+        }
+
+        if let Some(session_id) = response
+            .headers()
+            .get(HEADER_SESSION_ID)
+            .and_then(|v| v.to_str().ok())
+        {
+            *self.session_id.lock() = Some(session_id.to_string());
+        } else {
+            *self.session_id.lock() = None;
+        }
+
+        let body = self.read_body_with_idle_timeout(&mut response).await?;
+        let parsed: serde_json::Value = serde_json::from_str(&body)?;
+        if let Some(error) = parsed.get("error") {
+            anyhow::bail!(
+                "initialize rejected: {}",
+                error
+                    .get("message")
+                    .and_then(|message| message.as_str())
+                    .unwrap_or("unknown error")
+            );
+        }
+        if let Some(version) = parsed
+            .pointer("/result/protocolVersion")
+            .and_then(|value| value.as_str())
+        {
+            if !crate::protocol::ModelContextProtocol::supported_protocols()
+                .contains(&types::ProtocolVersion(version.to_string()))
+            {
+                anyhow::bail!("unsupported protocol version negotiated: {version}");
+            }
+            *self.protocol_version.lock() = Some(version.to_string());
+        }
+
+        // Complete the handshake. The notification carries the new session
+        // id, which `build_request` attaches below initialize.
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": types::notifications::Initialized::METHOD,
+        })
+        .to_string();
+        let response = self.send_request(notification.as_bytes(), false).await?;
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "initialized notification failed with HTTP {}",
+                response.status().as_u16()
+            );
+        }
+        // The notification's response body is intentionally not consumed: a
+        // bare 202 is the norm, and a server-initiated message arriving on an
+        // SSE answer here is handled by the store-restart fallback, not this
+        // path.
+
+        Ok(())
+    }
+
+    /// Handle a response based on status and content type: JSON bodies are
+    /// forwarded to the client's response channel, SSE responses are set up
+    /// for streaming, and a bare 202 acknowledges a notification. Other
+    /// errors go to the error channel — except a session rejection, which
+    /// fails the send so the owning store restarts the client with a fresh
+    /// initialize handshake.
+    async fn process_response(
+        &self,
+        mut response: Response<AsyncBody>,
+        is_notification: bool,
+        prefetched_error_body: Option<String>,
+    ) -> Result<()> {
         // Handle different response types based on status and content-type.
         match response.status() {
             status if status.is_success() => {
@@ -356,20 +568,19 @@ impl HttpTransport {
             }
             _ => {
                 let status = response.status().as_u16();
-                let error_body = self.read_body_with_idle_timeout(&mut response).await?;
+                let error_body = match prefetched_error_body {
+                    Some(body) => body,
+                    None => self.read_body_with_idle_timeout(&mut response).await?,
+                };
 
-                // A server that has expired our session rejects every request
-                // carrying the old session ID: the MCP streamable-HTTP spec
-                // says such a server may answer 404, and some servers answer
-                // 400 with an "initialize required" error. Failing the send
-                // (rather than just piping the error to `error_tx`) kills the
-                // client so the owning store restarts it with a fresh
-                // initialize handshake; otherwise this request hangs until its
-                // timeout and every later call keeps failing the same way.
-                let session_rejected = self.session_id.lock().is_some()
-                    && (status == 404
-                        || (status == 400
-                            && error_body.to_lowercase().contains("initialize required")));
+                // A session rejection that survived the transparent recovery
+                // attempt (or was never recovered): failing the send (rather
+                // than just piping the error to `error_tx`) kills the client
+                // so the owning store restarts it with a fresh initialize
+                // handshake; otherwise this request hangs until its timeout
+                // and every later call keeps failing the same way.
+                let session_rejected =
+                    self.session_id.lock().is_some() && is_session_rejection(status, &error_body);
                 if session_rejected {
                     log::error!(
                         "server rejected the MCP session (HTTP {status}); \
@@ -1177,6 +1388,213 @@ mod tests {
             vec![None, Some("sess-1".to_string()), None, None,],
             "initialize must omit the session header and a session-less initialize \
              response must clear the stored session id"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_session_recovery_attaches_new_session_id(cx: &mut TestAppContext) {
+        let initialize_count = Arc::new(AtomicUsize::new(0));
+        // The `mcp-session-id` header of each request, in order.
+        let captured_session_headers = Arc::new(SyncMutex::new(Vec::<Option<String>>::new()));
+
+        let client = {
+            let initialize_count = initialize_count.clone();
+            let captured_session_headers = captured_session_headers.clone();
+            make_fake_http_client(move |req| {
+                let initialize_count = initialize_count.clone();
+                let captured_session_headers = captured_session_headers.clone();
+                Box::pin(async move {
+                    let session_header = req
+                        .headers()
+                        .get("mcp-session-id")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|session| session.to_string());
+                    let mut body = req.into_body();
+                    let mut message = String::new();
+                    futures::AsyncReadExt::read_to_string(&mut body, &mut message).await?;
+                    captured_session_headers.lock().push(session_header);
+
+                    if message.contains("\"method\":\"initialize\"") {
+                        let session = if initialize_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                            "session-a"
+                        } else {
+                            "session-b"
+                        };
+                        return Ok(Response::builder()
+                            .status(200)
+                            .header("Content-Type", "application/json")
+                            .header("mcp-session-id", session)
+                            .body(AsyncBody::from(
+                                r#"{"jsonrpc":"2.0","id":"zed-internal-session-recovery","result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"t","version":"1"}}}"#.to_string()
+                            ))
+                            .unwrap());
+                    }
+                    if message.contains("notifications/initialized") {
+                        return json_response(202, "");
+                    }
+                    // Reject requests on the expired session with 404;
+                    // succeed once the recovered session is in use.
+                    if captured_session_headers
+                        .lock()
+                        .last()
+                        .and_then(|header| header.clone())
+                        .as_deref()
+                        == Some("session-a")
+                    {
+                        return json_response(404, r#"{"error":"unknown session id"}"#);
+                    }
+                    json_response(200, r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}"#)
+                })
+            })
+        };
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":0,"method":"initialize"}"#.to_string())
+            .await
+            .expect("initial initialize should succeed");
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#.to_string())
+            .await
+            .expect("request should succeed via transparent session recovery");
+
+        assert_eq!(
+            initialize_count.load(Ordering::SeqCst),
+            2,
+            "the transport should have re-initialized in-band"
+        );
+        assert_eq!(
+            captured_session_headers.lock().as_slice(),
+            [
+                // The initial initialize carries no session id.
+                None,
+                // The request that discovers the expiry carries the old one.
+                Some("session-a".to_string()),
+                // The recovery initialize must not present the stale id.
+                None,
+                // The initialized notification completes the new handshake.
+                Some("session-b".to_string()),
+                // The resent request carries the recovered session id.
+                Some("session-b".to_string()),
+            ],
+            "unexpected session id headers across the recovery"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_session_recovery_falls_back_when_initialize_answered_with_sse(
+        cx: &mut TestAppContext,
+    ) {
+        let client = make_fake_http_client(move |req| {
+            Box::pin(async move {
+                let mut body = req.into_body();
+                let mut message = String::new();
+                futures::AsyncReadExt::read_to_string(&mut body, &mut message).await?;
+                if message.contains("zed-internal-session-recovery") {
+                    // The recovery initialize is answered with SSE, which the
+                    // in-band handshake cannot consume. (Checked before the
+                    // generic initialize branch below: the recovery request
+                    // also carries `"method":"initialize"`.)
+                    return Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "text/event-stream")
+                        .body(AsyncBody::from(b"event: message\ndata: {}\n\n".to_vec()))
+                        .unwrap());
+                }
+                if message.contains("\"method\":\"initialize\"") {
+                    return Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .header("mcp-session-id", "session-a")
+                        .body(AsyncBody::from(
+                            r#"{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"t","version":"1"}}}"#.to_string()
+                        ))
+                        .unwrap());
+                }
+                if message.contains("notifications/initialized") {
+                    return json_response(202, "");
+                }
+                json_response(404, r#"{"error":"unknown session id"}"#)
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":0,"method":"initialize"}"#.to_string())
+            .await
+            .expect("initial initialize should succeed");
+
+        let error = transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#.to_string())
+            .await
+            .expect_err("recovery over an SSE initialize must fail the send");
+        assert!(
+            format!("{error:#}").contains("SSE"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_session_recovery_gives_up_when_resend_rejected_again(cx: &mut TestAppContext) {
+        let client = make_fake_http_client(move |req| {
+            Box::pin(async move {
+                let mut body = req.into_body();
+                let mut message = String::new();
+                futures::AsyncReadExt::read_to_string(&mut body, &mut message).await?;
+                if message.contains("\"method\":\"initialize\"") {
+                    return Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .header("mcp-session-id", "session-a")
+                        .body(AsyncBody::from(
+                            r#"{"jsonrpc":"2.0","id":"zed-internal-session-recovery","result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"t","version":"1"}}}"#.to_string()
+                        ))
+                        .unwrap());
+                }
+                if message.contains("notifications/initialized") {
+                    return json_response(202, "");
+                }
+                // Every session the server hands out is rejected again —
+                // recovery must not loop.
+                json_response(404, r#"{"error":"unknown session id"}"#)
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":0,"method":"initialize"}"#.to_string())
+            .await
+            .expect("initial initialize should succeed");
+
+        let error = transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#.to_string())
+            .await
+            .expect_err("a resend that is rejected again must fail the send");
+        assert!(
+            format!("{error:#}").contains("MCP session no longer valid"),
+            "unexpected error: {error:#}"
         );
     }
 
