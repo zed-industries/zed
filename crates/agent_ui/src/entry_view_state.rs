@@ -242,16 +242,15 @@ impl EntryViewState {
 
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
-                let can_rewind = thread.read(cx).supports_truncate(cx);
-                let has_client_id = message.client_id.is_some();
-                let is_subagent = thread.read(cx).parent_session_id().is_some();
+                let can_rewind = thread
+                    .read(cx)
+                    .can_rewind_to(message.client_id.as_ref(), cx);
                 let source_blocks = message.content.source_blocks();
                 let source_version = message.content.source_version();
                 let source_is_representable = source_blocks
                     .iter()
                     .all(acp_thread::content::can_convert_to_v1);
-                let is_editable =
-                    can_rewind && has_client_id && !is_subagent && source_is_representable;
+                let is_editable = can_rewind && source_is_representable;
                 if let Some(Entry::UserMessage {
                     editor,
                     synced_source_version,
