@@ -253,6 +253,94 @@ impl Default for SerializedPaneGroup {
 }
 
 impl SerializedPaneGroup {
+    /// The items of every pane in this group, in pane order.
+    pub(crate) fn into_items(self) -> Vec<SerializedItem> {
+        match self {
+            SerializedPaneGroup::Group { children, .. } => children
+                .into_iter()
+                .flat_map(SerializedPaneGroup::into_items)
+                .collect(),
+            SerializedPaneGroup::Pane(pane) => pane.children,
+        }
+    }
+
+    /// Removes every item the group lists with one of `item_ids`.
+    ///
+    /// While a restore is in flight two id spaces meet: the layout being restored
+    /// names items minted by the process that saved it, and the items the user
+    /// opens are minted by this one. An item is persisted as
+    /// `(item_id, workspace_id)`, so an id both spaces name can be listed only
+    /// once; a listing that is superseded this way has to go.
+    pub(crate) fn remove_items(&mut self, item_ids: &[ItemId]) {
+        match self {
+            SerializedPaneGroup::Group { children, .. } => {
+                for child in children {
+                    child.remove_items(item_ids);
+                }
+            }
+            SerializedPaneGroup::Pane(pane) => {
+                // Pinned tabs are the leading tabs of a pane, so the pinned count
+                // has to shrink along with every pinned listing that is dropped
+                // here. Otherwise a tab that was not pinned would take the dropped
+                // item's slot and come back pinned on the next restore.
+                let pinned_region = 0..pane.pinned_count;
+                let mut pinned_count = pane.pinned_count;
+                pane.children = std::mem::take(&mut pane.children)
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, item)| {
+                        if !item_ids.contains(&item.item_id) {
+                            return Some(item);
+                        }
+                        if pinned_region.contains(&index) {
+                            pinned_count -= 1;
+                        }
+                        None
+                    })
+                    .collect();
+                pane.pinned_count = pinned_count;
+            }
+        }
+    }
+
+    /// Appends `items` to the group's active pane, or to its first pane when no
+    /// pane is marked active.
+    ///
+    /// This is where items a user opened while a restore was in flight belong in
+    /// the restored layout: the restore installs them into its active pane, so
+    /// the persisted form of that layout has to place them the same way.
+    pub(crate) fn mount_items(&mut self, items: Vec<SerializedItem>) {
+        if items.is_empty() {
+            return;
+        }
+
+        let target = match self.active_pane_mut() {
+            Some(pane) => Some(pane),
+            None => self.first_pane_mut(),
+        };
+        if let Some(pane) = target {
+            pane.children.extend(items);
+        }
+    }
+
+    fn active_pane_mut(&mut self) -> Option<&mut SerializedPane> {
+        match self {
+            SerializedPaneGroup::Pane(pane) => pane.active.then_some(pane),
+            SerializedPaneGroup::Group { children, .. } => children
+                .iter_mut()
+                .find_map(|child| child.active_pane_mut()),
+        }
+    }
+
+    fn first_pane_mut(&mut self) -> Option<&mut SerializedPane> {
+        match self {
+            SerializedPaneGroup::Pane(pane) => Some(pane),
+            SerializedPaneGroup::Group { children, .. } => {
+                children.iter_mut().find_map(|child| child.first_pane_mut())
+            }
+        }
+    }
+
     #[async_recursion(?Send)]
     pub(crate) async fn deserialize(
         self,
@@ -302,7 +390,7 @@ impl SerializedPaneGroup {
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.add_pane(window, cx).downgrade()
+                        workspace.add_restore_pane(window, cx).downgrade()
                     })
                     .log_err()?;
                 let active = serialized_pane.active;
@@ -391,7 +479,13 @@ impl SerializedPane {
 
             if let Some(item_handle) = item_handle {
                 pane.update_in(cx, |pane, window, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, window, cx);
+                    // `activate_pane` is false: the pane is not attached to the
+                    // center until the restored layout is installed, so making it
+                    // the workspace's active pane would point the workspace -- and
+                    // the items the user opens while it restores -- at a pane the
+                    // user cannot see. The pane the layout marks active is
+                    // activated with the rest of the layout at installation.
+                    pane.add_item(item_handle.clone(), false, true, None, window, cx);
                 })?;
             }
         }

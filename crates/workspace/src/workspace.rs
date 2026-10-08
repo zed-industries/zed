@@ -1653,51 +1653,84 @@ pub struct Workspace {
     deferred_save_items: Vec<Box<dyn WeakItemHandle>>,
     persisted_recent_navigation_history: Vec<PathBuf>,
     last_active_project_path: Option<ProjectPath>,
-    /// Whether a restore of this workspace's layout is in flight, shared with the
-    /// [`WorkspaceRestoration`] guard that the restoring future owns. While
-    /// `true`, `serialize_workspace_internal` writes the session/window binding
-    /// but leaves the stored layout alone, because the in-memory center/dock
-    /// layout is still the placeholder the restore is about to replace. Writing
-    /// it now would delete the stored layout being restored, including the `items`
-    /// rows the restore itself reads.
-    restoring_workspace: Rc<Cell<bool>>,
+    /// State of a restore of this workspace's layout, shared with the
+    /// [`WorkspaceRestoration`] guard that the restoring future owns.
+    restoration: Rc<RestorationState>,
+}
+
+/// The state of a restore in flight, shared between the [`Workspace`] and the
+/// [`WorkspaceRestoration`] guard that owns it.
+#[derive(Default)]
+struct RestorationState {
+    /// Whether a restore of the workspace's layout is in flight.
+    ///
+    /// While `true`, `serialize_workspace_internal` must not persist the live
+    /// center layout: it is still the placeholder the restore is about to
+    /// replace, so writing it would delete the stored layout being restored,
+    /// including the `items` rows that items referencing another persisted item
+    /// (such as a markdown preview of a restored editor) read to tell which
+    /// items are part of the restore.
+    in_flight: Cell<bool>,
+    /// The stored layout the restore is reading, retained for as long as it is in
+    /// flight.
+    ///
+    /// It is the layout the workspace's persisted state must keep describing
+    /// while the restore runs, but it is not the whole of that state: the panes
+    /// the user creates in the meantime belong to it too. Keeping the restore
+    /// input here is what lets a serialization racing the restore write both --
+    /// the stored layout with the user's panes mounted into it -- instead of
+    /// choosing between losing the restore input and losing the user's work.
+    ///
+    /// `None` when a restore is not in flight, and for the states a test drives
+    /// without a stored layout.
+    layout: RefCell<Option<SerializedPaneGroup>>,
+}
+
+impl RestorationState {
+    /// Releases the workspace's layout state to the live layout.
+    ///
+    /// Idempotent, so `layout_installed` and `Drop` may both call it.
+    fn release(&self) {
+        self.in_flight.set(false);
+        self.layout.borrow_mut().take();
+    }
 }
 
 /// Guard for the restoration-in-flight state of a [`Workspace`].
 ///
 /// Armed by [`Workspace::begin_restoration`] before the first `await` of the
 /// future that restores a workspace, and held for that future's whole lifetime.
-/// While it is alive, `serialize_workspace_internal` writes only the
-/// session/window binding, so a serialization racing the restore cannot replace
-/// the stored layout the restore is reading.
+/// While it is alive, `serialize_workspace_internal` keeps the stored layout
+/// being restored in place of the placeholder, mounting into it any panes the
+/// user created since, so a serialization racing the restore can neither replace
+/// the stored layout the restore is reading nor drop the user's own items.
 ///
 /// The guard owns the release rather than relying on the restore's success path:
-/// it clears the flag when dropped, which happens when the restored layout is
+/// it releases the state when dropped, which happens when the restored layout is
 /// installed ([`WorkspaceRestoration::layout_installed`]), when the restore fails,
 /// and when the task owning it is cancelled -- dropping a task drops its future
 /// and every local in it, this guard included. No exit path has to remember to
 /// reset anything.
 ///
-/// It touches only its flag cell, so it needs no app context and is safe to drop
-/// while the app is borrowed, which is where task cancellation commonly lands.
+/// It touches only the shared restoration state, so it needs no app context and
+/// is safe to drop while the app is borrowed, which is where task cancellation
+/// commonly lands.
 struct WorkspaceRestoration {
-    restoring: Rc<Cell<bool>>,
+    restoration: Rc<RestorationState>,
 }
 
 impl WorkspaceRestoration {
     /// Releases the guard because the restored layout has been installed: the
-    /// workspace may serialize normally again, starting with the serialization of
-    /// the layout that was just installed.
+    /// live layout is authoritative again and may serialize normally, starting
+    /// with the serialization of the layout that was just installed.
     fn layout_installed(self) {
-        self.restoring.set(false);
+        self.restoration.release();
     }
 }
 
 impl Drop for WorkspaceRestoration {
     fn drop(&mut self) {
-        // Idempotent with `layout_installed`: a restore may instead end early, by
-        // failing or by being cancelled.
-        self.restoring.set(false);
+        self.restoration.release();
     }
 }
 
@@ -2200,7 +2233,7 @@ impl Workspace {
             deferred_save_items: Vec::new(),
             persisted_recent_navigation_history: Vec::new(),
             last_active_project_path: None,
-            restoring_workspace: Rc::new(Cell::new(false)),
+            restoration: Rc::new(RestorationState::default()),
         }
     }
 
@@ -2952,29 +2985,41 @@ impl Workspace {
     }
 
     pub fn is_restoring(&self) -> bool {
-        self.restoring_workspace.get()
+        self.restoration.in_flight.get()
     }
 
-    /// Arms the guard that keeps serialization from replacing the stored layout
-    /// until the returned [`WorkspaceRestoration`] is released or dropped.
+    /// Arms the guard that holds the stored `layout` being restored until the
+    /// returned [`WorkspaceRestoration`] is released or dropped.
     ///
     /// Arm it before the first `await` of a restore: the remote restore does so
     /// before loading toolchains, and `load_workspace` before deserializing items.
-    /// Those two scopes nest, share this flag cell, and either release re-enables
-    /// serialization -- which is what the state means. The inner scope is released
-    /// exactly when the restored layout is installed; the outer one only outlives
-    /// it inside the same task, so both are dropped together when that task is
-    /// cancelled.
-    fn begin_restoration(&mut self) -> WorkspaceRestoration {
-        self.restoring_workspace.set(true);
+    /// Those two scopes nest, share the restoration state, and either release
+    /// re-enables serialization -- which is what the state means. The inner scope
+    /// is released exactly when the restored layout is installed; the outer one
+    /// only outlives it inside the same task, so both are dropped together when
+    /// that task is cancelled.
+    ///
+    /// The layout is what serialization is allowed to persist while the restore
+    /// runs, in place of the placeholder center the restore is still building.
+    /// `None` for a restore whose stored layout is not known here; serialization
+    /// then writes only the session/window binding.
+    fn begin_restoration(&mut self, layout: Option<SerializedPaneGroup>) -> WorkspaceRestoration {
+        self.restoration.in_flight.set(true);
+        *self.restoration.layout.borrow_mut() = layout;
         WorkspaceRestoration {
-            restoring: Rc::clone(&self.restoring_workspace),
+            restoration: Rc::clone(&self.restoration),
         }
+    }
+
+    /// The stored layout a restore in flight is reading, or `None` when the
+    /// workspace is not restoring or the layout is not known.
+    fn restoring_layout(&self) -> Option<SerializedPaneGroup> {
+        self.restoration.layout.borrow().clone()
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_restoring_workspace(&mut self, restoring: bool) {
-        self.restoring_workspace.set(restoring);
+        self.restoration.in_flight.set(restoring);
     }
 
     pub fn set_panels_task(&mut self, task: Task<Result<()>>) {
@@ -4954,6 +4999,28 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
+        self.insert_pane(window, cx, true)
+    }
+
+    /// The pane a restore deserializes items into: like [`Workspace::add_pane`],
+    /// but it does not take focus.
+    ///
+    /// A restore creates its panes before it installs the restored center, so
+    /// they are not attached to the center and not what the user sees or acts in.
+    /// Focusing one -- which is what a new pane normally does -- would move the
+    /// workspace's active pane onto a pane the user cannot see, and the items they
+    /// open in the meantime would be added to that detached pane instead of the
+    /// one on screen, where the center and the saved layout can account for them.
+    fn add_restore_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
+        self.insert_pane(window, cx, false)
+    }
+
+    fn insert_pane(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        focus: bool,
+    ) -> Entity<Pane> {
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(
                 self.weak_handle(),
@@ -4972,7 +5039,9 @@ impl Workspace {
             .detach();
         self.panes.push(pane.clone());
 
-        window.focus(&pane.focus_handle(cx), cx);
+        if focus {
+            window.focus(&pane.focus_handle(cx), cx);
+        }
 
         cx.emit(Event::PaneAdded(pane.clone()));
         pane
@@ -7746,8 +7815,9 @@ impl Workspace {
     /// must still write then, so the workspace is bound to the session that is
     /// ending and the next launch restores it as part of the last session.
     ///
-    /// Paths, docks, panes and items are deliberately left untouched: during a
-    /// restore they describe the workspace being built, not the stored layout.
+    /// Paths, docks, bookmarks, breakpoints, toolchains and recent navigation
+    /// history are deliberately left untouched: during a restore they describe
+    /// the workspace being built, not the workspace being restored.
     fn persist_session_binding(
         &self,
         database_id: WorkspaceId,
@@ -7769,6 +7839,78 @@ impl Workspace {
         })
     }
 
+    /// Writes the state a serialization is allowed to persist while a restore of
+    /// this workspace's layout is in flight.
+    ///
+    /// The stored layout is what the workspace's persisted state must keep
+    /// describing, so it is what gets written: the live center is still the
+    /// placeholder pane the restore is about to replace, and the panes the
+    /// restore deserializes items into are not attached to it yet. It is not
+    /// written verbatim though -- the panes the user created since this workspace
+    /// became active exist nowhere else, and leaving them out would drop them on
+    /// quit. They are mounted into the stored layout's active pane, the pane they
+    /// will share once the restore installs that layout, so both the restore
+    /// input and the user's own work survive.
+    ///
+    /// Only the pane layout is rewritten. Docks, bookmarks, breakpoints,
+    /// toolchains and recent navigation history live in other rows and still hold
+    /// the values being restored, which the placeholder workspace's own would
+    /// overwrite.
+    ///
+    /// The session/window binding is written as well and unconditionally: a quit
+    /// flush during a restore relies on it to bind this workspace to the session
+    /// that just ended, so the next launch selects it for last-session
+    /// restoration instead of leaving it bound to the previous session.
+    fn persist_restoring_state(
+        &self,
+        database_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<()> {
+        let binding = self.persist_session_binding(database_id, window, cx);
+
+        // Without the stored layout there is nothing to merge the user's panes
+        // into, and the placeholder layout still must not be written.
+        let Some(stored_layout) = self.restoring_layout() else {
+            return binding;
+        };
+
+        let user_panes = build_serialized_pane_group(&self.center.root, window, cx);
+        let Some(layout) = restoring_layout_with_user_items(stored_layout, user_panes) else {
+            // The user has not opened anything, so the stored layout still
+            // describes this workspace exactly; leaving it untouched is what
+            // keeps it intact.
+            return binding;
+        };
+
+        // The write re-checks the restoration state when it runs, rather than
+        // writing unconditionally once the session binding has been written: the
+        // restore can end while this task waits its turn. Once it has installed the
+        // restored layout, the serialization `load_workspace` runs writes that whole
+        // live layout -- including the items the user opened, folded into it -- and
+        // this snapshot, which names the items the restore started from, would
+        // replace it, leaving rows that write deleted. While the restore is still in
+        // flight, the stored layout plus the user's items is what the workspace
+        // holds, so writing it is what keeps both.
+        let layout_write = {
+            let db = WorkspaceDb::global(cx);
+            let workspace = self.weak_handle();
+            cx.spawn(async move |cx| {
+                let still_restoring = workspace
+                    .read_with(cx, |workspace, _| workspace.is_restoring())
+                    .unwrap_or(false);
+                if still_restoring {
+                    db.save_center_group(database_id, layout).await;
+                }
+            })
+        };
+
+        cx.background_spawn(async move {
+            layout_write.await;
+            binding.await;
+        })
+    }
+
     fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
@@ -7776,46 +7918,19 @@ impl Workspace {
 
         // While a restore is in flight, `self.center` still holds the placeholder
         // pane: restoring a workspace deserializes items into fresh panes and only
-        // installs the restored center layout at the end. Writing the layout now
-        // would persist an empty pane tree and delete the stored layout being
+        // installs the restored center layout at the end. Writing the live layout
+        // now would persist an empty pane tree and delete the stored layout being
         // restored -- including the `items` rows that items referencing another
         // persisted item (such as a markdown preview of a restored editor) read to
         // tell which items are part of the restore. `load_workspace` serializes
         // again once the layout is installed, which is also when the restore guard
         // is released.
         //
-        // The session/window binding is not part of the layout and must keep being
-        // written: the quit flush relies on it to bind this workspace to the
-        // session that just ended, so the next launch selects it for last-session
-        // restoration instead of leaving it bound to the previous session. Persist
-        // exactly that much while restoring.
+        // The stored layout is not the whole of the persisted state though: the
+        // user is free to work in this workspace while the restore runs, and the
+        // panes they create belong to it. `persist_restoring_state` writes both.
         if self.is_restoring() {
-            return self.persist_session_binding(database_id, window, cx);
-        }
-
-        fn build_serialized_pane_group(
-            pane_group: &Member,
-            window: &mut Window,
-            cx: &mut App,
-        ) -> SerializedPaneGroup {
-            match pane_group {
-                Member::Axis(PaneAxis {
-                    axis,
-                    members,
-                    flexes,
-                    bounding_boxes: _,
-                }) => SerializedPaneGroup::Group {
-                    axis: SerializedAxis(*axis),
-                    children: members
-                        .iter()
-                        .map(|member| build_serialized_pane_group(member, window, cx))
-                        .collect::<Vec<_>>(),
-                    flexes: Some(flexes.lock().clone()),
-                },
-                Member::Pane(pane_handle) => {
-                    SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, window, cx))
-                }
-            }
+            return self.persist_restoring_state(database_id, window, cx);
         }
 
         fn build_serialized_docks(
@@ -7985,8 +8100,11 @@ impl Workspace {
                 // serialization triggered in between would overwrite the stored
                 // layout being restored. The guard releases when this future ends
                 // for any reason; `layout_installed` releases it earlier, once the
-                // restored layout may be serialized.
-                workspace.begin_restoration()
+                // restored layout may be serialized. The layout it holds is the one
+                // being deserialized, so those racing serializations keep writing
+                // it -- merged with the user's own panes -- instead of the
+                // placeholder.
+                workspace.begin_restoration(Some(serialized_workspace.center_group.clone()))
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
 
@@ -8004,17 +8122,9 @@ impl Workspace {
             }
 
             let mut items_by_project_path = HashMap::default();
-            let mut item_ids_by_kind = HashMap::default();
             let mut all_deserialized_items = Vec::default();
             cx.update(|_, cx| {
                 for item in center_items.unwrap_or_default().into_iter().flatten() {
-                    if let Some(serializable_item_handle) = item.to_serializable_item_handle(cx) {
-                        item_ids_by_kind
-                            .entry(serializable_item_handle.serialized_item_kind())
-                            .or_insert(Vec::new())
-                            .push(item.item_id().as_u64() as ItemId);
-                    }
-
                     if let Some(project_path) = item.project_path(cx) {
                         items_by_project_path.insert(project_path, item.clone());
                     }
@@ -8030,13 +8140,34 @@ impl Workspace {
                 })
                 .collect::<Vec<_>>();
 
-            // Remove old panes from workspace panes list
+            // Install the restored layout, keeping the items the user opened while it
+            // was being restored.
             workspace.update_in(cx, |workspace, window, cx| {
                 if let Some((center_group, active_pane)) = center_group {
-                    workspace.remove_panes(workspace.center.root.clone(), window, cx);
+                    let restored_center = PaneGroup::with_root(center_group);
+                    let target_pane = active_pane
+                        .clone()
+                        .unwrap_or_else(|| restored_center.first_pane());
+
+                    // The panes the workspace holds before the restore -- the
+                    // placeholder pane the user works in, plus any pane they split
+                    // off it -- are about to be replaced wholesale, so their items
+                    // have to be carried into the restored layout first. They join
+                    // the restored active pane, the same pane the layout persisted
+                    // while restoring mounted them into.
+                    let user_panes = workspace
+                        .center
+                        .panes()
+                        .into_iter()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let replaced_root = workspace.center.root.clone();
+                    for user_pane in &user_panes {
+                        fold_user_items_into(user_pane, &target_pane, window, cx);
+                    }
 
                     // Swap workspace center group
-                    workspace.center = PaneGroup::with_root(center_group);
+                    workspace.center = restored_center;
                     workspace.center.set_is_center(true);
                     workspace.center.mark_positions(cx);
 
@@ -8046,6 +8177,9 @@ impl Workspace {
                     } else {
                         workspace.set_active_pane(&workspace.center.first_pane(), window, cx);
                     }
+
+                    // Remove old panes from workspace panes list
+                    workspace.remove_panes(replaced_root, window, cx);
                 }
 
                 let docks = serialized_workspace.docks;
@@ -8096,7 +8230,30 @@ impl Workspace {
             // the database filling up, we delete items that haven't been loaded now.
             //
             // The items that have been loaded, have been saved after they've been added to the workspace.
-            let clean_up_tasks = workspace.update_in(cx, |_, window, cx| {
+            //
+            // The loaded items are read from the workspace here, now that the restored
+            // layout is installed, rather than collected from the deserialized items
+            // earlier: the items the user opened while the restore ran are part of the
+            // installed layout too, and if their ids were left out of this set their
+            // rows would be deleted here -- while the layout keeps them -- until their
+            // next serialization happened to rewrite them.
+            let clean_up_tasks = workspace.update_in(cx, |workspace, window, cx| {
+                let live_items = workspace
+                    .panes
+                    .iter()
+                    .flat_map(|pane| pane.read(cx).items().cloned().collect::<Vec<_>>())
+                    .collect::<Vec<_>>();
+
+                let mut item_ids_by_kind = HashMap::<&'static str, Vec<ItemId>>::default();
+                for item in live_items {
+                    if let Some(serializable_item_handle) = item.to_serializable_item_handle(cx) {
+                        item_ids_by_kind
+                            .entry(serializable_item_handle.serialized_item_kind())
+                            .or_insert(Vec::new())
+                            .push(item.item_id().as_u64() as ItemId);
+                    }
+                }
+
                 item_ids_by_kind
                     .into_iter()
                     .map(|(item_kind, loaded_items)| {
@@ -10780,6 +10937,67 @@ fn serialize_pane_handle(
     SerializedPane::new(items, active, pinned_count)
 }
 
+fn build_serialized_pane_group(
+    pane_group: &Member,
+    window: &mut Window,
+    cx: &mut App,
+) -> SerializedPaneGroup {
+    match pane_group {
+        Member::Axis(PaneAxis {
+            axis,
+            members,
+            flexes,
+            bounding_boxes: _,
+        }) => SerializedPaneGroup::Group {
+            axis: SerializedAxis(*axis),
+            children: members
+                .iter()
+                .map(|member| build_serialized_pane_group(member, window, cx))
+                .collect::<Vec<_>>(),
+            flexes: Some(flexes.lock().clone()),
+        },
+        Member::Pane(pane_handle) => {
+            SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, window, cx))
+        }
+    }
+}
+
+/// The layout to persist while a restore is in flight: the stored layout being
+/// restored, with the items of the panes the user created since mounted into its
+/// active pane.
+///
+/// Mounting them there is what the restore itself does when it installs the
+/// layout -- it folds the workspace's pre-restore panes into the restored active
+/// pane -- so the persisted state and the workspace agree both before and after
+/// installation. `None` when the user's panes hold no items, so the stored layout
+/// still describes the workspace exactly and must be left untouched.
+fn restoring_layout_with_user_items(
+    stored_layout: SerializedPaneGroup,
+    user_panes: SerializedPaneGroup,
+) -> Option<SerializedPaneGroup> {
+    let user_items = user_panes.into_items();
+    if user_items.is_empty() {
+        return None;
+    }
+
+    let user_item_ids = user_items
+        .iter()
+        .map(|item| item.item_id)
+        .collect::<Vec<_>>();
+
+    let mut merged = stored_layout;
+    // The stored layout names items minted by the process that saved it, the user's
+    // items are minted by this one, and the two id spaces overlap. An item is
+    // persisted as `(item_id, workspace_id)`, so where they do, one listing has to
+    // go -- and it is the stored one: the row that exists for that id is the live
+    // item's, written over whatever the stored listing described, so only the live
+    // item can be restored from it. Leaving both would fail the row's primary key
+    // and roll back the whole layout write instead.
+    merged.remove_items(&user_item_ids);
+    merged.mount_items(user_items);
+    Some(merged)
+}
+
 pub fn join_channel(
     channel_id: ChannelId,
     app_state: Arc<AppState>,
@@ -11675,8 +11893,11 @@ async fn open_remote_project_inner(
                 // pane, and `load_workspace` only arms its own guard once it is
                 // reached. Serializations can fire in that window, so arm the
                 // guard here, before this path's first await, and hold it (below)
-                // until the restore installs the restored layout.
-                restoration = Some(workspace.begin_restoration());
+                // until the restore installs the restored layout. It holds the
+                // stored layout so those serializations keep writing it rather
+                // than the placeholder.
+                restoration =
+                    Some(workspace.begin_restoration(Some(serialized.center_group.clone())));
             }
 
             workspace
@@ -12338,6 +12559,28 @@ fn move_all_items(
         to_pane.update(cx, |destination, cx| {
             destination.add_item(item_handle, true, true, None, window, cx);
             window.focus(&destination.focus_handle(cx), cx)
+        });
+    }
+}
+
+/// Moves every item out of `user_pane` and into `target_pane`.
+///
+/// Used to carry the panes the workspace held before a restore into the layout
+/// that restore installs. Taking the items one at a time rather than calling
+/// [`move_all_items`]: taking an item does not close the emptied pane, so no
+/// `Remove` event is emitted for a pane the center no longer holds -- a pane's
+/// events are resolved against the center, which by the time they are delivered
+/// has already been replaced by the restored layout. The emptied panes are
+/// dropped when the restored layout is installed.
+fn fold_user_items_into(
+    user_pane: &Entity<Pane>,
+    target_pane: &Entity<Pane>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    while let Some(item) = user_pane.update(cx, |pane, cx| pane.take_active_item(window, cx)) {
+        target_pane.update(cx, |pane, cx| {
+            pane.add_item(item, true, true, None, window, cx)
         });
     }
 }
@@ -20020,7 +20263,8 @@ mod tests {
         cx.update(register_gated_restore_item);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/project"), json!({ "a.rs": "" })).await;
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
@@ -20035,8 +20279,9 @@ mod tests {
         let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
         let stored_item_id = item.entity_id().as_u64();
         let session_id = workspace.read_with(cx, |workspace, _| workspace.session_id().unwrap());
-        let window_id =
-            workspace.update_in(cx, |_, window, _| window.window_handle().window_id().as_u64());
+        let window_id = workspace.update_in(cx, |_, window, _| {
+            window.window_handle().window_id().as_u64()
+        });
         workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.flush_serialization(window, cx)
@@ -20145,7 +20390,8 @@ mod tests {
         cx.update(register_gated_restore_item);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/project"), json!({ "a.rs": "" })).await;
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
@@ -20266,10 +20512,11 @@ mod tests {
         cx.update(register_gated_restore_item);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/project"), json!({ "a.rs": "" })).await;
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-        let (multi_workspace, cx) = cx
-            .add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let (gate_tx, gate_rx) = oneshot::channel();
         GATED_RESTORE_DESERIALIZE.with(|gate| *gate.borrow_mut() = Some(gate_rx));
@@ -20306,9 +20553,8 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let restored = multi_workspace.read_with(cx, |multi_workspace, _| {
-            multi_workspace.workspace().clone()
-        });
+        let restored =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         assert!(
             restored.read_with(cx, |workspace, _| workspace.is_restoring()),
             "the remote restore must be marked as restoring while it awaits its items"
@@ -20333,7 +20579,8 @@ mod tests {
         cx.update(register_gated_restore_item);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/project"), json!({ "a.rs": "" })).await;
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
@@ -20358,7 +20605,9 @@ mod tests {
         assert!(workspace.read_with(cx, |workspace, _| workspace.is_restoring()));
 
         let window = cx.update(|window, _| window.window_handle().downcast::<Workspace>().unwrap());
-        window.update(cx, |_, window, _| window.remove_window()).unwrap();
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
 
         // Release the suspended deserialization so the restore reaches its next
         // window update and fails there.
@@ -20381,7 +20630,8 @@ mod tests {
         cx.update(register_serializable_item::<TestItem>);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/project"), json!({ "a.rs": "" })).await;
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
@@ -20434,17 +20684,20 @@ mod tests {
         );
     }
 
-    // The restoring flag is released on every exit path of a restore, not only
-    // when one installs its layout: `layout_installed` clears it when the layout is
-    // installed, and `Drop` clears it for every other way the restoring future can
-    // end. This pins the protocol itself, apart from how a test drives a restore.
+    // The restoring state is released on every exit path of a restore, not only
+    // when one installs its layout: `layout_installed` releases it when the layout
+    // is installed, and `Drop` releases it for every other way the restoring
+    // future can end. Releasing it must drop the stored layout as well, or a later
+    // serialization would keep writing the layout of a restore that is over. This
+    // pins the protocol itself, apart from how a test drives a restore.
     #[gpui::test]
     async fn test_restoration_guard_releases_the_flag_on_every_exit_path(
         cx: &mut gpui::TestAppContext,
     ) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/project"), json!({ "a.rs": "" })).await;
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
@@ -20452,31 +20705,58 @@ mod tests {
         let is_restoring = |cx: &mut gpui::TestAppContext| {
             workspace.read_with(cx, |workspace, _| workspace.is_restoring())
         };
+        let stored_layout = |cx: &mut gpui::TestAppContext| {
+            workspace.read_with(cx, |workspace, _| workspace.restoring_layout())
+        };
+        let layout = || {
+            SerializedPaneGroup::Pane(SerializedPane::new(
+                vec![SerializedItem::new("TestItem", 1, true, false)],
+                true,
+                0,
+            ))
+        };
 
         // A restore that is abandoned instead of installing a layout: the guard's
         // `Drop` is what re-enables serialization.
-        let guard = workspace.update(cx, |workspace, _| workspace.begin_restoration());
+        let guard = workspace.update(cx, |workspace, _| {
+            workspace.begin_restoration(Some(layout()))
+        });
         assert!(is_restoring(cx));
+        assert!(stored_layout(cx).is_some());
         drop(guard);
         assert!(
             !is_restoring(cx),
             "dropping the guard without installing a layout must clear the restoring state"
         );
+        assert!(
+            stored_layout(cx).is_none(),
+            "dropping the guard must release the stored layout as well"
+        );
 
         // A restore that installs its layout: the explicit release clears the flag.
-        let guard = workspace.update(cx, |workspace, _| workspace.begin_restoration());
+        let guard = workspace.update(cx, |workspace, _| {
+            workspace.begin_restoration(Some(layout()))
+        });
         guard.layout_installed();
         assert!(
             !is_restoring(cx),
             "installing the layout must clear the restoring state"
+        );
+        assert!(
+            stored_layout(cx).is_none(),
+            "installing the layout must release the stored layout"
         );
 
         // One restore can hold two nested scopes -- the remote path arms one before
         // its toolchain load and `load_workspace` arms another before installing the
         // layout. Installing the layout releases the inner scope, which is what
         // re-enables serialization; the outer scope is dropped with the same task.
-        let outer = workspace.update(cx, |workspace, _| workspace.begin_restoration());
-        let inner = workspace.update(cx, |workspace, _| workspace.begin_restoration());
+        let outer = workspace.update(cx, |workspace, _| {
+            workspace.begin_restoration(Some(layout()))
+        });
+        let inner = workspace.update(cx, |workspace, _| {
+            workspace.begin_restoration(Some(layout()))
+        });
         assert!(is_restoring(cx));
         inner.layout_installed();
         assert!(
@@ -20485,6 +20765,465 @@ mod tests {
         );
         drop(outer);
         assert!(!is_restoring(cx));
+        assert!(stored_layout(cx).is_none());
+    }
+
+    // Starts restoring `serialized` into `workspace`, suspended on the
+    // `GATED_RESTORE_ITEM` it holds, and returns the sender that lets the restore
+    // finish.
+    //
+    // On return the restore is genuinely in flight: the workspace still shows the
+    // placeholder pane, which is the workspace a user works in while a project
+    // loads, and the restoration guard holds `serialized`'s layout.
+    fn start_suspended_restore(
+        workspace: &Entity<Workspace>,
+        serialized: SerializedWorkspace,
+        cx: &mut VisualTestContext,
+    ) -> (
+        oneshot::Sender<()>,
+        Task<Result<Vec<Option<Box<dyn ItemHandle>>>>>,
+    ) {
+        let (gate_tx, gate_rx) = oneshot::channel();
+        GATED_RESTORE_DESERIALIZE.with(|gate| *gate.borrow_mut() = Some(gate_rx));
+        let restore = workspace.update_in(cx, |_workspace, window, cx| {
+            Workspace::load_workspace(serialized, Vec::new(), window, cx)
+        });
+        cx.run_until_parked();
+        assert!(
+            workspace.read_with(cx, |workspace, _| workspace.is_restoring()),
+            "the restore must be in flight for this test"
+        );
+        (gate_tx, restore)
+    }
+
+    /// Whether the layout saved for `workspace_id` lists the item with `item_id`.
+    fn saves_item(cx: &mut VisualTestContext, workspace_id: WorkspaceId, item_id: u64) -> bool {
+        cx.update(|_, cx| {
+            WorkspaceDb::global(cx)
+                .contains_serialized_item(workspace_id, item_id)
+                .expect("querying the saved layout")
+        })
+    }
+
+    /// The workspace saved for `workspace_id`, which is what the next launch
+    /// restores.
+    fn saved_workspace(
+        cx: &mut VisualTestContext,
+        workspace_id: WorkspaceId,
+    ) -> SerializedWorkspace {
+        cx.update(|_, cx| {
+            WorkspaceDb::global(cx)
+                .workspace_for_id(workspace_id)
+                .expect("the workspace must have a saved row")
+        })
+    }
+
+    /// The layout a restore of two panes reads: one pane the restore can finish,
+    /// with one item, marked active, and one whose item stays suspended on the gate
+    /// so the restore is in flight when the test acts.
+    fn serialized_two_pane_restore(
+        workspace_id: WorkspaceId,
+        restored_item_id: u64,
+    ) -> SerializedWorkspace {
+        serialized_restore(
+            workspace_id,
+            SerializedPaneGroup::Group {
+                axis: SerializedAxis(gpui::Axis::Vertical),
+                flexes: None,
+                children: vec![
+                    SerializedPaneGroup::Pane(SerializedPane::new(
+                        vec![SerializedItem::new(
+                            "TestItem",
+                            restored_item_id,
+                            true,
+                            false,
+                        )],
+                        true,
+                        0,
+                    )),
+                    SerializedPaneGroup::Pane(SerializedPane::new(
+                        vec![SerializedItem::new(GATED_RESTORE_ITEM, 2, false, false)],
+                        false,
+                        0,
+                    )),
+                ],
+            },
+        )
+    }
+
+    // A quit during a restore must save both halves of the workspace's state: the
+    // layout the restore is reading, which the live placeholder pane would
+    // replace, and the items the user opened in the workspace that became active
+    // before it. Writing only the session binding -- as a restore used to -- drops
+    // the user's item, even though hot exit silently accepted its serialization.
+    #[gpui::test]
+    async fn test_quit_during_restore_saves_the_users_items_with_the_restored_layout(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(register_serializable_item::<TestItem>);
+        cx.update(register_gated_restore_item);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        workspace.update(cx, |workspace, _| workspace.set_random_database_id());
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+
+        // The item this workspace had open when it was last saved: it is the layout
+        // the restore reads, and the row the restore will deserialize.
+        let restored_item = cx.new(|cx| TestItem::new(cx).with_label("restored"));
+        let restored_item_id = restored_item.entity_id().as_u64();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(restored_item.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+        assert!(
+            saves_item(cx, workspace_id, restored_item_id),
+            "the workspace must have a saved layout to restore"
+        );
+
+        // The replacement workspace: its live panes no longer hold the saved item,
+        // and the restore of the saved layout is in flight.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.remove_item(restored_item.entity_id(), false, false, window, cx)
+            });
+        });
+        let (_gate_tx, _restore) = start_suspended_restore(
+            &workspace,
+            serialized_two_pane_restore(workspace_id, restored_item_id),
+            cx,
+        );
+
+        // The items the user creates in the active workspace: one untitled, as the
+        // finding's report has it, and one backed by a file. Both are dirty, and
+        // hot exit accepts the serialization of each without a prompt -- so their
+        // contents are written by their own serialization, and only the layout write
+        // can record that they belong to the workspace.
+        let untitled_item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("untitled")
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        let untitled_item_id = untitled_item.entity_id().as_u64();
+        let file_item = cx.new(|cx| {
+            let project_item = TestProjectItem::new(1, "a.rs", cx);
+            TestItem::new(cx)
+                .with_label("file")
+                .with_project_items(&[project_item])
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        let file_item_id = file_item.entity_id().as_u64();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(untitled_item.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_item_to_active_pane(Box::new(file_item.clone()), None, true, window, cx);
+        });
+
+        // The quit: hot exit serializes the dirty items and accepts them without a
+        // prompt, and the flush that follows writes what the next launch reads.
+        let prepared = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.prepare_to_close(CloseIntent::Quit, window, cx)
+        });
+        cx.run_until_parked();
+        assert!(
+            !cx.has_pending_prompt(),
+            "hot exit must not prompt for items it serialized during a restore"
+        );
+        assert!(
+            prepared.await.unwrap(),
+            "quitting must not be cancelled by a save prompt"
+        );
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+
+        assert!(
+            saves_item(cx, workspace_id, restored_item_id),
+            "the quit flush must not replace the layout the restore is reading"
+        );
+        for (label, item_id) in [
+            ("untitled", untitled_item_id),
+            ("file-backed", file_item_id),
+        ] {
+            assert!(
+                saves_item(cx, workspace_id, item_id),
+                "the quit flush must record the {label} item the user created while restoring"
+            );
+        }
+
+        // What the next launch reads: the layout being restored, with the items the
+        // user opened mounted into the restored active pane and nothing else
+        // touched.
+        let saved = saved_workspace(cx, workspace_id);
+        assert_eq!(
+            saved
+                .center_group
+                .clone()
+                .into_items()
+                .iter()
+                .map(|item| item.item_id)
+                .collect::<Vec<_>>(),
+            vec![restored_item_id, untitled_item_id, file_item_id, 2],
+            "the saved layout must be the restored layout with the user's items in its active pane"
+        );
+
+        // And restoring that saved layout is what the next launch gets: two panes,
+        // the active one holding the restored item and the user's items. A fresh
+        // project, as a fresh launch would have.
+        let next_project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (next, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(next_project, window, cx));
+        next.update_in(cx, |_workspace, window, cx| {
+            Workspace::load_workspace(saved, Vec::new(), window, cx)
+        })
+        .await
+        .unwrap();
+
+        let (panes, active_items) = next.read_with(cx, |workspace, cx| {
+            (
+                workspace.panes().len(),
+                workspace.active_pane().read(cx).items_len(),
+            )
+        });
+        assert_eq!(panes, 2, "the restored layout must keep its pane structure");
+        assert_eq!(
+            active_items, 3,
+            "the next launch must restore the restored item and both of the user's items"
+        );
+    }
+
+    // The restore installs the pane structure it deserialized in place of the
+    // workspace's placeholder pane. Items the user opened in that pane while the
+    // restore was pending must move into the restored active pane, not be dropped
+    // with the pane that held them.
+    #[gpui::test]
+    async fn test_user_items_created_while_restoring_survive_the_install(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(register_serializable_item::<TestItem>);
+        cx.update(register_gated_restore_item);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        workspace.update(cx, |workspace, _| workspace.set_random_database_id());
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+
+        let (gate_tx, restore) =
+            start_suspended_restore(&workspace, serialized_two_pane_restore(workspace_id, 1), cx);
+
+        let user_item = cx.new(|cx| TestItem::new(cx).with_label("user").with_dirty(true));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(user_item.clone()), None, true, window, cx);
+        });
+
+        gate_tx.send(()).ok();
+        restore.await.unwrap();
+        assert!(
+            !workspace.read_with(cx, |workspace, _| workspace.is_restoring()),
+            "the completed restore must release the restoring state"
+        );
+
+        let (panes, active_items) = workspace.read_with(cx, |workspace, cx| {
+            (
+                workspace.panes().len(),
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .map(|item| item.item_id())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        assert_eq!(
+            panes, 2,
+            "the placeholder pane must not outlive the restored layout"
+        );
+        assert!(
+            active_items.contains(&user_item.entity_id()),
+            "the item the user created while restoring must survive the install"
+        );
+        assert_eq!(
+            active_items.len(),
+            2,
+            "the user's item must join the restored item in the restored active pane"
+        );
+    }
+
+    // The user can split a pane while a restore is pending, and open items in
+    // both halves. Those panes are the workspace's own, so every item in them
+    // joins the restored active pane when the restore installs: the items survive
+    // even though the pane structure built during the pending window does not.
+    #[gpui::test]
+    async fn test_user_panes_created_while_restoring_are_folded_into_the_restored_pane(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(register_serializable_item::<TestItem>);
+        cx.update(register_gated_restore_item);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        workspace.update(cx, |workspace, _| workspace.set_random_database_id());
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+
+        let (gate_tx, restore) =
+            start_suspended_restore(&workspace, serialized_two_pane_restore(workspace_id, 1), cx);
+
+        let user_panes = workspace.update_in(cx, |workspace, window, cx| {
+            let first = workspace.active_pane().clone();
+            let second = workspace.split_pane(first.clone(), SplitDirection::Right, window, cx);
+            [first, second]
+        });
+        let user_items = user_panes
+            .iter()
+            .enumerate()
+            .map(|(index, pane)| {
+                let item = cx.new(|cx| TestItem::new(cx).with_label(&format!("user-{index}")));
+                pane.update_in(cx, |pane, window, cx| {
+                    pane.add_item(Box::new(item.clone()), true, true, None, window, cx);
+                });
+                item
+            })
+            .collect::<Vec<_>>();
+
+        gate_tx.send(()).ok();
+        restore.await.unwrap();
+
+        let (panes, active_items) = workspace.read_with(cx, |workspace, cx| {
+            (
+                workspace.panes().len(),
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .map(|item| item.item_id())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        assert_eq!(
+            panes, 2,
+            "the restored panes must outlive the panes the user split off"
+        );
+        for item in &user_items {
+            assert!(
+                active_items.contains(&item.entity_id()),
+                "every item the user opened while restoring must survive the install"
+            );
+        }
+        assert_eq!(
+            active_items.len(),
+            3,
+            "the restored item and both of the user's items share the restored active pane"
+        );
+    }
+
+    // Cancelling a restore leaves the workspace owning what it holds: the panes
+    // the user built stay the live layout, and the next serialization persists
+    // them. The layout of the abandoned restore is not in the workspace, so it is
+    // not what the saved state describes either -- but the user's items are.
+    #[gpui::test]
+    async fn test_cancelled_restore_keeps_the_users_items_in_the_saved_layout(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(register_serializable_item::<TestItem>);
+        cx.update(register_gated_restore_item);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "a.rs": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        workspace.update(cx, |workspace, _| workspace.set_random_database_id());
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+
+        let restored_item = cx.new(|cx| TestItem::new(cx).with_label("restored"));
+        let restored_item_id = restored_item.entity_id().as_u64();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(restored_item.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.remove_item(restored_item.entity_id(), false, false, window, cx)
+            });
+        });
+
+        let (gate_tx, restore) = start_suspended_restore(
+            &workspace,
+            serialized_two_pane_restore(workspace_id, restored_item_id),
+            cx,
+        );
+        let _gate_tx = gate_tx;
+
+        let user_item = cx.new(|cx| TestItem::new(cx).with_label("user").with_dirty(true));
+        let user_item_id = user_item.entity_id().as_u64();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(user_item.clone()), None, true, window, cx);
+        });
+
+        // The opening task is replaced, or its window closes: the restore is
+        // cancelled by dropping the task that owns it.
+        cx.update(|_, _cx| drop(restore));
+        cx.run_until_parked();
+        assert!(!workspace.read_with(cx, |workspace, _| workspace.is_restoring()));
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+
+        assert!(
+            saves_item(cx, workspace_id, user_item_id),
+            "cancelling the restore must not drop the item the user created"
+        );
+        assert!(
+            !saves_item(cx, workspace_id, restored_item_id),
+            "the layout of the abandoned restore is not what the workspace holds, so it is not saved"
+        );
     }
 
     #[gpui::test]

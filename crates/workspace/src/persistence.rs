@@ -1511,10 +1511,7 @@ impl WorkspaceDb {
                 };
 
                 // Clear out panes and pane_groups
-                conn.exec_bound(sql!(
-                    DELETE FROM pane_groups WHERE workspace_id = ?1;
-                    DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
-                    .context("Clearing old panes")?;
+                Self::clear_pane_layout(conn, workspace.id)?;
 
                 conn.exec_bound(
                     sql!(
@@ -2354,6 +2351,41 @@ impl WorkspaceDb {
             _ => true,
         })
         .collect::<Result<_>>()
+    }
+
+    /// Rewrites the center pane layout persisted for `workspace_id`, leaving every
+    /// other part of the workspace's persisted state -- docks, session binding,
+    /// paths, bookmarks, breakpoints, toolchains, recent navigation history -- as
+    /// stored.
+    ///
+    /// [`Self::save_workspace`] writes all of that together; this is the layout
+    /// half of the same write, for the one caller that must not touch the rest. A
+    /// serialization racing a restore is that caller: the workspace's other state
+    /// still holds the values being restored, and overwriting it with the
+    /// placeholder workspace's would lose them, but the layout may hold panes the
+    /// user created since and so have to be rewritten.
+    pub(crate) async fn save_center_group(
+        &self,
+        workspace_id: WorkspaceId,
+        center_group: SerializedPaneGroup,
+    ) {
+        self.write(move |conn| {
+            conn.with_savepoint("save_center_group", || {
+                Self::clear_pane_layout(conn, workspace_id)?;
+                Self::save_pane_group(conn, workspace_id, &center_group, None)
+                    .context("save pane group")
+            })
+            .log_err();
+        })
+        .await;
+    }
+
+    fn clear_pane_layout(conn: &Connection, workspace_id: WorkspaceId) -> Result<()> {
+        conn.exec_bound(sql!(
+            DELETE FROM pane_groups WHERE workspace_id = ?1;
+            DELETE FROM panes WHERE workspace_id = ?1;))?(workspace_id)
+        .context("Clearing old panes")?;
+        Ok(())
     }
 
     fn save_pane_group(
