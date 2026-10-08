@@ -6351,6 +6351,138 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_wrapped_table_link_interactions_in_all_columns(cx: &mut TestAppContext) {
+        for alignment in ["---", ":---", ":---:", "---:"] {
+            for column_count in 1..=3 {
+                for link_column in 0..column_count {
+                    let source =
+                        wrapped_link_table_with_columns(column_count, link_column, alignment);
+                    let (view, cx) = open_link_interaction_test_window(&source, cx);
+                    let rendered = view
+                        .read_with(cx, |view, _| view.rendered_text.borrow().clone())
+                        .expect("table should be rendered");
+                    assert_eq!(rendered.links.len(), 2);
+                    for link in rendered.links.iter() {
+                        assert!(
+                            rendered
+                                .bounds_for_source_range(link.source_range.clone())
+                                .len()
+                                > 1
+                        );
+                    }
+                    assert_link_mouse_interactions(&view, &rendered, cx);
+                    let plain_text_lines = rendered
+                        .lines
+                        .iter()
+                        .filter(|line| {
+                            matches!(
+                                line.layout.text().as_str(),
+                                "Before" | "After" | "Value" | "1" | "2"
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    for (text, expected_count) in [
+                        ("Before", 1),
+                        ("After", 1),
+                        ("Value", column_count - 1),
+                        ("1", column_count - 1),
+                        ("2", column_count - 1),
+                    ] {
+                        assert_eq!(
+                            plain_text_lines
+                                .iter()
+                                .filter(|line| line.layout.text() == text)
+                                .count(),
+                            expected_count,
+                            "missing plain text cells: text={text}, source={source}"
+                        );
+                    }
+                    let positions = plain_text_lines.iter().flat_map(|line| {
+                        let source_start = line
+                            .source_mappings
+                            .first()
+                            .expect("plain text should have a source mapping")
+                            .source_index;
+                        let source_range = source_start..line.source_end;
+                        let bounds = rendered.bounds_for_source_range(source_range.clone());
+                        assert!(!bounds.is_empty(), "plain text should have bounds");
+                        for bounds in &bounds {
+                            let source_index = rendered
+                                .source_index_for_position(bounds.center())
+                                .expect("position should hit plain text");
+                            assert!(source_range.contains(&source_index));
+                        }
+                        bounds.into_iter().map(|bounds| bounds.center())
+                    });
+                    assert_non_link_mouse_interactions(&view, &rendered, positions, cx);
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_table_link_mouse_release(cx: &mut TestAppContext) {
+        let source = format!("Before\n\n{WRAPPED_LINK_TABLE}");
+        let (view, cx) = open_link_interaction_test_window(&source, cx);
+        let markdown = view.read_with(cx, |view, _| view.markdown.clone());
+        let opened_urls = view.read_with(cx, |view, _| view.opened_urls.clone());
+        let rendered = view
+            .read_with(cx, |view, _| view.rendered_text.borrow().clone())
+            .expect("markdown should be rendered");
+        let mut links = rendered.links.iter();
+        let first_link = links.next().expect("table should contain the first link");
+        let second_link = links.next().expect("table should contain the second link");
+        let bounds = link_bounds_for_visual_rows(&rendered, first_link);
+        assert!(bounds.len() > 1);
+        let first_position = bounds
+            .first()
+            .expect("link should have a first row")
+            .center();
+        let last_position = bounds.last().expect("link should have a last row").center();
+
+        cx.simulate_mouse_move(first_position, None, Modifiers::default());
+        cx.simulate_mouse_down(first_position, MouseButton::Left, Modifiers::default());
+        assert!(opened_urls.borrow().is_empty());
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(markdown.pressed_link.as_ref(), Some(first_link));
+        });
+        cx.simulate_mouse_move(last_position, Some(MouseButton::Left), Modifiers::default());
+        cx.simulate_mouse_up(last_position, MouseButton::Left, Modifiers::default());
+        assert_eq!(
+            opened_urls.borrow().as_slice(),
+            std::slice::from_ref(&first_link.destination_url)
+        );
+        markdown.read_with(cx, |markdown, _| assert!(markdown.pressed_link.is_none()));
+
+        let other_link_position = rendered
+            .bounds_for_source_range(second_link.source_range.clone())
+            .into_iter()
+            .next()
+            .expect("second link should have bounds")
+            .center();
+        let outside_position = rendered
+            .bounds_for_source_range(0.."Before".len())
+            .into_iter()
+            .next()
+            .expect("paragraph should have bounds")
+            .center();
+        for position in [other_link_position, outside_position] {
+            opened_urls.borrow_mut().clear();
+            markdown.read_with(cx, |markdown, _| assert!(markdown.pressed_link.is_none()));
+            cx.simulate_mouse_move(first_position, None, Modifiers::default());
+            cx.simulate_mouse_down(first_position, MouseButton::Left, Modifiers::default());
+            assert!(opened_urls.borrow().is_empty());
+            markdown.read_with(cx, |markdown, _| {
+                assert_eq!(markdown.pressed_link.as_ref(), Some(first_link));
+            });
+            cx.simulate_mouse_move(position, Some(MouseButton::Left), Modifiers::default());
+            cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
+            assert!(opened_urls.borrow().is_empty());
+            markdown.read_with(cx, |markdown, _| assert!(markdown.pressed_link.is_none()));
+        }
+    }
+
+    #[gpui::test]
     fn test_table_columns_are_sized_to_their_content(cx: &mut TestAppContext) {
         fn cells(row: &str) -> impl Iterator<Item = &str> {
             row.trim().trim_matches('|').split('|')
