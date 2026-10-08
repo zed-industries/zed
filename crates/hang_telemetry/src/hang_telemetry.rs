@@ -12,9 +12,11 @@ use std::time::{Duration, Instant};
 
 use gpui::App;
 use gpui::profiler::hang::{
-    HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason, HangTrigger,
-    MEASUREMENT_VERSION, SerializedHangIncident,
+    HangIncident, HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason,
+    HangTrigger, MEASUREMENT_VERSION, SerializedHangIncident,
 };
+use gpui::profiler::journal::ForegroundEvent;
+use serde::Serialize;
 use serde_json::Value;
 use telemetry_events::FlexibleEvent;
 
@@ -26,6 +28,15 @@ const MAX_SERIALIZED_CONTRIBUTORS: usize = 8;
 /// ones with the largest stalls are kept and the incident counts still cover
 /// them all.
 const MAX_REPORTED_INCIDENTS: usize = 10;
+
+/// Cap on the contributors summed across every incident in an event, kept by
+/// total duration, so frequent causes show up even when no single incident
+/// they're in is among the largest.
+const MAX_REPORTED_CONTRIBUTOR_TOTALS: usize = 20;
+
+/// Cap on the distinct contributors tracked between sends, bounding memory
+/// for sessions with many distinct slow tasks.
+const MAX_TRACKED_CONTRIBUTORS: usize = 512;
 
 // A long interval keeps hang telemetry a small fraction of event volume even
 // for pathologically hang-prone sessions; the on-quit flush covers short ones.
@@ -125,6 +136,9 @@ impl HangTelemetry {
     fn handle_poll(&mut self, poll: HangMonitorPoll) {
         let flush = poll.reason == HangMonitorPollReason::Flush;
         let active_time = poll.active_time;
+        for incident in &poll.incidents {
+            self.reporter.add_contributors(incident);
+        }
         let incidents = serialize_incidents(self.startup, poll);
         if !incidents.is_empty()
             && let Some(observe_incidents) = self.observe_incidents.as_mut()
@@ -166,6 +180,37 @@ struct Reporter {
     stall_max_ms: u64,
     /// See [`gpui::profiler::hang::HangDetector::take_active_time`].
     active_time: Duration,
+    active_threshold_incidents: u64,
+    active_budget_incidents: u64,
+    contributor_totals: HashMap<String, ContributorTotal>,
+    contributors_untracked: u64,
+}
+
+/// One contributor's share of every incident since the last send.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+struct ContributorTotal {
+    /// See [`contributor_name`].
+    name: String,
+    /// Incidents it contributed to.
+    incidents: u64,
+    /// Its total duration across those incidents, in milliseconds. Nested
+    /// work, such as a draw inside an input dispatch, counts toward both.
+    total_ms: f64,
+}
+
+/// What a contributor was, without timing: the action's name, where the task
+/// was spawned, or the kind of input or frame work.
+fn contributor_name(event: &ForegroundEvent) -> String {
+    match event {
+        ForegroundEvent::TaskPoll(timing) => {
+            format!("task:{}:{}", timing.location.file(), timing.location.line())
+        }
+        ForegroundEvent::Action(timing) => format!("action:{}", timing.name),
+        ForegroundEvent::Input(timing) => format!("input:{}", timing.kind),
+        ForegroundEvent::Draw(_) => "draw".to_string(),
+        ForegroundEvent::Present(_) => "present".to_string(),
+        ForegroundEvent::SmallPolls(_) => "small_polls".to_string(),
+    }
 }
 
 impl Reporter {
@@ -178,13 +223,48 @@ impl Reporter {
             stall_buckets: [0; 9],
             stall_max_ms: 0,
             active_time: Duration::ZERO,
+            active_threshold_incidents: 0,
+            active_budget_incidents: 0,
+            contributor_totals: HashMap::new(),
+            contributors_untracked: 0,
+        }
+    }
+
+    fn add_contributors(&mut self, incident: &HangIncident) {
+        let mut counted = Vec::new();
+        for event in &incident.contributors {
+            let name = contributor_name(event);
+            if !self.contributor_totals.contains_key(&name)
+                && self.contributor_totals.len() >= MAX_TRACKED_CONTRIBUTORS
+            {
+                self.contributors_untracked += 1;
+                continue;
+            }
+            let total = self
+                .contributor_totals
+                .entry(name.clone())
+                .or_insert_with(|| ContributorTotal {
+                    name: name.clone(),
+                    ..ContributorTotal::default()
+                });
+            total.total_ms += event.duration().as_secs_f64() * 1000.0;
+            if !counted.contains(&name) {
+                total.incidents += 1;
+                counted.push(name);
+            }
         }
     }
 
     fn add(&mut self, incident: SerializedHangIncident) {
         match incident.trigger {
-            HangTrigger::Threshold => self.threshold_incidents += 1,
-            HangTrigger::Budget => self.budget_incidents += 1,
+            HangTrigger::Threshold => {
+                self.threshold_incidents += 1;
+                self.active_threshold_incidents += u64::from(incident.during_active_use);
+            }
+            HangTrigger::Budget => {
+                self.budget_incidents += 1;
+                self.active_budget_incidents += u64::from(incident.during_active_use);
+            }
         }
         let stall_ms = incident.stall_ms.max(0.0).ceil() as u64;
         let bucket = STALL_BUCKETS_MS
@@ -209,6 +289,19 @@ impl Reporter {
         incidents.sort_by(|first, second| second.stall_ms.total_cmp(&first.stall_ms));
         let threshold_incidents = std::mem::take(&mut self.threshold_incidents);
         let budget_incidents = std::mem::take(&mut self.budget_incidents);
+        let mut contributor_totals = std::mem::take(&mut self.contributor_totals)
+            .into_values()
+            .collect::<Vec<_>>();
+        contributor_totals.sort_by(|first, second| second.total_ms.total_cmp(&first.total_ms));
+        let contributor_totals_elided = contributor_totals
+            .len()
+            .saturating_sub(MAX_REPORTED_CONTRIBUTOR_TOTALS)
+            as u64
+            + std::mem::take(&mut self.contributors_untracked);
+        contributor_totals.truncate(MAX_REPORTED_CONTRIBUTOR_TOTALS);
+        for total in &mut contributor_totals {
+            total.total_ms = (total.total_ms * 1000.0).round() / 1000.0;
+        }
         let event = HangIncidentsEvent {
             incidents,
             total_incidents: threshold_incidents + budget_incidents,
@@ -218,6 +311,10 @@ impl Reporter {
             stall_max_ms: std::mem::take(&mut self.stall_max_ms),
             report_window_seconds,
             active_seconds: std::mem::take(&mut self.active_time).as_secs(),
+            active_threshold_incidents: std::mem::take(&mut self.active_threshold_incidents),
+            active_budget_incidents: std::mem::take(&mut self.active_budget_incidents),
+            contributor_totals,
+            contributor_totals_elided,
         };
         event
     }
@@ -236,6 +333,15 @@ struct HangIncidentsEvent {
     /// app (within a minute of a key press, click, or scroll), for rates such
     /// as hangs per active hour.
     active_seconds: u64,
+    /// Of `threshold_incidents`, those during active use.
+    active_threshold_incidents: u64,
+    /// Of `budget_incidents`, those during active use.
+    active_budget_incidents: u64,
+    /// Contributors summed across every incident, not only the reported ones,
+    /// longest total first.
+    contributor_totals: Vec<ContributorTotal>,
+    /// Contributors left out of `contributor_totals` by its cap, or untracked.
+    contributor_totals_elided: u64,
 }
 
 impl HangIncidentsEvent {
@@ -254,6 +360,25 @@ impl HangIncidentsEvent {
                 self.report_window_seconds.into(),
             ),
             ("active_seconds".to_string(), self.active_seconds.into()),
+            (
+                "active_threshold_incidents".to_string(),
+                self.active_threshold_incidents.into(),
+            ),
+            (
+                "active_budget_incidents".to_string(),
+                self.active_budget_incidents.into(),
+            ),
+            (
+                "contributor_totals".to_string(),
+                serde_json::to_value(&self.contributor_totals).unwrap_or_else(|error| {
+                    log::error!("failed to serialize contributor totals: {error}");
+                    Value::Null
+                }),
+            ),
+            (
+                "contributor_totals_elided".to_string(),
+                self.contributor_totals_elided.into(),
+            ),
             (
                 "measurement_version".to_string(),
                 MEASUREMENT_VERSION.into(),
@@ -290,6 +415,77 @@ fn to_value(incidents: &[SerializedHangIncident]) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn reporter_sums_contributors_across_all_incidents() {
+        use gpui::profiler::{ActionTiming, journal::InputTiming};
+
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let action = |name: &'static str, start_ms: u64, end_ms: u64| {
+            ForegroundEvent::Action(ActionTiming {
+                name,
+                start: at(start_ms),
+                end: at(end_ms),
+            })
+        };
+        let mut reporter = Reporter::new();
+        for index in 0..30u64 {
+            let mut contributors = vec![
+                action("editor::Paste", index * 100, index * 100 + 40),
+                ForegroundEvent::Input(InputTiming {
+                    kind: "key_down",
+                    start: at(index * 100),
+                    end: at(index * 100 + 41),
+                    caused_invalidation: true,
+                }),
+            ];
+            if index == 0 {
+                // A name repeated within one incident counts as one incident.
+                contributors.push(action("editor::Paste", 50, 60));
+            }
+            reporter.add_contributors(&incident_with_contributors(contributors));
+        }
+        let event = reporter.take_event();
+
+        assert_eq!(
+            event.contributor_totals,
+            [
+                ContributorTotal {
+                    name: "input:key_down".to_string(),
+                    incidents: 30,
+                    total_ms: 1230.0,
+                },
+                ContributorTotal {
+                    name: "action:editor::Paste".to_string(),
+                    incidents: 30,
+                    total_ms: 1210.0,
+                },
+            ]
+        );
+        assert_eq!(event.contributor_totals_elided, 0);
+        assert!(reporter.take_event().contributor_totals.is_empty());
+    }
+
+    #[test]
+    fn reporter_counts_incidents_during_active_use() {
+        let mut reporter = Reporter::new();
+        for (trigger, during_active_use) in [
+            (HangTrigger::Threshold, true),
+            (HangTrigger::Threshold, false),
+            (HangTrigger::Budget, true),
+        ] {
+            let mut incident = serialized_incident(120.0);
+            incident.trigger = trigger;
+            incident.during_active_use = during_active_use;
+            reporter.add(incident);
+        }
+        let event = reporter.take_event();
+        assert_eq!(event.threshold_incidents, 2);
+        assert_eq!(event.active_threshold_incidents, 1);
+        assert_eq!(event.budget_incidents, 1);
+        assert_eq!(event.active_budget_incidents, 1);
+    }
 
     #[test]
     fn reporter_keeps_largest_incidents_and_counts_all() {
@@ -376,6 +572,10 @@ mod tests {
                 "stall_ms_gt_10000": 0,
                 "report_window_seconds": report_window_seconds,
                 "active_seconds": 0,
+                "active_threshold_incidents": 0,
+                "active_budget_incidents": 0,
+                "contributor_totals": [],
+                "contributor_totals_elided": 0,
                 "measurement_version": 3
             })
         );
@@ -392,6 +592,14 @@ mod tests {
             stall_max_ms: 125,
             report_window_seconds: 1800,
             active_seconds: 900,
+            active_threshold_incidents: 1,
+            active_budget_incidents: 1,
+            contributor_totals: vec![ContributorTotal {
+                name: "action:editor::Paste".to_string(),
+                incidents: 2,
+                total_ms: 250.5,
+            }],
+            contributor_totals_elided: 4,
         }
         .into_flexible_event();
 
@@ -403,6 +611,7 @@ mod tests {
                     "measurement_version": 3,
                     "phase": "steady",
                     "trigger": "threshold",
+                    "during_active_use": false,
                     "start_ms": 10.0,
                     "active_ms": 125.0,
                     "stall_ms": 125.0,
@@ -432,9 +641,34 @@ mod tests {
                 "stall_ms_gt_10000": 0,
                 "report_window_seconds": 1800,
                 "active_seconds": 900,
+                "active_threshold_incidents": 1,
+                "active_budget_incidents": 1,
+                "contributor_totals": [{
+                    "name": "action:editor::Paste",
+                    "incidents": 2,
+                    "total_ms": 250.5
+                }],
+                "contributor_totals_elided": 4,
                 "measurement_version": 3
             })
         );
+    }
+
+    fn incident_with_contributors(contributors: Vec<ForegroundEvent>) -> HangIncident {
+        let start = Instant::now();
+        HangIncident {
+            snapshot: gpui::profiler::journal::FrameSnapshot {
+                interval_start: start,
+                boundary: gpui::profiler::journal::IntervalBoundary::Idle { ended_at: start },
+                events: contributors.clone(),
+                small_polls: Vec::new(),
+                dropped_events: 0,
+                journal_discontinuous: false,
+            },
+            trigger: HangTrigger::Threshold,
+            contributors,
+            during_active_use: false,
+        }
     }
 
     fn serialized_incident(stall_ms: f64) -> SerializedHangIncident {
@@ -442,6 +676,7 @@ mod tests {
             measurement_version: MEASUREMENT_VERSION,
             phase: "steady",
             trigger: HangTrigger::Threshold,
+            during_active_use: false,
             start_ms: 10.0,
             active_ms: stall_ms,
             stall_ms,

@@ -58,6 +58,9 @@ const PASSIVE_INPUT_KINDS: [&str; 3] = ["mouse_move", "mouse_exited", "mouse_pre
 /// by a system suspend.
 #[derive(Default)]
 struct ActiveUse {
+    /// End times of recent deliberate input, oldest first, for
+    /// [`Self::was_active_during`].
+    recent_inputs: std::collections::VecDeque<Instant>,
     accounted_until: Option<Instant>,
     active_until: Option<Instant>,
     first_input_since_accounted: Option<Instant>,
@@ -71,6 +74,7 @@ impl ActiveUse {
             ForegroundJournalEntry::Event(ForegroundEvent::Input(input))
                 if !PASSIVE_INPUT_KINDS.contains(&input.kind) =>
             {
+                self.recent_inputs.push_back(input.end);
                 self.first_input_since_accounted.get_or_insert(input.start);
                 self.last_input_since_accounted = Some(
                     self.last_input_since_accounted
@@ -84,7 +88,27 @@ impl ActiveUse {
         }
     }
 
+    /// Whether the user was actively using the app at some point from
+    /// `start` to `end`: deliberate input during that span or within
+    /// [`ACTIVE_USE_WINDOW`] before it.
+    fn was_active_during(&self, start: Instant, end: Instant) -> bool {
+        let since = start.checked_sub(ACTIVE_USE_WINDOW).unwrap_or(start);
+        self.recent_inputs
+            .iter()
+            .any(|input| *input >= since && *input <= end)
+    }
+
     fn take(&mut self, now: Instant, max_elapsed: Duration) -> Duration {
+        // Incidents are judged soon after they end; inputs older than this
+        // can't be within the active window of anything still being sealed.
+        let retained_since = now.checked_sub(ACTIVE_USE_WINDOW * 10);
+        while self
+            .recent_inputs
+            .front()
+            .is_some_and(|input| retained_since.is_some_and(|since| *input < since))
+        {
+            self.recent_inputs.pop_front();
+        }
         let since = self.accounted_until.replace(now);
         let previous_until = self.active_until;
         let first_input = self.first_input_since_accounted.take();
@@ -118,6 +142,10 @@ pub struct HangIncident {
     /// [`HangTrigger::Budget`], no event crossed the threshold and this instead
     /// holds every event in the interval, longest first.
     pub contributors: Vec<ForegroundEvent>,
+    /// Whether the user was actively using the app during the incident (see
+    /// [`HangDetector::take_active_time`]), so rates per active hour can count
+    /// only incidents that happened during it.
+    pub during_active_use: bool,
 }
 
 /// The detection rule that qualified an interval as a [`HangIncident`].
@@ -186,7 +214,11 @@ impl HangDetector {
             .push_entries(drained.entries)
             .into_iter()
             .filter_map(|snapshot| {
-                HangIncident::detect(snapshot, self.threshold, self.frame_budget)
+                let mut incident =
+                    HangIncident::detect(snapshot, self.threshold, self.frame_budget)?;
+                let (start, end) = incident.active_window();
+                incident.during_active_use = self.activity.was_active_during(start, end);
+                Some(incident)
             })
             .collect()
     }
@@ -205,6 +237,8 @@ pub struct SerializedHangIncident {
     pub phase: &'static str,
     /// `"threshold"` or `"budget"` (see [`HangTrigger`]).
     pub trigger: HangTrigger,
+    /// See [`HangIncident::during_active_use`].
+    pub during_active_use: bool,
     /// When the incident's active window started, in milliseconds since app
     /// startup: the sealing frame's first invalidation, or the earliest
     /// contributor's start when nothing was pending a repaint. Foreground
@@ -360,6 +394,7 @@ impl SerializedHangIncident {
             },
             measurement_version: MEASUREMENT_VERSION,
             trigger: incident.trigger,
+            during_active_use: incident.during_active_use,
             start_ms: since_startup(active_start),
             active_ms: as_millis(active),
             stall_ms: incident
@@ -537,6 +572,7 @@ impl HangIncident {
             snapshot,
             trigger,
             contributors,
+            during_active_use: false,
         })
     }
 }
@@ -1213,6 +1249,13 @@ mod tests {
         assert_eq!(activity.take(at(88), max), Duration::from_secs(4));
         // Time the monitor itself was suspended isn't counted.
         assert_eq!(activity.take(at(130), max), max);
+
+        // Incidents spanning input or within a minute after it are during
+        // active use; ones later than that aren't.
+        assert!(activity.was_active_during(at(79), at(80)));
+        assert!(activity.was_active_during(at(100), at(101)));
+        assert!(!activity.was_active_during(at(141), at(142)));
+        assert!(!activity.was_active_during(at(66), at(70)));
     }
 
     /// Budget hangs are late frames, so busy intervals that presented no frame

@@ -15,5 +15,6 @@ doctest = false
 [dependencies]
 gpui = { workspace = true, features = ["profiler"] }
 log.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 telemetry_events.workspace = true
