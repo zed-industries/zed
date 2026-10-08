@@ -9385,8 +9385,7 @@ dependencies = [
 [[package]]
 name = "khronos-egl"
 version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
+source = "git+https://github.com/zed-industries/khronos-egl?rev=42214b36347b108fd9630ca6254b96dde59e04fe#42214b36347b108fd9630ca6254b96dde59e04fe"
 dependencies = [
  "libc",
  "libloading",
