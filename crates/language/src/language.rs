@@ -1470,7 +1470,7 @@ pub(crate) fn parse_text(grammar: &Grammar, text: &Rope, old_tree: Option<Tree>)
             .parse_with_options(
                 &mut move |offset, _| {
                     chunks.seek(offset);
-                    chunks.next().unwrap_or("").as_bytes()
+                    chunks.peek_bytes().unwrap_or_default()
                 },
                 old_tree.as_ref(),
                 None,
