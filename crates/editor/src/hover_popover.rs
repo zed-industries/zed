@@ -195,7 +195,7 @@ pub fn hover_at_inlay(
                 editor.hover_state.diagnostic_popover = None;
                 editor.hover_state.info_popovers = vec![InfoPopover {
                     symbol_range,
-                    is_fallback_range: false,
+                    fallback_state: None,
                     parsed_content,
                     scroll_handle: ScrollHandle::new(),
                     keyboard_grace: Rc::new(RefCell::new(false)),
@@ -444,7 +444,7 @@ fn show_hover(
                     .flatten();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
-                    is_fallback_range: false,
+                    fallback_state: None,
                     parsed_content,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
@@ -478,12 +478,16 @@ fn show_hover(
             let buffer_snapshot = snapshot.buffer_snapshot();
             for hover_result in hovers_response {
                 // Create symbol range of anchors for highlighting and filtering of future requests.
-                let (range, is_fallback_range) = hover_result
+                let (range, fallback_state) = hover_result
                     .range
                     .and_then(|range| buffer_snapshot.buffer_anchor_range_to_anchor_range(range))
                     .filter(|range| !range.to_offset(buffer_snapshot).is_empty())
-                    .map(|range| (range, false))
-                    .unwrap_or_else(|| (fallback_hover_range(buffer_snapshot, anchor), true));
+                    .map(|range| (range, None))
+                    .unwrap_or_else(|| {
+                        let range = fallback_hover_range(buffer_snapshot, anchor);
+                        let fallback_state = FallbackHoverState::new(buffer_snapshot, &range);
+                        (range, Some(fallback_state))
+                    });
 
                 let blocks = hover_result.contents;
                 let language = hover_result.language;
@@ -501,7 +505,7 @@ fn show_hover(
                     .flatten();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
-                    is_fallback_range,
+                    fallback_state,
                     parsed_content,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
@@ -528,7 +532,7 @@ fn show_hover(
                     .flatten();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(multi_buffer_range),
-                    is_fallback_range: false,
+                    fallback_state: None,
                     parsed_content,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
@@ -567,53 +571,54 @@ fn show_hover(
 }
 
 /// The range to use for a hover result whose language server reported no usable range.
-///
-/// Without a syntax tree, `surrounding_word` prefers the word side of a boundary such as
-/// `foo|+=bar`, which would make the operator's hover cover the identifier. When a word ends
-/// at the anchor and punctuation starts there, the punctuation run is used instead.
 fn fallback_hover_range(buffer_snapshot: &MultiBufferSnapshot, anchor: Anchor) -> Range<Anchor> {
     let offset = anchor.to_offset(buffer_snapshot);
-    let syntax_offset = if offset == buffer_snapshot.len() {
-        // An empty syntax query at EOF can resolve to the root instead of the last token.
-        // Query inside the preceding character, but don't expand trailing whitespace.
+    let syntax_offset = if offset == buffer_snapshot.len()
+        || buffer_snapshot
+            .chars_at(offset)
+            .next()
+            .is_some_and(char::is_whitespace)
+    {
         match buffer_snapshot.reversed_chars_at(offset).next() {
             Some(character) if !character.is_whitespace() => offset - character.len_utf8(),
-            _ => return anchor..anchor,
+            _ if offset == buffer_snapshot.len() => return anchor..anchor,
+            _ => offset,
         }
     } else {
         offset
     };
-    // Whitespace can resolve to an enclosing syntax node; use lexical boundaries there.
     if buffer_snapshot
         .chars_at(syntax_offset)
         .next()
         .is_some_and(|character| !character.is_whitespace())
         && let Some((_, range)) = buffer_snapshot.syntax_ancestor(syntax_offset..syntax_offset)
         && !range.is_empty()
+        && (syntax_offset == offset || range.end == offset)
     {
-        return buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end);
+        return buffer_snapshot.anchor_after(range.start)..buffer_snapshot.anchor_before(range.end);
     }
 
-    let (word_range, kind) = buffer_snapshot.surrounding_word(offset, None);
     let classifier = buffer_snapshot.char_classifier_at(offset);
-    let punctuation_len: usize = buffer_snapshot
+    if buffer_snapshot
         .chars_at(offset)
-        .take_while(|character| classifier.kind(*character) == CharKind::Punctuation)
-        .map(char::len_utf8)
-        .sum();
-    let range = match kind {
-        Some(CharKind::Whitespace) | None => return anchor..anchor,
-        Some(CharKind::Word) if punctuation_len > 0 => offset..offset + punctuation_len,
-        _ => word_range,
-    };
-    buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end)
+        .next()
+        .is_some_and(|character| classifier.kind(character) == CharKind::Punctuation)
+    {
+        return anchor..anchor;
+    }
+
+    let (range, kind) = buffer_snapshot.surrounding_word(offset, None);
+    if kind != Some(CharKind::Word) {
+        return anchor..anchor;
+    }
+    buffer_snapshot.anchor_after(range.start)..buffer_snapshot.anchor_before(range.end)
 }
 
-fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
-    editor.hover_state.info_popovers.iter().any(
+fn same_info_hover(editor: &mut Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
+    editor.hover_state.info_popovers.iter_mut().any(
         |InfoPopover {
              symbol_range,
-             is_fallback_range,
+             fallback_state,
              ..
          }| {
             symbol_range
@@ -622,15 +627,18 @@ fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -
                     let buffer_snapshot = snapshot.buffer_snapshot();
                     let hover_range = range.to_offset(buffer_snapshot);
                     let offset = anchor.to_offset(buffer_snapshot);
-                    // A fallback range's shared endpoint can belong to the next token, unless it is the
-                    // end of the buffer, where no next token exists.
-                    if *is_fallback_range
-                        && offset == hover_range.end
-                        && offset < buffer_snapshot.len()
-                    {
-                        return fallback_hover_range(buffer_snapshot, anchor)
-                            .to_offset(buffer_snapshot)
-                            == hover_range;
+                    if let Some(fallback_state) = fallback_state {
+                        if fallback_state.edit_count != buffer_snapshot.edit_count() {
+                            return false;
+                        }
+                        if offset == hover_range.end {
+                            if fallback_state.non_text_state_update_count
+                                != buffer_snapshot.non_text_state_update_count()
+                            {
+                                *fallback_state = FallbackHoverState::new(buffer_snapshot, &range);
+                            }
+                            return fallback_state.includes_end;
+                        }
                     }
                     // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
                     // use an inclusive range here to check if we should dismiss the popover
@@ -1252,13 +1260,33 @@ impl HoverState {
 
 pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
-    is_fallback_range: bool,
     pub parsed_content: Option<Entity<Markdown>>,
     pub scroll_handle: ScrollHandle,
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Option<Anchor>,
     pub last_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    fallback_state: Option<FallbackHoverState>,
     _subscription: Option<Subscription>,
+}
+
+struct FallbackHoverState {
+    edit_count: usize,
+    non_text_state_update_count: usize,
+    includes_end: bool,
+}
+
+impl FallbackHoverState {
+    fn new(buffer_snapshot: &MultiBufferSnapshot, range: &Range<Anchor>) -> Self {
+        let offsets = range.to_offset(buffer_snapshot);
+        let includes_end = offsets.end == buffer_snapshot.len()
+            || fallback_hover_range(buffer_snapshot, range.end).to_offset(buffer_snapshot)
+                == offsets;
+        Self {
+            edit_count: buffer_snapshot.edit_count(),
+            non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
+            includes_end,
+        }
+    }
 }
 
 impl InfoPopover {
@@ -3689,12 +3717,92 @@ mod tests {
             &request_count,
             &[
                 ("fˇoo+=bar", 0..3, "foo docs", 1),
-                ("fooˇ+=bar", 3..5, "operator docs", 2),
-                ("foo+ˇ=bar", 3..5, "operator docs", 2),
-                ("foo+=ˇbar", 5..8, "bar docs", 3),
-                ("fˇoo+=bar", 0..3, "foo docs", 4),
+                ("fooˇ+=bar", 3..3, "operator docs", 2),
+                ("foo+ˇ=bar", 4..4, "operator docs", 3),
+                ("foo+=ˇbar", 5..8, "bar docs", 4),
+                ("fˇoo+=bar", 0..3, "foo docs", 5),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_fallback_hover_does_not_merge_punctuation(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = plain_text_lsp_context(cx).await;
+        cx.set_state("foo()ˇ+bar");
+
+        for zero_width_range in [false, true] {
+            let request_count = handle_hover_requests(&mut cx, move |position| {
+                let text = match position.character {
+                    3 => "open docs",
+                    4 => "close docs",
+                    5 => "plus docs",
+                    _ => "word docs",
+                };
+                let range = zero_width_range.then(|| lsp::Range::new(position, position));
+                (text, range)
+            });
+            assert_hovers(
+                &mut cx,
+                &request_count,
+                &[
+                    ("foo()ˇ+bar", 5..5, "plus docs", 1),
+                    ("foo(ˇ)+bar", 4..4, "close docs", 2),
+                    ("fooˇ()+bar", 3..3, "open docs", 3),
+                    ("fˇoo()+bar", 0..3, "word docs", 4),
+                ],
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_fallback_hover_refreshes_after_external_edits(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = plain_text_lsp_context(cx).await;
+
+        for (initial, initial_range, edit_range, replacement, edited, edited_range) in [
+            ("fˇoo ", 0..3, 3..3, " bar", "foo ˇbar ", 4..7),
+            (" fˇoo", 1..4, 1..1, "bar ", " ˇbar foo", 1..4),
+            ("foo bˇar ", 4..7, 3..4, "", "foobarˇ ", 0..6),
+            ("fooˇ+ ", 3..3, 3..4, "", "fooˇ ", 0..3),
+        ] {
+            cx.set_state(initial);
+            let request_count = handle_hover_requests(&mut cx, |_| ("docs", None));
+            assert_hovers(
+                &mut cx,
+                &request_count,
+                &[(initial, initial_range, "docs", 1)],
+            );
+
+            cx.update_buffer(|buffer, cx| {
+                buffer.edit([(edit_range, replacement)], None, cx);
+            });
+            assert_hovers(
+                &mut cx,
+                &request_count,
+                &[(edited, edited_range, "docs", 2)],
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_fallback_hover_refreshes_after_language_change(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = plain_text_lsp_context(cx).await;
+        cx.set_state("fooˇ# ");
+        let request_count = handle_hover_requests(&mut cx, |_| ("docs", None));
+        assert_hovers(&mut cx, &request_count, &[("fooˇ# ", 3..3, "docs", 1)]);
+
+        cx.update_buffer(|buffer, cx| {
+            let mut config = buffer
+                .language()
+                .expect("test buffer has a language")
+                .config()
+                .clone();
+            config.word_characters.insert('#');
+            buffer.set_language(Some(Arc::new(Language::new(config, None))), cx);
+        });
+        assert_hovers(&mut cx, &request_count, &[("fooˇ# ", 0..4, "docs", 2)]);
     }
 
     #[gpui::test]
@@ -3726,11 +3834,29 @@ mod tests {
                 ("fn main(){fooˇ+=bar;}", 13..15, "operator docs", 2),
                 ("fn main(){foo+ˇ=bar;}", 13..15, "operator docs", 2),
                 ("fn main(){foo+=ˇbar;}", 15..18, "bar docs", 3),
-                ("fn main(){foo+=baˇr;}", 15..18, "bar docs", 3),
+                ("fn main(){foo+=bˇar;}", 15..18, "bar docs", 3),
                 ("fn main(){foo+=barˇ;}", 18..19, "semicolon docs", 4),
                 ("fn main(){foo+=bar;ˇ}", 19..20, "brace docs", 5),
                 ("fn main(){foo+=bar;}ˇ", 19..20, "brace docs", 5),
                 ("fn main(){fˇoo+=bar;}", 10..13, "foo docs", 6),
+            ],
+        );
+
+        cx.set_state("fn main(){fooˇ+= bar; }");
+        let request_count = handle_hover_requests(&mut cx, |position| match position.character {
+            13..=15 => ("operator docs", None),
+            19..=20 => ("semicolon docs", None),
+            _ => ("brace docs", None),
+        });
+        assert_hovers(
+            &mut cx,
+            &request_count,
+            &[
+                ("fn main(){fooˇ+= bar; }", 13..15, "operator docs", 1),
+                ("fn main(){foo+=ˇ bar; }", 13..15, "operator docs", 1),
+                ("fn main(){foo+= barˇ; }", 19..20, "semicolon docs", 2),
+                ("fn main(){foo+= bar;ˇ }", 19..20, "semicolon docs", 2),
+                ("fn main(){foo+= bar; ˇ}", 21..22, "brace docs", 3),
             ],
         );
     }
@@ -3859,8 +3985,10 @@ mod tests {
             ("foo+=bar", 0, 0..3),
             ("foo+=bar", 1, 0..3),
             // Word end and operator start share an offset: the operator wins.
-            ("foo+=bar", 3, 3..5),
-            ("foo+=bar", 4, 3..5),
+            ("foo+=bar", 3, 3..3),
+            ("foo+=bar", 4, 4..4),
+            ("foo+-bar", 3, 3..3),
+            ("foo+-bar", 4, 4..4),
             // Operator end and word start share an offset: the word wins.
             ("foo+=bar", 5, 5..8),
             ("foo+=bar", 8, 5..8),
@@ -3873,7 +4001,7 @@ mod tests {
             ("foo\n", 4, 4..4),
             ("", 0, 0..0),
             // Ranges are byte offsets, so multi-byte characters must be measured in bytes.
-            ("héllo+é", 6, 6..7),
+            ("héllo+é", 6, 6..6),
             ("héllo+é", 7, 7..9),
             ("héllo+é", 9, 7..9),
         ];
@@ -3890,6 +4018,13 @@ mod tests {
                 *expected,
                 "text {text:?} at offset {offset}",
             );
+            if !expected.is_empty() {
+                assert_eq!(
+                    (range.start.bias(), range.end.bias()),
+                    (Bias::Right, Bias::Left),
+                    "text {text:?} at offset {offset}",
+                );
+            }
         }
     }
 
