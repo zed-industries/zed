@@ -69,3 +69,12 @@ uuid.workspace = true
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 gpui_apple = { workspace = true, features = ["test-support"] }
+objc2-app-kit = { workspace = true, features = [
+    "NSAttributedString",
+    "NSBitmapImageRep",
+    "NSColor",
+    "NSFont",
+    "NSGraphicsContext",
+    "NSImageRep",
+    "NSStringDrawing",
+] }
