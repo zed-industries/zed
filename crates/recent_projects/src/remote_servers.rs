@@ -8,16 +8,17 @@ use crate::{
 mod filter;
 
 use dev_container::{
-    DevContainerConfig, DevContainerContext, find_devcontainer_configs,
-    start_dev_container_with_config,
+    ContainerSummary, DevContainerConfig, DevContainerContext, connection_for_running_container,
+    find_devcontainer_configs, list_running_containers, start_dev_container_with_config,
 };
 use editor::Editor;
 use extension_host::ExtensionStore;
 use filter::{FilterData, FilteredServer};
 use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
 use gpui::{
-    Action, AnyElement, App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, PromptLevel, Subscription, Task, TaskExt, WeakEntity, Window,
+    Action, AnyElement, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, PromptLevel, Subscription, Task, TaskExt, WeakEntity,
+    Window, WindowHandle,
 };
 use log::{debug, info};
 use open_path_prompt::OpenPathDelegate;
@@ -29,8 +30,8 @@ use remote::{
     remote_client::ConnectionIdentifier,
 };
 use settings::{
-    RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
-    watch_config_file,
+    DevContainerConnection, RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore,
+    update_settings_file, watch_config_file,
 };
 use std::{
     borrow::Cow,
@@ -114,6 +115,13 @@ impl CreateRemoteDevContainer {
             progress,
         }
     }
+}
+
+enum RunningContainerProgress {
+    LoadingContainers { _list_task: Task<()> },
+    Selecting(Entity<Picker<RunningContainerPickerDelegate>>),
+    Connecting,
+    Error(SharedString),
 }
 
 #[cfg(target_os = "windows")]
@@ -345,6 +353,133 @@ impl PickerDelegate for DevContainerPickerDelegate {
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
                         }),
+                )
+                .into_any_element(),
+        )
+    }
+}
+
+struct RunningContainerPickerDelegate {
+    selected_index: usize,
+    candidates: Vec<ContainerSummary>,
+    matching_candidates: Vec<ContainerSummary>,
+    parent_modal: WeakEntity<RemoteServerProjects>,
+}
+
+impl RunningContainerPickerDelegate {
+    fn new(
+        candidates: Vec<ContainerSummary>,
+        parent_modal: WeakEntity<RemoteServerProjects>,
+    ) -> Self {
+        Self {
+            selected_index: 0,
+            matching_candidates: candidates.clone(),
+            candidates,
+            parent_modal,
+        }
+    }
+}
+
+impl PickerDelegate for RunningContainerPickerDelegate {
+    type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "running container picker"
+    }
+
+    fn match_count(&self) -> usize {
+        self.matching_candidates.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Select a Running Container".into()
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some(if self.candidates.is_empty() {
+            "No running containers found".into()
+        } else {
+            "No matching containers".into()
+        })
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let query_lower = query.to_lowercase();
+        self.matching_candidates = self
+            .candidates
+            .iter()
+            .filter(|container| {
+                container.name.to_lowercase().contains(&query_lower)
+                    || container.image.to_lowercase().contains(&query_lower)
+            })
+            .cloned()
+            .collect();
+
+        self.selected_index = std::cmp::min(
+            self.selected_index,
+            self.matching_candidates.len().saturating_sub(1),
+        );
+
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(container) = self.matching_candidates.get(self.selected_index).cloned() else {
+            return;
+        };
+        self.parent_modal
+            .update(cx, |modal, cx| {
+                modal.open_running_container(container, window, cx);
+            })
+            .ok();
+    }
+
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.parent_modal
+            .update(cx, |modal, cx| {
+                modal.cancel(&menu::Cancel, window, cx);
+            })
+            .ok();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let container = self.matching_candidates.get(ix)?;
+        Some(
+            ListItem::new(SharedString::from(format!("li-running-container-{}", ix)))
+                .inset(true)
+                .spacing(ui::ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .start_slot(Icon::new(IconName::Box).color(Color::Muted))
+                .child(
+                    v_flex().child(Label::new(container.name.clone())).child(
+                        Label::new(container.image.clone())
+                            .size(ui::LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
                 )
                 .into_any_element(),
         )
@@ -796,6 +931,7 @@ enum Mode {
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
     CreateRemoteDevContainer(CreateRemoteDevContainer),
+    CreateRemoteRunningContainer(RunningContainerProgress),
     #[cfg(target_os = "windows")]
     AddWslDistro(AddWslDistro),
 }
@@ -812,6 +948,7 @@ impl Mode {
 enum RemoteMatch {
     AddServer,
     AddDevContainer,
+    AddRunningContainer,
     AddWsl,
     Separator,
     ServerHeader {
@@ -898,6 +1035,7 @@ impl RemoteServerPickerDelegate {
         let mut matches = Vec::new();
         if self.query.trim().is_empty() {
             matches.push(RemoteMatch::AddServer);
+            matches.push(RemoteMatch::AddRunningContainer);
             if has_open_project && is_local {
                 matches.push(RemoteMatch::AddDevContainer);
             }
@@ -1152,6 +1290,13 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                     })
                     .ok();
             }
+            RemoteMatch::AddRunningContainer => {
+                remote_server_projects
+                    .update(cx, |this, cx| {
+                        this.init_running_container_mode(window, cx);
+                    })
+                    .ok();
+            }
             RemoteMatch::AddDevContainer => {
                 remote_server_projects
                     .update(cx, |this, cx| {
@@ -1265,6 +1410,12 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             RemoteMatch::AddServer => {
                 Some(self.render_action_item(ix, IconName::Plus, "Connect SSH Server", selected))
             }
+            RemoteMatch::AddRunningContainer => Some(self.render_action_item(
+                ix,
+                IconName::Plus,
+                "Connect Running Container",
+                selected,
+            )),
             RemoteMatch::AddDevContainer => {
                 Some(self.render_action_item(ix, IconName::Plus, "Connect Dev Container", selected))
             }
@@ -1892,6 +2043,7 @@ impl RemoteServerProjects {
                 self.create_ssh_server(state.address_editor.clone(), window, cx);
             }
             Mode::CreateRemoteDevContainer(_) => {}
+            Mode::CreateRemoteRunningContainer(_) => {}
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
@@ -2283,38 +2435,148 @@ impl RemoteServerProjects {
             })
             .log_err();
 
-            entity
-                .update(cx, |this, cx| {
-                    this.allow_dismissal = true;
-                    cx.emit(DismissEvent);
-                })
-                .log_err();
-
-            let Some(app_state) = app_state.upgrade() else {
-                return;
-            };
-            let result = open_remote_project(
-                Connection::DevContainer(dev_container_connection).into(),
-                vec![starting_dir].into_iter().map(PathBuf::from).collect(),
+            Self::open_container_project(
+                &entity,
+                dev_container_connection,
+                starting_dir,
                 app_state,
-                OpenOptions {
-                    requesting_window: replace_window,
-                    ..OpenOptions::default()
-                },
+                replace_window,
                 cx,
             )
             .await;
-            if let Err(e) = result {
-                log::error!("Failed to connect: {e:#}");
-                cx.prompt(
-                    gpui::PromptLevel::Critical,
-                    "Failed to connect",
-                    Some(&e.to_string()),
-                    &["OK"],
-                )
-                .await
-                .ok();
-            }
+        })
+        .detach();
+    }
+
+    /// Closes the modal and opens `starting_directory` inside the container,
+    /// prompting if the connection fails.
+    async fn open_container_project(
+        remote_server_projects: &WeakEntity<Self>,
+        connection: DevContainerConnection,
+        starting_directory: String,
+        app_state: std::sync::Weak<AppState>,
+        replace_window: Option<WindowHandle<MultiWorkspace>>,
+        cx: &mut AsyncWindowContext,
+    ) {
+        remote_server_projects
+            .update(cx, |this, cx| {
+                this.allow_dismissal = true;
+                cx.emit(DismissEvent);
+            })
+            .log_err();
+
+        let Some(app_state) = app_state.upgrade() else {
+            return;
+        };
+        let result = open_remote_project(
+            Connection::DevContainer(connection).into(),
+            vec![PathBuf::from(starting_directory)],
+            app_state,
+            OpenOptions {
+                requesting_window: replace_window,
+                ..OpenOptions::default()
+            },
+            cx,
+        )
+        .await;
+        if let Err(error) = result {
+            log::error!("Failed to connect: {error:#}");
+            cx.prompt(
+                gpui::PromptLevel::Critical,
+                "Failed to connect",
+                Some(&error.to_string()),
+                &["OK"],
+            )
+            .await
+            .ok();
+        }
+    }
+
+    fn init_running_container_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let use_podman = dev_container::use_podman(cx);
+        let list_task = cx.spawn_in(window, async move |this, cx| {
+            let result = list_running_containers(use_podman).await;
+            this.update_in(cx, |this, window, cx| {
+                let Mode::CreateRemoteRunningContainer(progress) = &mut this.mode else {
+                    return;
+                };
+                *progress = match result {
+                    Ok(containers) => {
+                        let delegate =
+                            RunningContainerPickerDelegate::new(containers, cx.weak_entity());
+                        RunningContainerProgress::Selecting(
+                            cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded()),
+                        )
+                    }
+                    Err(error) => {
+                        log::error!("Failed to list running containers: {error:?}");
+                        RunningContainerProgress::Error(error.to_string().into())
+                    }
+                };
+                cx.notify();
+            })
+            .log_err();
+        });
+
+        self.mode =
+            Mode::CreateRemoteRunningContainer(RunningContainerProgress::LoadingContainers {
+                _list_task: list_task,
+            });
+        self.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    fn open_running_container(
+        &mut self,
+        container: ContainerSummary,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(app_state) = self
+            .workspace
+            .read_with(cx, |workspace, _| workspace.app_state().clone())
+            .log_err()
+        else {
+            return;
+        };
+        let app_state = Arc::downgrade(&app_state);
+        let replace_window = window.window_handle().downcast::<MultiWorkspace>();
+        let use_podman = dev_container::use_podman(cx);
+
+        self.allow_dismissal = false;
+        self.mode = Mode::CreateRemoteRunningContainer(RunningContainerProgress::Connecting);
+        self.focus_handle(cx).focus(window, cx);
+        cx.notify();
+
+        cx.spawn_in(window, async move |entity, cx| {
+            let (connection, starting_directory) =
+                match connection_for_running_container(&container, use_podman).await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        log::error!("Failed to inspect container {}: {error:?}", container.id);
+                        entity
+                            .update_in(cx, |this, window, cx| {
+                                this.allow_dismissal = true;
+                                this.mode = Mode::CreateRemoteRunningContainer(
+                                    RunningContainerProgress::Error(error.to_string().into()),
+                                );
+                                this.focus_handle(cx).focus(window, cx);
+                                cx.notify();
+                            })
+                            .log_err();
+                        return;
+                    }
+                };
+
+            Self::open_container_project(
+                &entity,
+                connection,
+                starting_directory,
+                app_state,
+                replace_window,
+                cx,
+            )
+            .await;
         })
         .detach();
     }
@@ -2452,6 +2714,75 @@ impl RemoteServerProjects {
                     .into_any_element()
             }
         }
+    }
+
+    fn render_create_running_container(
+        &self,
+        progress: &RunningContainerProgress,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let status = match progress {
+            RunningContainerProgress::Selecting(picker) => {
+                picker.focus_handle(cx).focus(window, cx);
+                return v_flex()
+                    .pb_1()
+                    .child(picker.clone().into_any_element())
+                    .into_any_element();
+            }
+            RunningContainerProgress::LoadingContainers { .. } => {
+                ListItem::new("loading-containers")
+                    .start_slot(
+                        Icon::new(IconName::ArrowCircle)
+                            .color(Color::Muted)
+                            .with_rotate_animation(2),
+                    )
+                    .child(
+                        h_flex()
+                            .opacity(0.6)
+                            .gap_1()
+                            .child(Label::new("Listing Running Containers"))
+                            .child(LoadingLabel::new("")),
+                    )
+            }
+            RunningContainerProgress::Connecting => ListItem::new("connecting-container")
+                .start_slot(
+                    Icon::new(IconName::ArrowCircle)
+                        .color(Color::Muted)
+                        .with_rotate_animation(2),
+                )
+                .child(
+                    h_flex()
+                        .opacity(0.6)
+                        .gap_1()
+                        .child(Label::new("Connecting to Container"))
+                        .child(LoadingLabel::new("")),
+                ),
+            RunningContainerProgress::Error(message) => ListItem::new("running-container-error")
+                .start_slot(Icon::new(IconName::XCircle).color(Color::Error))
+                .child(Label::new("Error Connecting to Container:"))
+                .child(Label::new(message.clone()).buffer_font(cx)),
+        };
+
+        div()
+            .track_focus(&self.focus_handle(cx))
+            .size_full()
+            .child(
+                v_flex()
+                    .pb_1()
+                    .child(
+                        ModalHeader::new()
+                            .child(Headline::new("Running Containers").size(HeadlineSize::XSmall)),
+                    )
+                    .child(ListSeparator)
+                    .child(
+                        status
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .selectable(false),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn render_config_selection(
@@ -3098,6 +3429,9 @@ impl Render for RemoteServerProjects {
                     .into_any_element(),
                 Mode::CreateRemoteDevContainer(state) => self
                     .render_create_dev_container(state, window, cx)
+                    .into_any_element(),
+                Mode::CreateRemoteRunningContainer(progress) => self
+                    .render_create_running_container(progress, window, cx)
                     .into_any_element(),
                 Mode::EditNickname(state) => self
                     .render_edit_nickname(state, window, cx)

@@ -3249,21 +3249,25 @@ fn get_remote_user_from_config(
     {
         return Ok(user.clone());
     }
+    Ok(remote_user_from_inspect(docker_config))
+}
+
+pub(crate) fn remote_user_from_inspect(docker_config: &DockerInspect) -> String {
     if let Some(metadata) = &docker_config.config.labels.metadata {
         for metadatum in metadata {
             if let Some(remote_user) = metadatum.get("remoteUser") {
                 if let Some(remote_user_str) = remote_user.as_str() {
-                    return Ok(remote_user_str.to_string());
+                    return remote_user_str.to_string();
                 }
             }
         }
     }
     if let Some(image_user) = &docker_config.config.image_user {
         if !image_user.is_empty() {
-            return Ok(image_user.to_string());
+            return image_user.to_string();
         }
     }
-    Ok("root".to_string())
+    "root".to_string()
 }
 
 // This should come from spec - see the docs
@@ -3668,6 +3672,7 @@ mod test {
                     metadata: Some(vec![metadata]),
                 },
                 image_user: None,
+                working_dir: None,
                 env: Vec::new(),
             },
             mounts: None,
@@ -3696,6 +3701,7 @@ mod test {
                     metadata: Some(vec![metadata]),
                 },
                 image_user: None,
+                working_dir: None,
                 env: Vec::new(),
             },
             mounts: None,
@@ -3761,6 +3767,7 @@ mod test {
                         metadata: None,
                         },
                     image_user: None,
+                    working_dir: None,
                     env: Vec::new(),
                 },
                 mounts: None,
@@ -3850,6 +3857,7 @@ mod test {
             config: DockerInspectConfig {
                 labels: DockerConfigLabels { metadata: None },
                 image_user: None,
+                working_dir: None,
                 env: Vec::new(),
             },
             mounts: None,
@@ -3917,6 +3925,7 @@ mod test {
                     metadata: Some(metadata),
                 },
                 image_user: None,
+                working_dir: None,
                 env: vec!["PATH=/usr/local/bin:/usr/bin".to_string()],
             },
             mounts: None,
@@ -7351,6 +7360,7 @@ RUN echo $RUBY_VERSION2
                         },
                         env: Vec::new(),
                         image_user: Some("root".to_string()),
+                        working_dir: None,
                     },
                     mounts: None,
                     state: None,
@@ -7382,6 +7392,7 @@ RUN echo $RUBY_VERSION2
                             ]),
                         },
                         image_user: Some("root".to_string()),
+                        working_dir: None,
                         env: Vec::new(),
                     },
                     mounts: None,
@@ -7400,6 +7411,7 @@ RUN echo $RUBY_VERSION2
                             )])]),
                         },
                         image_user: Some("root".to_string()),
+                        working_dir: None,
                         env: vec!["PATH=/initial/path".to_string()],
                     },
                     mounts: None,
@@ -7418,6 +7430,7 @@ RUN echo $RUBY_VERSION2
                             )])]),
                         },
                         image_user: Some("root".to_string()),
+                        working_dir: None,
                         env: vec!["PATH=/initial/path".to_string()],
                     },
                     mounts: Some(vec![DockerInspectMount {
@@ -7453,6 +7466,7 @@ RUN echo $RUBY_VERSION2
                             ]),
                         },
                         image_user: Some("root".to_string()),
+                        working_dir: None,
                         env: Vec::new(),
                     },
                     mounts: None,
@@ -7472,6 +7486,7 @@ RUN echo $RUBY_VERSION2
                         },
                         env: Vec::new(),
                         image_user: Some("root".to_string()),
+                        working_dir: None,
                     },
                     mounts: None,
                     state: None,
@@ -7681,6 +7696,8 @@ RUN echo $RUBY_VERSION2
             }
             Ok(Some(DockerPs {
                 id: "found_docker_ps".to_string(),
+                names: Vec::new(),
+                image: String::new(),
             }))
         }
         fn supports_compose_buildkit(&self) -> bool {
