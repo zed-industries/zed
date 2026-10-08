@@ -106,7 +106,8 @@ impl KeyBinding {
         cx.set_global(VimStyle(enabled));
     }
 
-    fn is_vim_mode(cx: &App) -> bool {
+    /// Returns whether keybindings use Vim-style notation.
+    pub fn is_vim_mode(cx: &App) -> bool {
         cx.try_global::<VimStyle>().is_some_and(|g| g.0)
     }
 
@@ -391,7 +392,7 @@ fn icon_for_key(key: &str, platform_style: PlatformStyle) -> Option<IconName> {
         "up" => Some(IconName::ArrowUp),
         "down" => Some(IconName::ArrowDown),
         "backspace" => Some(IconName::Backspace),
-        "delete" => Some(IconName::Backspace),
+        "delete" => Some(IconName::Delete),
         "return" => Some(IconName::Return),
         "enter" => Some(IconName::Return),
         "tab" => Some(IconName::Tab),
@@ -846,6 +847,21 @@ impl Component for KeyBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_backspace_and_delete_have_distinct_icons() {
+        for platform_style in [
+            PlatformStyle::Mac,
+            PlatformStyle::Linux,
+            PlatformStyle::Windows,
+        ] {
+            let backspace = icon_for_key("backspace", platform_style);
+            let delete = icon_for_key("delete", platform_style);
+            assert!(backspace.is_some());
+            assert!(delete.is_some());
+            assert_ne!(backspace, delete);
+        }
+    }
 
     #[test]
     fn test_text_for_keystroke() {

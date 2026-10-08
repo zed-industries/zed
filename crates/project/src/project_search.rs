@@ -1,7 +1,7 @@
 use std::{
     cell::LazyCell,
     collections::BTreeSet,
-    io::{BufRead, BufReader, Cursor, ErrorKind, Read},
+    io::{Cursor, ErrorKind, Read},
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
@@ -11,8 +11,8 @@ use std::{
 
 use anyhow::Context;
 use async_channel::{Receiver, Sender, bounded, unbounded};
-use collections::HashSet;
-use fs::Fs;
+use collections::HashMap;
+use fs::{Fs, ReadSeek};
 use futures::FutureExt as _;
 use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
@@ -20,13 +20,14 @@ use language::{Buffer, BufferSnapshot, Point};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
+use text::Rope;
 
-use language::ByteContent;
-use util::{ResultExt, maybe, rel_path::RelPath};
-use worktree::{
-    Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings, decode_byte_header,
-    decode_file_text,
+use encoding_rs::Encoding;
+use file_content::{
+    ByteContent, DecodingReader, FILE_ANALYSIS_BYTES, decode_byte_header, detect_encoding,
 };
+use util::{ResultExt, maybe, rel_path::RelPath};
+use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
@@ -167,7 +168,7 @@ impl Search {
     /// Prepares a project search run. The resulting [`SearchResultsHandle`] has to be used to specify whether you're interested in matching buffers
     /// or full search results.
     pub fn into_handle(mut self, query: SearchQuery, cx: &mut App) -> SearchResultsHandle {
-        let mut open_buffers = HashSet::default();
+        let mut open_buffers = HashMap::default();
         let mut unnamed_buffers = Vec::new();
         let mut entryless_file_buffers = Vec::new();
         const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
@@ -183,7 +184,7 @@ impl Search {
             {
                 continue;
             } else if let Some(entry_id) = buffer.entry_id(cx) {
-                open_buffers.insert(entry_id);
+                open_buffers.insert(entry_id, buffer.as_rope().clone());
             } else if searches_all_unnamed_buffers {
                 match (&self.kind, buffer.file()) {
                     (SearchKind::Local { .. }, Some(file)) => {
@@ -614,7 +615,7 @@ impl Search {
     ) {
         _ = maybe!(async move {
             while let Ok((buffer, line_hint)) = rx.recv().await {
-                let snapshot = buffer.read_with(&mut cx, |this, _| this.snapshot());
+                let snapshot = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot());
                 let (tx, rx) = oneshot::channel();
                 find_all_matches_tx
                     .send(FindAllMatchesRequest {
@@ -713,7 +714,7 @@ fn path_key_sort_key(
 
 struct Worker {
     query: Arc<SearchQuery>,
-    open_buffers: Arc<HashSet<ProjectEntryId>>,
+    open_buffers: Arc<HashMap<ProjectEntryId, Rope>>,
     candidates: FindSearchCandidates,
     /// Ok, we're back in background: run full scan & find all matches in a given buffer snapshot.
     /// Then, when you're done, share them via the channel you were given.
@@ -793,7 +794,7 @@ impl Worker {
 struct RequestHandler<'worker> {
     query: &'worker SearchQuery,
     fs: Option<&'worker dyn Fs>,
-    open_entries: &'worker HashSet<ProjectEntryId>,
+    open_entries: &'worker HashMap<ProjectEntryId, Rope>,
     confirm_contents_will_match_tx: &'worker Sender<MatchingEntry>,
 }
 
@@ -834,13 +835,14 @@ impl RequestHandler<'_> {
             let fs = self
                 .fs
                 .context("Trying to query filesystem in remote project search")?;
-            let Some(file) = fs.open_sync(&abs_path).await.log_err() else {
+            let Some(mut file) = fs.open_sync(&abs_path).await.log_err() else {
                 return anyhow::Ok(());
             };
 
-            let mut file = BufReader::new(file);
-            let file_start = file.fill_buf()?;
-            let (bom_encoding, byte_content) = decode_byte_header(file_start);
+            let mut file_start = Vec::with_capacity(8 * 1024);
+            (&mut *file).take(8 * 1024).read_to_end(&mut file_start)?;
+            let (bom_encoding, byte_content) =
+                decode_byte_header(&file_start[..file_start.len().min(FILE_ANALYSIS_BYTES)]);
             if byte_content == ByteContent::Binary {
                 log::debug!("Skipping binary file {abs_path:?}");
                 return Ok(());
@@ -848,27 +850,35 @@ impl RequestHandler<'_> {
 
             let is_plain_utf8 = bom_encoding.is_none()
                 && byte_content == ByteContent::Unknown
-                && is_utf8_prefix(file_start);
+                && is_utf8_prefix(&file_start);
+            let encoding = bom_encoding.or(byte_content.encoding());
 
-            let line_hint = if is_plain_utf8 {
-                match self.query.detect(file).await {
+            let first_match = if is_plain_utf8 {
+                match self
+                    .query
+                    .detect(&mut Cursor::new(file_start).chain(&mut *file))
+                    .await
+                {
                     Ok(line_hint) => line_hint,
                     Err(error)
                         if error
                             .downcast_ref::<std::io::Error>()
                             .is_some_and(|error| error.kind() == ErrorKind::InvalidData) =>
                     {
-                        self.detect_in_decoded_file(fs, &abs_path).await?
+                        self.detect_in_decoded_file(&mut *file, encoding).await?
                     }
                     Err(error) => return Err(error),
                 }
             } else {
-                self.detect_in_decoded_file(fs, &abs_path).await?
+                self.detect_in_decoded_file(&mut *file, encoding).await?
             };
 
-            if let Some(line_hint) = line_hint {
+            if first_match.is_some() {
                 // Yes, we should scan the whole file.
-                entry.should_scan_tx.send((entry.path, line_hint)).await?;
+                entry
+                    .should_scan_tx
+                    .send((entry.path, MatchPositionHint::default()))
+                    .await?;
             }
             Ok(())
         }
@@ -878,12 +888,21 @@ impl RequestHandler<'_> {
 
     async fn detect_in_decoded_file(
         &self,
-        fs: &dyn Fs,
-        abs_path: &Path,
+        file: &mut (dyn ReadSeek + Send),
+        encoding: Option<&'static Encoding>,
     ) -> anyhow::Result<Option<MatchPositionHint>> {
-        let (text, _encoding, _has_bom) = decode_file_text(fs, abs_path).await?;
-        let reader: Box<dyn Read + Send + Sync> = Box::new(Cursor::new(text.into_bytes()));
-        self.query.detect(BufReader::new(reader)).await
+        file.rewind()?;
+        let encoding = match encoding {
+            Some(encoding) => encoding,
+            None => {
+                let encoding = detect_encoding(file).await?;
+                file.rewind()?;
+                encoding
+            }
+        };
+        self.query
+            .detect(&mut DecodingReader::new(file, encoding))
+            .await
     }
 
     async fn handle_scan_path(&self, req: InputPath) {
@@ -911,9 +930,15 @@ impl RequestHandler<'_> {
                 }
             }
 
-            if self.open_entries.contains(&entry.id) {
-                // The buffer is already in memory and that's the version we want to scan;
-                // hence skip the dilly-dally and look for all matches straight away.
+            if let Some(text) = self.open_entries.get(&entry.id) {
+                if self
+                    .query
+                    .detect(&mut text.bytes_in_range(0..text.len()))
+                    .await?
+                    .is_none()
+                {
+                    return Ok(());
+                }
                 should_scan_tx
                     .send((
                         ProjectPath {

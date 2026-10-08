@@ -6,7 +6,7 @@ description: "Overview of programming language support in Zed, including built-i
 # Language Support in Zed
 
 Zed supports hundreds of programming languages and text formats.
-Some work out-of-the-box and others rely on 3rd party extensions.
+Some work out-of-the-box and others rely on [3rd party extensions](./extensions/installing-extensions.md).
 
 > The ones included out-of-the-box, natively built into Zed, are marked with \*.
 
@@ -29,6 +29,7 @@ Some work out-of-the-box and others rely on 3rd party extensions.
 - [Elixir](./languages/elixir.md)
 - [Elm](./languages/elm.md)
 - [Emmet](./languages/emmet.md)
+- [Env](./languages/env.md) \*
 - [Erlang](./languages/erlang.md)
 - [Fish](./languages/fish.md)
 - [GDScript](./languages/gdscript.md)
