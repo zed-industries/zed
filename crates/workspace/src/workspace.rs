@@ -7539,7 +7539,7 @@ impl Workspace {
             return Task::ready(());
         };
 
-        let window_bounds = window.inner_window_bounds();
+        let window_bounds = window.window_bounds();
         let database_id = self.database_id;
         let has_paths = !self.root_paths(cx).is_empty();
         let db = WorkspaceDb::global(cx);
@@ -12489,7 +12489,7 @@ mod tests {
     };
     use fs::FakeFs;
     use gpui::{
-        DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
+        DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Pixels, Render, TestAppContext,
         UpdateGlobal, VisualTestContext, px,
     };
     use project::{Project, ProjectEntryId, WorktreeId};
@@ -19288,6 +19288,62 @@ mod tests {
             cx.set_global(db::AppDatabase::test_new());
             theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_window_bounds_remain_stable_when_reopened_with_client_insets(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "a.txt": "" })).await;
+        let initial_bounds = Bounds::new(point(px(80.0), px(45.0)), size(px(947.0), px(1008.0)));
+        let database = cx.update(|cx| WorkspaceDb::global(cx));
+
+        for client_inset in [Pixels::ZERO, px(10.0)] {
+            let workspace_id = database.next_id().await.unwrap();
+            let mut restored_bounds = initial_bounds;
+
+            for _ in 0..3 {
+                // test_new registers client handlers, so each reopen needs a fresh project.
+                let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+                let window_handle = cx
+                    .update(|cx| {
+                        cx.open_window(
+                            WindowOptions {
+                                window_bounds: Some(WindowBounds::Windowed(restored_bounds)),
+                                ..Default::default()
+                            },
+                            |window, cx| {
+                                cx.new(|cx| Workspace::test_new(project.clone(), window, cx))
+                            },
+                        )
+                    })
+                    .unwrap();
+                let workspace = window_handle.root(cx).unwrap();
+                let mut window_cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+                let flush_task = workspace.update_in(&mut window_cx, |workspace, window, cx| {
+                    workspace.set_database_id(workspace_id);
+                    window.set_client_inset(client_inset);
+                    workspace.flush_serialization(window, cx)
+                });
+                flush_task.await;
+
+                let serialized = database
+                    .workspace_for_id(workspace_id)
+                    .expect("workspace should exist after serialization");
+                let saved_bounds = serialized
+                    .window_bounds
+                    .expect("window bounds should be persisted")
+                    .0;
+                assert_eq!(saved_bounds, WindowBounds::Windowed(initial_bounds));
+                restored_bounds = saved_bounds.get_bounds();
+
+                workspace.update_in(&mut window_cx, |_, window, _| window.remove_window());
+            }
+        }
     }
 
     #[gpui::test]
