@@ -762,6 +762,15 @@ impl UserStore {
         cx.notify();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_current_organization_plan_for_test(&mut self, plan: Plan, cx: &mut Context<Self>) {
+        if let Some(organization) = &self.current_organization {
+            self.plans_by_organization
+                .insert(organization.id.clone(), plan);
+        }
+        cx.notify();
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -830,6 +839,13 @@ impl UserStore {
 
     pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
         self.edit_prediction_usage
+    }
+
+    /// Returns whether the current plan doesn't include Zed's hosted edit predictions. This is
+    /// decided by plan rather than by the usage limit Cloud reports, because Cloud may still
+    /// report a nonzero Free allowance while it denies requests.
+    pub fn edit_predictions_excluded_from_plan(&self) -> bool {
+        self.plan() == Some(Plan::ZedFree)
     }
 
     pub fn update_edit_prediction_usage(
@@ -902,29 +918,29 @@ impl UserStore {
     }
 
     fn handle_message_to_client(this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
-        cx.spawn(async move |cx| {
-            match message {
-                MessageToClient::UserUpdated => {
-                    let (cloud_client, system_id) = cx
-                        .update(|cx| {
-                            this.read_with(cx, |this, _cx| {
-                                this.client.upgrade().map(|client| {
-                                    let system_id =
-                                        client.telemetry().system_id().map(|id| id.to_string());
-                                    (client.cloud_client(), system_id)
-                                })
-                            })
-                        })?
-                        .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
+        match message {
+            MessageToClient::UserUpdated => {}
+            MessageToClient::NotificationsUpdated | MessageToClient::SettingsUpdated => return,
+        }
 
-                    let response = cloud_client.get_authenticated_user(system_id).await?;
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            this.update_authenticated_user(response, cx);
+        cx.spawn(async move |cx| {
+            let (cloud_client, system_id) = cx
+                .update(|cx| {
+                    this.read_with(cx, |this, _cx| {
+                        this.client.upgrade().map(|client| {
+                            let system_id = client.telemetry().system_id().map(|id| id.to_string());
+                            (client.cloud_client(), system_id)
                         })
-                    })?;
-                }
-            }
+                    })
+                })?
+                .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
+
+            let response = cloud_client.get_authenticated_user(system_id).await?;
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.update_authenticated_user(response, cx);
+                })
+            })?;
 
             anyhow::Ok(())
         })

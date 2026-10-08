@@ -7,6 +7,7 @@ license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/agent.rs"
+doctest = false
 
 [features]
 test-support = ["db/test-support"]
@@ -46,7 +47,6 @@ indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
-language_models.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
@@ -55,7 +55,6 @@ prompt_store.workspace = true
 quick-xml.workspace = true
 rand.workspace = true
 regex.workspace = true
-rust-embed.workspace = true
 sandbox.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -103,6 +102,7 @@ gpui = { workspace = true, "features" = ["test-support"] }
 gpui_tokio.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
+language_models.workspace = true
 lsp = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
@@ -113,7 +113,7 @@ settings = { workspace = true, "features" = ["test-support"] }
 theme = { workspace = true, "features" = ["test-support"] }
 theme_settings.workspace = true
 
-unindent = { workspace = true }
+unindent.workspace = true
 
 zlog.workspace = true
 

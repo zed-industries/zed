@@ -9,10 +9,11 @@ use editor::{Editor, EditorEvent};
 use futures::{StreamExt, channel::mpsc};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
-    Focusable, Global, KeyContext, ListState, ReadGlobal as _, Role, ScrollHandle, Stateful,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, WeakEntity, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
+    Action, App, AsyncApp, AvailableSpace, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div,
+    Entity, FocusHandle, Focusable, Global, KeyContext, ListState, ReadGlobal as _, Role,
+    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle,
+    WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, actions, container_query, div,
+    list, point, prelude::*, px, uniform_list,
 };
 
 use language::Buffer;
@@ -354,33 +355,52 @@ impl SettingFieldRenderer {
         ) -> Stateful<Div>
         + 'static,
     ) -> &mut Self {
-        let key = TypeId::of::<T>();
-        let renderer = Box::new(
-            move |settings_window: &SettingsWindow,
-                  item: &SettingItem,
-                  settings_file: SettingsUiFile,
-                  metadata: Option<&SettingsFieldMetadata>,
-                  sub_field: bool,
-                  window: &mut Window,
-                  cx: &mut Context<SettingsWindow>| {
-                let field = *item
-                    .field
-                    .as_ref()
-                    .as_any()
-                    .downcast_ref::<SettingField<T>>()
-                    .unwrap();
-                renderer(
-                    settings_window,
-                    item,
-                    field,
-                    settings_file,
-                    metadata,
-                    sub_field,
-                    window,
-                    cx,
-                )
-            },
-        );
+        self.add_renderer_erased(
+            TypeId::of::<T>(),
+            Box::new(
+                move |settings_window: &SettingsWindow,
+                      item: &SettingItem,
+                      settings_file: SettingsUiFile,
+                      metadata: Option<&SettingsFieldMetadata>,
+                      sub_field: bool,
+                      window: &mut Window,
+                      cx: &mut Context<SettingsWindow>| {
+                    let field = *item
+                        .field
+                        .as_ref()
+                        .as_any()
+                        .downcast_ref::<SettingField<T>>()
+                        .unwrap();
+                    renderer(
+                        settings_window,
+                        item,
+                        field,
+                        settings_file,
+                        metadata,
+                        sub_field,
+                        window,
+                        cx,
+                    )
+                },
+            ),
+        )
+    }
+
+    fn add_renderer_erased(
+        &mut self,
+        key: TypeId,
+        renderer: Box<
+            dyn Fn(
+                &SettingsWindow,
+                &SettingItem,
+                SettingsUiFile,
+                Option<&SettingsFieldMetadata>,
+                bool,
+                &mut Window,
+                &mut Context<SettingsWindow>,
+            ) -> Stateful<Div>,
+        >,
+    ) -> &mut Self {
         self.renderers.borrow_mut().insert(key, renderer);
         self
     }
@@ -535,6 +555,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::SaturatingBool>(render_toggle_button)
         .add_basic_renderer::<settings::CursorShape>(render_dropdown)
         .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
+        .add_basic_renderer::<settings::OnNewWindow>(render_dropdown)
         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
         .add_basic_renderer::<settings::CliDefaultOpenBehavior>(render_dropdown)
@@ -549,6 +570,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::CurrentLineHighlight>(render_dropdown)
         .add_basic_renderer::<settings::ShowWhitespaceSetting>(render_dropdown)
         .add_basic_renderer::<settings::SoftWrap>(render_dropdown)
+        .add_basic_renderer::<settings::SoftWrapIndent>(render_dropdown)
         .add_basic_renderer::<settings::AutoIndentMode>(render_dropdown)
         .add_basic_renderer::<settings::ScrollBeyondLastLine>(render_dropdown)
         .add_basic_renderer::<settings::SnippetSortOrder>(render_dropdown)
@@ -623,6 +645,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::GitPanelClickBehavior>(render_dropdown)
         .add_basic_renderer::<settings::GitPanelSortBy>(render_dropdown)
         .add_basic_renderer::<settings::GitPanelGroupBy>(render_dropdown)
+        .add_basic_renderer::<settings::GitPanelCommitEditor>(render_dropdown)
         .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
@@ -636,6 +659,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::IconThemeName>(render_icon_theme_picker)
         .add_basic_renderer::<settings::BufferLineHeightDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterWidthDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::ProjectPanelTitleTooltipDelayDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::AutosaveSettingDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::WorkingDirectoryDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::IncludeIgnoredContent>(render_dropdown)
@@ -956,6 +980,7 @@ pub struct SettingsWindow {
     files_focus_handle: FocusHandle,
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
+    bottom_spacer_height: Pixels,
     shown_errors: HashSet<String>,
     pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
@@ -1953,7 +1978,6 @@ impl SettingsWindow {
         };
 
         let list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(0.0)).measure_all();
-        list_state.set_scroll_handler(|_, _, _| {});
 
         let mut this = Self {
             title_bar,
@@ -1999,6 +2023,7 @@ impl SettingsWindow {
             regex_validation_error: None,
             sandbox_host_validation_error: None,
             list_state,
+            bottom_spacer_height: px(0.),
             last_copied_link_path: None,
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
@@ -2503,8 +2528,8 @@ impl SettingsWindow {
         let mut visible_items_count = self.visible_page_items().count();
 
         if visible_items_count > 0 {
-            // show page title if page is non empty
-            visible_items_count += 1;
+            // Include the page title and a trailing spacer for scrolling final sections to the top.
+            visible_items_count += 2;
         }
 
         self.list_state.reset(visible_items_count);
@@ -3379,10 +3404,7 @@ impl SettingsWindow {
                 scroll_handle.set_offset(point(px(0.), px(0.)));
             }
 
-            self.list_state.scroll_to(gpui::ListOffset {
-                item_ix: 0,
-                offset_in_item: px(0.),
-            });
+            self.list_state.scroll_to(gpui::ListOffset::default());
             return;
         }
         self.list_state.scroll_to(gpui::ListOffset {
@@ -3563,6 +3585,13 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         let current_page_index = self.current_page_index();
         let mut page_content = v_flex()
+            .on_children_prepainted(cx.processor(|settings_window, _, window, cx| {
+                let previous_entry = settings_window.navbar_entry;
+                settings_window.update_navbar_entry_from_scroll_position(window);
+                if settings_window.navbar_entry != previous_entry {
+                    cx.defer_in(window, |_, _, cx| cx.notify());
+                }
+            }))
             .id("settings-ui-page")
             .role(Role::Group)
             .aria_label("Settings Content")
@@ -3587,60 +3616,97 @@ impl SettingsWindow {
                 .find(|entry| entry.is_root && entry.page_index == self.current_page_index())
                 .map(|entry| entry.title);
 
-            let list_content = list(
-                self.list_state.clone(),
-                cx.processor(move |this, index, window, cx| {
-                    if index == 0 {
-                        return div()
-                            .px_8()
-                            .when(this.sub_page_stack.is_empty(), |this| {
-                                this.when_some(root_nav_label, |this, title| {
-                                    this.child(
-                                        Label::new(title).size(LabelSize::Large).mt_2().mb_3(),
-                                    )
-                                })
+            let render_item = cx.processor(move |settings_window, index, window, cx| {
+                if index == 0 {
+                    return div()
+                        .px_8()
+                        .when(settings_window.sub_page_stack.is_empty(), |element| {
+                            element.when_some(root_nav_label, |element, title| {
+                                element
+                                    .child(Label::new(title).size(LabelSize::Large).mt_2().mb_3())
                             })
-                            .into_any_element();
+                        })
+                        .into_any_element();
+                }
+
+                let mut visible_items = settings_window.visible_page_items();
+                let Some((actual_item_index, item)) = visible_items.nth(index - 1) else {
+                    return div()
+                        .h(settings_window.bottom_spacer_height)
+                        .into_any_element();
+                };
+
+                let next_is_header = visible_items
+                    .next()
+                    .map(|(_, item)| matches!(item, SettingsPageItem::SectionHeader(_)))
+                    .unwrap_or(false);
+
+                let is_last = Some(actual_item_index) == last_non_header_index;
+                let is_last_in_section = next_is_header || is_last;
+
+                let bottom_border = !is_last_in_section;
+                let extra_bottom_padding = is_last_in_section;
+
+                let item_focus_handle = settings_window.content_handles[current_page_index]
+                    [actual_item_index]
+                    .focus_handle(cx);
+
+                v_flex()
+                    .id(("settings-page-item", actual_item_index))
+                    .track_focus(&item_focus_handle)
+                    .w_full()
+                    .min_w_0()
+                    .child(item.render(
+                        settings_window,
+                        actual_item_index,
+                        bottom_border,
+                        extra_bottom_padding,
+                        window,
+                        cx,
+                    ))
+                    .into_any_element()
+            });
+
+            let settings_window = cx.entity();
+            let list_state = self.list_state.clone();
+            page_content = page_content.child(container_query(move |size, window, cx| {
+                let count = list_state.item_count();
+                let last_index = count.checked_sub(2);
+                let mut last_item = last_index.map(|index| render_item(index, window, cx));
+                if let Some(last_item) = last_item.as_mut() {
+                    let last_item_size = last_item.layout_as_root(
+                        gpui::size(
+                            AvailableSpace::Definite(size.width),
+                            AvailableSpace::MinContent,
+                        ),
+                        window,
+                        cx,
+                    );
+                    let spacer_height = (size.height - last_item_size.height).max(px(0.));
+                    settings_window.update(cx, |settings_window, _| {
+                        if list_state
+                            .bounds_for_item(count - 2)
+                            .is_some_and(|bounds| bounds.size != last_item_size)
+                        {
+                            list_state.remeasure_items(count - 2..count - 1);
+                        }
+                        if settings_window.bottom_spacer_height != spacer_height {
+                            settings_window.bottom_spacer_height = spacer_height;
+                            list_state.remeasure_items(count - 1..count);
+                        }
+                    });
+                }
+                list(list_state, move |index, window, cx| {
+                    if Some(index) == last_index
+                        && let Some(last_item) = last_item.take()
+                    {
+                        last_item
+                    } else {
+                        render_item(index, window, cx)
                     }
-
-                    let mut visible_items = this.visible_page_items();
-                    let Some((actual_item_index, item)) = visible_items.nth(index - 1) else {
-                        return gpui::Empty.into_any_element();
-                    };
-
-                    let next_is_header = visible_items
-                        .next()
-                        .map(|(_, item)| matches!(item, SettingsPageItem::SectionHeader(_)))
-                        .unwrap_or(false);
-
-                    let is_last = Some(actual_item_index) == last_non_header_index;
-                    let is_last_in_section = next_is_header || is_last;
-
-                    let bottom_border = !is_last_in_section;
-                    let extra_bottom_padding = is_last_in_section;
-
-                    let item_focus_handle = this.content_handles[current_page_index]
-                        [actual_item_index]
-                        .focus_handle(cx);
-
-                    v_flex()
-                        .id(("settings-page-item", actual_item_index))
-                        .track_focus(&item_focus_handle)
-                        .w_full()
-                        .min_w_0()
-                        .child(item.render(
-                            this,
-                            actual_item_index,
-                            bottom_border,
-                            extra_bottom_padding,
-                            window,
-                            cx,
-                        ))
-                        .into_any_element()
-                }),
-            );
-
-            page_content = page_content.child(list_content.size_full())
+                })
+                .size_full()
+            }))
         }
         page_content
     }
@@ -3992,7 +4058,17 @@ impl SettingsWindow {
                     }
                     if handle.contains_focused(window, cx) {
                         let next_logical_index = logical_index + offset + 1;
-                        this.list_state.scroll_to_reveal_item(next_logical_index);
+                        let visible_item_count = this.visible_page_items().count();
+                        if next_logical_index <= visible_item_count {
+                            this.list_state.scroll_to_reveal_item(next_logical_index);
+                        } else if let Some(bounds) =
+                            this.list_state.bounds_for_item(visible_item_count)
+                        {
+                            this.list_state.scroll_by(
+                                (bounds.bottom() - this.list_state.viewport_bounds().bottom())
+                                    .max(px(0.)),
+                            );
+                        }
                         // We need to render the next item to ensure it's focus handle is in the element tree
                         cx.on_next_frame(window, |_, window, cx| {
                             cx.notify();
@@ -4040,18 +4116,6 @@ impl SettingsWindow {
                 }
                 window.focus_prev(cx);
             }))
-            .when(current_sub_page.is_none(), |this| {
-                this.vertical_scrollbar_for(&self.list_state, window, cx)
-            })
-            .when_some(current_sub_page, |this, current_sub_page| {
-                this.custom_scrollbars(
-                    Scrollbars::new(ui::ScrollAxes::Vertical)
-                        .tracked_scroll_handle(&current_sub_page.scroll_handle)
-                        .id((current_sub_page.link.title.clone(), 42)),
-                    window,
-                    cx,
-                )
-            })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .pt_6()
             .gap_4()
@@ -4075,6 +4139,18 @@ impl SettingsWindow {
                     .tab_index(CONTENT_GROUP_TAB_INDEX)
                     .child(page_content),
             )
+            .when(current_sub_page.is_none(), |element| {
+                element.vertical_scrollbar_for(&self.list_state, window, cx)
+            })
+            .when_some(current_sub_page, |element, current_sub_page| {
+                element.custom_scrollbars(
+                    Scrollbars::new(ui::ScrollAxes::Vertical)
+                        .tracked_scroll_handle(&current_sub_page.scroll_handle)
+                        .id((current_sub_page.link.title.clone(), 42)),
+                    window,
+                    cx,
+                )
+            })
     }
 
     /// This function will create a new settings file if one doesn't exist
@@ -4214,6 +4290,53 @@ impl SettingsWindow {
 
     fn is_navbar_entry_selected(&self, ix: usize) -> bool {
         ix == self.navbar_entry
+    }
+
+    fn update_navbar_entry_from_scroll_position(&mut self, window: &Window) {
+        if self.navbar_entries.get(self.navbar_entry).is_none() || !self.sub_page_stack.is_empty() {
+            return;
+        }
+
+        let root_index = self.root_entry_containing(self.navbar_entry);
+        if !self.navbar_entries[root_index].expanded && !self.has_query {
+            self.navbar_entry = root_index;
+            return;
+        }
+
+        // The list's first row is the page title, not a settings item.
+        let top_index = self
+            .list_state
+            .logical_scroll_top()
+            .item_ix
+            .saturating_sub(1);
+        let viewport = self.list_state.viewport_bounds();
+        let section_index = self
+            .visible_page_items()
+            .enumerate()
+            .filter_map(|(position, (index, item))| {
+                if !matches!(item, SettingsPageItem::SectionHeader(_)) {
+                    return None;
+                }
+                let near_top = position <= top_index
+                    || self
+                        .list_state
+                        .bounds_for_item(position + 1)
+                        .is_some_and(|bounds| {
+                            bounds.intersects(&viewport)
+                                && bounds.top() <= viewport.top() + window.rem_size() * 1.5
+                        });
+                near_top.then_some(index)
+            })
+            .last();
+
+        self.navbar_entry = section_index
+            .and_then(|section_index| {
+                self.navbar_entries.iter().position(|entry| {
+                    entry.page_index == self.current_page_index()
+                        && entry.item_index == Some(section_index)
+                })
+            })
+            .unwrap_or(root_index);
     }
 
     fn push_sub_page(
@@ -4674,6 +4797,20 @@ fn update_settings_file(
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) -> Result<()> {
+    let mut update = Some(update);
+    update_settings_file_inner(file, file_name, window, cx, &mut || {
+        Box::new(update.take().expect("called once"))
+    })
+}
+
+#[inline(never)]
+fn update_settings_file_inner(
+    file: SettingsUiFile,
+    file_name: Option<&'static str>,
+    window: &mut Window,
+    cx: &mut App,
+    update: &mut dyn FnMut() -> Box<dyn Send + FnOnce(&mut SettingsContent, &App)>,
+) -> Result<()> {
     telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
 
     match file {
@@ -4687,7 +4824,7 @@ fn update_settings_file(
         }
         SettingsUiFile::User => {
             // todo(settings_ui) error?
-            SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update);
+            SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update());
             Ok(())
         }
         SettingsUiFile::Server(_) => unimplemented!(),
@@ -4812,10 +4949,11 @@ impl ProjectSettingsUpdateQueue {
     }
 }
 
+#[inline(never)]
 fn update_project_setting_file(
     worktree_id: WorktreeId,
     rel_path: Arc<RelPath>,
-    update: impl 'static + FnOnce(&mut SettingsContent, &App),
+    update: &mut dyn FnMut() -> Box<dyn Send + FnOnce(&mut SettingsContent, &App)>,
     settings_window: Entity<SettingsWindow>,
     cx: &mut App,
 ) -> Result<()> {
@@ -4836,7 +4974,7 @@ fn update_project_setting_file(
         settings_window: settings_window.downgrade(),
         project: project.downgrade(),
         worktree: worktree.downgrade(),
-        update: Box::new(update),
+        update: update(),
     };
 
     ProjectSettingsUpdateQueue::enqueue(cx, entry);
@@ -5337,6 +5475,7 @@ pub mod test {
                 files_focus_handle: cx.focus_handle(),
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
+                bottom_spacer_height: px(0.),
                 shown_errors: HashSet::default(),
                 hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
@@ -5476,6 +5615,7 @@ pub mod test {
             files_focus_handle: cx.focus_handle(),
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
+            bottom_spacer_height: px(0.),
             shown_errors: HashSet::default(),
             hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
@@ -5555,6 +5695,689 @@ pub mod test {
                 });
             }
         };
+    }
+
+    #[gpui::test]
+    fn scroll_selection_requires_a_visible_header(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let settings_window = cx.update(|window, cx| {
+            register_settings(cx);
+            cx.new(|cx| {
+                let mut settings_window = parse("v Test\n- First*\n- Last", window, cx);
+                settings_window.build_content_handles(window, cx);
+                settings_window.list_state =
+                    ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+                settings_window.reset_list_state();
+                settings_window
+            })
+        });
+        let list_state =
+            settings_window.read_with(cx, |settings_window, _| settings_window.list_state.clone());
+        let view = cx.update(|_, cx| cx.new(|_| TestSettingsPage(settings_window.clone())));
+        draw_settings_page(&view, px(400.), px(400.), cx);
+        let first_header_height = list_state.bounds_for_item(1).unwrap().size.height;
+        for (height, header_top, expected_entry) in [
+            (px(0.), px(22.), 1),
+            (px(20.), px(22.), 1),
+            (px(22.), px(22.), 1),
+            (px(23.), px(22.), 2),
+            (px(40.), px(24.), 2),
+            (px(40.), px(25.), 1),
+        ] {
+            list_state.scroll_to(gpui::ListOffset {
+                item_ix: 1,
+                offset_in_item: first_header_height - header_top,
+            });
+            draw_settings_page(&view, px(400.), height, cx);
+            let viewport = list_state.viewport_bounds();
+            let last_header = list_state.bounds_for_item(2).unwrap();
+            assert_eq!(viewport.size.height, height);
+            assert_eq!(last_header.top() - viewport.top(), header_top);
+            settings_window.read_with(cx, |settings_window, _| {
+                assert_eq!(settings_window.navbar_entry, expected_entry);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn scroll_selection_tracks_reflow_without_spacer_changes(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let setting = || {
+                test_action_link(
+                    "Setting",
+                    Some("A setting with a long description. ".repeat(100)),
+                )
+            };
+            settings_window_with_items(
+                vec![
+                    SettingsPageItem::SectionHeader("First"),
+                    setting(),
+                    SettingsPageItem::SectionHeader("Last"),
+                    setting(),
+                ],
+                window,
+                cx,
+            )
+        });
+        cx.simulate_resize(gpui::size(px(900.), px(500.)));
+        cx.run_until_parked();
+        let list_state =
+            settings_window.read_with(cx, |settings_window, _| settings_window.list_state.clone());
+        let first_setting_height = list_state.bounds_for_item(2).unwrap().size.height;
+        assert!(first_setting_height > list_state.viewport_bounds().size.height);
+        settings_window.update(cx, |settings_window, cx| {
+            assert_eq!(settings_window.bottom_spacer_height, px(0.));
+            list_state.scroll_to(gpui::ListOffset {
+                item_ix: 2,
+                offset_in_item: first_setting_height - px(22.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            list_state.bounds_for_item(3).unwrap().top() - list_state.viewport_bounds().top(),
+            px(22.)
+        );
+        settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(settings_window.navbar_entry, 2);
+        });
+
+        for (width, expected_entry) in [(px(600.), 1), (px(900.), 2)] {
+            cx.simulate_resize(gpui::size(width, px(500.)));
+            cx.run_until_parked();
+            let header_bounds = list_state.bounds_for_item(3).unwrap();
+            let viewport = list_state.viewport_bounds();
+            if width == px(600.) {
+                assert!(header_bounds.top() > viewport.bottom());
+            } else {
+                assert_eq!(header_bounds.top() - viewport.top(), px(22.));
+            }
+            settings_window.read_with(cx, |settings_window, _| {
+                assert_eq!(settings_window.bottom_spacer_height, px(0.));
+                assert_eq!(settings_window.navbar_entry, expected_entry);
+            });
+        }
+
+        let last_height = list_state.bounds_for_item(4).unwrap().size.height;
+        settings_window.update(cx, |_, cx| {
+            list_state.scroll_to(gpui::ListOffset {
+                item_ix: 4,
+                offset_in_item: last_height / 4.,
+            });
+            cx.notify();
+        });
+        assert_eq!(
+            list_state.logical_scroll_top().offset_in_item,
+            last_height / 4.
+        );
+        settings_window.update(cx, |settings_window, cx| {
+            settings_window.pages[0].items[3] = test_action_link(
+                "Setting",
+                Some("A setting with a long description. ".repeat(200)),
+            );
+            list_state.remeasure();
+            cx.notify();
+        });
+        let resized_height = list_state.bounds_for_item(4).unwrap().size.height;
+        assert!(resized_height > last_height);
+        assert_eq!(list_state.logical_scroll_top().item_ix, 4);
+        assert_eq!(
+            list_state.logical_scroll_top().offset_in_item,
+            resized_height / 4.
+        );
+    }
+
+    #[gpui::test]
+    fn tab_in_last_setting_keeps_focused_control_visible(cx: &mut gpui::TestAppContext) {
+        let control_handles = Rc::new(RefCell::new(HashMap::<&'static str, FocusHandle>::new()));
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state, cx);
+            cx.default_global::<SettingFieldRenderer>()
+                .add_basic_renderer::<bool>({
+                    let control_handles = control_handles.clone();
+                    move |field, file, metadata, title, description, window, cx| {
+                        let focus_handle = control_handles
+                            .borrow_mut()
+                            .entry(title)
+                            .or_insert_with(|| cx.focus_handle())
+                            .clone();
+                        div()
+                            .id("test-switch-bounds")
+                            .track_focus(&focus_handle)
+                            .debug_selector(move || title.to_string())
+                            .child(render_toggle_button(
+                                field,
+                                file,
+                                metadata,
+                                title,
+                                description,
+                                window,
+                                cx,
+                            ))
+                            .into_any_element()
+                    }
+                });
+            let git_integration = page_data::settings_data(cx)
+                .into_iter()
+                .flat_map(|page| Vec::from(page.items))
+                .find(|item| match item {
+                    SettingsPageItem::DynamicItem(item) => {
+                        item.discriminant.title == "Disable Git Integration"
+                    }
+                    _ => false,
+                })
+                .unwrap();
+            let mut settings_window = settings_window_with_items(
+                vec![
+                    SettingsPageItem::SectionHeader("First"),
+                    test_action_link(
+                        "Preceding setting",
+                        Some("A setting with a long description. ".repeat(100)),
+                    ),
+                    SettingsPageItem::SectionHeader("Last"),
+                    git_integration,
+                    SettingsPageItem::SectionHeader("Hidden"),
+                ],
+                window,
+                cx,
+            );
+            settings_window.filter_table[0][4] = false;
+            settings_window.reset_list_state();
+            settings_window.setup_navbar_focus_subscriptions(window, cx);
+            window.activate_window();
+            settings_window
+        });
+        let list_state = settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(settings_window.visible_page_items().count(), 4);
+            assert_eq!(settings_window.list_state.item_count(), 6);
+            settings_window.list_state.clone()
+        });
+        for (height, clipped) in [(500., false), (500., true), (260., true)] {
+            cx.simulate_resize(gpui::size(px(900.), px(height)));
+            cx.run_until_parked();
+            settings_window.update(cx, |_, cx| {
+                list_state.scroll_to_reveal_item(4);
+                cx.notify();
+            });
+            cx.run_until_parked();
+            let viewport = list_state.viewport_bounds();
+            if clipped {
+                let status_bounds = cx.debug_bounds("Enable Git Status").unwrap();
+                settings_window.update(cx, |_, cx| {
+                    list_state.scroll_by(status_bounds.bottom() - viewport.bottom() + px(1.));
+                    cx.notify();
+                });
+                cx.run_until_parked();
+            }
+            let status_handle = control_handles.borrow()["Enable Git Status"].clone();
+            let diff_handle = control_handles.borrow()["Enable Git Diff"].clone();
+            cx.update(|window, cx| {
+                status_handle.focus(window, cx);
+                window.focus_next(cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| assert!(status_handle.contains_focused(window, cx)));
+            let status_bounds = cx.debug_bounds("Enable Git Status").unwrap();
+            let initial_row_bounds = list_state.bounds_for_item(4).unwrap();
+            let initial_offset = list_state.scroll_px_offset_for_scrollbar();
+            assert!(status_bounds.top() >= viewport.top());
+            assert!(status_bounds.bottom() <= viewport.bottom());
+            if clipped {
+                assert_eq!(status_bounds.bottom(), viewport.bottom() - px(1.));
+                assert!(cx.debug_bounds("Enable Git Diff").unwrap().top() > viewport.bottom());
+            } else {
+                assert!(initial_row_bounds.top() >= viewport.top());
+                assert_eq!(initial_row_bounds.bottom(), viewport.bottom());
+            }
+            if height == 260. {
+                assert!(initial_row_bounds.size.height > viewport.size.height);
+            }
+
+            cx.dispatch_action(menu::SelectNext);
+            if !clipped {
+                assert_eq!(list_state.scroll_px_offset_for_scrollbar(), initial_offset);
+            }
+            for _ in 0..2 {
+                cx.update(|window, cx| {
+                    window.simulate_next_frame(cx);
+                });
+                cx.run_until_parked();
+            }
+            cx.update(|window, cx| assert!(diff_handle.contains_focused(window, cx)));
+            let diff_bounds = cx.debug_bounds("Enable Git Diff").unwrap();
+            assert_eq!(
+                list_state.bounds_for_item(4).unwrap().bottom(),
+                viewport.bottom()
+            );
+            assert!(diff_bounds.top() >= viewport.top());
+            assert!(diff_bounds.bottom() <= viewport.bottom());
+            if !clipped {
+                assert_eq!(list_state.scroll_px_offset_for_scrollbar(), initial_offset);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn last_setting_preserves_focused_input_across_reflow(cx: &mut gpui::TestAppContext) {
+        let editors = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.observe_new({
+                let editors = editors.clone();
+                move |_: &mut Editor, _, cx| editors.borrow_mut().push(cx.weak_entity())
+            })
+        });
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state, cx);
+            cx.default_global::<SettingFieldRenderer>()
+                .add_basic_renderer::<String>(render_text_field);
+            let setting = page_data::settings_data(cx)
+                .into_iter()
+                .flat_map(|page| Vec::from(page.items))
+                .find(|item| match item {
+                    SettingsPageItem::SettingItem(item) => item.title == "Fallback Branch Name",
+                    _ => false,
+                })
+                .unwrap();
+            window.activate_window();
+            settings_window_with_items(
+                vec![SettingsPageItem::SectionHeader("Last"), setting],
+                window,
+                cx,
+            )
+        });
+        cx.simulate_resize(gpui::size(px(900.), px(500.)));
+        let search_bar =
+            settings_window.read_with(cx, |settings_window, _| settings_window.search_bar.clone());
+        let editor = editors
+            .borrow()
+            .iter()
+            .filter_map(WeakEntity::upgrade)
+            .find(|editor| editor != &search_bar)
+            .unwrap();
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+            editor.set_text("unsaved-branch-name", window, cx);
+        });
+        for (width, height) in [(600., 300.), (900., 600.), (600., 500.)] {
+            cx.simulate_resize(gpui::size(px(width), px(height)));
+            settings_window.update(cx, |settings_window, cx| {
+                settings_window.list_state.remeasure();
+                cx.notify();
+            });
+            cx.run_until_parked();
+            assert_eq!(editors.borrow().len(), 2);
+            editor.update_in(cx, |editor, window, cx| {
+                assert!(editor.is_focused(window));
+                assert_eq!(editor.text(cx), "unsaved-branch-name");
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn search_navigation_reaches_last_section(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let mut settings_window =
+                parse("v First*\n- One\nv Second\n- First\n- Last", window, cx);
+            let setting = |title, repetitions| {
+                test_action_link(
+                    title,
+                    Some("Tall content for the preceding section. ".repeat(repetitions)),
+                )
+            };
+            settings_window.pages[0].items = vec![
+                SettingsPageItem::SectionHeader("One"),
+                setting("Initial setting", 100),
+            ]
+            .into_boxed_slice();
+            settings_window.pages[1].items = vec![
+                SettingsPageItem::SectionHeader("First"),
+                setting("Last setting", 30),
+                SettingsPageItem::SectionHeader("Last"),
+                setting("Last setting", 0),
+            ]
+            .into_boxed_slice();
+            settings_window.build_filter_table();
+            settings_window.build_navbar(cx);
+            settings_window.navbar_entries[2].expanded = true;
+            settings_window.build_content_handles(window, cx);
+            settings_window.build_search_index();
+            settings_window.list_state =
+                ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+            settings_window.reset_list_state();
+            settings_window
+        });
+        cx.simulate_resize(gpui::size(px(900.), px(500.)));
+        cx.run_until_parked();
+        settings_window.update_in(cx, |settings_window, window, cx| {
+            settings_window
+                .search_bar
+                .update(cx, |editor, cx| editor.set_text("last", window, cx));
+            settings_window.update_matches(cx);
+        });
+        cx.run_until_parked();
+        settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(settings_window.navbar_entry, 4);
+            let header = settings_window.list_state.bounds_for_item(3).unwrap();
+            assert_eq!(
+                header.top(),
+                settings_window.list_state.viewport_bounds().top()
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn navbar_selection_follows_content_scroll(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_empty_window();
+        window.update(|window, cx| {
+            register_settings(cx);
+            let mut settings_window = parse(
+                r"
+                > General
+                - General
+                v Window & Layout*
+                - Status Bar
+                - Title Bar
+                - Tab Bar
+                ",
+                window,
+                cx,
+            );
+            let setting = || test_action_link("Setting", None);
+            settings_window.pages[1].items = vec![
+                SettingsPageItem::SectionHeader("Status Bar"),
+                setting(),
+                SettingsPageItem::SectionHeader("Title Bar"),
+                setting(),
+                SettingsPageItem::SectionHeader("Tab Bar"),
+                setting(),
+            ]
+            .into_boxed_slice();
+            settings_window.build_filter_table();
+            settings_window.build_navbar(cx);
+            settings_window.navbar_entries[2].expanded = true;
+            settings_window.reset_list_state();
+
+            for (list_index, expected_entry) in [(0, 3), (2, 3), (3, 4), (4, 4), (6, 5), (1, 3)] {
+                settings_window.list_state.scroll_to(gpui::ListOffset {
+                    item_ix: list_index,
+                    offset_in_item: px(0.),
+                });
+                settings_window.update_navbar_entry_from_scroll_position(window);
+                assert_eq!(settings_window.navbar_entry, expected_entry);
+            }
+
+            settings_window.filter_table[1][..2].fill(false);
+            settings_window.reset_list_state();
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 4);
+
+            settings_window.navbar_entries[2].expanded = false;
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 2);
+
+            settings_window.has_query = true;
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 4);
+
+            settings_window.sub_page_stack.push(SubPage::new(
+                SubPageLink {
+                    title: "Details".into(),
+                    r#type: SubPageType::Other,
+                    description: None,
+                    search_aliases: &[],
+                    json_path: None,
+                    in_json: false,
+                    files: USER,
+                    render: |_, _, _, _| gpui::Empty.into_any_element(),
+                },
+                "Title Bar".into(),
+            ));
+            settings_window.list_state.scroll_to(gpui::ListOffset {
+                item_ix: 3,
+                offset_in_item: px(0.),
+            });
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 4);
+            settings_window.sub_page_stack.clear();
+
+            settings_window.filter_table[1].fill(false);
+            settings_window.reset_list_state();
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 2);
+        });
+    }
+
+    #[gpui::test]
+    fn settings_content_keeps_a_visible_viewport(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let settings_window = cx.update(|window, cx| {
+            register_settings(cx);
+            cx.new(|cx| {
+                settings_window_with_items(
+                    vec![
+                        SettingsPageItem::SectionHeader("First"),
+                        SettingsPageItem::SectionHeader("Last"),
+                        test_action_link(
+                            "Last setting",
+                            Some(
+                                "A long setting description that wraps as the window narrows. "
+                                    .repeat(8),
+                            ),
+                        ),
+                    ],
+                    window,
+                    cx,
+                )
+            })
+        });
+        let list_state =
+            settings_window.read_with(cx, |settings_window, _| settings_window.list_state.clone());
+        let view = cx.update(|_, cx| cx.new(|_| TestSettingsPage(settings_window.clone())));
+        draw_settings_page(&view, px(400.), px(700.), cx);
+        let last_height = list_state.bounds_for_item(3).unwrap().size.height;
+        draw_settings_page(&view, px(400.), px(600.) + last_height * 2., cx);
+        list_state.scroll_to(gpui::ListOffset {
+            item_ix: 3,
+            offset_in_item: px(0.),
+        });
+        draw_settings_page(&view, px(400.), px(600.) + last_height * 2., cx);
+        draw_settings_page(&view, px(400.), px(600.) + last_height, cx);
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(200.), px(100.)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), -last_height)),
+            ..gpui::ScrollWheelEvent::default()
+        });
+        draw_settings_page(&view, px(400.), px(600.), cx);
+        let viewport = list_state.viewport_bounds();
+        let last_item = list_state.bounds_for_item(3).unwrap();
+        assert_eq!(last_item.top(), viewport.top());
+        assert_eq!(last_item.size.height, last_height);
+        assert_eq!(
+            list_state.bounds_for_item(4).unwrap().bottom(),
+            viewport.bottom()
+        );
+        list_state.scroll_to(gpui::ListOffset::default());
+
+        for (width, height) in [
+            (px(400.), px(400.)),
+            (px(400.), px(250.)),
+            (px(400.), px(600.)),
+            (px(200.), px(250.)),
+            (px(900.), px(600.)),
+        ] {
+            draw_settings_page(&view, width, height, cx);
+            let viewport = list_state.viewport_bounds();
+            assert_eq!(viewport.top(), px(40.));
+            assert_eq!(viewport.size.height, height);
+            let count = list_state.item_count();
+            let last_item = list_state.bounds_for_item(count - 2).unwrap();
+            let spacer = list_state.bounds_for_item(count - 1).unwrap();
+            assert_eq!(
+                spacer.size.height,
+                (viewport.size.height - last_item.size.height).max(px(0.))
+            );
+            if width == px(200.) {
+                assert_eq!(spacer.size.height, px(0.));
+            } else if width == px(900.) {
+                assert!(spacer.size.height > px(0.));
+            }
+            list_state.scroll_to(gpui::ListOffset {
+                item_ix: count - 1,
+                offset_in_item: px(0.),
+            });
+            draw_settings_page(&view, width, height, cx);
+            assert_eq!(
+                list_state.bounds_for_item(count - 2).unwrap().bottom() + spacer.size.height,
+                viewport.bottom(),
+            );
+            list_state.scroll_to(gpui::ListOffset::default());
+        }
+
+        draw_settings_page(&view, px(400.), px(1.), cx);
+        let last_item = list_state.bounds_for_item(3).unwrap();
+        assert!(last_item.top() > list_state.viewport_bounds().bottom());
+        settings_window.update(cx, |settings_window, _| {
+            settings_window.pages[0].items[2] = test_action_link(
+                "Last setting",
+                Some("A long setting description that wraps as the window narrows. ".repeat(16)),
+            );
+        });
+        draw_settings_page(&view, px(400.), px(1.), cx);
+        assert!(list_state.bounds_for_item(3).unwrap().size.height > last_item.size.height);
+    }
+
+    #[gpui::test]
+    fn navbar_navigation_reaches_last_section(cx: &mut gpui::TestAppContext) {
+        enum ScrollInput {
+            Wheel,
+            Scrollbar,
+            Keyboard,
+        }
+
+        let cx = cx.add_empty_window();
+        let settings_window = cx.update(|window, cx| {
+            register_settings(cx);
+            cx.new(|cx| {
+                let mut settings_window =
+                    parse("v First*\n- One\nv Second\n- First\n- Last", window, cx);
+                settings_window.build_content_handles(window, cx);
+                settings_window.list_state =
+                    ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+                settings_window.reset_list_state();
+                settings_window
+            })
+        });
+        let list_state =
+            settings_window.read_with(cx, |settings_window, _| settings_window.list_state.clone());
+        let view = cx.update(|_, cx| cx.new(|_| TestSettingsPage(settings_window.clone())));
+        for target in [4, 1, 4] {
+            settings_window.update_in(cx, |settings_window, window, cx| {
+                settings_window.open_and_scroll_to_navbar_entry(target, None, false, window, cx);
+            });
+            draw_settings_page(&view, px(400.), px(400.), cx);
+            settings_window.read_with(cx, |settings_window, _| {
+                assert_eq!(settings_window.navbar_entry, target);
+                if target == 4 {
+                    let header = list_state.bounds_for_item(2).unwrap();
+                    assert_eq!(header.top(), list_state.viewport_bounds().top());
+                }
+            });
+        }
+        for input in [
+            ScrollInput::Wheel,
+            ScrollInput::Scrollbar,
+            ScrollInput::Keyboard,
+        ] {
+            list_state.scroll_to(gpui::ListOffset::default());
+            draw_settings_page(&view, px(400.), px(400.), cx);
+            settings_window.update_in(cx, |settings_window, window, cx| {
+                settings_window.scroll_to_content_item(1, window, cx);
+            });
+            let expected_offset = match input {
+                ScrollInput::Wheel => {
+                    cx.simulate_event(gpui::ScrollWheelEvent {
+                        position: point(px(200.), px(100.)),
+                        delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-32.))),
+                        ..gpui::ScrollWheelEvent::default()
+                    });
+                    px(-32.)
+                }
+                ScrollInput::Scrollbar => {
+                    list_state.set_offset_from_scrollbar(point(px(0.), px(-32.)));
+                    px(-32.)
+                }
+                ScrollInput::Keyboard => {
+                    list_state.scroll_to_reveal_item(0);
+                    px(0.)
+                }
+            };
+            assert_eq!(
+                list_state.scroll_px_offset_for_scrollbar().y,
+                expected_offset
+            );
+            draw_settings_page(&view, px(400.), px(500.), cx);
+            assert_eq!(
+                list_state.scroll_px_offset_for_scrollbar().y,
+                expected_offset
+            );
+        }
+        settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(settings_window.navbar_entry, 3)
+        });
+    }
+    #[gpui::test]
+    fn navbar_focus_navigation_reaches_last_section(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let mut this = parse("v First*\n- One\nv Second\n- First\n- Last", window, cx);
+            this.pages[0].items = vec![
+                SettingsPageItem::SectionHeader("One"),
+                test_action_link(
+                    "Tall final row",
+                    Some("A setting with a long description. ".repeat(8)),
+                ),
+            ]
+            .into_boxed_slice();
+            this.build_filter_table();
+            this.build_content_handles(window, cx);
+            this.list_state = ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+            this.reset_list_state();
+            this.setup_navbar_focus_subscriptions(window, cx);
+            window.activate_window();
+            this
+        });
+        cx.simulate_resize(gpui::size(px(900.), px(500.)));
+        cx.run_until_parked();
+        for target in [4, 1, 4] {
+            settings_window.update_in(cx, |settings_window, window, cx| {
+                settings_window.navbar_entries[target]
+                    .focus_handle
+                    .focus(window, cx);
+            });
+            for _ in 0..2 {
+                cx.update(|window, cx| {
+                    window.simulate_next_frame(cx);
+                });
+                cx.run_until_parked();
+            }
+            settings_window.read_with(cx, |settings_window, _| {
+                assert_eq!(settings_window.navbar_entry, target);
+                if target == 4 {
+                    let header = settings_window.list_state.bounds_for_item(2).unwrap();
+                    assert_eq!(
+                        header.top(),
+                        settings_window.list_state.viewport_bounds().top()
+                    );
+                }
+            });
+        }
     }
 
     check_navbar_toggle!(
@@ -6461,6 +7284,64 @@ pub mod test {
                 );
             })
             .unwrap();
+    }
+
+    fn settings_window_with_items(
+        items: Vec<SettingsPageItem>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> SettingsWindow {
+        let mut settings_window = SettingsWindow::test(window, cx);
+        settings_window.pages[0].items = items.into_boxed_slice();
+        settings_window.build_filter_table();
+        settings_window.build_navbar(cx);
+        settings_window.navbar_entries[0].expanded = true;
+        settings_window.build_content_handles(window, cx);
+        settings_window.list_state =
+            ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+        settings_window.reset_list_state();
+        settings_window
+    }
+
+    fn test_action_link(title: &'static str, description: Option<String>) -> SettingsPageItem {
+        SettingsPageItem::ActionLink(ActionLink {
+            title: SharedString::from(title),
+            description: description.map(SharedString::from),
+            button_text: SharedString::from("Change"),
+            on_click: Arc::new(|_, _, _| {}),
+            files: USER,
+        })
+    }
+
+    fn draw_settings_page(
+        view: &Entity<TestSettingsPage>,
+        width: Pixels,
+        content_height: Pixels,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(width, content_height + px(40.)),
+            |_, _| view.clone().into_any_element(),
+        );
+    }
+
+    struct TestSettingsPage(Entity<SettingsWindow>);
+
+    impl Render for TestSettingsPage {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .size_full()
+                .child(div().h(px(40.)).flex_shrink_0())
+                .child(div().flex_1().min_h_0().size_full().child(self.0.update(
+                    cx,
+                    |settings_window, cx| {
+                        settings_window
+                            .render_current_page_items(window, cx)
+                            .into_any_element()
+                    },
+                )))
+        }
     }
 }
 
