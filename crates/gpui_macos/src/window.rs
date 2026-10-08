@@ -1493,11 +1493,13 @@ impl PlatformWindow for MacWindow {
             if let Some(tabbing_identifier) = tabbing_identifier {
                 let tabbing_id = ns_string(tabbing_identifier.as_str());
                 let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
-                let _: () = msg_send![native_window, setTabbingMode: NSWindowTabbingMode::Automatic];
+                let _: () =
+                    msg_send![native_window, setTabbingMode: NSWindowTabbingMode::Automatic];
             } else {
                 let _: () =
                     msg_send![native_window, setTabbingIdentifier:ptr::null_mut::<AnyObject>()];
-                let _: () = msg_send![native_window, setTabbingMode: NSWindowTabbingMode::Disallowed];
+                let _: () =
+                    msg_send![native_window, setTabbingMode: NSWindowTabbingMode::Disallowed];
             }
         }
     }

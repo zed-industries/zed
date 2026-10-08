@@ -62,6 +62,7 @@ impl SystemWindowTabs {
     pub fn init(cx: &mut App) {
         let mut was_use_system_window_tabs =
             WorkspaceSettings::get_global(cx).use_system_window_tabs;
+        SystemWindowTabController::set_enabled(cx, was_use_system_window_tabs);
         // Window creation only turns automatic tabbing on. Apply the off state
         // once here, before any window opens, so a launch with the setting
         // disabled still overrides the macOS "Prefer tabs: Always" preference.
@@ -75,6 +76,7 @@ impl SystemWindowTabs {
                 return;
             }
             was_use_system_window_tabs = use_system_window_tabs;
+            SystemWindowTabController::set_enabled(cx, use_system_window_tabs);
             // Set directly rather than relying on the per-window loop below, which
             // does nothing when no windows are open.
             cx.set_allows_automatic_window_tabbing(use_system_window_tabs);
@@ -84,10 +86,6 @@ impl SystemWindowTabs {
             } else {
                 None
             };
-
-            if use_system_window_tabs {
-                SystemWindowTabController::init(cx);
-            }
 
             cx.windows().iter().for_each(|handle| {
                 let _ = handle.update(cx, |_, window, cx| {
@@ -103,9 +101,9 @@ impl SystemWindowTabs {
                         };
 
                         let has_multiple_tabs = tabs.len() > 1;
-                        SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
+                        SystemWindowTabController::sync_tabs(cx, tabs);
                         if has_multiple_tabs {
-                            SystemWindowTabController::set_visible(cx, true);
+                            SystemWindowTabController::show_for_tab_group(cx);
                         }
                     }
                 });
@@ -145,7 +143,7 @@ impl SystemWindowTabs {
                         window.move_tab_to_new_window();
                     })
                 })
-                .when(tab_groups.len() > 1, |div| {
+                .when(controller.is_enabled() && tab_groups.len() > 1, |div| {
                     div.on_action(move |_: &MergeAllWindows, window, cx| {
                         SystemWindowTabController::merge_all_windows(
                             cx,
