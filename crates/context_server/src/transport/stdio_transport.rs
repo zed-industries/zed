@@ -14,7 +14,7 @@ use util::process::Child;
 use util::shell::Shell;
 use util::shell_builder::ShellBuilder;
 
-use crate::client::ModelContextServerBinary;
+use crate::client::{ModelContextServerBinary, StdinPrefix};
 use crate::transport::Transport;
 
 pub struct StdioTransport {
@@ -30,7 +30,9 @@ impl StdioTransport {
         working_directory: &Option<PathBuf>,
         cx: &AsyncApp,
     ) -> Result<Self> {
-        let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
+        let builder = ShellBuilder::new(&Shell::System, cfg!(windows))
+            .non_interactive()
+            .literal_args();
         let mut command =
             builder.build_std_command(Some(binary.executable.display().to_string()), &binary.args);
 
@@ -55,8 +57,13 @@ impl StdioTransport {
         let (stdout_sender, stdout_receiver) = async_channel::unbounded::<String>();
         let (stderr_sender, stderr_receiver) = async_channel::unbounded::<String>();
 
-        cx.spawn(async move |_| Self::handle_output(stdin, stdout_receiver).log_err().await)
-            .detach();
+        let stdin_prefix = binary.stdin_prefix;
+        cx.spawn(async move |_| {
+            Self::handle_output(stdin, stdin_prefix, stdout_receiver)
+                .log_err()
+                .await
+        })
+        .detach();
 
         cx.spawn(async move |_| Self::handle_input(stdout, stdin_sender).await)
             .detach();
@@ -91,12 +98,17 @@ impl StdioTransport {
 
     async fn handle_output<Stdin>(
         stdin: Stdin,
+        stdin_prefix: Option<StdinPrefix>,
         outbound_rx: async_channel::Receiver<String>,
     ) -> Result<()>
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
     {
         let mut stdin = BufWriter::new(stdin);
+        if let Some(StdinPrefix(prefix)) = stdin_prefix {
+            stdin.write_all(&prefix).await?;
+            stdin.flush().await?;
+        }
         let mut pinned_rx = Box::pin(outbound_rx);
         while let Some(message) = pinned_rx.next().await {
             log::trace!("outgoing message: {}", message);

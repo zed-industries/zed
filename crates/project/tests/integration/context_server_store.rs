@@ -1542,6 +1542,7 @@ async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
                 timeout: Some(180000),
             },
             remote: false,
+            launcher: None,
         }),
         &mut async_cx,
     )

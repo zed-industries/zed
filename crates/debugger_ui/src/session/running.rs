@@ -32,8 +32,8 @@ use dap::{
 };
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
-    Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    NoAction, Pixels, Point, Subscription, Task, TaskExt, WeakEntity,
+    Action as _, AnyView, App, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, NoAction, Pixels, Point, Subscription, Task, TaskExt, WeakEntity,
 };
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
@@ -133,7 +133,14 @@ impl Render for RunningState {
         self.variable_list.update(cx, |this, cx| {
             this.disabled(thread_status != ThreadStatus::Stopped, cx);
         });
-        v_flex()
+        let outer = cx
+            .try_global::<workspace::PaneSearchBarCallbacks>()
+            .map(|callbacks| {
+                (callbacks.wrap_div_with_search_actions)(div(), self.active_pane.clone())
+            })
+            .unwrap_or_else(div);
+        outer
+            .v_flex()
             .size_full()
             .key_context("DebugSessionItem")
             .track_focus(&self.focus_handle(cx))
@@ -373,6 +380,19 @@ impl Item for SubView {
         });
 
         true
+    }
+
+    fn as_searchable(
+        &self,
+        _: &Entity<Self>,
+        cx: &App,
+    ) -> Option<Box<dyn workspace::searchable::SearchableItemHandle>> {
+        if self.kind != DebuggerPaneItem::Terminal {
+            return None;
+        }
+        let debug_terminal = self.inner.clone().downcast::<DebugTerminal>().ok()?;
+        let terminal_view = debug_terminal.read(cx).terminal.clone()?;
+        Some(Box::new(terminal_view))
     }
 }
 
@@ -671,6 +691,11 @@ pub(crate) fn new_debugger_pane(
         pane.set_render_tab_bar(cx, {
             move |pane, window, cx| render_debugger_tab_bar(pane, &focus_handle, window, cx)
         });
+        let toolbar = pane.toolbar().clone();
+        if let Some(callbacks) = cx.try_global::<workspace::PaneSearchBarCallbacks>() {
+            let languages = Some(project.read(cx).languages().clone());
+            (callbacks.setup_search_bar)(languages, &toolbar, window, cx);
+        }
         pane
     })
 }
@@ -1219,6 +1244,7 @@ impl RunningState {
                         debug_terminal.terminal = Some(terminal_view);
                         cx.notify();
                     });
+                    this.refresh_terminal_toolbars(window, cx);
                 })?;
 
                 let exit_status = terminal
@@ -1383,6 +1409,7 @@ impl RunningState {
                     debug_terminal.terminal = Some(terminal_view);
                     cx.notify();
                 });
+                running.refresh_terminal_toolbars(window, cx);
             })?;
 
             terminal.read_with(cx, |terminal, _| {
@@ -1484,6 +1511,26 @@ impl RunningState {
         pane.update(cx, |pane, cx| {
             pane.add_item_inner(sub_view, false, false, false, None, window, cx);
         })
+    }
+
+    fn refresh_terminal_toolbars(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let panes: Vec<Entity<Pane>> = self.panes.panes().into_iter().cloned().collect();
+        for pane in panes {
+            let is_active_terminal = pane.read(cx).active_item().is_some_and(|item| {
+                item.act_as::<SubView>(cx)
+                    .is_some_and(|s| s.read(cx).kind == DebuggerPaneItem::Terminal)
+            });
+            if !is_active_terminal {
+                continue;
+            }
+            pane.update(cx, |pane, cx| {
+                let active = pane.active_item();
+                let toolbar = pane.toolbar().clone();
+                toolbar.update(cx, |toolbar, cx| {
+                    toolbar.set_active_item(active.as_deref(), window, cx);
+                });
+            });
+        }
     }
 
     pub(crate) fn add_pane_item(

@@ -29,9 +29,12 @@
 //! }
 //! ```
 
-use crate::remote_client::{
-    ChannelClient, CommandTemplate, Interactive, RemoteClientDelegate, RemoteConnection,
-    RemoteConnectionOptions,
+use crate::{
+    command::RemoteCommand,
+    remote_client::{
+        ChannelClient, CommandTemplate, Interactive, RemoteClientDelegate, RemoteConnection,
+        RemoteConnectionOptions,
+    },
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -213,6 +216,10 @@ impl RemoteConnection for MockRemoteConnection {
         })
     }
 
+    fn build_stdio_command(&self, command: RemoteCommand) -> Result<(CommandTemplate, Vec<u8>)> {
+        stdio_bootstrap_command(command)
+    }
+
     fn build_forward_ports_command(
         &self,
         forwards: Vec<(u16, String, u16)>,
@@ -313,6 +320,108 @@ impl RemoteConnection for MockRemoteConnection {
 
     fn has_wsl_interop(&self) -> bool {
         false
+    }
+}
+
+pub const MOCK_STDIO_FRAME_HEX: &str = "MOCK_STDIO_FRAME_HEX";
+
+fn stdio_bootstrap_command(command: RemoteCommand) -> Result<(CommandTemplate, Vec<u8>)> {
+    let payload = command.encode()?;
+    let script = format!(
+        "{MOCK_STDIO_FRAME_HEX}=\"$(command -p dd bs=1 count={} 2>/dev/null | command -p od -An -v -tx1 | command -p tr -d ' \\n')\" || exit 1; [ \"${{#{MOCK_STDIO_FRAME_HEX}}}\" -eq {} ] || {{ printf 'mock stdio bootstrap read %s hex digits, expected {}\\n' \"${{#{MOCK_STDIO_FRAME_HEX}}}\" >&2; exit 1; }}; export {MOCK_STDIO_FRAME_HEX}; exec \"$@\"",
+        payload.len(),
+        payload.len() * 2,
+        payload.len() * 2,
+    );
+    let mut args = vec![
+        String::from("-c"),
+        script,
+        String::from("sh"),
+        command.program,
+    ];
+    args.extend(command.args);
+    Ok((
+        CommandTemplate {
+            program: String::from("/bin/sh"),
+            args,
+            env: command.env,
+        },
+        payload,
+    ))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use futures::{AsyncReadExt as _, AsyncWriteExt as _};
+    use smol::process::{Command, Stdio};
+
+    #[test]
+    fn test_stdio_bootstrap_without_target_path() -> Result<()> {
+        smol::block_on(async {
+            let (template, payload) = stdio_bootstrap_command(RemoteCommand {
+                program: String::from("/bin/sh"),
+                args: vec![
+                    String::from("-c"),
+                    format!("printf '%s\\n' \"${MOCK_STDIO_FRAME_HEX}\"; exec /bin/cat"),
+                ],
+                env: HashMap::from_iter([(String::from("PATH"), String::from("/nonexistent"))]),
+                working_dir: None,
+            })?;
+            let expected_hex = payload
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let message = b"{\"jsonrpc\":\"2.0\",\"id\":1}\n\0\xff";
+
+            let mut child = spawn(&template)?;
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(&payload).await?;
+            stdin.write_all(message).await?;
+            drop(stdin);
+            let output = child.output().await?;
+            assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+            assert!(output.status.success());
+            assert_eq!(
+                output.stdout,
+                [expected_hex.as_bytes(), b"\n", message].concat()
+            );
+
+            let mut child = spawn(&template)?;
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(&payload[..payload.len() / 2]).await?;
+            drop(stdin);
+            let mut stdout = Vec::new();
+            child
+                .stdout
+                .take()
+                .unwrap()
+                .read_to_end(&mut stdout)
+                .await?;
+            let output = child.output().await?;
+            assert_eq!(output.status.code(), Some(1));
+            assert_eq!(stdout, b"");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr),
+                format!(
+                    "mock stdio bootstrap read {} hex digits, expected {}\n",
+                    payload.len() / 2 * 2,
+                    payload.len() * 2
+                )
+            );
+            Ok(())
+        })
+    }
+
+    fn spawn(template: &CommandTemplate) -> Result<smol::process::Child> {
+        Ok(Command::new(&template.program)
+            .args(&template.args)
+            .env_clear()
+            .envs(&template.env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?)
     }
 }
 

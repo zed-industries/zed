@@ -540,7 +540,7 @@ impl Conversation {
         &mut self,
         session_id: acp_v1::SessionId,
         elicitation_id: ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let thread = self.threads.get(&session_id)?.clone();
@@ -2634,7 +2634,7 @@ impl ConversationView {
             .map(|elicitation| {
                 let is_pending = matches!(elicitation.status, ElicitationStatus::Pending { .. });
                 let schema = match &elicitation.request.mode {
-                    acp_v1::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    acp_v2::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
                     _ => None,
                 };
                 (elicitation.id.clone(), is_pending, schema)
@@ -2814,7 +2814,7 @@ impl ConversationView {
         };
 
         match mode {
-            acp_v1::ElicitationMode::Form(mode) => {
+            acp_v2::ElicitationMode::Form(mode) => {
                 let Some(state) = self
                     .request_elicitation_form_states
                     .get_mut(&elicitation_id)
@@ -2847,9 +2847,9 @@ impl ConversationView {
                             Ok(content) => {
                                 this.respond_to_request_elicitation(
                                     elicitation_id,
-                                    acp_v1::CreateElicitationResponse::new(
-                                        acp_v1::ElicitationAction::Accept(
-                                            acp_v1::ElicitationAcceptAction::new().content(content),
+                                    acp_v2::CreateElicitationResponse::new(
+                                        acp_v2::ElicitationAction::Accept(
+                                            acp_v2::ElicitationAcceptAction::new().content(content),
                                         ),
                                     ),
                                     cx,
@@ -2868,11 +2868,11 @@ impl ConversationView {
                 })
                 .detach();
             }
-            acp_v1::ElicitationMode::Url(_) => {
+            acp_v2::ElicitationMode::Url(_) => {
                 self.respond_to_request_elicitation(
                     elicitation_id,
-                    acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                        acp_v1::ElicitationAcceptAction::new(),
+                    acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                        acp_v2::ElicitationAcceptAction::new(),
                     )),
                     cx,
                 );
@@ -2889,7 +2889,7 @@ impl ConversationView {
     ) {
         self.respond_to_request_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
             cx,
         );
     }
@@ -2902,7 +2902,7 @@ impl ConversationView {
     ) {
         self.respond_to_request_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Cancel),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Cancel),
             cx,
         );
     }
@@ -2924,7 +2924,7 @@ impl ConversationView {
     fn respond_to_request_elicitation(
         &mut self,
         elicitation_id: ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
         self.request_elicitation_form_states.remove(&elicitation_id);
@@ -4143,7 +4143,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
         assert!(matches!(
             response.lock().as_ref(),
-            Some(acp_v1::ElicitationAction::Cancel)
+            Some(acp_v2::ElicitationAction::Cancel)
         ));
     }
 
@@ -4198,7 +4198,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
         assert!(matches!(
             response.lock().as_ref(),
-            Some(acp_v1::ElicitationAction::Cancel)
+            Some(acp_v2::ElicitationAction::Cancel)
         ));
     }
 
@@ -4230,7 +4230,7 @@ pub(crate) mod tests {
                 .elicitations()
                 .iter()
                 .find_map(|elicitation| {
-                    let acp_v1::ElicitationScope::Request(scope) = elicitation.request.scope()
+                    let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope()
                     else {
                         return None;
                     };
@@ -4242,8 +4242,8 @@ pub(crate) mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &first_elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
@@ -4252,7 +4252,7 @@ pub(crate) mod tests {
 
         assert!(matches!(
             response.lock().as_ref(),
-            Some(acp_v1::ElicitationAction::Accept(_))
+            Some(acp_v2::ElicitationAction::Accept(_))
         ));
         conversation_view.read_with(cx, |view, _cx| {
             let connected = view
@@ -4270,7 +4270,7 @@ pub(crate) mod tests {
                     store.elicitations()
                 );
             };
-            let acp_v1::ElicitationScope::Request(scope) = remaining.request.scope() else {
+            let acp_v2::ElicitationScope::Request(scope) = remaining.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
             assert_eq!(scope.request_id, second_request_id);
@@ -5349,12 +5349,26 @@ pub(crate) mod tests {
         let notice =
             acp_v1::Notice::new(acp_v1::NoticeSeverity::Error, "Optional integration failed")
                 .description("**Plain text**, not Markdown. Work continues.");
+        let shared_notice = acp_thread::notices::from_v1(notice.clone()).expect("shared notice");
+        let custom_notice = acp_v2::Notice::new(
+            acp_v2::NoticeSeverity::Other("_custom/β".into()),
+            "**Plain text**, not Markdown",
+        )
+        .description("")
+        .meta(acp_v2::Meta::from_iter([(
+            "extension".into(),
+            json!({"nested": [null, true, {"value": "retained"}]}),
+        )]));
         thread.update(cx, |thread, cx| {
-            for _ in 0..2 {
-                thread
-                    .handle_session_update(acp_v1::SessionUpdate::Notice(notice.clone()), cx)
-                    .expect("notice should be accepted");
-            }
+            thread
+                .handle_session_update(acp_v1::SessionUpdate::Notice(notice), cx)
+                .expect("notice should be accepted");
+            thread.push_notice(custom_notice.clone(), cx);
+            assert_eq!(
+                thread.notices(),
+                &[(0, shared_notice), (1, custom_notice.clone())]
+            );
+            assert!(thread.to_markdown(cx).is_empty());
         });
         cx.run_until_parked();
 
@@ -5370,7 +5384,7 @@ pub(crate) mod tests {
         cx.simulate_click(dismiss.center(), gpui::Modifiers::default());
         cx.run_until_parked();
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.notices(), &[(1, notice)]);
+            assert_eq!(thread.notices(), &[(1, custom_notice)]);
         });
         assert!(cx.debug_bounds("dismiss-session-notice-0").is_none());
 
@@ -8097,10 +8111,12 @@ pub(crate) mod tests {
             thread.update(cx, |thread, cx| {
                 thread
                     .request_elicitation(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationFormMode::new(
-                                acp_v1::ElicitationSessionScope::new(session_id),
-                                acp_v1::ElicitationSchema::new().string("name", true),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationFormMode::new(
+                                acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                    session_id.0,
+                                )),
+                                acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
                         ),
@@ -8151,7 +8167,7 @@ pub(crate) mod tests {
 
     struct SessionCreationRequestElicitationServer {
         store: Entity<ElicitationStore>,
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentServer for SessionCreationRequestElicitationServer {
@@ -8183,7 +8199,7 @@ pub(crate) mod tests {
 
     struct SessionCreationRequestElicitationConnection {
         store: Entity<ElicitationStore>,
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentConnection for SessionCreationRequestElicitationConnection {
@@ -8211,10 +8227,10 @@ pub(crate) mod tests {
             let first_response_task = self.store.update(cx, |store, cx| {
                 store
                     .request_elicitation(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationFormMode::new(
-                                acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                                acp_v1::ElicitationSchema::new().string("name", true),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationFormMode::new(
+                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
                         ),
@@ -8226,12 +8242,12 @@ pub(crate) mod tests {
                 .update(cx, |store, cx| {
                     store
                         .request_elicitation(
-                            acp_v1::CreateElicitationRequest::new(
-                                acp_v1::ElicitationFormMode::new(
-                                    acp_v1::ElicitationRequestScope::new(
+                            acp_v2::CreateElicitationRequest::new(
+                                acp_v2::ElicitationFormMode::new(
+                                    acp_v2::ElicitationRequestScope::new(
                                         acp_v1::RequestId::Number(2),
                                     ),
-                                    acp_v1::ElicitationSchema::new().string("account", true),
+                                    acp_v2::ElicitationSchema::new().string("account", true),
                                 ),
                                 "Provide an account",
                             ),
@@ -8281,7 +8297,7 @@ pub(crate) mod tests {
     }
 
     struct ReleaseRequestElicitationServer {
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentServer for ReleaseRequestElicitationServer {
@@ -8313,7 +8329,7 @@ pub(crate) mod tests {
 
     struct ReleaseRequestElicitationConnection {
         store: Entity<ElicitationStore>,
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentConnection for ReleaseRequestElicitationConnection {
@@ -8341,10 +8357,10 @@ pub(crate) mod tests {
             let response_task = self.store.update(cx, |store, cx| {
                 store
                     .request_elicitation(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationFormMode::new(
-                                acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                                acp_v1::ElicitationSchema::new().string("name", true),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationFormMode::new(
+                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
                         ),
@@ -9275,6 +9291,238 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_scroll_to_user_message_lands_on_ask_user_elicitation_answer(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let tool_call_id = acp_v1::ToolCallId::new("ask-user-1");
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new(tool_call_id.clone(), "Which directory should we explore?")
+                .kind(acp_v1::ToolKind::Other)
+                .status(acp_v1::ToolCallStatus::InProgress)
+                .meta(acp_thread::meta_with_tool_name("ask_user")),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("List the top directories, then ask which to explore", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0.clone(),
+                            ))
+                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationSchema::new().string("other", true),
+                        ),
+                        "Which directory should we explore?",
+                    ),
+                    cx,
+                )
+                .expect("ask_user elicitation should be accepted")
+        });
+
+        let elicitation_id = thread.read_with(cx, |thread, _| {
+            thread.entries().iter().find_map(|entry| {
+                if let AgentThreadEntry::Elicitation(id) = entry {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        let elicitation_id = elicitation_id.expect("elicitation entry should exist");
+
+        let other_answer = std::collections::BTreeMap::from([(
+            "other".to_string(),
+            acp_v2::ElicitationContentValue::from("delve into src"),
+        )]);
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new().content(other_answer),
+                )),
+                cx,
+            );
+        });
+        response_task.await;
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp_v1::ToolCallUpdateFields::new()
+                            .title("Answered: delve into src")
+                            .status(acp_v1::ToolCallStatus::Completed),
+                    )),
+                    cx,
+                )
+                .expect("ask_user tool call should update");
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                        "I'll explore src in depth.".into(),
+                    )),
+                    cx,
+                )
+                .expect("follow-up assistant message should apply");
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            let entries = thread.entries();
+            assert_eq!(entries.len(), 4);
+            assert!(matches!(entries[0], AgentThreadEntry::UserMessage(_)));
+            assert!(matches!(entries[1], AgentThreadEntry::ToolCall(_)));
+            assert!(matches!(entries[2], AgentThreadEntry::Elicitation(_)));
+            assert!(matches!(entries[3], AgentThreadEntry::AssistantMessage(_)));
+        });
+
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
+            view.scroll_to_top(cx);
+            view.scroll_to_user_message_index(None, cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(
+                scroll_top.item_ix, 1,
+                "scroll should land on the ask_user tool call that holds the Other answer, not the original prompt"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_user_message_skips_accepted_url_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp_v1::ToolCallId::new("sign-in-1");
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new(tool_call_id.clone(), "Sign in to continue")
+                .kind(acp_v1::ToolKind::Other)
+                .status(acp_v1::ToolCallStatus::InProgress),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Fetch my private repos", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0.clone(),
+                            ))
+                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationId::new("sign-in-url-1"),
+                            "https://example.com/sign-in",
+                        ),
+                        "Continue in the browser",
+                    ),
+                    cx,
+                )
+                .expect("URL elicitation should be accepted")
+        });
+
+        let elicitation_id = thread.read_with(cx, |thread, _| {
+            thread.entries().iter().find_map(|entry| {
+                if let AgentThreadEntry::Elicitation(id) = entry {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        let elicitation_id = elicitation_id.expect("elicitation entry should exist");
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        response_task.await;
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                        "Waiting for sign-in to finish.".into(),
+                    )),
+                    cx,
+                )
+                .expect("follow-up assistant message should apply");
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            let entries = thread.entries();
+            assert_eq!(entries.len(), 4);
+            assert!(matches!(entries[0], AgentThreadEntry::UserMessage(_)));
+            assert!(matches!(entries[1], AgentThreadEntry::ToolCall(_)));
+            assert!(matches!(entries[2], AgentThreadEntry::Elicitation(_)));
+            assert!(matches!(entries[3], AgentThreadEntry::AssistantMessage(_)));
+            let (_, elicitation) = thread
+                .elicitation(&elicitation_id)
+                .expect("elicitation should be stored");
+            assert!(matches!(
+                elicitation.status,
+                acp_thread::ElicitationStatus::Accepted
+            ));
+        });
+
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
+            view.scroll_to_top(cx);
+            view.scroll_to_user_message_index(None, cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(
+                scroll_top.item_ix, 0,
+                "consenting to open a URL is not a user answer, so scroll should land on the prompt"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_thread_search_finds_matches_across_entries(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -9910,6 +10158,92 @@ pub(crate) mod tests {
             cx.debug_bounds("MENU_ITEM-Copy This Agent Response")
                 .is_some()
         );
+    }
+
+    #[gpui::test]
+    async fn test_thinking_preview_copies_selected_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(r#"{ "agent": { "thinking_display": "preview" } }"#, cx)
+                    .expect("thinking preview settings");
+            });
+        });
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentThoughtChunk(
+            acp_v1::ContentChunk::new("**first**".into()),
+        )]);
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Think first", cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, cx| {
+                state.auto_expand_streaming_thought(view.thread.read(cx), cx);
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        for is_constrained in [true, false] {
+            if !is_constrained {
+                thread_view.update(cx, |view, cx| {
+                    view.entry_view_state.update(cx, |state, cx| {
+                        state.toggle_thinking_block_expansion((1, 0), cx);
+                    });
+                    cx.notify();
+                });
+                cx.run_until_parked();
+            }
+            thread_view.read_with(cx, |view, cx| {
+                assert_eq!(
+                    view.entry_view_state
+                        .read(cx)
+                        .thinking_block_state((1, 0), cx),
+                    (true, is_constrained),
+                );
+            });
+
+            for (menu_item, expected) in [
+                ("MENU_ITEM-Copy", "first"),
+                ("MENU_ITEM-Copy as Markdown", "**first**"),
+            ] {
+                let bounds = cx
+                    .debug_bounds("message-content-1-0-0")
+                    .expect("thinking content");
+                let position = bounds.origin + point(px(12.), bounds.size.height / 2.);
+                cx.simulate_event(gpui::MouseDownEvent {
+                    position,
+                    button: gpui::MouseButton::Left,
+                    modifiers: gpui::Modifiers::default(),
+                    click_count: 2,
+                    first_mouse: false,
+                });
+                cx.simulate_mouse_up(
+                    position,
+                    gpui::MouseButton::Left,
+                    gpui::Modifiers::default(),
+                );
+                cx.simulate_mouse_down(
+                    position,
+                    gpui::MouseButton::Right,
+                    gpui::Modifiers::default(),
+                );
+                cx.simulate_mouse_up(
+                    position,
+                    gpui::MouseButton::Right,
+                    gpui::Modifiers::default(),
+                );
+                let copy = cx
+                    .debug_bounds(menu_item)
+                    .expect("thinking selection copy command");
+                cx.simulate_click(copy.center(), gpui::Modifiers::default());
+                let copied =
+                    cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+                assert_eq!(copied.as_deref(), Some(expected));
+            }
+        }
     }
 
     #[gpui::test]

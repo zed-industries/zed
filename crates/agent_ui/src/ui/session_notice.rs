@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use gpui::{AnyElement, App, ClickEvent, ElementId, Stateful, Window, px};
 use ui::{Callout, Color, IconButton, IconName, IconSize, Severity, Tooltip, prelude::*};

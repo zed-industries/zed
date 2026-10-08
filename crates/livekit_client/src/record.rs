@@ -30,7 +30,7 @@ impl CaptureInput {
         log::info!("Using microphone: {}", name);
 
         let samples = Arc::new(Mutex::new(Vec::new()));
-        let stream = start_capture(device, config.clone(), samples.clone())?;
+        let stream = start_capture(device, config, samples.clone())?;
 
         Ok(Self {
             name,
@@ -58,7 +58,7 @@ fn start_capture(
 ) -> Result<cpal::Stream> {
     let stream = device
         .build_input_stream_raw(
-            &config.config(),
+            config.config(),
             config.sample_format(),
             move |data, _: &_| {
                 let data = crate::get_sample_data(config.sample_format(), data).log_err();

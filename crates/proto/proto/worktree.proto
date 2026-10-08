@@ -52,6 +52,7 @@ message RemoveWorktree {
 message GetPathMetadata {
   uint64 project_id = 1;
   string path = 2;
+  bool canonicalize = 3;
 }
 
 message GetPathMetadataResponse {

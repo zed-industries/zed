@@ -691,6 +691,7 @@ impl DapStore {
                             padding_left: false,
                             padding_right: false,
                             tooltip: None,
+                            text_edits: None,
                             resolve_state: ResolveState::Resolved,
                         });
                     }
@@ -712,6 +713,7 @@ impl DapStore {
                                 padding_left: false,
                                 padding_right: false,
                                 tooltip: None,
+                                text_edits: None,
                                 resolve_state: ResolveState::Resolved,
                             });
                         };

@@ -1,14 +1,13 @@
 use anyhow::{Context as _, Result};
 use std::process::Stdio;
 
-/// A wrapper around `smol::process::Child` that ensures all subprocesses
-/// are killed when the process is terminated: on Unix by using process
-/// groups, and on Windows by using job objects.
+/// A wrapper around `smol::process::Child` that attempts to clean up subprocess
+/// trees: on Unix by using process groups, and on Windows by using job objects.
 ///
-/// On Windows, dropping this struct closes the job object handle, which
-/// terminates all processes in the job. This also applies when the Zed
-/// process exits for any reason (including crashes), since the OS closes
-/// its handles, so spawned process trees can never outlive Zed.
+/// On Windows, if job setup and assignment succeed, dropping this struct
+/// closes the job handle and terminates processes in the job. If either step
+/// fails, the direct child remains usable but descendants are not tracked.
+/// A descendant spawned before job assignment can also escape the job.
 pub struct Child {
     process: smol::process::Child,
     #[cfg(windows)]
@@ -85,9 +84,8 @@ impl Child {
         // Closing it fully would require creating the process suspended
         // (`CREATE_SUSPENDED`), assigning it, then resuming it, which the
         // std/smol process APIs don't support without reimplementing process
-        // creation. The window is microseconds, and the children we care
-        // about (`npx`, `node`, etc.) take far longer to load their runtime
-        // and spawn anything, so in practice nothing escapes.
+        // creation. The window is normally short, but descendants created in
+        // it are not tracked by the job.
         let job = windows_job::JobObject::new()
             .and_then(|job| {
                 job.assign_process(process.id())?;
@@ -129,6 +127,22 @@ impl Child {
             Ok(())
         }
     }
+
+    /// Returns job activity, or `None` when descendant cleanup is unavailable.
+    ///
+    /// The count includes descendants after the direct child exits. `None`
+    /// means job setup failed, not that the process tree is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Windows cannot query the owned job's activity.
+    #[cfg(windows)]
+    pub fn has_running_processes(&self) -> Result<Option<bool>> {
+        self.job
+            .as_ref()
+            .map(windows_job::JobObject::has_running_processes)
+            .transpose()
+    }
 }
 
 #[cfg(windows)]
@@ -140,8 +154,9 @@ mod windows_job {
         System::{
             JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-                SetInformationJobObject, TerminateJobObject,
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+                QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
             },
             Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE},
         },
@@ -190,6 +205,23 @@ mod windows_job {
         pub(crate) fn terminate(&self) -> Result<()> {
             unsafe { TerminateJobObject(self.0, 1).context("failed to terminate job object") }
         }
+
+        pub(crate) fn has_running_processes(&self) -> Result<bool> {
+            let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            // SAFETY: self owns a valid job handle, and accounting is writable
+            // for the exact buffer size passed to this synchronous query.
+            unsafe {
+                QueryInformationJobObject(
+                    Some(self.0),
+                    JobObjectBasicAccountingInformation,
+                    &mut accounting as *mut _ as *mut _,
+                    size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    None,
+                )
+                .context("failed to query active job processes")?;
+            }
+            Ok(accounting.ActiveProcesses > 0)
+        }
     }
 
     impl Drop for JobObject {
@@ -205,6 +237,71 @@ mod windows_job {
 mod windows_tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn test_unmanaged_child_reports_unavailable_job_activity() {
+        let mut command = gpui_util::new_std_command("ping.exe");
+        command.args(["-n", "60", "127.0.0.1"]);
+        let process = smol::process::Command::from(command)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn unmanaged process");
+        let mut child = Child { process, job: None };
+
+        let pid = child.id();
+        assert!(
+            process_is_alive(pid),
+            "direct child should still be running"
+        );
+        assert_eq!(
+            child.has_running_processes().expect("failed to query job"),
+            None
+        );
+        child
+            .kill()
+            .expect("failed to kill unassigned direct child");
+        smol::block_on(child.status()).expect("failed to reap direct child");
+        assert_process_exits(pid, "direct child should be terminated");
+    }
+
+    #[test]
+    fn test_job_tracks_grandchild_after_direct_child_exits() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let pid_file = temp_dir.path().join("grandchild_pid");
+        let mut command = gpui_util::new_std_command("powershell.exe");
+        command.args(["-NoProfile", "-Command"]).arg(format!(
+            "$p = Start-Process -FilePath ping.exe -ArgumentList @('-n','60','127.0.0.1') -PassThru -WindowStyle Hidden; \
+             Set-Content -LiteralPath '{}' -Value $p.Id",
+            pid_file.display()
+        ));
+        let mut child = Child::spawn(command, Stdio::null(), Stdio::null(), Stdio::null())
+            .expect("failed to spawn powershell");
+        let status = smol::block_on(child.status()).expect("failed to await powershell");
+        assert!(status.success(), "powershell failed: {status}");
+
+        let grandchild_pid = std::fs::read_to_string(&pid_file)
+            .expect("powershell did not record grandchild pid")
+            .trim()
+            .parse::<u32>()
+            .expect("invalid grandchild pid");
+        assert!(process_is_alive(grandchild_pid));
+        assert_eq!(
+            child.has_running_processes().expect("failed to query job"),
+            Some(true),
+            "job should remain active after its direct child exits"
+        );
+
+        child.kill().expect("failed to terminate job");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while child.has_running_processes().expect("failed to query job") != Some(false) {
+            assert!(Instant::now() < deadline, "job did not become inactive");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_process_exits(grandchild_pid, "job grandchild should be terminated");
+    }
 
     /// Spawns a process tree `powershell -> ping` via `Child::spawn` and
     /// returns the `Child` along with the pid of the grandchild (`ping`).

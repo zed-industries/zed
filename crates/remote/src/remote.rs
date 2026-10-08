@@ -1,3 +1,4 @@
+pub mod command;
 pub mod json_log;
 pub mod protocol;
 pub mod proxy;
@@ -23,5 +24,6 @@ pub use transport::wsl::wsl_path_to_windows_path;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use transport::mock::{
-    MockConnection, MockConnectionOptions, MockConnectionRegistry, MockDelegate,
+    MOCK_STDIO_FRAME_HEX, MockConnection, MockConnectionOptions, MockConnectionRegistry,
+    MockDelegate,
 };
