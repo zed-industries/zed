@@ -117,6 +117,7 @@ impl Render for WhichKeyModal {
                 self.pending_keys.clone(),
                 self.bindings.clone(),
                 self.scroll_handle.clone(),
+                max_panel_width,
                 max_content_height,
             ))
     }

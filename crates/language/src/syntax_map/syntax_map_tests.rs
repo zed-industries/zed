@@ -15,6 +15,87 @@ use unindent::Unindent as _;
 use util::test::marked_text_ranges;
 
 #[test]
+fn test_parse_text_inside_multibyte_character() -> anyhow::Result<()> {
+    let language = rust_lang();
+    let grammar = language.grammar().expect("Rust grammar");
+    for prefix in ["", "prefix "] {
+        for character in ["и", "中", "🧘"] {
+            let source = format!("// {character}\nfn main() {{}}");
+            let text = Rope::from(format!("{prefix}{source}").as_str());
+            for character_offset in 1..character.len() {
+                let range = tree_sitter::Range {
+                    start_byte: 3 + character_offset,
+                    start_point: tree_sitter::Point {
+                        row: 0,
+                        column: 3 + character_offset,
+                    },
+                    end_byte: source.len(),
+                    end_point: text.max_point().to_ts_point(),
+                };
+                let tree = parse_text(grammar, &text, prefix.len(), &[range], None, &mut None)?;
+
+                let mut parser = tree_sitter::Parser::new();
+                parser.set_language(&grammar.ts_language)?;
+                parser.set_included_ranges(&[range])?;
+                let expected_tree = parser
+                    .parse(source.as_bytes(), None)
+                    .expect("parse contiguous bytes");
+                assert_eq!(
+                    tree.root_node().to_sexp(),
+                    expected_tree.root_node().to_sexp()
+                );
+                assert_eq!(
+                    tree.root_node().byte_range(),
+                    expected_tree.root_node().byte_range()
+                );
+                assert_eq!(tree.root_node().end_byte(), source.len());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_query_text_inside_multibyte_character() -> anyhow::Result<()> {
+    let language = rust_lang();
+    let grammar = language.grammar().expect("Rust grammar");
+    let query = Query::new(
+        &grammar.ts_language,
+        "((ERROR) @error (#match? @error \".*\"))",
+    )?;
+    for character in ["и", "中", "🧘"] {
+        let source = format!("// {character}\nfn main() {{}}");
+        let text = Rope::from(source.as_str());
+        for character_offset in 1..character.len() {
+            let range = tree_sitter::Range {
+                start_byte: 3 + character_offset,
+                start_point: tree_sitter::Point {
+                    row: 0,
+                    column: 3 + character_offset,
+                },
+                end_byte: text.len(),
+                end_point: text.max_point().to_ts_point(),
+            };
+            let tree = parse_text(grammar, &text, 0, &[range], None, &mut None)?;
+            let mut cursor = QueryCursor::new();
+            let mut matches = cursor.matches(&query, tree.root_node(), TextProvider(&text));
+            let query_match = matches.next().expect("predicate matches the error node");
+            let node = query_match.captures.first().expect("error capture").node;
+            assert_eq!(node.start_byte(), range.start_byte);
+            assert!(!source.is_char_boundary(node.start_byte()));
+            assert_eq!(
+                tree_sitter::TextProvider::text(&mut TextProvider(&text), node)
+                    .flatten()
+                    .copied()
+                    .collect::<Vec<_>>(),
+                &source.as_bytes()[node.byte_range()],
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn test_splice_included_ranges() {
     let ranges = vec![ts_range(20..30), ts_range(50..60), ts_range(80..90)];
 
@@ -1054,7 +1135,7 @@ fn test_combined_injection_with_leading_content_layer_ordering(cx: &mut App) {
             LanguageConfig {
                 name: LanguageName::new_static("Elixir"),
                 matcher: Arc::new(LanguageMatcher {
-                    path_suffixes: vec![String::from("ex")],
+                    path_suffixes: vec!["ex".into()],
                     ..Default::default()
                 }),
                 ..LanguageConfig::default()
@@ -1729,7 +1810,7 @@ fn html_lang() -> Language {
         LanguageConfig {
             name: "HTML".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["html".to_string()],
+                path_suffixes: vec!["html".into()],
                 ..Default::default()
             })
             .into(),
@@ -1752,7 +1833,7 @@ fn ruby_lang() -> Language {
         LanguageConfig {
             name: "Ruby".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rb".to_string()],
+                path_suffixes: vec!["rb".into()],
                 ..Default::default()
             })
             .into(),
@@ -1775,7 +1856,7 @@ fn erb_lang() -> Language {
         LanguageConfig {
             name: "ERB".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["erb".to_string()],
+                path_suffixes: vec!["erb".into()],
                 ..Default::default()
             })
             .into(),
@@ -1866,7 +1947,7 @@ fn python_lang() -> Language {
         LanguageConfig {
             name: "Python".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["py".to_string()],
+                path_suffixes: vec!["py".into()],
                 ..Default::default()
             })
             .into(),
