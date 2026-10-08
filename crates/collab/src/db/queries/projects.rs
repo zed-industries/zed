@@ -993,6 +993,7 @@ impl Database {
                         name: language_server.name,
                         worktree_id: language_server.worktree_id.map(|id| id as u64),
                         language_name: language_server.language_name,
+                        server_version: None,
                     },
                     capabilities: language_server.capabilities,
                 })
