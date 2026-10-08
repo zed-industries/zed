@@ -1461,6 +1461,68 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_set_anchored_excerpts_after_edit(cx: &mut TestAppContext) {
+    for (replace_excerpt, edit, replacement, expected) in [
+        (true, 5..5, "λx", "bλxbb"),
+        (false, 5..5, "λ", "bλbb"),
+        (false, 4..7, "", ""),
+    ] {
+        let buffer = cx.new(|cx| Buffer::local("aaa\nbbb\nccc\n", cx));
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let update = multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                [Point::new(1, 0)..Point::new(1, 3)],
+                0,
+                cx,
+            );
+            let snapshot = buffer.read(cx).snapshot();
+            multibuffer.set_anchored_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![
+                    snapshot.anchor_after(Point::new(1, 0))
+                        ..snapshot.anchor_before(Point::new(1, 3)),
+                ],
+                0,
+                cx,
+            )
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(edit, replacement)], None, cx);
+        });
+        multibuffer.update(cx, |multibuffer, cx| {
+            assert_eq!(multibuffer.snapshot(cx).text(), expected);
+            if replace_excerpt {
+                let snapshot = buffer.read(cx).snapshot();
+                multibuffer.set_excerpt_ranges_for_path(
+                    PathKey::sorted(0),
+                    buffer.clone(),
+                    &snapshot,
+                    vec![ExcerptRange::new(Point::new(1, 3)..Point::new(1, 4))],
+                    cx,
+                );
+            }
+        });
+
+        let ranges = update.await;
+        multibuffer.read_with(cx, |multibuffer, cx| {
+            let snapshot = multibuffer.snapshot(cx);
+            assert_eq!(snapshot.text(), expected);
+            assert_eq!(snapshot.len(), MultiBufferOffset(expected.len()));
+            assert_eq!(
+                ranges
+                    .iter()
+                    .map(|range| range.to_point(&snapshot))
+                    .collect::<Vec<_>>(),
+                vec![Point::new(0, 0)..Point::new(0, expected.len() as u32)],
+            );
+        });
+    }
+}
+
+#[gpui::test]
 fn test_empty_multibuffer(cx: &mut App) {
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
