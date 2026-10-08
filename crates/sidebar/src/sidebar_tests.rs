@@ -708,6 +708,47 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
+async fn test_sidebar_surface_has_a_themed_backdrop(cx: &mut TestAppContext) {
+    let (_, project) = init_multi_project_test(&["/my-project"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    for background_alpha in [1.0, 0.5] {
+        set_sidebar_test_surface_alpha(0.4, cx);
+        let (background, surface) = cx.update(|_, cx| {
+            let mut theme = cx.theme().as_ref().clone();
+            theme.styles.colors.background.a = background_alpha;
+            let colors = (theme.colors().background, theme.colors().surface_background);
+            theme::GlobalTheme::update_theme(cx, Arc::new(theme));
+            colors
+        });
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(400.), px(240.)),
+            |_, _| sidebar.clone().into_any_element(),
+        );
+
+        cx.update(|window, _| {
+            let quads = window.painted_quads();
+            let backdrop = quads
+                .iter()
+                .find(|quad| quad.background.as_solid() == Some(background))
+                .expect("Sidebar should paint the theme background");
+            let overlay = quads
+                .iter()
+                .find(|quad| quad.background.as_solid() == Some(surface))
+                .expect("Sidebar should paint the unmodified surface color");
+
+            assert!(backdrop.order < overlay.order);
+            assert_eq!(backdrop.corner_radii, overlay.corner_radii);
+            assert_eq!(backdrop.bounds.origin, overlay.bounds.origin);
+            assert_eq!(backdrop.bounds.size.height, overlay.bounds.size.height);
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));

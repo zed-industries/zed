@@ -7952,7 +7952,6 @@ impl Render for Sidebar {
         let sticky_header = self.render_sticky_header(window, cx);
 
         let color = cx.theme().colors();
-        let bg = color.surface_background;
 
         let no_open_projects = !self.contents.has_open_projects;
         let no_search_results = self.contents.entries.is_empty();
@@ -8031,10 +8030,15 @@ impl Render for Sidebar {
                         }),
                 }
             })
-            .bg(bg)
+            .bg(color.background)
             .when(self.side(cx) == SidebarSide::Left, |el| el.border_r_1())
             .when(self.side(cx) == SidebarSide::Right, |el| el.border_l_1())
             .border_color(color.border)
+            .map(|mut this| {
+                let mut surface = div().absolute().inset_0().bg(color.surface_background);
+                surface.style().corner_radii = this.style().corner_radii.clone();
+                this.child(surface)
+            })
             .map(|this| match &self.view {
                 SidebarView::ThreadList => this
                     .child(self.render_sidebar_header(no_open_projects, window, cx))
