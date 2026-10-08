@@ -428,28 +428,37 @@ impl Render for EditPredictionButton {
 
                 let show_editor_predictions = self.editor_show_predictions;
                 let user = self.user_store.read(cx).current_user();
+                let zed_cloud_has_no_active_subscription =
+                    matches!(provider, EditPredictionProvider::Zed)
+                        && self
+                            .user_store
+                            .read(cx)
+                            .current_organization_has_no_active_subscription();
 
                 let mercury_has_error = matches!(provider, EditPredictionProvider::Mercury)
                     && edit_prediction::EditPredictionStore::try_global(cx).is_some_and(
                         |ep_store| ep_store.read(cx).mercury_has_payment_required_error(),
                     );
 
-                let indicator_color = if missing_token || mercury_has_error {
-                    Some(Color::Error)
-                } else if enabled && (!show_editor_predictions || over_limit) {
-                    Some(if over_limit {
-                        Color::Error
+                let indicator_color =
+                    if missing_token || mercury_has_error || zed_cloud_has_no_active_subscription {
+                        Some(Color::Error)
+                    } else if enabled && (!show_editor_predictions || over_limit) {
+                        Some(if over_limit {
+                            Color::Error
+                        } else {
+                            Color::Muted
+                        })
                     } else {
-                        Color::Muted
-                    })
-                } else {
-                    None
-                };
+                        None
+                    };
 
                 let zed_cloud_needs_sign_in =
                     matches!(provider, EditPredictionProvider::Zed) && user.is_none();
-                let provider_unavailable =
-                    missing_token || mercury_has_error || zed_cloud_needs_sign_in;
+                let provider_unavailable = missing_token
+                    || mercury_has_error
+                    || zed_cloud_needs_sign_in
+                    || zed_cloud_has_no_active_subscription;
 
                 let icon_button = IconButton::new("zed-predict-pending-button", ep_icon)
                     .shape(IconButtonShape::Square)
@@ -465,6 +474,8 @@ impl Render for EditPredictionButton {
                                 "Disabled For This File"
                             } else if zed_cloud_needs_sign_in {
                                 "Sign In Or Configure a Provider"
+                            } else if zed_cloud_has_no_active_subscription {
+                                "This organization has no active subscription"
                             } else if provider_unavailable || show_editor_predictions {
                                 tooltip_meta
                             } else {
@@ -556,6 +567,8 @@ impl EditPredictionButton {
 
         cx.observe_global::<EditPredictionStore>(move |_, cx| cx.notify())
             .detach();
+
+        cx.observe(&user_store, |_, _, cx| cx.notify()).detach();
 
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
         let open_ai_compatible_api_token_task =
@@ -998,22 +1011,34 @@ impl EditPredictionButton {
         }
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
+            let zed_cloud_has_no_active_subscription =
+                all_language_settings(None, cx).edit_predictions.provider
+                    == EditPredictionProvider::Zed
+                    && self
+                        .user_store
+                        .read(cx)
+                        .current_organization_has_no_active_subscription();
             menu = menu
                 .separator()
                 .header("Actions")
-                .entry(
-                    "Predict Edit at Cursor",
-                    Some(Box::new(ShowEditPrediction)),
-                    {
-                        let editor_focus_handle = editor_focus_handle.clone();
-                        move |window, cx| {
-                            telemetry::event!(
-                                "Edit Prediction Menu Action",
-                                action = "predict_at_cursor",
-                            );
-                            editor_focus_handle.dispatch_action(&ShowEditPrediction, window, cx);
-                        }
-                    },
+                .item(
+                    ContextMenuEntry::new("Predict Edit at Cursor")
+                        .action(Box::new(ShowEditPrediction))
+                        .disabled(zed_cloud_has_no_active_subscription)
+                        .handler({
+                            let editor_focus_handle = editor_focus_handle.clone();
+                            move |window, cx| {
+                                telemetry::event!(
+                                    "Edit Prediction Menu Action",
+                                    action = "predict_at_cursor",
+                                );
+                                editor_focus_handle.dispatch_action(
+                                    &ShowEditPrediction,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }),
                 )
                 .context(editor_focus_handle)
                 .when(
