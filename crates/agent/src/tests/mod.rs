@@ -7300,27 +7300,23 @@ async fn test_subagent_context_limit_exceeded_without_partial_output(cx: &mut Te
 }
 
 #[gpui::test]
-async fn test_subagent_context_limit_preserves_terminal_result_during_checkpoint(
+async fn test_subagent_context_limit_preserves_result_after_turn_completes(
     cx: &mut TestAppContext,
 ) {
     for provider_error in [false, true] {
-        let test = SubagentCompactionTest::new_with_files(json!({".git": {}}), cx).await;
+        let test = SubagentCompactionTest::new(cx).await;
         test.configure_compaction(false, 1_000_000, None, cx);
-        let mut send = test.send("subagent task prompt", cx);
-        let repository = test.thread.read_with(cx, |thread, cx| {
-            thread
-                .project()
-                .read(cx)
-                .git_store()
-                .read(cx)
-                .active_repository()
-                .unwrap()
-        });
-        let (resume_checkpoint, checkpoint_gate) = oneshot::channel::<()>();
-        let checkpoint_job = repository.update(cx, |repository, _| {
-            repository.send_job("hold checkpoint", None, move |_, _| checkpoint_gate)
-        });
+        let send = test.send("subagent task prompt", cx);
         test.fake.send_last_text(&test.model, "partial work");
+        // The final usage update crosses the limit as the turn ends, so the limit
+        // signal fires while the finished turn's result is still on its way.
+        test.fake.send_last_event(
+            &test.model,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 800_000,
+                ..TokenUsage::default()
+            }),
+        );
         if provider_error {
             test.fake.send_last_error(
                 &test.model,
@@ -7333,40 +7329,7 @@ async fn test_subagent_context_limit_preserves_terminal_result_during_checkpoint
             );
         }
         test.fake.end_last(&test.model);
-        cx.run_until_parked();
 
-        test.thread
-            .read_with(cx, |thread, _| assert!(thread.is_turn_complete()));
-        assert!((&mut send).now_or_never().is_none());
-        repository.read_with(cx, |repository, _| {
-            let queue = repository.job_debug_queue().to_debug_value();
-            assert_eq!(
-                queue["entries"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter(|job| job["description"] == "checkpoint" && job["status"] == "Pending")
-                    .count(),
-                1,
-            );
-        });
-        test.thread.update(cx, |thread, cx| {
-            assert!(thread.is_turn_complete());
-            cx.emit(TokenUsageUpdated(Some(acp_thread::TokenUsage {
-                max_tokens: 1_000_000,
-                used_tokens: 800_000,
-                input_tokens: 800_000,
-                ..acp_thread::TokenUsage::default()
-            })));
-        });
-        cx.run_until_parked();
-        assert!((&mut send).now_or_never().is_none());
-        test.parent.read_with(cx, |thread, cx| {
-            assert_eq!(thread.running_subagent_ids(cx), vec![test.handle.id()]);
-        });
-
-        resume_checkpoint.send(()).unwrap();
-        checkpoint_job.await.unwrap().unwrap();
         if provider_error {
             assert_eq!(
                 send.await.unwrap_err().to_string(),
