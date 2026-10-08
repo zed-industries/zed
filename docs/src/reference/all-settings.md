@@ -3680,6 +3680,8 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 - Setting: `on_new_window`
 - Default: `"launchpad"`
 
+In the Settings Editor, search for `On New Window` and choose an option.
+
 **Options**
 
 1. Show an empty untitled buffer:
@@ -3697,6 +3699,29 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
   "on_new_window": "launchpad"
 }
 ```
+
+3. Open a README when a new or reopened project has no open items:
+
+In the Settings Editor, set `On New Window` to `Readme`.
+
+Or add this to your settings.json:
+
+```json [settings]
+{
+  "on_new_window": "readme"
+}
+```
+
+Zed opens one README from the first project root with a match.
+Zed checks `README.md`, `readme.md`, `Readme.md`, `README`, `readme`, `Readme`, `README.txt`, `readme.txt`, and `Readme.txt`, in that order.
+These are direct root-level file checks, not a directory scan.
+Other spellings do not match on case-sensitive filesystems.
+File-index exclusions do not affect README discovery.
+The same behavior applies when you add a folder to a project with no open items.
+Files passed when opening the project and restored tabs take precedence.
+The README opens in a temporary [preview tab](#preview-tabs) when `preview_tabs.enabled` is `true`, or a regular tab otherwise.
+Zed uses your existing file opener settings, without forcing a rendered Markdown preview.
+If no matching README exists, Zed leaves the project's pane empty.
 
 ## Instrumentation
 
