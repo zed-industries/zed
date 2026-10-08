@@ -268,6 +268,7 @@ pub struct X11WindowState {
     pub(crate) counter_id: sync::Counter,
     pub(crate) last_sync_counter: Option<sync::Int64>,
     bounds: Bounds<Pixels>,
+    initial_window_size: Option<Size<DevicePixels>>,
     scale_factor: f32,
     /// Taken when the window is dropped. Its GPU objects use the X connection, so they mustn't
     /// outlive the window, which a display mode switch relies on.
@@ -835,6 +836,7 @@ impl X11WindowState {
                 x_screen_index,
                 visual_id: visual.id,
                 bounds: bounds.to_pixels(scale_factor),
+                initial_window_size: Some(bounds.size),
                 scale_factor,
                 renderer: Some(renderer),
                 atoms: *atoms,
@@ -1397,12 +1399,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn window_bounds(&self) -> WindowBounds {
-        let state = self.0.state.borrow();
-        if self.is_maximized() {
-            WindowBounds::Maximized(state.bounds)
-        } else {
-            WindowBounds::Windowed(state.bounds)
-        }
+        self.inner_window_bounds()
     }
 
     fn inner_window_bounds(&self) -> WindowBounds {
@@ -1672,22 +1669,33 @@ impl PlatformWindow for X11Window {
     }
 
     fn zoom(&self) {
-        let state = self.0.state.borrow();
+        let (vertical_atom, horizontal_atom) = {
+            let mut state = self.0.state.borrow_mut();
+            state.initial_window_size = None;
+            (
+                state.atoms._NET_WM_STATE_MAXIMIZED_VERT,
+                state.atoms._NET_WM_STATE_MAXIMIZED_HORZ,
+            )
+        };
         self.set_wm_hints(
             || "X11 SendEvent to maximize a window failed.",
             WmHintPropertyState::Toggle,
-            state.atoms._NET_WM_STATE_MAXIMIZED_VERT,
-            state.atoms._NET_WM_STATE_MAXIMIZED_HORZ,
+            vertical_atom,
+            horizontal_atom,
         )
         .log_err();
     }
 
     fn toggle_fullscreen(&self) {
-        let state = self.0.state.borrow();
+        let fullscreen_atom = {
+            let mut state = self.0.state.borrow_mut();
+            state.initial_window_size = None;
+            state.atoms._NET_WM_STATE_FULLSCREEN
+        };
         self.set_wm_hints(
             || "X11 SendEvent to fullscreen a window failed.",
             WmHintPropertyState::Toggle,
-            state.atoms._NET_WM_STATE_FULLSCREEN,
+            fullscreen_atom,
             xproto::AtomEnum::NONE.into(),
         )
         .log_err();
@@ -1908,6 +1916,36 @@ impl PlatformWindow for X11Window {
                 ),
             )
             .log_err();
+
+            if insets.iter().any(|&inset| inset != 0)
+                && !state.fullscreen
+                && (!state.maximized_horizontal || !state.maximized_vertical)
+                && let Some(initial_window_size) = state.initial_window_size.take()
+            {
+                // The window manager can add the frame extents before or after mapping.
+                // Request the same decorated size either way so the saved frame size is restored.
+                let mut configured_size = xproto::ConfigureWindowAux::new();
+                if !state.maximized_horizontal {
+                    let width = (initial_window_size.width.0.max(1) as u32)
+                        .saturating_add(insets[0])
+                        .saturating_add(insets[1]);
+                    configured_size = configured_size.width(width);
+                }
+                if !state.maximized_vertical {
+                    let height = (initial_window_size.height.0.max(1) as u32)
+                        .saturating_add(insets[2])
+                        .saturating_add(insets[3]);
+                    configured_size = configured_size.height(height);
+                }
+                check_reply(
+                    || "X11 ConfigureWindow failed while restoring decorated window",
+                    self.0
+                        .xcb
+                        .configure_window(self.0.x_window, &configured_size),
+                )
+                .log_err();
+            }
+            xcb_flush(&self.0.xcb);
         }
     }
 
