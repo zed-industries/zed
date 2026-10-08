@@ -164,6 +164,11 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
+                sel!(onScreenParametersChange:),
+                on_screen_parameters_change as extern "C" fn(&mut Object, Sel, id),
+            );
+
+            decl.add_method(
                 sel!(onSystemSleep:),
                 on_system_sleep as extern "C" fn(&mut Object, Sel, id),
             );
@@ -193,6 +198,7 @@ pub(crate) struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     on_thermal_state_change: Option<Box<dyn FnMut()>>,
+    on_displays_changed: Option<Box<dyn FnMut()>>,
     on_system_sleep: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
     system_power_observers_registered: bool,
@@ -269,6 +275,7 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             on_thermal_state_change: None,
+            on_displays_changed: None,
             on_system_sleep: None,
             on_system_wake: None,
             system_power_observers_registered: false,
@@ -737,6 +744,10 @@ impl Platform for MacPlatform {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_displays_changed = Some(callback);
     }
 
     #[cfg(feature = "screen-capture")]
@@ -1408,6 +1419,14 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: nil
         ];
 
+        // Posted when a display is connected, disconnected, rearranged, or
+        // changes mode, which includes its refresh rate.
+        let _: () = msg_send![notification_center, addObserver: this as id
+            selector: sel!(onScreenParametersChange:)
+            name: ns_string("NSApplicationDidChangeScreenParametersNotification")
+            object: nil
+        ];
+
         let thermal_name = ns_string("NSProcessInfoThermalStateDidChangeNotification");
         let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
         let _: () = msg_send![notification_center, addObserver: this as id
@@ -1515,6 +1534,28 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
                 .0
                 .lock()
                 .on_thermal_state_change
+                .get_or_insert(callback);
+        }
+    }
+}
+
+extern "C" fn on_screen_parameters_change(this: &mut Object, _: Sel, _: id) {
+    // Deferred for the same reason as `on_thermal_state_change`.
+    let platform = unsafe { get_mac_platform(this) };
+    let platform_ptr = platform as *const MacPlatform as *mut c_void;
+    unsafe {
+        DispatchQueue::main().exec_async_f(platform_ptr, on_screen_parameters_change);
+    }
+
+    extern "C" fn on_screen_parameters_change(context: *mut c_void) {
+        let platform = unsafe { &*(context as *const MacPlatform) };
+        let callback = platform.0.lock().on_displays_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            platform
+                .0
+                .lock()
+                .on_displays_changed
                 .get_or_insert(callback);
         }
     }
