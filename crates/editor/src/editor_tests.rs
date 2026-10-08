@@ -18,7 +18,10 @@ use crate::{
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use collections::{HashMap, HashSet};
 use fs::Fs as _;
-use futures::{StreamExt, channel::oneshot};
+use futures::{
+    StreamExt,
+    channel::{mpsc, oneshot},
+};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
@@ -8906,6 +8909,44 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
         FOX JUMPS OVER
         THE LAZY DOGˇ»
     "});
+}
+
+#[gpui::test]
+async fn test_multicursor_manipulate_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let mut failures = Vec::new();
+    for (before, expected, to_upper) in [
+        ("some_ˇvariˇable_naˇme", "«SOME_VARIABLE_NAMEˇ»", true),
+        ("some_ˇvariˇable naˇme", "«SOME_VARIABLEˇ» «NAMEˇ»", true),
+        ("SOME_ˇVARIˇABLE_NAˇME", "«some_variable_nameˇ»", false),
+        ("SOME_ˇVARIˇABLE NAˇME", "«some_variableˇ» «nameˇ»", false),
+        ("«word1ˇ» woˇr«d2 word3ˇ»", "«WORD1ˇ» «WORD2 WORD3ˇ»", true),
+        ("«aˇ»b«cdˇ»eˇf", "«ABCDEFˇ»", true),
+        ("hello woˇrˇld", "hello woˇrˇld", false),
+    ] {
+        cx.set_state(before);
+        cx.update_editor(|editor, window, cx| {
+            if to_upper {
+                editor.convert_to_upper_case(&ConvertToUpperCase, window, cx)
+            } else {
+                editor.convert_to_lower_case(&ConvertToLowerCase, window, cx)
+            }
+        });
+        let actual = cx.editor_state();
+        if actual != expected {
+            failures.push(format!(
+                "before:   {before}\nexpected: {expected}\nactual:   {actual}"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} case(s) failed:\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
 }
 
 #[gpui::test]
@@ -28093,6 +28134,82 @@ fn test_split_words_for_snippet_prefix() {
 }
 
 #[gpui::test]
+async fn test_go_to_symbol_after_edit(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.document_symbols = Some(settings::DocumentSymbols::On);
+    });
+
+    for direction in [-1, 1] {
+        let editor = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            build_editor(buffer, window, cx)
+        });
+        let mut cx = EditorTestContext::for_editor(editor, cx).await;
+        cx.set_state("padding\nˇ\n");
+        let (ready, pending) = oneshot::channel();
+        let navigation = cx.update_editor(|editor, window, cx| {
+            editor.refresh_document_symbols_task = cx
+                .background_spawn(async move {
+                    pending.await.expect("symbol refresh should complete");
+                })
+                .shared();
+            editor.go_to_symbol_by_offset(window, cx, direction)
+        });
+        cx.run_until_parked();
+        cx.update_buffer(|buffer, cx| {
+            let end = buffer.len();
+            buffer.edit(
+                [
+                    (0..0, "λ padding\nfn before() {}\n"),
+                    (end..end, "fn after() {}\n"),
+                ],
+                None,
+                cx,
+            );
+        });
+        cx.update_editor(|editor, _, cx| {
+            let buffer = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .expect("singleton buffer");
+            let snapshot = buffer.read(cx).snapshot();
+            let text = snapshot.text();
+            let items = ["fn before", "fn after"]
+                .into_iter()
+                .map(|name| {
+                    let start = text.find(name).expect("symbol should be in buffer");
+                    let range =
+                        snapshot.anchor_after(start)..snapshot.anchor_before(start + name.len());
+                    language::OutlineItem {
+                        depth: 0,
+                        range: range.clone(),
+                        selection_range: range.clone(),
+                        source_range_for_text: range,
+                        text: SharedString::from(name),
+                        highlight_ranges: Vec::new(),
+                        name_ranges: Vec::new(),
+                        body_range: None,
+                        annotation_range: None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            editor
+                .lsp_document_symbols
+                .insert(snapshot.remote_id(), items);
+        });
+        ready.send(()).expect("symbol refresh should be pending");
+        navigation.await.expect("symbol navigation should succeed");
+        cx.assert_editor_state(if direction < 0 {
+            "λ padding\nˇfn before() {}\npadding\n\nfn after() {}\n"
+        } else {
+            "λ padding\nfn before() {}\npadding\n\nˇfn after() {}\n"
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_move_to_syntax_node_relative_jumps(tcx: &mut TestAppContext) {
     init_test(tcx, |_| {});
 
@@ -34289,6 +34406,91 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
             references_fallback_text, "fn one() {\n    let mut a = two();\n}",
             "Should use the range from the references response and not the GoToDefinition one"
         );
+    });
+}
+
+#[gpui::test]
+async fn test_find_all_references_cleanup_after_edit(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let (requests, mut responses) = mpsc::unbounded();
+    let mut cx = EditorLspTestContext::new_with_adapter(
+        Arc::into_inner(rust_lang()).expect("Rust language should have a single owner"),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |server| {
+                let requests = requests.clone();
+                server.set_request_handler::<lsp::request::References, _, _>(move |_, _| {
+                    let requests = requests.clone();
+                    async move {
+                        let (response, pending) = oneshot::channel();
+                        requests
+                            .unbounded_send(response)
+                            .expect("request receiver should exist");
+                        pending.await.expect("reference response should arrive");
+                        Ok(Some(Vec::new()))
+                    }
+                });
+            })),
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn aˇ() {}\n");
+    let first = cx.update_editor(|editor, window, cx| {
+        editor
+            .find_all_references(&FindAllReferences::default(), window, cx)
+            .expect("first request should start")
+    });
+    let first_response = responses.next().await.expect("first request should arrive");
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.insert("fn b() {}\n", window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 4)..Point::new(1, 4)]);
+        });
+    });
+    let second = cx.update_editor(|editor, window, cx| {
+        editor
+            .find_all_references(&FindAllReferences::default(), window, cx)
+            .expect("second request should start")
+    });
+    let second_response = responses
+        .next()
+        .await
+        .expect("second request should arrive");
+    first_response
+        .send(())
+        .expect("first request should be pending");
+    assert_eq!(
+        first.await.expect("first request should succeed"),
+        Navigated::No
+    );
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        assert_eq!(
+            editor
+                .find_all_references_task_sources
+                .iter()
+                .map(|anchor| anchor.to_point(&snapshot))
+                .collect::<Vec<_>>(),
+            vec![Point::new(1, 4)],
+        );
+    });
+    second_response
+        .send(())
+        .expect("second request should be pending");
+    assert_eq!(
+        second.await.expect("second request should succeed"),
+        Navigated::No
+    );
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(editor.find_all_references_task_sources, Vec::new());
     });
 }
 

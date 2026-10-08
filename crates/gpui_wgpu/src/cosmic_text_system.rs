@@ -418,10 +418,17 @@ impl CosmicTextSystemState {
                 "Segoe Fluent Icons",
             ];
 
+            // This only decides whether a face can be a primary font. The
+            // editor measures layout with the width of 'm' and would panic
+            // without it.
+            //
+            // Don't remove the face from the font database. Arabic, Devanagari
+            // and emoji fonts often have no Latin glyphs, and they are exactly
+            // what cosmic-text falls back to when the primary font lacks a
+            // glyph.
             if font.as_swash().charmap().map('m') == 0
                 && !allowed_bad_font_names.contains(&postscript_name.as_str())
             {
-                self.font_system.db_mut().remove_face(font.id());
                 continue;
             };
 
