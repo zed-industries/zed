@@ -53,6 +53,7 @@ pub struct Database {
     pub pool: DatabaseConnection,
     rooms: DashMap<RoomId, Arc<Mutex<()>>>,
     projects: DashMap<ProjectId, Arc<Mutex<()>>>,
+    memory_usage: DashMap<(ProjectId, u64), u64>,
     notification_kinds_by_id: HashMap<NotificationKindId, &'static str>,
     notification_kinds_by_name: HashMap<String, NotificationKindId>,
     #[cfg(feature = "test-support")]
@@ -74,7 +75,28 @@ impl Database {
             notification_kinds_by_name: HashMap::default(),
             #[cfg(feature = "test-support")]
             test_options: None,
+            memory_usage: DashMap::new(),
         })
+    }
+
+    pub fn update_language_server_memory_usage(
+        &self,
+        project_id: ProjectId,
+        language_server_id: u64,
+        memory_usage: u64,
+    ) {
+        self.memory_usage
+            .insert((project_id, language_server_id), memory_usage);
+    }
+
+    pub fn language_server_memory_usage(
+        &self,
+        project_id: ProjectId,
+        language_server_id: u64,
+    ) -> Option<u64> {
+        self.memory_usage
+            .get(&(project_id, language_server_id))
+            .map(|usage| *usage)
     }
 
     pub fn options(&self) -> &ConnectOptions {
@@ -614,6 +636,7 @@ impl ProjectCollaborator {
 pub struct LanguageServer {
     pub server: proto::LanguageServer,
     pub capabilities: String,
+    pub memory_usage: Option<u64>,
 }
 
 #[derive(Debug)]

@@ -820,15 +820,20 @@ impl Database {
             .all(tx)
             .await?
             .into_iter()
-            .map(|language_server| LanguageServer {
-                server: proto::LanguageServer {
-                    id: language_server.id as u64,
-                    name: language_server.name,
-                    worktree_id: language_server.worktree_id.map(|id| id as u64),
-                    language_name: language_server.language_name,
-                    server_version: None,
-                },
-                capabilities: language_server.capabilities,
+            .map(|language_server| {
+                let memory_usage =
+                    self.language_server_memory_usage(project_id, language_server.id as u64);
+                LanguageServer {
+                    server: proto::LanguageServer {
+                        id: language_server.id as u64,
+                        name: language_server.name,
+                        worktree_id: language_server.worktree_id.map(|id| id as u64),
+                        language_name: language_server.language_name,
+                        server_version: language_server.server_version,
+                    },
+                    capabilities: language_server.capabilities,
+                    memory_usage,
+                }
             })
             .collect::<Vec<_>>();
 

@@ -589,6 +589,7 @@ impl Database {
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
                 language_name: ActiveValue::set(server.language_name.clone()),
+                server_version: ActiveValue::set(server.server_version.clone()),
                 worktree_id: ActiveValue::set(server.worktree_id.map(|id| id as i64)),
                 capabilities: ActiveValue::set(update.capabilities.clone()),
             })
@@ -600,6 +601,7 @@ impl Database {
                 .update_columns([
                     language_server::Column::Name,
                     language_server::Column::LanguageName,
+                    language_server::Column::ServerVersion,
                     language_server::Column::Capabilities,
                     language_server::Column::WorktreeId,
                 ])
@@ -993,9 +995,10 @@ impl Database {
                         name: language_server.name,
                         worktree_id: language_server.worktree_id.map(|id| id as u64),
                         language_name: language_server.language_name,
-                        server_version: None,
+                        server_version: language_server.server_version,
                     },
                     capabilities: language_server.capabilities,
+                    memory_usage: None,
                 })
                 .collect(),
             path_style,

@@ -1537,6 +1537,29 @@ async fn rejoin_room(
                 .map(|rejoined_project| rejoined_project.to_proto())
                 .collect(),
         })?;
+
+        for project in &rejoined_room.rejoined_projects {
+            for server in &project.language_servers {
+                if let Some(memory_usage) = server.memory_usage {
+                    session
+                        .peer
+                        .send(
+                            session.connection_id,
+                            proto::UpdateLanguageServer {
+                                project_id: project.id.to_proto(),
+                                server_name: Some(server.server.name.clone()),
+                                language_server_id: server.server.id,
+                                variant: Some(
+                                    proto::update_language_server::Variant::MemoryUsageUpdated(
+                                        proto::ServerMemoryUsageUpdated { memory_usage },
+                                    ),
+                                ),
+                            },
+                        )
+                        .trace_err();
+                }
+            }
+        }
         room_updated(&rejoined_room.room, &session.peer);
 
         for project in &rejoined_room.reshared_projects {
@@ -2352,6 +2375,16 @@ async fn update_language_server(
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
     let db = session.db().await;
+
+    if let Some(proto::update_language_server::Variant::MemoryUsageUpdated(update)) =
+        &request.variant
+    {
+        db.0.update_language_server_memory_usage(
+            project_id,
+            request.language_server_id,
+            update.memory_usage,
+        );
+    }
 
     if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
         && let Some(capabilities) = update.capabilities.clone()

@@ -4576,6 +4576,7 @@ pub struct LspStore {
     semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
     buffer_reload_tasks: HashMap<BufferId, Task<anyhow::Result<()>>>,
+    memory_usage_task: Option<Task<()>>,
     next_hint_id: Arc<AtomicUsize>,
 }
 
@@ -4985,6 +4986,91 @@ impl LspStore {
             active_entry: None,
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
+            memory_usage_task: Some(cx.spawn(async move |this, cx| {
+                let mut last_memory_usage = HashMap::default();
+
+                loop {
+                    let servers = this
+                        .update(cx, |this, _| {
+                            this.language_server_statuses
+                                .iter()
+                                .filter_map(|(server_id, status)| {
+                                    status.process_id.map(|pid| (*server_id, pid))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .ok();
+
+                    let Some(servers) = servers else {
+                        break;
+                    };
+
+                    if !servers.is_empty() {
+                        let memory_usage = cx
+                            .background_spawn(async move {
+                                let mut system = sysinfo::System::new();
+
+                                let refresh_kind = sysinfo::RefreshKind::nothing().with_processes(
+                                    sysinfo::ProcessRefreshKind::nothing()
+                                        .without_tasks()
+                                        .with_memory(),
+                                );
+
+                                system.refresh_specifics(refresh_kind);
+
+                                servers
+                                    .into_iter()
+                                    .map(|(server_id, process_id)| {
+                                        let memory = Self::process_tree_memory(
+                                            &system,
+                                            sysinfo::Pid::from_u32(process_id),
+                                        );
+                                        (server_id, memory)
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .await;
+
+                        for (server_id, memory) in memory_usage {
+                            if !last_memory_usage
+                                .get(&server_id)
+                                .is_some_and(|last| memory.abs_diff(*last) < 1024 * 1024)
+                            {
+                                last_memory_usage.insert(server_id, memory);
+
+                                let should_continue = this
+                                    .update(cx, |this, cx| {
+                                        let server = this.as_local().and_then(|local| {
+                                            local.language_servers.values().find_map(|state| {
+                                                match state {
+                                                    LanguageServerState::Running {
+                                                        server, ..
+                                                    } if server.server_id() == server_id => {
+                                                        Some(server.clone())
+                                                    }
+                                                    _ => None,
+                                                }
+                                            })
+                                        });
+
+                                        if let Some(server) = server {
+                                            this.notify_server_memory_usage(&server, memory, cx);
+                                        }
+                                    })
+                                    .is_ok();
+
+                                if !should_continue {
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        last_memory_usage.clear();
+                    }
+
+                    cx.background_executor().timer(Duration::from_secs(5)).await;
+                }
+            })),
         }
     }
 
@@ -5053,6 +5139,8 @@ impl LspStore {
 
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
+
+            memory_usage_task: None,
         }
     }
 
@@ -13623,61 +13711,6 @@ impl LspStore {
             .into_iter()
             .collect();
 
-        let memory_usage_task = Some(cx.spawn({
-            let language_server = language_server.clone();
-            async move |this, cx| {
-                let mut system = sysinfo::System::new();
-                let mut last_memory_usage = None;
-
-                while let Some(has_downstream_client) = this
-                    .update(cx, |this, _| this.downstream_client.is_some())
-                    .ok()
-                {
-                    if has_downstream_client {
-                        if let Some(process_id) = this
-                            .update(cx, |_, _| language_server.process_id())
-                            .ok()
-                            .flatten()
-                        {
-                            let refresh_kind = sysinfo::RefreshKind::nothing().with_processes(
-                                sysinfo::ProcessRefreshKind::nothing()
-                                    .without_tasks()
-                                    .with_memory(),
-                            );
-                            system.refresh_specifics(refresh_kind);
-
-                            let total_memory = Self::process_tree_memory(
-                                &system,
-                                sysinfo::Pid::from_u32(process_id),
-                            );
-
-                            if !last_memory_usage
-                                .is_some_and(|last| total_memory.abs_diff(last) < 1024 * 1024)
-                            {
-                                last_memory_usage = Some(total_memory);
-
-                                if this
-                                    .update(cx, |this, cx| {
-                                        this.notify_server_memory_usage(
-                                            &language_server,
-                                            total_memory,
-                                            cx,
-                                        );
-                                    })
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                            }
-                        }
-                    } else {
-                        last_memory_usage = None;
-                    }
-
-                    cx.background_executor().timer(Duration::from_secs(5)).await;
-                }
-            }
-        }));
         local.language_servers.insert(
             server_id,
             LanguageServerState::Running {
@@ -13685,7 +13718,6 @@ impl LspStore {
                 adapter: adapter.clone(),
                 server: language_server.clone(),
                 simulate_disk_based_diagnostics_completion: None,
-                memory_usage_task,
             },
         );
         local.update_binary_status(adapter.name(), BinaryStatus::None);
@@ -16348,7 +16380,6 @@ pub enum LanguageServerState {
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
-        memory_usage_task: Option<Task<()>>,
         workspace_diagnostics_refresh_tasks: HashMap<Option<String>, WorkspaceRefreshTask>,
     },
 }
@@ -17707,7 +17738,7 @@ mod tests {
             .map(|process| process.memory())
             .unwrap_or(0);
 
-        let mut child = std::process::Command::new("sleep")
+        let mut child = smol::process::Command::new("sleep")
             .arg("2")
             .spawn()
             .expect("failed to spawn child process");
