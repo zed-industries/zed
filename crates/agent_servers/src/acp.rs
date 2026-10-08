@@ -131,8 +131,8 @@ struct Subagent {
     /// creates the session itself, so no round trip gives us a thread; we build
     /// one on the spawn because the child's work starts streaming immediately.
     thread: Option<Entity<AcpThread>>,
-    /// Whether the parent's tool call has been told which child does its work.
-    linked_to_parent_tool_call: bool,
+    /// The parent's tool call that hosts this child, once one is known.
+    parent_tool_call_id: Option<acp::ToolCallId>,
 }
 
 fn dispatch_queue_closed_error() -> acp::Error {
@@ -6198,6 +6198,11 @@ exit 7
                 .as_ref()
                 .expect("the hosting call should name the child session");
             assert_eq!(info.session_id, child_session_id);
+            assert_eq!(
+                tool_call.status(),
+                acp_thread::ToolCallStatus::InProgress,
+                "the delegation is still running"
+            );
 
             let transcript = parent
                 .entries()
@@ -6208,6 +6213,99 @@ exit 7
                 !transcript.contains("looking"),
                 "the child's work must stay out of the parent transcript, got: {transcript}"
             );
+        });
+
+        // The agent reports no status of its own for the hosting call: the
+        // child's own state is what ends the delegation.
+        agent
+            .send_notification(raw_session_update(
+                "parent-session",
+                serde_json::json!({
+                    "sessionUpdate": "subagent_state_update",
+                    "subagentSessionId": "child-session",
+                    "state": "completed",
+                }),
+            ))
+            .expect("the child's state should reach the client");
+        cx.run_until_parked();
+
+        parent.read_with(cx, |parent, _| {
+            let (_, tool_call) = parent
+                .tool_call(&acp_v2::ToolCallId::new("toolu_1"))
+                .expect("the hosting call");
+            assert_eq!(
+                tool_call.status(),
+                acp_thread::ToolCallStatus::Completed,
+                "a settled child must not leave its hosting call running forever"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn a_failed_subagent_fails_the_call_that_hosts_it(cx: &mut gpui::TestAppContext) {
+        let (agent_sender, agent_receiver) = futures::channel::oneshot::channel();
+        let (connection, project, _, _, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_handle(None, Some(agent_sender), cx).await;
+        let agent = agent_receiver.await.expect("fake agent handle");
+
+        let parent_session_id = acp_v2::SessionId::new("parent-session");
+        let parent = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    parent_session_id,
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("load parent session");
+
+        agent
+            .send_notification(raw_session_update(
+                "parent-session",
+                serde_json::json!({
+                    "sessionUpdate": "subagent_spawned",
+                    "subagentSessionId": "child-session",
+                    "name": "Explore",
+                    "task": "Find the callers of `foo`",
+                    "capabilities": {},
+                }),
+            ))
+            .expect("the spawn should reach the client");
+        cx.run_until_parked();
+
+        // The child's work is what names the call it belongs to.
+        agent
+            .send_notification(raw_session_update(
+                "child-session",
+                serde_json::json!({
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": { "type": "text", "text": "looking" },
+                    "_meta": { "claudeCode": { "parentToolUseId": "toolu_1" } },
+                }),
+            ))
+            .expect("the child's work should reach the client");
+        cx.run_until_parked();
+
+        agent
+            .send_notification(raw_session_update(
+                "parent-session",
+                serde_json::json!({
+                    "sessionUpdate": "subagent_state_update",
+                    "subagentSessionId": "child-session",
+                    "state": "failed",
+                }),
+            ))
+            .expect("the child's state should reach the client");
+        cx.run_until_parked();
+
+        parent.read_with(cx, |parent, _| {
+            let (_, tool_call) = parent
+                .tool_call(&acp_v2::ToolCallId::new("toolu_1"))
+                .expect("the hosting call");
+            assert_eq!(tool_call.status(), acp_thread::ToolCallStatus::Failed);
         });
     }
 
@@ -7935,14 +8033,46 @@ fn handle_subagent_notification(
             // Nothing left to stream for this child. Release the thread if no
             // view ever claimed it; a claimed one lives as long as its view.
             let child_session_id = acp_v2::SessionId::new(changed.session_id.0.clone());
-            if let Some(subagent) = ctx.subagents.borrow_mut().get_mut(&child_session_id) {
+            let hosting_call = {
+                let mut subagents = ctx.subagents.borrow_mut();
+                let Some(subagent) = subagents.get_mut(&child_session_id) else {
+                    return;
+                };
                 subagent.thread.take();
-            }
-            log::debug!(
-                "Subagent {:?} finished: {:?}",
-                changed.session_id,
-                changed.state
-            );
+                subagent.parent_tool_call_id.clone()
+            };
+
+            // The agent sends no status for the hosting call; the child's own
+            // state is what ends the delegation, so without this it runs forever.
+            let Some(tool_call_id) = hosting_call else {
+                return;
+            };
+            let Some(parent) = ctx
+                .sessions
+                .borrow()
+                .get(&parent_session_id)
+                .and_then(|session| session.thread.upgrade())
+            else {
+                return;
+            };
+            let status = match changed.state {
+                subagent_updates::SubagentState::Completed => acp::ToolCallStatus::Completed,
+                // Cancelled and disconnected both mean the work didn't finish.
+                subagent_updates::SubagentState::Failed
+                | subagent_updates::SubagentState::Cancelled
+                | subagent_updates::SubagentState::Disconnected => acp::ToolCallStatus::Failed,
+            };
+            cx.update(|cx| {
+                parent.update(cx, |parent, cx| {
+                    let update = acp::ToolCallUpdate::new(
+                        tool_call_id,
+                        acp::ToolCallUpdateFields::new().status(status),
+                    );
+                    parent
+                        .handle_session_update(acp::SessionUpdate::ToolCallUpdate(update), cx)
+                        .log_err();
+                });
+            });
         }
     }
 }
@@ -8053,7 +8183,7 @@ fn open_subagent_session(
                 parent_session_id,
                 name: spawned.name,
                 thread: Some(thread),
-                linked_to_parent_tool_call: false,
+                parent_tool_call_id: None,
             },
         );
 
@@ -8080,10 +8210,10 @@ fn handle_subagent_attribution(
             // attributes it to a tool call on the session it already streams to.
             return;
         };
-        if subagent.linked_to_parent_tool_call {
+        if subagent.parent_tool_call_id.is_some() {
             return;
         }
-        subagent.linked_to_parent_tool_call = true;
+        subagent.parent_tool_call_id = Some(attribution.parent_tool_call_id.clone());
         (subagent.parent_session_id.clone(), subagent.name.clone())
     };
 
