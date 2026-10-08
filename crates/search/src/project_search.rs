@@ -1771,17 +1771,6 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        enum QuerySeed {
-            /// Content of the buffer search bar: already query syntax, with
-            /// escaping already applied if it was seeded in regex mode, so it
-            /// must never be re-escaped. It's carried over verbatim even if
-            /// the buffer search's mode differs from the project search's.
-            Query(String),
-            /// Raw text from the editor's selection or the word under the
-            /// cursor, so it gets escaped when entering a regex query.
-            Text(String),
-        }
-
         let query_seed = workspace.active_item(cx).and_then(|item| {
             if let Some(buffer_search_query) = buffer_search_query(workspace, item.as_ref(), cx) {
                 return Some(QuerySeed::Query(buffer_search_query));
@@ -1847,15 +1836,8 @@ impl ProjectSearchView {
             if let Some(query) = action.query.as_deref().filter(|query| !query.is_empty()) {
                 search.set_query(query, window, cx);
             } else if let Some(query_seed) = query_seed {
-                let query = match query_seed {
-                    QuerySeed::Query(query) => query,
-                    QuerySeed::Text(text)
-                        if search.search_options.contains(SearchOptions::REGEX) =>
-                    {
-                        regex::escape(&text)
-                    }
-                    QuerySeed::Text(text) => text,
-                };
+                let query =
+                    query_seed.into_query(search.search_options.contains(SearchOptions::REGEX));
                 search.set_query(&query, window, cx);
             }
             if let Some(included_files) = action.included_files.as_deref() {
@@ -2579,6 +2561,26 @@ impl ProjectSearchView {
             query_buffer.update(cx, |query_buffer, cx| {
                 query_buffer.set_language(None, cx);
             })
+        }
+    }
+}
+
+pub(crate) enum QuerySeed {
+    /// Content of a search bar: already query syntax, with escaping already
+    /// applied if it was seeded in regex mode, so it must never be re-escaped.
+    /// It's carried over verbatim even if the source search's mode differs.
+    Query(String),
+    /// Raw text from a selection or the word under the cursor, so it gets
+    /// escaped when entering a regex query.
+    Text(String),
+}
+
+impl QuerySeed {
+    pub(crate) fn into_query(self, regex: bool) -> String {
+        match self {
+            QuerySeed::Query(query) => query,
+            QuerySeed::Text(text) if regex => regex::escape(&text),
+            QuerySeed::Text(text) => text,
         }
     }
 }
