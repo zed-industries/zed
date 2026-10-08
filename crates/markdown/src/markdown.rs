@@ -6247,6 +6247,110 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_wrapped_table_link_unicode_and_surrounding_text(cx: &mut TestAppContext) {
+        for alignment in ["---", ":---", ":---:", "---:"] {
+            for (cell, surrounding_words) in [
+                (
+                    "[https://zed.dev/docs/über/条件/🙂/markdown/preview/tables/wrapped-links](https://zed.dev/docs/markdown/unicode)",
+                    None,
+                ),
+                (
+                    "before [https://zed.dev/docs/markdown/preview/tables/wrapped-link-hit-testing-and-selection](https://zed.dev/docs/markdown/links) after",
+                    Some(["before", "after"]),
+                ),
+            ] {
+                let source = format!("| # | Link |\n| --- | {alignment} |\n| 1 | {cell} |\n");
+                let (view, cx) = open_link_interaction_test_window(&source, cx);
+                let rendered = view
+                    .read_with(cx, |view, _| view.rendered_text.borrow().clone())
+                    .expect("table should be rendered");
+                assert_eq!(rendered.links.len(), 1);
+                let link = rendered.links.first().expect("cell should contain a link");
+                assert!(
+                    rendered
+                        .bounds_for_source_range(link.source_range.clone())
+                        .len()
+                        > 1,
+                    "link should wrap: alignment={alignment}, source={source}"
+                );
+                assert_link_hit_testing(&rendered);
+                assert_link_mouse_interactions(&view, &rendered, cx);
+
+                if let Some(surrounding_words) = surrounding_words {
+                    let positions = surrounding_words.map(|word| {
+                        let start = source.find(word).expect("cell should contain plain text");
+                        rendered
+                            .bounds_for_source_range(start..start + word.len())
+                            .into_iter()
+                            .next()
+                            .expect("plain text should have bounds")
+                            .center()
+                    });
+                    assert_non_link_mouse_interactions(&view, &rendered, positions, cx);
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_table_link_hover_click_and_resize(cx: &mut TestAppContext) {
+        let source = format!("Before\n\n{WRAPPED_LINK_TABLE}\nAfter");
+        let (view, cx) = open_link_interaction_test_window(&source, cx);
+        let rendered_text = view.read_with(cx, |view, _| view.rendered_text.clone());
+
+        for width in [1200., 240., 360., 1200.] {
+            *rendered_text.borrow_mut() = None;
+            cx.simulate_resize(size(px(width), px(1600.)));
+            cx.run_until_parked();
+            let rendered = rendered_text
+                .borrow()
+                .clone()
+                .expect("markdown should be rendered again after resizing");
+            assert_eq!(rendered.links.len(), 10);
+            let first_link = rendered.links.first().expect("table should contain links");
+            let row_count = rendered
+                .bounds_for_source_range(first_link.source_range.clone())
+                .len();
+            if width < 1200. {
+                assert!(row_count > 1);
+            } else {
+                assert_eq!(row_count, 1);
+            }
+            assert_link_mouse_interactions(&view, &rendered, cx);
+
+            let before_bounds = rendered
+                .bounds_for_source_range(0.."Before".len())
+                .into_iter()
+                .next()
+                .expect("paragraph should have bounds");
+            let number_start = source.find("| 1 |").expect("table should contain row 1") + 2;
+            let number_bounds = rendered
+                .bounds_for_source_range(number_start..number_start + 1)
+                .into_iter()
+                .next()
+                .expect("number should have bounds");
+            let header_bounds = rendered
+                .lines
+                .iter()
+                .find(|line| line.layout.text().as_str() == "#")
+                .expect("table should have a header")
+                .layout
+                .bounds();
+            assert!(before_bounds.bottom() < header_bounds.top());
+            let gap_position = point(
+                before_bounds.center().x,
+                (before_bounds.bottom() + header_bounds.top()) / 2.,
+            );
+            assert_non_link_mouse_interactions(
+                &view,
+                &rendered,
+                [before_bounds.center(), number_bounds.center(), gap_position],
+                cx,
+            );
+        }
+    }
+
+    #[gpui::test]
     fn test_table_columns_are_sized_to_their_content(cx: &mut TestAppContext) {
         fn cells(row: &str) -> impl Iterator<Item = &str> {
             row.trim().trim_matches('|').split('|')
@@ -8157,6 +8261,129 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn assert_link_mouse_interactions(
+        view: &Entity<LinkInteractionTestView>,
+        rendered: &RenderedText,
+        cx: &mut VisualTestContext,
+    ) {
+        assert!(!rendered.links.is_empty(), "markdown should contain links");
+        let markdown = view.read_with(cx, |view, _| view.markdown.clone());
+        let hovered_urls = view.read_with(cx, |view, _| view.hovered_urls.clone());
+        let opened_urls = view.read_with(cx, |view, _| view.opened_urls.clone());
+        let viewport =
+            cx.update(|window, _| Bounds::new(point(px(0.), px(0.)), window.viewport_size()));
+        for link in rendered.links.iter() {
+            for bounds in link_bounds_for_visual_rows(rendered, link) {
+                let position = bounds.center();
+                assert!(
+                    viewport.contains(&position),
+                    "link should be visible at {position:?}"
+                );
+                hovered_urls.borrow_mut().clear();
+                opened_urls.borrow_mut().clear();
+                markdown.read_with(cx, |markdown, _| assert!(markdown.pressed_link.is_none()));
+                cx.simulate_mouse_move(position, None, Modifiers::default());
+                assert_eq!(
+                    hovered_urls.borrow().as_slice(),
+                    &[Some(link.destination_url.clone())],
+                    "mouse move should report this link exactly once at {position:?}"
+                );
+                assert!(opened_urls.borrow().is_empty());
+                cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+                assert!(opened_urls.borrow().is_empty());
+                markdown.read_with(cx, |markdown, _| {
+                    assert_eq!(markdown.pressed_link.as_ref(), Some(link));
+                });
+                cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
+                assert_eq!(
+                    opened_urls.borrow().as_slice(),
+                    std::slice::from_ref(&link.destination_url),
+                    "click should open this link exactly once at {position:?}"
+                );
+                markdown.read_with(cx, |markdown, _| assert!(markdown.pressed_link.is_none()));
+            }
+        }
+    }
+
+    fn assert_non_link_mouse_interactions(
+        view: &Entity<LinkInteractionTestView>,
+        rendered: &RenderedText,
+        positions: impl IntoIterator<Item = Point<Pixels>>,
+        cx: &mut VisualTestContext,
+    ) {
+        let hovered_urls = view.read_with(cx, |view, _| view.hovered_urls.clone());
+        let opened_urls = view.read_with(cx, |view, _| view.opened_urls.clone());
+        let viewport =
+            cx.update(|window, _| Bounds::new(point(px(0.), px(0.)), window.viewport_size()));
+        let mut checked_position_count = 0;
+        for position in positions {
+            checked_position_count += 1;
+            assert!(
+                viewport.contains(&position),
+                "non-link position should be visible at {position:?}"
+            );
+            assert!(
+                rendered
+                    .source_index_for_position(position)
+                    .ok()
+                    .and_then(|source_index| rendered.link_for_source_index(source_index))
+                    .is_none(),
+                "position should not hit a link: {position:?}"
+            );
+            hovered_urls.borrow_mut().clear();
+            opened_urls.borrow_mut().clear();
+            cx.simulate_mouse_move(position, None, Modifiers::default());
+            assert_eq!(hovered_urls.borrow().as_slice(), &[None]);
+            assert!(opened_urls.borrow().is_empty());
+            cx.simulate_click(position, Modifiers::default());
+            assert!(opened_urls.borrow().is_empty());
+        }
+        assert!(
+            checked_position_count > 0,
+            "non-link positions should be tested"
+        );
+    }
+
+    struct LinkInteractionTestView {
+        markdown: Entity<Markdown>,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+        hovered_urls: Rc<RefCell<Vec<Option<SharedString>>>>,
+        opened_urls: Rc<RefCell<Vec<SharedString>>>,
+    }
+
+    impl Render for LinkInteractionTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let hovered_urls = self.hovered_urls.clone();
+            let opened_urls = self.opened_urls.clone();
+            div().size_full().child(CapturingMarkdownElement {
+                markdown_element: MarkdownElement::new(
+                    self.markdown.clone(),
+                    MarkdownStyle::default(),
+                )
+                .on_url_hover(move |url, _, _| hovered_urls.borrow_mut().push(url))
+                .on_url_click(move |url, _, _| opened_urls.borrow_mut().push(url)),
+                rendered_text: self.rendered_text.clone(),
+            })
+        }
+    }
+
+    fn open_link_interaction_test_window<'a>(
+        source: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<LinkInteractionTestView>, &'a mut VisualTestContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new(source.to_string().into(), None, None, cx));
+        let (view, cx) = cx.add_window_view(move |_, _| LinkInteractionTestView {
+            markdown,
+            rendered_text: Rc::new(RefCell::new(None)),
+            hovered_urls: Rc::new(RefCell::new(Vec::new())),
+            opened_urls: Rc::new(RefCell::new(Vec::new())),
+        });
+        cx.simulate_resize(size(px(240.), px(1600.)));
+        cx.run_until_parked();
+        (view, cx)
     }
 
     struct TestWindow;
