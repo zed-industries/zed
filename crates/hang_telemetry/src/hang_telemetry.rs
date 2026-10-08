@@ -69,7 +69,8 @@ pub fn hang_threshold() -> Duration {
 
 /// Total foreground spend within one interval that counts as a hang, for
 /// frames on displays whose refresh interval is unknown. Elsewhere a frame
-/// counts as a hang when it misses several refreshes.
+/// counts as a hang when its work exceeds one refresh interval or one refresh
+/// at 120 Hz, whichever is longer.
 pub fn frame_budget() -> Duration {
     if cfg!(debug_assertions) {
         // Unoptimized builds routinely spend more than a release frame budget

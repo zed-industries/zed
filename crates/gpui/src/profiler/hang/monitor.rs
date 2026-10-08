@@ -14,7 +14,7 @@ pub struct HangMonitorConfig {
     pub threshold: Duration,
     /// Total foreground spend within one interval that counts as a hang,
     /// for frames on displays whose refresh interval is unknown. Elsewhere a
-    /// frame counts as a hang when it misses several refreshes.
+    /// frame counts as a hang when it's late (see `FrameTiming::is_late`).
     pub frame_budget: Duration,
     /// How often the monitor thread drains the journal.
     pub interval: Duration,

@@ -159,7 +159,7 @@ pub enum HangTrigger {
     /// A single event blocked the foreground for at least the hang threshold.
     Threshold,
     /// No single event crossed the threshold, but the interval presented a
-    /// frame that missed several refreshes (see [`HangIncident::detect`]).
+    /// late frame (see [`HangIncident::detect`]).
     Budget,
 }
 
@@ -541,8 +541,9 @@ impl HangIncident {
 
     /// Returns an incident when the snapshot contains at least one event
     /// that blocked the foreground for `threshold` or longer, or when no
-    /// single event did but the interval presented a frame that missed
-    /// several refreshes of its display. On displays whose refresh interval
+    /// single event did but the interval presented a late frame, whose work
+    /// exceeded one refresh interval or the 120 Hz floor, whichever is
+    /// longer. On displays whose refresh interval
     /// is unknown, the interval's total foreground spend — event time plus
     /// folded small-poll time — reaching `frame_budget` counts instead. For
     /// such budget incidents every event in the interval becomes a
@@ -577,15 +578,10 @@ impl HangIncident {
     }
 }
 
-/// A frame missing this many refreshes of its display is a budget hang. Fewer
-/// would report most frames on high refresh rate displays, where one refresh
-/// is a few milliseconds.
-const BUDGET_MISSED_REFRESHES: u64 = 2;
-
-/// Whether the interval presented a frame that missed
-/// [`BUDGET_MISSED_REFRESHES`] or more refreshes. On displays whose refresh
-/// interval is unknown, whether the interval's foreground spend reached
-/// `frame_budget` instead.
+/// Whether the interval presented a late frame, per
+/// [`FrameTiming::is_late`](crate::profiler::FrameTiming::is_late).
+/// On displays whose refresh interval is unknown, whether the interval's
+/// foreground spend reached `frame_budget` instead.
 fn presented_late_frame(snapshot: &FrameSnapshot, frame_budget: Duration) -> bool {
     let IntervalBoundary::Presented(presented) = snapshot.boundary else {
         return false;
@@ -596,8 +592,8 @@ fn presented_late_frame(snapshot: &FrameSnapshot, frame_budget: Duration) -> boo
     }
     presented
         .frame
-        .missed_refreshes(presented.presentation.submitted_at())
-        .is_some_and(|missed_refreshes| missed_refreshes >= BUDGET_MISSED_REFRESHES)
+        .is_late(presented.presentation.submitted_at())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -1277,52 +1273,60 @@ mod tests {
         assert!(HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).is_none());
     }
 
-    /// With a known refresh interval, a frame is a budget hang when it missed
-    /// two or more refreshes, measured from its opportunity to its submission.
+    /// With a known refresh interval, a frame is a budget hang when its work,
+    /// from its opportunity to its submission, exceeded one refresh interval or
+    /// the 120 Hz floor, whichever is longer.
     #[test]
-    fn frames_missing_several_refreshes_are_budget_hangs() {
+    fn late_frames_are_budget_hangs() {
         let startup = scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xB0D6E7);
-        let detect = |opportunity: FrameOpportunity, submitted_ms: u64| {
-            let snapshot = FrameSnapshot {
-                interval_start: at(0),
-                boundary: IntervalBoundary::Presented(PresentedFrame {
-                    frame: FrameTiming {
-                        window_id,
-                        dirty_at: Some(at(0)),
-                        invalidations: 1,
-                        draw_start: at(1),
-                        draw_end: at(submitted_ms - 1),
-                        refresh_interval: Some(Duration::from_millis(10)),
-                        opportunity,
-                    },
-                    presentation: PresentTiming {
-                        window_id,
-                        present_start: at(submitted_ms),
-                        // Waiting for a drawable doesn't make the frame late.
-                        present_end: at(submitted_ms + 50),
-                        animation_interval: None,
-                        drawable_wait: Some(Duration::from_millis(50)),
-                    },
-                }),
-                events: vec![
-                    task_poll_event(at(1), at(6)),
-                    task_poll_event(at(10), at(15)),
-                ],
-                small_polls: Vec::new(),
-                dropped_events: 0,
-                journal_discontinuous: false,
+        let detect =
+            |refresh_interval: Duration, opportunity: FrameOpportunity, submitted_ms: u64| {
+                let snapshot = FrameSnapshot {
+                    interval_start: at(0),
+                    boundary: IntervalBoundary::Presented(PresentedFrame {
+                        frame: FrameTiming {
+                            window_id,
+                            dirty_at: Some(at(0)),
+                            invalidations: 1,
+                            draw_start: at(1),
+                            draw_end: at(submitted_ms - 1),
+                            refresh_interval: Some(refresh_interval),
+                            opportunity,
+                        },
+                        presentation: PresentTiming {
+                            window_id,
+                            present_start: at(submitted_ms),
+                            // Waiting for a drawable doesn't make the frame late.
+                            present_end: at(submitted_ms + 50),
+                            animation_interval: None,
+                            drawable_wait: Some(Duration::from_millis(50)),
+                        },
+                    }),
+                    events: vec![
+                        task_poll_event(at(1), at(6)),
+                        task_poll_event(at(10), at(15)),
+                    ],
+                    small_polls: Vec::new(),
+                    dropped_events: 0,
+                    journal_discontinuous: false,
+                };
+                HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
             };
-            HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
-        };
 
-        let incident = detect(FrameOpportunity::At(at(0)), 25).expect("missed two refreshes");
+        let sixty_hertz = Duration::from_secs(1) / 60;
+        let incident = detect(sixty_hertz, FrameOpportunity::At(at(0)), 25)
+            .expect("work exceeded one refresh");
         assert_eq!(incident.trigger, HangTrigger::Budget);
         assert_eq!(incident.contributors.len(), 2);
-        assert!(detect(FrameOpportunity::At(at(0)), 19).is_none());
-        assert!(detect(FrameOpportunity::Delayed, 25).is_none());
-        assert!(detect(FrameOpportunity::Unmeasured, 25).is_none());
+        assert!(detect(sixty_hertz, FrameOpportunity::At(at(0)), 16).is_none());
+        assert!(detect(sixty_hertz, FrameOpportunity::Delayed, 25).is_none());
+        assert!(detect(sixty_hertz, FrameOpportunity::Unmeasured, 25).is_none());
+
+        let three_hundred_sixty_hertz = Duration::from_secs(1) / 360;
+        assert!(detect(three_hundred_sixty_hertz, FrameOpportunity::At(at(0)), 8).is_none());
+        assert!(detect(three_hundred_sixty_hertz, FrameOpportunity::At(at(0)), 9).is_some());
     }
 
     /// Contributors serialize in start order with their nesting depth: an

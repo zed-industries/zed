@@ -852,6 +852,13 @@ impl FrameOpportunity {
     }
 }
 
+/// The least work a frame can take before it counts as late: one refresh
+/// at 120 Hz. Frames rarely fit a single refresh on faster displays yet, so
+/// judging them by it would count nearly every frame as late and hide
+/// regressions; missed refreshes still measure against the real interval.
+#[cfg(feature = "profiler")]
+pub const FRAME_BUDGET_FLOOR: Duration = Duration::from_nanos(8_333_333);
+
 #[cfg(feature = "profiler")]
 impl FrameTiming {
     /// The main-thread time from the frame's opportunity until it was
@@ -861,6 +868,18 @@ impl FrameTiming {
             FrameOpportunity::At(at) => Some(submitted_at.saturating_duration_since(at)),
             FrameOpportunity::Delayed | FrameOpportunity::Unmeasured => None,
         }
+    }
+
+    /// Whether the frame's work, submitted at `submitted_at`, exceeded
+    /// [`FrameTiming::budget`], when both are known.
+    pub fn is_late(&self, submitted_at: Instant) -> Option<bool> {
+        Some(self.work(submitted_at)? > self.budget()?)
+    }
+
+    /// The work a frame can take before it counts as late: one refresh
+    /// interval, but no less than [`FRAME_BUDGET_FLOOR`].
+    pub fn budget(&self) -> Option<Duration> {
+        Some(self.refresh_interval?.max(FRAME_BUDGET_FLOOR))
     }
 
     /// How many refreshes the frame missed when submitted at `submitted_at`:
@@ -981,7 +1000,7 @@ pub type FrameWorkBuckets = [u64; FRAME_WORK_BUCKETS_PERCENT.len() + 1];
 /// A frame's work is the main-thread time from its
 /// [`FrameOpportunity`] until it was submitted
 /// ([`PresentTiming::submitted_at`]). A frame is on time when its work fit
-/// within one refresh interval.
+/// within [`FrameTiming::budget`].
 #[cfg(feature = "profiler")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RefreshIntervalFrames {
@@ -995,11 +1014,11 @@ pub struct RefreshIntervalFrames {
     /// Durations from the first invalidation to presentation, bucketed by
     /// [`FRAME_DURATION_BUCKETS_MS`].
     pub dirty_to_present: FrameDurationBuckets,
-    /// Presented frames whose work fit within one refresh interval.
+    /// Presented frames whose work fit within [`FrameTiming::budget`].
     pub frames_on_time: u64,
-    /// Presented frames whose work took longer than one refresh interval.
+    /// Presented frames whose work exceeded [`FrameTiming::budget`].
     pub frames_late: u64,
-    /// Refreshes that late frames missed in total.
+    /// Refreshes that on-time and late frames missed in total.
     pub missed_refreshes: u64,
     /// Presented frames whose opportunity was [`FrameOpportunity::Delayed`].
     pub frames_delayed: u64,
@@ -1083,20 +1102,21 @@ impl RefreshIntervalFrames {
         match (
             frame.work(submitted_at),
             frame.missed_refreshes(submitted_at),
+            frame.is_late(submitted_at),
         ) {
-            (Some(work), Some(missed_refreshes)) => {
+            (Some(work), Some(missed_refreshes), Some(is_late)) => {
                 let bucket = percent_bucket(work, refresh_interval);
                 self.work[bucket] += 1;
                 if responded_to_input {
                     self.input_work[bucket] += 1;
                 }
-                if missed_refreshes == 0 {
-                    self.frames_on_time += 1;
-                    self.input_frames_on_time += u64::from(responded_to_input);
-                } else {
+                self.missed_refreshes += missed_refreshes;
+                if is_late {
                     self.frames_late += 1;
                     self.input_frames_late += u64::from(responded_to_input);
-                    self.missed_refreshes += missed_refreshes;
+                } else {
+                    self.frames_on_time += 1;
+                    self.input_frames_on_time += u64::from(responded_to_input);
                 }
             }
             _ => match frame.opportunity {
@@ -1737,6 +1757,7 @@ mod tests {
         let mut profiler = WindowProfiler::new(WindowId::from(1)).expect("valid histograms");
         let sixty_hertz = Duration::from_secs(1) / 60;
         let one_hundred_twenty_hertz = Duration::from_secs(1) / 120;
+        let three_hundred_sixty_hertz = Duration::from_secs(1) / 360;
         let base = Instant::now();
         let at = |ms| base + Duration::from_millis(ms);
 
@@ -1782,6 +1803,21 @@ mod tests {
                 refresh_interval: Some(one_hundred_twenty_hertz),
                 signal_ms: Some(0),
                 present_start_ms: 12,
+                drawable_wait_ms: None,
+                responded_to_input: false,
+            },
+            // Misses refreshes but fits the budget floor.
+            Frame {
+                refresh_interval: Some(three_hundred_sixty_hertz),
+                signal_ms: Some(0),
+                present_start_ms: 6,
+                drawable_wait_ms: None,
+                responded_to_input: false,
+            },
+            Frame {
+                refresh_interval: Some(three_hundred_sixty_hertz),
+                signal_ms: Some(0),
+                present_start_ms: 9,
                 drawable_wait_ms: None,
                 responded_to_input: false,
             },
@@ -1852,6 +1888,12 @@ mod tests {
         assert_eq!(one_hundred_twenty.frames_late, 1);
         assert_eq!(one_hundred_twenty.missed_refreshes, 1);
         assert_eq!(one_hundred_twenty.input_frames_late, 0);
+
+        let three_hundred_sixty = frames_for(Some(three_hundred_sixty_hertz));
+        assert_eq!(three_hundred_sixty.frames_on_time, 1);
+        assert_eq!(three_hundred_sixty.frames_late, 1);
+        // 6 ms of work misses 2 refreshes at 2.78 ms each, and 9 ms misses 3.
+        assert_eq!(three_hundred_sixty.missed_refreshes, 5);
 
         let unknown = frames_for(None);
         assert_eq!(unknown.frames_drawn, 1);
