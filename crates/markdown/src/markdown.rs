@@ -4918,6 +4918,7 @@ impl RenderedText {
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
         let mut fallback_line: Option<&Rc<RenderedLine>> = None;
+        let mut gap_source_index: Option<usize> = None;
 
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
@@ -4936,10 +4937,16 @@ impl RenderedText {
             if position.y > line_bounds.bottom() {
                 if let Some(next_line) = lines.peek()
                     && position.y < next_line.layout.bounds().top()
+                    && gap_source_index.is_none()
                 {
-                    return Err(line.source_end);
+                    // A later table cell may contain the position, so defer the gap fallback.
+                    gap_source_index = Some(line.source_end);
                 }
             }
+        }
+
+        if let Some(source_index) = gap_source_index {
+            return Err(source_index);
         }
 
         // Fall back to Y-coordinate matched line
