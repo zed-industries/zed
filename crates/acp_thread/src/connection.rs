@@ -112,7 +112,7 @@ pub trait AgentConnection {
     /// Load an existing session by ID.
     fn load_session(
         self: Rc<Self>,
-        _session_id: acp_v1::SessionId,
+        _session_id: acp_v2::SessionId,
         _project: Entity<Project>,
         _work_dirs: PathList,
         _title: Option<SharedString>,
@@ -129,7 +129,7 @@ pub trait AgentConnection {
     /// Close an existing session. Allows the agent to free the session from memory.
     fn close_session(
         self: Rc<Self>,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &mut App,
     ) -> Task<Result<()>> {
         Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
@@ -143,7 +143,7 @@ pub trait AgentConnection {
     /// Resume an existing session by ID without replaying previous messages.
     fn resume_session(
         self: Rc<Self>,
-        _session_id: acp_v1::SessionId,
+        _session_id: acp_v2::SessionId,
         _project: Entity<Project>,
         _work_dirs: PathList,
         _title: Option<SharedString>,
@@ -194,7 +194,7 @@ pub trait AgentConnection {
 
     fn receipt_submissions(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn ReceiptSessionSubmissions>> {
         None
@@ -216,13 +216,13 @@ pub trait AgentConnection {
 
     fn retry(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionRetry>> {
         None
     }
 
-    fn cancel(&self, session_id: &acp_v1::SessionId, cx: &mut App);
+    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App);
 
     /// Request-scoped elicitations are connection-level because they can arrive before a session
     /// thread exists. Session-scoped elicitations stay in the thread timeline, but use
@@ -233,7 +233,7 @@ pub trait AgentConnection {
 
     fn truncate(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionTruncate>> {
         None
@@ -241,7 +241,7 @@ pub trait AgentConnection {
 
     fn set_title(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionSetTitle>> {
         None
@@ -253,7 +253,7 @@ pub trait AgentConnection {
     /// This allows sharing the selector in UI components.
     fn model_selector(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
     ) -> Option<Rc<dyn AgentModelSelector>> {
         None
     }
@@ -264,7 +264,7 @@ pub trait AgentConnection {
 
     fn session_modes(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionModes>> {
         None
@@ -272,7 +272,7 @@ pub trait AgentConnection {
 
     fn session_config_options(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
         None
@@ -331,7 +331,7 @@ pub trait AgentTelemetry {
     /// storage with telemetry events.
     fn thread_data(
         &self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &mut App,
     ) -> Task<Result<serde_json::Value>>;
 }
@@ -390,7 +390,7 @@ impl AgentSessionListResponse {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSessionInfo {
-    pub session_id: acp_v1::SessionId,
+    pub session_id: acp_v2::SessionId,
     pub work_dirs: Option<PathList>,
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
@@ -399,7 +399,7 @@ pub struct AgentSessionInfo {
 }
 
 impl AgentSessionInfo {
-    pub fn new(session_id: impl Into<acp_v1::SessionId>) -> Self {
+    pub fn new(session_id: impl Into<acp_v2::SessionId>) -> Self {
         Self {
             session_id: session_id.into(),
             work_dirs: None,
@@ -457,7 +457,7 @@ pub fn session_info_update_from_v1(update: acp_v1::SessionInfoUpdate) -> acp_v2:
 pub enum SessionListUpdate {
     Refresh,
     SessionInfo {
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         update: acp_v2::SessionInfoUpdate,
     },
 }
@@ -473,7 +473,7 @@ pub trait AgentSessionList {
         false
     }
 
-    fn delete_session(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) -> Task<Result<()>> {
+    fn delete_session(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!("delete_session not supported")))
     }
 
@@ -852,15 +852,15 @@ mod test_support {
 
     #[derive(Clone)]
     pub struct StubAgentConnection {
-        sessions: Arc<Mutex<HashMap<acp_v1::SessionId, Session>>>,
-        permission_requests: HashMap<acp_v1::ToolCallId, PermissionOptions>,
+        sessions: Arc<Mutex<HashMap<acp_v2::SessionId, Session>>>,
+        permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp_v1::SessionUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
-        set_title_calls: Arc<Mutex<Vec<(acp_v1::SessionId, SharedString)>>>,
+        set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
@@ -938,7 +938,7 @@ mod test_support {
             self.receipt_prompt.lock().take()
         }
 
-        pub fn take_set_title_calls(&self) -> Vec<(acp_v1::SessionId, SharedString)> {
+        pub fn take_set_title_calls(&self) -> Vec<(acp_v2::SessionId, SharedString)> {
             std::mem::take(&mut *self.set_title_calls.lock())
         }
 
@@ -950,7 +950,7 @@ mod test_support {
 
         pub fn with_permission_requests(
             mut self,
-            permission_requests: HashMap<acp_v1::ToolCallId, PermissionOptions>,
+            permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         ) -> Self {
             self.permission_requests = permission_requests;
             self
@@ -1004,7 +1004,7 @@ mod test_support {
 
         fn create_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             work_dirs: PathList,
             title: Option<SharedString>,
@@ -1036,7 +1036,7 @@ mod test_support {
 
         pub fn send_update(
             &self,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             update: acp_v1::SessionUpdate,
             cx: &mut App,
         ) {
@@ -1056,7 +1056,7 @@ mod test_support {
                 .unwrap();
         }
 
-        pub fn end_turn(&self, session_id: acp_v1::SessionId, stop_reason: acp_v1::StopReason) {
+        pub fn end_turn(&self, session_id: acp_v2::SessionId, stop_reason: acp_v1::StopReason) {
             self.sessions
                 .lock()
                 .get_mut(&session_id)
@@ -1084,7 +1084,7 @@ mod test_support {
 
         fn model_selector(
             &self,
-            _session_id: &acp_v1::SessionId,
+            _session_id: &acp_v2::SessionId,
         ) -> Option<Rc<dyn AgentModelSelector>> {
             Some(self.model_selector_impl())
         }
@@ -1095,7 +1095,7 @@ mod test_support {
             work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let session_id = acp_v1::SessionId::new(StubSessionCounter::next(cx).to_string());
+            let session_id = acp_v2::SessionId::new(StubSessionCounter::next(cx).to_string());
             let thread = self.create_session(session_id, project, work_dirs, None, cx);
             Task::ready(Ok(thread))
         }
@@ -1110,7 +1110,7 @@ mod test_support {
 
         fn load_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             work_dirs: PathList,
             title: Option<SharedString>,
@@ -1141,15 +1141,15 @@ mod test_support {
             params: acp_v2::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            let params = match crate::content::prompt_to_v1(params) {
-                Ok(params) => params,
-                Err(error) => return Task::ready(Err(error)),
-            };
+            let session_id = params.session_id.clone();
+            if let Err(error) = crate::content::prompt_to_v1(params) {
+                return Task::ready(Err(error));
+            }
             let mut sessions = self.sessions.lock();
             let Session {
                 thread,
                 response_tx,
-            } = sessions.get_mut(&params.session_id).unwrap();
+            } = sessions.get_mut(&session_id).unwrap();
             let mut tasks = vec![];
             if let Some(receiver) = self.next_prompt_response.lock().take() {
                 cx.spawn(async move |_| receiver.await?)
@@ -1166,7 +1166,9 @@ mod test_support {
                     let update = update.clone();
                     let permission_request = if let acp_v1::SessionUpdate::ToolCall(tool_call) =
                         &update
-                        && let Some(options) = self.permission_requests.get(&tool_call.tool_call_id)
+                        && let Some(options) = self
+                            .permission_requests
+                            .get(&acp_v2::ToolCallId::new(tool_call.tool_call_id.0.clone()))
                     {
                         Some((tool_call.clone(), options.clone()))
                     } else {
@@ -1211,7 +1213,7 @@ mod test_support {
 
         fn receipt_submissions(
             &self,
-            session_id: &acp_v1::SessionId,
+            session_id: &acp_v2::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn ReceiptSessionSubmissions>> {
             self.supports_receipt_submissions.then(|| {
@@ -1226,14 +1228,14 @@ mod test_support {
 
         fn retry(
             &self,
-            _session_id: &acp_v1::SessionId,
+            _session_id: &acp_v2::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionRetry>> {
             self.supports_retry
                 .then(|| Rc::new(StubAgentSessionRetry) as Rc<dyn AgentSessionRetry>)
         }
 
-        fn cancel(&self, session_id: &acp_v1::SessionId, _cx: &mut App) {
+        fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
             if let Some(end_turn_tx) = self
                 .sessions
                 .lock()
@@ -1248,7 +1250,7 @@ mod test_support {
 
         fn set_title(
             &self,
-            session_id: &acp_v1::SessionId,
+            session_id: &acp_v2::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionSetTitle>> {
             self.supports_set_title.then(|| {
@@ -1261,7 +1263,7 @@ mod test_support {
 
         fn truncate(
             &self,
-            _session_id: &acp_v1::SessionId,
+            _session_id: &acp_v2::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             // Capability checks also call this; only run may consume the gate.
@@ -1276,8 +1278,8 @@ mod test_support {
     }
 
     struct StubAgentSessionSetTitle {
-        session_id: acp_v1::SessionId,
-        calls: Arc<Mutex<Vec<(acp_v1::SessionId, SharedString)>>>,
+        session_id: acp_v2::SessionId,
+        calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
     }
 
     impl AgentSessionSetTitle for StubAgentSessionSetTitle {
@@ -1303,8 +1305,8 @@ mod test_support {
     }
 
     struct StubReceiptSessionSubmissions {
-        session_id: acp_v1::SessionId,
-        sessions: Arc<Mutex<HashMap<acp_v1::SessionId, Session>>>,
+        session_id: acp_v2::SessionId,
+        sessions: Arc<Mutex<HashMap<acp_v2::SessionId, Session>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
@@ -1404,6 +1406,27 @@ pub use test_support::*;
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Arc;
+
+    #[test]
+    fn session_info_id_preserves_backing_arc_and_legacy_serialization() {
+        for value in ["", "session/ \0 雪 😀"] {
+            let backing: Arc<str> = value.into();
+            let info = AgentSessionInfo::new(acp_v2::SessionId::new(backing.clone()));
+            assert!(Arc::ptr_eq(&info.session_id.0, &backing));
+            let wire_id = acp_v1::SessionId::new(backing);
+            let serialized = serde_json::to_value(&info.session_id).expect("application ID");
+            assert_eq!(serialized, json!(value));
+            assert_eq!(
+                serialized,
+                serde_json::to_value(&wire_id).expect("legacy ID"),
+            );
+            let restored = AgentSessionInfo::new(
+                serde_json::from_value::<acp_v2::SessionId>(serialized).expect("restored ID"),
+            );
+            assert_eq!(restored, info);
+        }
+    }
 
     #[test]
     fn session_info_patches_preserve_legacy_fields_and_apply_tristate_updates() {
@@ -1416,7 +1439,7 @@ mod tests {
             json!({"nested": [1, {"value": "retained"}]}),
         )]);
         let original = AgentSessionInfo {
-            session_id: acp_v1::SessionId::new("opaque/session"),
+            session_id: acp_v2::SessionId::new("opaque/session"),
             work_dirs: Some(PathList::new(&[std::path::Path::new("/workspace")])),
             title: Some("Original title".into()),
             updated_at: Some(updated_at),

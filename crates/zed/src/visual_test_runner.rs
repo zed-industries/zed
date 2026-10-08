@@ -95,7 +95,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 use {
     acp_thread::{AgentConnection, StubAgentConnection},
-    agent_client_protocol::schema::v1 as acp,
+    agent_client_protocol::schema::{v1 as acp, v2 as acp_v2},
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
@@ -2721,7 +2721,7 @@ fn run_multi_workspace_sidebar_visual_tests(
 
                 let task = thread_store.update(cx, |store, cx| {
                     store.save_thread(
-                        acp::SessionId::new(Arc::from(session_id)),
+                        acp_v2::SessionId::new(Arc::from(session_id)),
                         agent::DbThread {
                             title: title.to_string().into(),
                             messages: Vec::new(),
