@@ -1571,28 +1571,30 @@ impl Window {
 
         let tab_bar_visible = platform_window.tab_bar_visible();
         SystemWindowTabController::init_visible(cx, tab_bar_visible);
-        if let Some(tabs) = platform_window.tabbed_windows() {
-            let joined_existing_group = tabs.len() > 1;
-            SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
-            // AppKit shows the tab bar when a window gains a second tab, but the native bar
-            // is kept hidden, so apps draw their own from this flag.
-            if joined_existing_group {
-                SystemWindowTabController::set_visible(cx, true);
-            }
-        } else {
-            #[cfg(target_os = "macos")]
-            if has_tabbing_identifier {
-                // A standalone window is not in a native tab group yet, so `tabbed_windows()`
-                // is `None`. Register it anyway; otherwise Merge All Windows no-ops because
-                // the controller has never heard of this window.
-                let title = initial_window_title
-                    .clone()
-                    .unwrap_or_else(|| SharedString::from(""));
-                SystemWindowTabController::add_tab(
-                    cx,
-                    handle.window_id(),
-                    vec![SystemWindowTab::new(title, handle)],
-                );
+        if cx.global::<SystemWindowTabController>().is_enabled() {
+            if let Some(tabs) = platform_window.tabbed_windows() {
+                let joined_existing_group = tabs.len() > 1;
+                SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
+                // AppKit shows the tab bar when a window gains a second tab, but the native bar
+                // is kept hidden, so apps draw their own from this flag.
+                if joined_existing_group {
+                    SystemWindowTabController::show_for_tab_group(cx);
+                }
+            } else {
+                #[cfg(target_os = "macos")]
+                if has_tabbing_identifier {
+                    // A standalone window is not in a native tab group yet, so `tabbed_windows()`
+                    // is `None`. Register it anyway; otherwise Merge All Windows no-ops because
+                    // the controller has never heard of this window.
+                    let title = initial_window_title
+                        .clone()
+                        .unwrap_or_else(|| SharedString::from(""));
+                    SystemWindowTabController::add_tab(
+                        cx,
+                        handle.window_id(),
+                        vec![SystemWindowTab::new(title, handle)],
+                    );
+                }
             }
         }
 
@@ -1935,11 +1937,12 @@ impl Window {
                         // Windows opened hidden (e.g. restored at launch) are only placed into a
                         // native tab group once shown, after they were registered at creation.
                         if active
+                            && cx.global::<SystemWindowTabController>().is_enabled()
                             && let Some(tabs) = window.platform_window.tabbed_windows()
                             && tabs.len() > 1
                             && SystemWindowTabController::sync_tabs(cx, tabs)
                         {
-                            SystemWindowTabController::set_visible(cx, true);
+                            SystemWindowTabController::show_for_tab_group(cx);
                         }
                         SystemWindowTabController::update_last_active(cx, window.handle.id);
                     })
@@ -2014,11 +2017,15 @@ impl Window {
                         handle
                             .update(&mut cx, |_, window, cx| {
                                 let window_id = handle.window_id();
-                                if let Some(tabs) = window.platform_window.tabbed_windows()
+                                if cx.global::<SystemWindowTabController>().is_enabled()
+                                    && let Some(tabs) = window.platform_window.tabbed_windows()
                                     && tabs.len() > 1
                                 {
                                     SystemWindowTabController::sync_tabs(cx, tabs);
-                                    SystemWindowTabController::set_visible(cx, true);
+                                    SystemWindowTabController::show_for_tab_group(cx);
+                                    return;
+                                }
+                                if !cx.global::<SystemWindowTabController>().is_enabled() {
                                     return;
                                 }
                                 SystemWindowTabController::merge_all_windows(cx, window_id);
@@ -2028,7 +2035,7 @@ impl Window {
                                     .map(|tabs| tabs.len())
                                     .unwrap_or(0);
                                 if tab_count > 1 {
-                                    SystemWindowTabController::set_visible(cx, true);
+                                    SystemWindowTabController::show_for_tab_group(cx);
                                 }
                             })
                             .log_err();
@@ -7868,6 +7875,78 @@ mod tests {
             let controller = cx.global::<SystemWindowTabController>();
             assert_eq!(controller.tab_groups().len(), 1);
             assert_eq!(controller.tabs(first.window_id()).map(Vec::len), Some(2));
+        });
+    }
+
+    #[gpui::test]
+    fn test_system_window_tab_visibility_respects_user_choice(cx: &mut TestAppContext) {
+        use crate::SystemWindowTabController;
+
+        cx.update(|cx| {
+            SystemWindowTabController::set_visible(cx, false);
+            SystemWindowTabController::show_for_tab_group(cx);
+            assert!(!cx.global::<SystemWindowTabController>().is_visible());
+
+            SystemWindowTabController::set_visible(cx, true);
+            SystemWindowTabController::show_for_tab_group(cx);
+            assert!(cx.global::<SystemWindowTabController>().is_visible());
+        });
+    }
+
+    #[gpui::test]
+    fn test_disabling_system_window_tabs_preserves_existing_groups(cx: &mut TestAppContext) {
+        use crate::{SystemWindowTab, SystemWindowTabController};
+
+        let first: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        let second: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        let standalone: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        cx.update(|cx| {
+            let tabs = vec![
+                SystemWindowTab::new("".into(), first),
+                SystemWindowTab::new("".into(), second),
+            ];
+            SystemWindowTabController::add_tab(cx, first.window_id(), tabs);
+            SystemWindowTabController::add_tab(
+                cx,
+                standalone.window_id(),
+                vec![SystemWindowTab::new("".into(), standalone)],
+            );
+            SystemWindowTabController::set_visible(cx, true);
+            SystemWindowTabController::set_enabled(cx, false);
+
+            let controller = cx.global::<SystemWindowTabController>();
+            assert!(!controller.is_enabled());
+            assert_eq!(controller.tab_groups().len(), 1);
+            assert_eq!(controller.tabs(first.window_id()).map(Vec::len), Some(2));
+            assert!(controller.tabs(standalone.window_id()).is_none());
+            assert!(controller.is_visible());
+
+            SystemWindowTabController::select_next_tab(cx, first.window_id());
+            assert_eq!(cx.active_window(), Some(second));
+            SystemWindowTabController::select_previous_tab(cx, second.window_id());
+            assert_eq!(cx.active_window(), Some(first));
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn test_disabling_system_window_tabs_removes_standalone_windows(cx: &mut TestAppContext) {
+        use crate::{SystemWindowTab, SystemWindowTabController};
+
+        let standalone: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        cx.update(|cx| {
+            SystemWindowTabController::add_tab(
+                cx,
+                standalone.window_id(),
+                vec![SystemWindowTab::new("".into(), standalone)],
+            );
+            SystemWindowTabController::set_visible(cx, true);
+            SystemWindowTabController::set_enabled(cx, false);
+
+            let controller = cx.global::<SystemWindowTabController>();
+            assert!(!controller.is_enabled());
+            assert!(controller.tab_groups().is_empty());
+            assert!(!controller.is_visible());
         });
     }
 

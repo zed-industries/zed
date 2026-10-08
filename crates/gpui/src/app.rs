@@ -431,10 +431,17 @@ impl SystemWindowTab {
 }
 
 /// A controller for managing window tabs.
-#[derive(Default)]
 pub struct SystemWindowTabController {
+    enabled: bool,
     visible: Option<bool>,
+    user_visible: Option<bool>,
     tab_groups: FxHashMap<usize, Vec<SystemWindowTab>>,
+}
+
+impl Default for SystemWindowTabController {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Global for SystemWindowTabController {}
@@ -443,7 +450,9 @@ impl SystemWindowTabController {
     /// Create a new instance of the window tab controller.
     pub fn new() -> Self {
         Self {
+            enabled: true,
             visible: None,
+            user_visible: None,
             tab_groups: FxHashMap::default(),
         }
     }
@@ -519,6 +528,25 @@ impl SystemWindowTabController {
             .find(|tabs| tabs.iter().any(|tab| tab.id == id))
     }
 
+    /// Returns whether system window tabs are enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Enable or disable system window tabs.
+    pub fn set_enabled(cx: &mut App, enabled: bool) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        controller.enabled = enabled;
+        if !enabled {
+            // Disallowing native tabbing does not detach existing tabs, so keep their
+            // controls available until those groups are closed or split apart.
+            controller.tab_groups.retain(|_, tabs| tabs.len() > 1);
+            if controller.tab_groups.is_empty() {
+                controller.visible = Some(false);
+            }
+        }
+    }
+
     /// Initialize the visibility of the system window tab controller.
     pub fn init_visible(cx: &mut App, visible: bool) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
@@ -536,6 +564,16 @@ impl SystemWindowTabController {
     pub fn set_visible(cx: &mut App, visible: bool) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
         controller.visible = Some(visible);
+        controller.user_visible = Some(visible);
+    }
+
+    /// Show the custom tab bar when a native tab group is detected, unless the user
+    /// explicitly hid it.
+    pub fn show_for_tab_group(cx: &mut App) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        if controller.user_visible != Some(false) {
+            controller.visible = Some(true);
+        }
     }
 
     /// Update the last active of a window.
