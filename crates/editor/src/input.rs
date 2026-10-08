@@ -669,11 +669,16 @@ impl Editor {
                                 let row_start =
                                     buffer.point_to_offset(Point::new(start_point.row, 0));
                                 let tab_size = buffer.language_settings_at(start, cx).tab_size;
-                                existing_indent.len = existing_indent
-                                    .len
-                                    .saturating_sub(existing_indent.outdent_len(tab_size));
-                                let mut new_text = String::new();
-                                new_text.extend(existing_indent.chars());
+                                let mut new_text = newline_indent.clone();
+                                let outdent_len = if new_text.ends_with('\t') {
+                                    1
+                                } else {
+                                    let trailing_spaces =
+                                        new_text.chars().rev().take_while(|c| *c == ' ').count();
+                                    IndentSize::spaces(trailing_spaces as u32).outdent_len(tab_size)
+                                        as usize
+                                };
+                                new_text.truncate(new_text.len().saturating_sub(outdent_len));
                                 new_text.push_str(continuation);
                                 (row_start, new_text, true)
                             }
@@ -2677,8 +2682,13 @@ fn logical_indent_for_newline(
     // leaving the indent alone.
     let position = Point::new(line_range.start.row, start_point.column);
     snapshot
-        .block_comment_closing_indent(position)
-        .map(|indent| indent.chars().collect())
+        .block_comment_opening_row(position)
+        .map(|row| {
+            snapshot
+                .chars_at(Point::new(row, 0))
+                .take(snapshot.indent_size_for_line(row).len as usize)
+                .collect()
+        })
         .unwrap_or_else(existing_whitespace)
 }
 
