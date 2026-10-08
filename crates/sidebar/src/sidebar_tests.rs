@@ -708,20 +708,17 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
-async fn test_sidebar_surface_has_a_themed_backdrop(cx: &mut TestAppContext) {
+async fn test_sidebar_background_with_transparent_panel(cx: &mut TestAppContext) {
     let (_, project) = init_multi_project_test(&["/my-project"], cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
 
-    for background_alpha in [1.0, 0.5] {
-        set_sidebar_test_surface_alpha(0.4, cx);
-        let (background, surface) = cx.update(|_, cx| {
-            let mut theme = cx.theme().as_ref().clone();
-            theme.styles.colors.background.a = background_alpha;
-            let colors = (theme.colors().background, theme.colors().surface_background);
-            theme::GlobalTheme::update_theme(cx, Arc::new(theme));
-            colors
+    for panel_alpha in [0.0, 0.4] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
+        let background = cx.update(|_, cx| {
+            let colors = cx.theme().colors();
+            colors.background.blend(colors.panel_background)
         });
         cx.draw(
             gpui::point(px(0.), px(0.)),
@@ -731,19 +728,8 @@ async fn test_sidebar_surface_has_a_themed_backdrop(cx: &mut TestAppContext) {
 
         cx.update(|window, _| {
             let quads = window.painted_quads();
-            let backdrop = quads
-                .iter()
-                .find(|quad| quad.background.as_solid() == Some(background))
-                .expect("Sidebar should paint the theme background");
-            let overlay = quads
-                .iter()
-                .find(|quad| quad.background.as_solid() == Some(surface))
-                .expect("Sidebar should paint the unmodified surface color");
-
-            assert!(backdrop.order < overlay.order);
-            assert_eq!(backdrop.corner_radii, overlay.corner_radii);
-            assert_eq!(backdrop.bounds.origin, overlay.bounds.origin);
-            assert_eq!(backdrop.bounds.size.height, overlay.bounds.size.height);
+            let sidebar_background = quads.first().expect("Sidebar should paint its background");
+            assert_eq!(sidebar_background.background.as_solid(), Some(background));
         });
     }
 }
@@ -757,8 +743,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
     save_n_test_threads(1, &project, cx).await;
 
-    for (query, surface_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
-        set_sidebar_test_surface_alpha(surface_alpha, cx);
+    for (query, panel_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
         type_in_search(&sidebar, query, cx);
         let row_bounds = sidebar.read_with(cx, |sidebar, _| {
             sidebar
@@ -820,8 +806,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
                 .bounds
                 .map(|value| px(value.as_f32() / window.scale_factor()))
         });
-        for surface_alpha in [1.0, 0.0, 0.2] {
-            set_sidebar_test_surface_alpha(surface_alpha, cx);
+        for panel_alpha in [1.0, 0.0, 0.2] {
+            set_sidebar_test_panel_alpha(panel_alpha, cx);
             assert_sidebar_action_hover(selector, row_bounds, cx);
         }
     }
@@ -15865,11 +15851,12 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
     );
 }
 
-fn set_sidebar_test_surface_alpha(alpha: f32, cx: &mut VisualTestContext) {
+fn set_sidebar_test_panel_alpha(alpha: f32, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         let mut theme = cx.theme().as_ref().clone();
         theme.styles.colors.background = Hsla::from(gpui::rgb(0xdcdcdd));
-        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
+        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xff00ff));
+        theme.styles.colors.panel_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
         theme.styles.colors.element_background = Hsla::from(gpui::rgb(0xebebec));
         theme.styles.colors.ghost_element_hover = Hsla::from(gpui::rgb(0xdfdfe0));
         theme::GlobalTheme::update_theme(cx, Arc::new(theme));
