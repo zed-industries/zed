@@ -437,6 +437,18 @@ fn char_index_for_byte(text: &str, byte_offset: usize) -> usize {
         .count()
 }
 
+fn text_direction(text: &[char]) -> accesskit::TextDirection {
+    text.iter()
+        .find_map(|character| match unicode_bidi::bidi_class(*character) {
+            unicode_bidi::BidiClass::R | unicode_bidi::BidiClass::AL => {
+                Some(accesskit::TextDirection::RightToLeft)
+            }
+            unicode_bidi::BidiClass::L => Some(accesskit::TextDirection::LeftToRight),
+            _ => None,
+        })
+        .unwrap_or(accesskit::TextDirection::LeftToRight)
+}
+
 /// Convert a character index into an AccessKit text position, accounting for
 /// text that is split into multiple runs.
 ///
@@ -484,6 +496,7 @@ fn build_a11y_text_runs(
     // Build at least one (possibly empty) run so the text pattern remains
     // supported when the field is empty.
     let num_chunks = total_chars.div_ceil(MAX_CHARS_PER_TEXT_RUN).max(1);
+    let direction = text_direction(&chars);
 
     let mut word_starts = Vec::new();
     let mut was_word_char = false;
@@ -502,7 +515,7 @@ fn build_a11y_text_runs(
         let chunk_chars = &chars[char_start..char_end];
 
         let mut node = accesskit::Node::new(accesskit::Role::TextRun);
-        node.set_text_direction(accesskit::TextDirection::LeftToRight);
+        node.set_text_direction(direction);
         node.set_value(chunk_chars.iter().collect::<String>());
         node.set_character_lengths(
             chunk_chars
