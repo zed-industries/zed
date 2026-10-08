@@ -279,6 +279,18 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn is_dirty(&self, _: &App) -> bool {
         false
     }
+
+    /// Whether closing this item would terminate work that is still running,
+    /// such as a process in a terminal.
+    ///
+    /// [`Item::is_dirty`] covers unsaved document edits, which the close flow
+    /// confirms with a save prompt. Items whose in-memory state has no
+    /// unsaved-edits representation override this method so that closing them
+    /// asks for confirmation first.
+    fn has_running_work(&self, _: &App) -> bool {
+        false
+    }
+
     fn capability(&self, _: &App) -> Capability {
         Capability::ReadWrite
     }
@@ -526,6 +538,7 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
+    fn has_running_work(&self, cx: &App) -> bool;
     fn capability(&self, cx: &App) -> Capability;
     fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
@@ -1039,6 +1052,10 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).is_dirty(cx)
     }
 
+    fn has_running_work(&self, cx: &App) -> bool {
+        self.read(cx).has_running_work(cx)
+    }
+
     fn capability(&self, cx: &App) -> Capability {
         self.read(cx).capability(cx)
     }
@@ -1454,6 +1471,7 @@ pub mod test {
         pub save_as_count: usize,
         pub reload_count: usize,
         pub is_dirty: bool,
+        pub running_work: bool,
         pub save_error: Option<String>,
         pub buffer_kind: ItemBufferKind,
         pub has_conflict: bool,
@@ -1547,6 +1565,7 @@ pub mod test {
                 save_as_count: 0,
                 reload_count: 0,
                 is_dirty: false,
+                running_work: false,
                 save_error: None,
                 has_conflict: false,
                 has_deleted_file: false,
@@ -1585,6 +1604,11 @@ pub mod test {
 
         pub fn with_dirty(mut self, dirty: bool) -> Self {
             self.is_dirty = dirty;
+            self
+        }
+
+        pub fn with_running_work(mut self, running_work: bool) -> Self {
+            self.running_work = running_work;
             self
         }
 
@@ -1747,6 +1771,7 @@ pub mod test {
                     save_as_count: self.save_as_count,
                     reload_count: self.reload_count,
                     is_dirty: self.is_dirty,
+                    running_work: self.running_work,
                     save_error: self.save_error.clone(),
                     buffer_kind: self.buffer_kind,
                     has_conflict: self.has_conflict,
@@ -1770,6 +1795,10 @@ pub mod test {
 
         fn is_dirty(&self, _: &App) -> bool {
             self.is_dirty
+        }
+
+        fn has_running_work(&self, _: &App) -> bool {
+            self.running_work
         }
 
         fn has_conflict(&self, _: &App) -> bool {

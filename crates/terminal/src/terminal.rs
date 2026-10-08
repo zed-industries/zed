@@ -1299,7 +1299,10 @@ impl TerminalBuilder {
                     }
                 };
 
-                let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
+                // macOS PTYs are spawned through `/usr/bin/login`, which runs
+                // the shell as its child, unless a shell program was configured.
+                let shell_is_wrapped = cfg!(target_os = "macos") && shell_params.is_none();
+                let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty), shell_is_wrapped);
 
                 //And connect them together
                 let pty_tx =
@@ -2996,6 +2999,15 @@ impl Terminal {
         }
     }
 
+    /// Whether a process other than the spawned shell is currently running in
+    /// this terminal.
+    pub fn has_running_process(&self) -> bool {
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => info.has_running_process(),
+            TerminalType::DisplayOnly => false,
+        }
+    }
+
     /// Returns the working directory of the process that's connected to the PTY.
     /// That means it returns the working directory of the local shell or program
     /// that's running inside the terminal.
@@ -4346,6 +4358,52 @@ mod tests {
             exit_status.await.is_some(),
             "expected terminal completion after sleep exits"
         );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_has_running_process_tracks_foreground_command(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    TerminalMode::interactive(),
+                    task::Shell::System,
+                    HashMap::default(),
+                    SettingsCursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    Duration::ZERO,
+                    false,
+                    0,
+                    cx,
+                    Vec::new(),
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        assert_running_process_eventually(&terminal, false, cx).await;
+
+        // An interactive shell runs a command in its own process group and
+        // hands the terminal over to that group.
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"sleep 30\r".to_vec());
+        });
+        assert_running_process_eventually(&terminal, true, cx).await;
+
+        // Interrupting the command returns the terminal to the shell.
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"\x03".to_vec());
+        });
+        assert_running_process_eventually(&terminal, false, cx).await;
     }
 
     // TODO should be tested on Linux too, but does not work there well
@@ -6103,6 +6161,33 @@ mod tests {
         panic!(
             "Expected foreground process command name to be {expected:?}, got {command_name:?}; process info: {process_info:?}"
         );
+    }
+
+    #[cfg(unix)]
+    async fn assert_running_process_eventually(
+        terminal: &Entity<Terminal>,
+        expected: bool,
+        cx: &mut TestAppContext,
+    ) {
+        for _ in 0..100 {
+            if terminal.read_with(cx, |terminal, _| terminal.has_running_process()) == expected {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        let process_info = terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+            TerminalType::Pty { info, .. } => format!(
+                "pid={:?}, fallback_pid={:?}, current={:?}",
+                info.pid(),
+                info.pid_getter().fallback_pid(),
+                info.load_for_test()
+                    .map(|p| format!("{} {:?}", p.name, p.argv))
+            ),
+            TerminalType::DisplayOnly => "display-only".to_string(),
+        });
+        panic!("Expected has_running_process to be {expected}; process info: {process_info:?}");
     }
 
     /// Test that kill_active_task properly terminates both the foreground process

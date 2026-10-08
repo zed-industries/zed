@@ -1951,6 +1951,29 @@ impl Pane {
         }
     }
 
+    /// Names for a prompt listing the tab titles of items being closed.
+    pub(super) fn tab_names_for_prompt(
+        items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
+        cx: &App,
+    ) -> String {
+        let mut names = BTreeSet::default();
+        for item in items {
+            let name = item.tab_content_text(0, cx);
+            if !name.is_empty() {
+                names.insert(name);
+            }
+        }
+        if names.len() > 6 {
+            format!(
+                "{}\n.. and {} more",
+                names.iter().take(5).join("\n"),
+                names.len() - 5
+            )
+        } else {
+            names.into_iter().join("\n")
+        }
+    }
+
     pub fn close_items(
         &self,
         window: &mut Window,
@@ -1983,6 +2006,36 @@ impl Pane {
             return Task::ready(Ok(()));
         };
         cx.spawn_in(window, async move |pane, cx| {
+            // Ask before terminating anything, so that a cancelled close leaves
+            // every item untouched. `SaveIntent::Skip` is used by callers that
+            // have already decided to discard, such as Vim's `:qa!`.
+            if save_intent != SaveIntent::Skip {
+                let running_work_items = workspace.update(cx, |_, cx| {
+                    items_to_close
+                        .iter()
+                        .filter(|item| item.has_running_work(cx))
+                        .map(|item| item.boxed_clone())
+                        .collect::<Vec<_>>()
+                })?;
+
+                if !running_work_items.is_empty() {
+                    let answer = pane.update_in(cx, |_, window, cx| {
+                        let detail = Self::tab_names_for_prompt(&mut running_work_items.iter(), cx);
+                        window.prompt(
+                            PromptLevel::Warning,
+                            "Do you want to terminate the running processes?",
+                            Some(&detail),
+                            &["Terminate", "Cancel"],
+                            cx,
+                        )
+                    })?;
+                    match answer.await {
+                        Ok(0) => {}
+                        _ => return Ok(()),
+                    }
+                }
+            }
+
             let dirty_items = workspace.update(cx, |workspace, cx| {
                 items_to_close
                     .iter()
@@ -3094,7 +3147,6 @@ impl Pane {
             .any(|item| item.buffer_kind(cx) == ItemBufferKind::Multibuffer);
         let has_items_to_left = ix > 0;
         let has_items_to_right = ix < total_items - 1;
-        let has_clean_items = self.items.iter().any(|item| !item.is_dirty(cx));
         let is_pinned = self.is_tab_pinned(ix);
 
         let pane = cx.entity().downgrade();
@@ -3108,6 +3160,15 @@ impl Pane {
                 let menu_context = menu_context.clone();
                 let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
                 ContextMenu::build(window, cx, move |mut menu, window, cx| {
+                    // Computed when the menu opens rather than during render:
+                    // deciding whether an item can be closed cleanly inspects a
+                    // terminal's running processes.
+                    let has_clean_items = pane.upgrade().is_some_and(|pane| {
+                        pane.read(cx)
+                            .items
+                            .iter()
+                            .any(|item| !item.is_dirty(cx) && !item.has_running_work(cx))
+                    });
                     let close_active_item_action = CloseActiveItem {
                         save_intent: None,
                         close_pinned: true,
@@ -4264,15 +4325,12 @@ impl Pane {
             .collect()
     }
 
+    /// Ids of the items that `Close Clean` may close: the ones with nothing to
+    /// lose, matching how it leaves items with unsaved changes alone.
     fn clean_item_ids(&self, cx: &mut Context<Pane>) -> Vec<EntityId> {
         self.items()
-            .filter_map(|item| {
-                if !item.is_dirty(cx) {
-                    return Some(item.item_id());
-                }
-
-                None
-            })
+            .filter(|item| !item.is_dirty(cx) && !item.has_running_work(cx))
+            .map(|item| item.item_id())
             .collect()
     }
 
@@ -7884,6 +7942,105 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_close_clean_items_leaves_running_work_alone(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item_with_running_work(&pane, "B", cx);
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // `Close Clean` leaves the item with work in progress alone, the same
+        // way it leaves an item with unsaved changes alone, and does not ask
+        // anything about it.
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_clean_items(
+                &CloseCleanItems {
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+        assert!(
+            !cx.has_pending_prompt(),
+            "Close Clean should not prompt about work it leaves alone"
+        );
+        close_task.await.unwrap();
+        assert_item_labels(&pane, ["B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_items_with_running_work_asks_for_confirmation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item_with_running_work(&pane, "B", cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        // Closing work in progress asks first, and cancelling keeps every item.
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Cancel");
+        close_task.await.unwrap();
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Terminate");
+        close_task.await.unwrap();
+        assert_item_labels(&pane, [], cx);
+
+        // Closing only the active item asks for the same confirmation.
+        add_labeled_item_with_running_work(&pane, "A", cx);
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Cancel");
+        close_task.await.unwrap();
+        assert_item_labels(&pane, ["A*"], cx);
+    }
+
+    #[gpui::test]
     async fn test_close_items_to_the_left(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -9085,6 +9242,21 @@ mod tests {
         pane.update_in(cx, |pane, window, cx| {
             let labeled_item =
                 Box::new(cx.new(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)));
+            pane.add_item(labeled_item.clone(), false, false, None, window, cx);
+            labeled_item
+        })
+    }
+
+    /// Adds an item that reports work in progress, as a terminal running a
+    /// process does, without reporting unsaved changes.
+    fn add_labeled_item_with_running_work(
+        pane: &Entity<Pane>,
+        label: &str,
+        cx: &mut VisualTestContext,
+    ) -> Box<Entity<TestItem>> {
+        pane.update_in(cx, |pane, window, cx| {
+            let labeled_item =
+                Box::new(cx.new(|cx| TestItem::new(cx).with_label(label).with_running_work(true)));
             pane.add_item(labeled_item.clone(), false, false, None, window, cx);
             labeled_item
         })

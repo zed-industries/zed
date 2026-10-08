@@ -5,7 +5,9 @@ use std::{path::PathBuf, sync::Arc};
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
-use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{
+    Pid, Process, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind,
+};
 
 use crate::{Event, Terminal};
 
@@ -77,13 +79,21 @@ pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
     refresh_kind: ProcessRefreshKind,
     pid_getter: ProcessIdGetter,
+    /// Whether the spawned process is a wrapper that runs the shell as its
+    /// child, as macOS `login` does when no shell program is configured.
+    #[cfg(unix)]
+    shell_is_wrapped: bool,
+    /// The shell's pid, once it has been looked up. The shell keeps its pid for
+    /// the lifetime of the terminal, so the lookup only has to happen once.
+    #[cfg(unix)]
+    cached_shell_pid: Mutex<Option<Pid>>,
     last_foreground_pid: Mutex<Option<Pid>>,
     pub(crate) current: RwLock<Option<ProcessInfo>>,
     task: Mutex<Option<Task<()>>>,
 }
 
 impl PtyProcessInfo {
-    pub(crate) fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
+    pub(crate) fn new(pid_getter: ProcessIdGetter, shell_is_wrapped: bool) -> PtyProcessInfo {
         // Task enumeration is on by default and would retain a `Process` entry
         // per thread, each pinning an open `/proc/<pid>/task/<tid>/stat` handle
         // on Linux (#58651).
@@ -108,6 +118,10 @@ impl PtyProcessInfo {
             system: RwLock::new(system),
             refresh_kind: process_refresh_kind,
             pid_getter,
+            #[cfg(unix)]
+            shell_is_wrapped,
+            #[cfg(unix)]
+            cached_shell_pid: Mutex::new(None),
             last_foreground_pid: Mutex::new(None),
             current: RwLock::new(None),
             task: Mutex::new(None),
@@ -241,6 +255,109 @@ impl PtyProcessInfo {
     pub(crate) fn pid(&self) -> Option<Pid> {
         self.pid_getter.pid()
     }
+
+    /// Whether a process other than the shell is currently running.
+    ///
+    /// Used to tell whether closing a terminal would terminate work in
+    /// progress.
+    pub(crate) fn has_running_process(&self) -> bool {
+        #[cfg(unix)]
+        {
+            // Under job control the shell hands the terminal to the foreground
+            // job, which leads its own process group, so the shell is not the
+            // foreground process while a command runs.
+            let Some(shell_pid) = self.shell_pid() else {
+                // The shell cannot be identified yet; keep the terminal
+                // protected rather than risk terminating it.
+                return true;
+            };
+            self.pid()
+                .is_some_and(|foreground_pid| foreground_pid != shell_pid)
+        }
+
+        #[cfg(windows)]
+        {
+            // Windows PTYs only report the spawned shell as the foreground
+            // process, so a running command shows up as its descendant instead.
+            self.has_running_descendant()
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            false
+        }
+    }
+
+    /// The pid of the shell running on the PTY.
+    #[cfg(unix)]
+    fn shell_pid(&self) -> Option<Pid> {
+        if let Some(shell_pid) = *self.cached_shell_pid.lock() {
+            return Some(shell_pid);
+        }
+
+        let spawned_pid = self.pid_getter.fallback_pid();
+        let shell_pid = if self.shell_is_wrapped {
+            // The spawned process is a wrapper, so the shell is its child. The
+            // wrapper runs exactly one child and waits for it, so the first
+            // process parented to it is the shell.
+            let mut system = System::new_with_specifics(RefreshKind::nothing());
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::nothing(),
+            );
+            system
+                .processes()
+                .iter()
+                .find(|(_, process)| process.parent() == Some(spawned_pid))
+                .map(|(pid, _)| *pid)
+        } else {
+            Some(spawned_pid)
+        };
+
+        if let Some(shell_pid) = shell_pid {
+            *self.cached_shell_pid.lock() = Some(shell_pid);
+        }
+        shell_pid
+    }
+
+    /// Whether the spawned shell has any live descendant process.
+    #[cfg(windows)]
+    fn has_running_descendant(&self) -> bool {
+        use std::collections::HashSet;
+
+        let shell_pid = self.pid_getter.fallback_pid();
+        // A throwaway `System`: the caller only needs the parent links, and
+        // retaining every process in `self.system` would defeat the bound on
+        // that map.
+        let mut system = System::new_with_specifics(RefreshKind::nothing());
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+
+        let mut tree = HashSet::from([shell_pid]);
+        loop {
+            let mut grew = false;
+            for (pid, process) in system.processes() {
+                if tree.contains(pid) {
+                    continue;
+                }
+                if process
+                    .parent()
+                    .is_some_and(|parent| tree.contains(&parent))
+                {
+                    tree.insert(*pid);
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        tree.len() > 1
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -259,7 +376,7 @@ mod tests {
         reason = "the test needs real short-lived child processes and may block"
     )]
     fn process_map_stays_bounded() {
-        let mut info = PtyProcessInfo::new(ProcessIdGetter::new(-1, std::process::id()));
+        let mut info = PtyProcessInfo::new(ProcessIdGetter::new(-1, std::process::id()), false);
         assert!(
             info.get_child().is_some(),
             "the spawned child must be inspectable for kill_child_process \
