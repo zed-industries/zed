@@ -49,6 +49,9 @@ const MONITOR_INTERVAL: Duration = Duration::from_secs(1);
 /// counts longer ones.
 const STALL_BUCKETS_MS: [u64; 8] = [50, 100, 250, 500, 1000, 2000, 5000, 10000];
 
+/// Counts per [`STALL_BUCKETS_MS`] bucket, plus the final unbounded one.
+type StallBuckets = [u64; STALL_BUCKETS_MS.len() + 1];
+
 /// Duration at which a single piece of foreground work counts as a hang.
 pub fn hang_threshold() -> Duration {
     if cfg!(debug_assertions) {
@@ -176,7 +179,7 @@ struct Reporter {
     budget_incidents: u64,
     /// Every incident's stall, bucketed by [`STALL_BUCKETS_MS`]; `pending`
     /// keeps only the largest incidents.
-    stall_buckets: [u64; 9],
+    stall_buckets: StallBuckets,
     stall_max_ms: u64,
     /// See [`gpui::profiler::hang::HangDetector::take_active_time`].
     active_time: Duration,
@@ -220,7 +223,7 @@ impl Reporter {
             pending: Vec::new(),
             threshold_incidents: 0,
             budget_incidents: 0,
-            stall_buckets: [0; 9],
+            stall_buckets: StallBuckets::default(),
             stall_max_ms: 0,
             active_time: Duration::ZERO,
             active_threshold_incidents: 0,
@@ -326,7 +329,7 @@ struct HangIncidentsEvent {
     total_incidents: u64,
     threshold_incidents: u64,
     budget_incidents: u64,
-    stall_buckets: [u64; 9],
+    stall_buckets: StallBuckets,
     stall_max_ms: u64,
     report_window_seconds: u64,
     /// Of `report_window_seconds`, how long the user was actively using the
@@ -539,7 +542,7 @@ mod tests {
         assert_eq!(empty.total_incidents, 0);
         assert_eq!(empty.threshold_incidents, 0);
         assert_eq!(empty.budget_incidents, 0);
-        assert_eq!(empty.stall_buckets, [0; 9]);
+        assert_eq!(empty.stall_buckets, StallBuckets::default());
         assert_eq!(empty.stall_max_ms, 0);
     }
 

@@ -965,6 +965,16 @@ pub const FRAME_DURATION_BUCKETS_MS: [u64; 9] = [4, 8, 16, 33, 50, 100, 250, 500
 #[cfg(feature = "profiler")]
 pub const FRAME_WORK_BUCKETS_PERCENT: [u64; 7] = [25, 50, 75, 100, 150, 200, 400];
 
+/// Counts per [`FRAME_DURATION_BUCKETS_MS`] bucket, plus the final unbounded
+/// one.
+#[cfg(feature = "profiler")]
+pub type FrameDurationBuckets = [u64; FRAME_DURATION_BUCKETS_MS.len() + 1];
+
+/// Counts per [`FRAME_WORK_BUCKETS_PERCENT`] bucket, plus the final unbounded
+/// one.
+#[cfg(feature = "profiler")]
+pub type FrameWorkBuckets = [u64; FRAME_WORK_BUCKETS_PERCENT.len() + 1];
+
 /// Statistics for the frames a window drew and presented while its display had
 /// one refresh interval.
 ///
@@ -981,10 +991,10 @@ pub struct RefreshIntervalFrames {
     /// Frames drawn, whether or not they were presented.
     pub frames_drawn: u64,
     /// Draw durations, bucketed by [`FRAME_DURATION_BUCKETS_MS`].
-    pub draw_duration: [u64; 10],
+    pub draw_duration: FrameDurationBuckets,
     /// Durations from the first invalidation to presentation, bucketed by
     /// [`FRAME_DURATION_BUCKETS_MS`].
-    pub dirty_to_present: [u64; 10],
+    pub dirty_to_present: FrameDurationBuckets,
     /// Presented frames whose work fit within one refresh interval.
     pub frames_on_time: u64,
     /// Presented frames whose work took longer than one refresh interval.
@@ -997,18 +1007,18 @@ pub struct RefreshIntervalFrames {
     pub frames_unmeasured: u64,
     /// Work of on-time and late frames, bucketed by
     /// [`FRAME_WORK_BUCKETS_PERCENT`].
-    pub work: [u64; 8],
+    pub work: FrameWorkBuckets,
     /// Of `frames_on_time`, the frames that responded to input.
     pub input_frames_on_time: u64,
     /// Of `frames_late`, the frames that responded to input.
     pub input_frames_late: u64,
     /// Work of on-time and late frames that responded to input, bucketed by
     /// [`FRAME_WORK_BUCKETS_PERCENT`].
-    pub input_work: [u64; 8],
+    pub input_work: FrameWorkBuckets,
     /// How long presented frames waited for a buffer to draw into, as a
     /// percentage of the refresh interval, bucketed by
     /// [`FRAME_WORK_BUCKETS_PERCENT`]. Only where the platform measures it.
-    pub drawable_wait: [u64; 8],
+    pub drawable_wait: FrameWorkBuckets,
 }
 
 #[cfg(feature = "profiler")]
@@ -1846,7 +1856,7 @@ mod tests {
         let unknown = frames_for(None);
         assert_eq!(unknown.frames_drawn, 1);
         assert_eq!(unknown.frames_unmeasured, 1);
-        assert_eq!(unknown.work, [0; 8]);
+        assert_eq!(unknown.work, FrameWorkBuckets::default());
 
         let later = profiler.frame_duration_snapshot();
         let delta = later.by_refresh_interval[0].since(&snapshot.by_refresh_interval[0]);
