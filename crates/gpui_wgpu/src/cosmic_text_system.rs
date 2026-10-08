@@ -753,7 +753,6 @@ impl CosmicTextSystemState {
          4,
         );
 
-    line.set_rtl(false);
         let mut layout_lines = Vec::with_capacity(1);
         line.layout_to_buffer(
             &mut self.scratch,

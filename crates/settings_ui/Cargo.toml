@@ -67,6 +67,7 @@ strum.workspace = true
 telemetry.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
+unicode-bidi.workspace = true
 ui.workspace = true
 url.workspace = true
 ui_input.workspace = true

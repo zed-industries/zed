@@ -7868,7 +7868,6 @@ impl LineWithInvisibles {
             let (fragment_len, fragment_width, line) = match fragment {
                 LineFragment::Text(line) => {
                     if has_points {
-                        let mut glyphs = line.runs.iter().flat_map(|run| &run.glyphs).peekable();
                         line.paint_with_underline_handler(
                             fragment_origin,
                             line_height,
@@ -7912,14 +7911,7 @@ impl LineWithInvisibles {
                                         bounds.right()
                                     } else {
                                         let index = end - fragment_start;
-                                        while glyphs.peek().is_some_and(|glyph| glyph.index < index)
-                                        {
-                                            glyphs.next();
-                                        }
-                                        let x = fragment_origin.x
-                                            + glyphs
-                                                .peek()
-                                                .map_or(line.width, |glyph| glyph.position.x);
+                                        let x = fragment_origin.x + line.x_for_index(index);
                                         window
                                             .underline_bounds(
                                                 point(x, origin.y),
@@ -8003,10 +7995,7 @@ impl LineWithInvisibles {
                         } else {
                             0
                         };
-                        while glyphs.peek().is_some_and(|glyph| glyph.index < index) {
-                            glyphs.next();
-                        }
-                        glyphs.peek().map_or(line.width, |glyph| glyph.position.x)
+                        line.x_for_index(index)
                     } else {
                         Pixels::ZERO
                     };

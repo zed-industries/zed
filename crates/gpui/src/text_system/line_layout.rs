@@ -101,11 +101,37 @@ impl LineLayout {
             }
         }
 
-        self.len
+        if self.has_visually_reordered_glyphs() {
+            0
+        } else {
+            self.len
+        }
     }
 
     /// The x position of the character at the given index
     pub fn x_for_index(&self, index: usize) -> Pixels {
+        if self.has_visually_reordered_glyphs() {
+            let glyphs = self.runs.iter().flat_map(|run| run.glyphs.iter());
+            if index >= self.len {
+                return Pixels::ZERO;
+            }
+
+            let Some(glyph_x) = glyphs
+                .clone()
+                .filter(|glyph| glyph.index == index)
+                .map(|glyph| glyph.position.x)
+                .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+            else {
+                return self.width;
+            };
+
+            return glyphs
+                .filter(|glyph| glyph.position.x > glyph_x)
+                .map(|glyph| glyph.position.x)
+                .min_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap_or(self.width);
+        }
+
         for run in &self.runs {
             for glyph in &run.glyphs {
                 if glyph.index >= index {
@@ -116,8 +142,27 @@ impl LineLayout {
         self.width
     }
 
+    fn has_visually_reordered_glyphs(&self) -> bool {
+        !self
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter())
+            .map(|glyph| glyph.index)
+            .is_sorted()
+    }
+
     /// The corresponding Font at the given index
     pub fn font_id_for_index(&self, index: usize) -> Option<FontId> {
+        if self.has_visually_reordered_glyphs() {
+            if let Some(run) = self
+                .runs
+                .iter()
+                .find(|run| run.glyphs.iter().any(|glyph| glyph.index == index))
+            {
+                return Some(run.font_id);
+            }
+        }
+
         for run in &self.runs {
             for glyph in &run.glyphs {
                 if glyph.index >= index {
@@ -408,7 +453,12 @@ impl WrappedLineLayout {
         if position_in_unwrapped_line.x < wrapped_line_start_x {
             Err(wrapped_line_start_index)
         } else if position_in_unwrapped_line.x >= wrapped_line_end_x {
-            Err(wrapped_line_end_index)
+            let end_index = if self.unwrapped_layout.has_visually_reordered_glyphs() {
+                0
+            } else {
+                wrapped_line_end_index
+            };
+            Err(end_index)
         } else {
             if closest {
                 Ok(self
