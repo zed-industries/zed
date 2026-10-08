@@ -40,7 +40,7 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::Formatter;
-use languages::{language, markdown_lang, rust_lang};
+use languages::{json_lang, language, markdown_lang, rust_lang};
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
 use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
@@ -20019,6 +20019,218 @@ async fn test_modifications_format_on_save(cx: &mut TestAppContext) {
         "one, two\nthree\n"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
+async fn test_modifications_format_on_save_multi(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "file.rs": "",
+            "file.json": "",
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", "".to_string()), ("file.json", "".to_string())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", "".to_string()), ("file.json", "".to_string())],
+    );
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    language_registry.add(json_lang());
+    let mut rs_fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let rs_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(rs_buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut json_fake_servers = language_registry.register_fake_lsp(
+        "JSON",
+        FakeLspAdapter {
+            name: "json-lsp",
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let json_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.json"), cx)
+        })
+        .await
+        .unwrap();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(json_buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            rs_buffer.clone(),
+            [Point::zero()..rs_buffer.read(cx).max_point()],
+            0,
+            cx,
+        );
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            json_buffer.clone(),
+            [Point::zero()..json_buffer.read(cx).max_point()],
+            0,
+            cx,
+        );
+        multi_buffer
+    });
+
+    let (multi_editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+
+    multi_editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    rs_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "one two three\n")], None, cx);
+    });
+
+    json_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "foo\n")], None, cx);
+    });
+
+    cx.run_until_parked();
+
+    let rs_fake_server = rs_fake_servers.next().await.unwrap();
+    let json_fake_server = json_fake_servers.next().await.unwrap();
+
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    &json!({
+                        "languages": {
+                            "JSON": {"format_on_save": "modifications"},
+                            "Rust": {"format_on_save": "on"}
+                        }
+                    })
+                    .to_string(),
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+
+    assert!(cx.read(|cx| multi_editor.is_dirty(cx)));
+
+    let save = multi_editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+
+    let mut rs_format_fut = rs_fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Uri::from_file_path(path!("/project/file.rs")).unwrap()
+            );
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 3)),
+                "xyz".to_string(),
+            )]))
+        },
+    );
+
+    let mut fail_rs_format_fut = rs_fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(|_, _| async {
+            panic!("should not have reached here");
+        });
+
+    let mut json_format_fut = json_fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Uri::from_file_path(path!("/project/file.json")).unwrap()
+            );
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 3)),
+                "bcd".to_string(),
+            )]))
+        });
+
+    let mut fail_json_format_fut = json_fake_server
+        .set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async {
+            panic!("should not have reached here");
+        });
+
+    futures::join!(
+        save,
+        futures::select! {
+            _ = rs_format_fut.next() => async { () },
+            _ = fail_rs_format_fut.next() => unreachable!(),
+        },
+        futures::select! {
+            _ = json_format_fut.next() => async { () },
+            _ = fail_json_format_fut.next() => unreachable!(),
+        }
+    );
+
+    assert_eq!(
+        multi_editor.update(cx, |editor, cx| editor.text(cx)),
+        "xyz two three\n\nbcd\n"
+    );
+    assert!(!cx.read(|cx| multi_editor.is_dirty(cx)));
 }
 
 #[gpui::test]
