@@ -327,33 +327,27 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "2.2.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13f780597b2c88ab83d02509bcc3e86366751f86fa12114005e35c55ed691763"
+checksum = "6e582d0a6aed50feeea4d4ed3c57919db2f614a5cec42cd7acd1717231fa4f2f"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
- "async-io",
- "async-process",
- "blocking",
  "futures 0.3.34",
  "futures-concurrency",
  "rustc-hash 2.1.1",
- "rustix",
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "shell-words",
  "tracing",
  "uuid",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "2.2.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4893bfb11e0e193aa5a64611a126ee87567acb1879556519c902722899229de"
+checksum = "605b0063f9c1b05c28bb7d6242b156ffa1e81b9469c6279f9cc291c0df2855d2"
 dependencies = [
  "quote",
  "syn 3.0.3",
@@ -361,9 +355,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "1.9.1"
+version = "1.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d595a79e1665d02c91c7dd1bedd118501e75cc0a3d5b1651b5150ec4c5c1e0d"
+checksum = "7c3ffd489b0e2f96a134d7966c2f43d874d91299e951b66093b91b54b00b7f8f"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -372,7 +366,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "strum 0.28.0",
- "tracing",
 ]
 
 [[package]]
@@ -476,6 +469,7 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "client",
+ "clock",
  "cloud_api_types",
  "collections",
  "command_palette_hooks",
@@ -664,9 +658,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "alsa"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c88dbbce13b232b26250e1e2e6ac18b6a891a646b8148285036ebce260ac5c3"
+checksum = "812947049edcd670a82cd5c73c3661d2e58468577ba8489de58e1a73c04cbd5d"
 dependencies = [
  "alsa-sys",
  "bitflags 2.13.1",
@@ -676,9 +670,9 @@ dependencies = [
 
 [[package]]
 name = "alsa-sys"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db8fee663d06c4e303404ef5f40488a53e062f89ba8bfed81f42325aafad1527"
+checksum = "ad7569085a265dd3f607ebecce7458eaab2132a84393534c95b18dcbc3f31e04"
 dependencies = [
  "libc",
  "pkg-config",
@@ -1226,7 +1220,7 @@ dependencies = [
 [[package]]
 name = "async-task"
 version = "4.7.1"
-source = "git+https://github.com/smol-rs/async-task.git?rev=b4486cd71e4e94fbda54ce6302444de14f4d190e#b4486cd71e4e94fbda54ce6302444de14f4d190e"
+source = "git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da#015845a19fc31752c02367567d3b8900a406f9da"
 
 [[package]]
 name = "async-trait"
@@ -1350,6 +1344,7 @@ dependencies = [
  "collections",
  "cpal",
  "crossbeam-queue",
+ "futures 0.3.34",
  "gpui",
  "libwebrtc",
  "log",
@@ -1532,9 +1527,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.17.1"
+version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4342d8937fc7e5dd9b1c60292261c0670c882a2cd1719cfc11b1af41731e32ad"
+checksum = "b281d307588d634de920874890732659e2e7672f72b5e10e81badc1a8a83621e"
 dependencies = [
  "aws-lc-sys",
  "untrusted 0.7.1",
@@ -1543,9 +1538,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.42.0"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d9ceb1da931507a12f4fccea479dccd00da1943e1b4ae72d8e502d707361444"
+checksum = "9bff6c3b54fad79a2e60b8102caf565819711497c1f5f092f49508e2f5c31b27"
 dependencies = [
  "cc",
  "cmake",
@@ -3928,11 +3923,11 @@ dependencies = [
 
 [[package]]
 name = "coreaudio-rs"
-version = "0.13.0"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aae284fbaf7d27aa0e292f7677dfbe26503b0d555026f702940805a630eac17"
+checksum = "7d5d7dca3ebcf65a035582c9ad4385371a9d9ee6537474d2a278f4e1e475bb58"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.13.1",
  "libc",
  "objc2-audio-toolbox",
  "objc2-core-audio",
@@ -3975,17 +3970,17 @@ dependencies = [
 
 [[package]]
 name = "cpal"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b1f9c7312f19fc2fa12fd7acaf38de54e8320ba10d1a02dcbe21038def51ccb"
+version = "0.18.2"
+source = "git+https://github.com/RustAudio/cpal?rev=e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7#e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7"
 dependencies = [
  "alsa",
- "coreaudio-rs 0.13.0",
+ "block2 0.6.2",
+ "coreaudio-rs 0.14.2",
  "dasp_sample",
- "jni 0.21.1",
+ "jni 0.22.4",
  "js-sys",
  "libc",
- "mach2 0.5.0",
+ "mach2",
  "ndk",
  "ndk-context",
  "num-derive",
@@ -3997,10 +3992,9 @@ dependencies = [
  "objc2-core-audio-types",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
- "wasm-bindgen",
- "wasm-bindgen-futures",
  "web-sys",
  "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -4184,7 +4178,7 @@ checksum = "3748e166981fa3ba9dc54ff950ad0ed5ca4aab4b73eae21d9f539659fe806e28"
 dependencies = [
  "cfg-if",
  "libc",
- "mach2 0.6.0",
+ "mach2",
 ]
 
 [[package]]
@@ -4196,7 +4190,7 @@ dependencies = [
  "cfg-if",
  "crash-context",
  "libc",
- "mach2 0.6.0",
+ "mach2",
  "parking_lot",
 ]
 
@@ -4208,7 +4202,7 @@ dependencies = [
  "crash-handler",
  "libc",
  "log",
- "mach2 0.6.0",
+ "mach2",
  "minidumper",
  "parking_lot",
  "serde",
@@ -4812,6 +4806,7 @@ dependencies = [
  "project",
  "rpc",
  "schemars 1.0.4",
+ "search",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -7496,7 +7491,7 @@ dependencies = [
  "image",
  "libc",
  "log",
- "mach2 0.6.0",
+ "mach2",
  "metal",
  "objc2 0.6.3",
  "objc2-foundation 0.3.2",
@@ -7651,6 +7646,7 @@ name = "gpui_web"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "console_error_panic_hook",
  "futures 0.3.34",
  "gpui",
@@ -9383,8 +9379,7 @@ dependencies = [
 [[package]]
 name = "khronos-egl"
 version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
+source = "git+https://github.com/zed-industries/khronos-egl?rev=42214b36347b108fd9630ca6254b96dde59e04fe#42214b36347b108fd9630ca6254b96dde59e04fe"
 dependencies = [
  "libc",
  "libloading",
@@ -10538,15 +10533,6 @@ dependencies = [
 
 [[package]]
 name = "mach2"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "mach2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
@@ -10988,7 +10974,7 @@ dependencies = [
  "goblin",
  "libc",
  "log",
- "mach2 0.6.0",
+ "mach2",
  "memmap2",
  "minidump-common",
  "process-backend",
@@ -11740,6 +11726,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13a380031deed8e99db00065c45937da434ca987c034e13b87e4441f9e4090be"
 dependencies = [
+ "bitflags 2.13.1",
  "objc2 0.6.3",
  "objc2-foundation 0.3.2",
 ]
@@ -15006,6 +14993,7 @@ dependencies = [
  "action_log",
  "agent",
  "agent-client-protocol",
+ "agent_servers",
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
@@ -15034,6 +15022,7 @@ dependencies = [
  "language_extension",
  "language_model",
  "languages",
+ "libc",
  "log",
  "lsp",
  "net",
@@ -15310,8 +15299,8 @@ dependencies = [
 
 [[package]]
 name = "rodio"
-version = "0.21.1"
-source = "git+https://github.com/RustAudio/rodio?rev=e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a#e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a"
+version = "0.22.2"
+source = "git+https://github.com/RustAudio/rodio?rev=3ee9745862279ce1d18db593155016e7ce024aeb#3ee9745862279ce1d18db593155016e7ce024aeb"
 dependencies = [
  "cpal",
  "dasp_sample",
@@ -15576,9 +15565,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -15659,9 +15648,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -18838,7 +18827,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fb391ac70462b3097a755618fbf9c8f95ecc1eb379a414f7b46f202ed10db1f"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -19473,7 +19462,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "mach2 0.6.0",
+ "mach2",
  "nix",
  "path",
  "percent-encoding",
@@ -20024,7 +20013,7 @@ dependencies = [
  "futures 0.3.34",
  "libc",
  "log",
- "mach2 0.6.0",
+ "mach2",
  "memfd",
  "object 0.39.1",
  "once_cell",
@@ -22395,7 +22384,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -22490,6 +22479,7 @@ dependencies = [
  "migrator",
  "mimalloc",
  "miniprofiler_ui",
+ "nix",
  "node_runtime",
  "notifications",
  "onboarding",

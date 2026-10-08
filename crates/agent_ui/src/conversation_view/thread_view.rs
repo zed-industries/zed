@@ -1,11 +1,11 @@
 use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     conversation_view::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent},
-    open_abs_path_at_point,
+    open_abs_path_at_point, project_path_for_file_link,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
-use std::cell::RefCell;
+use std::{cell::RefCell, path::Path};
 
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity,
@@ -41,12 +41,14 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
 };
 use notifications::status_toast::StatusToast;
+use project::ResolvedPath;
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
     SplitButtonStyle, Tab, ToggleState,
 };
-use util::markdown::{source_position_from_fragment, split_local_url_fragment};
+use url::Url;
+use util::markdown::source_position_from_fragment;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
 use super::elicitation::{
@@ -579,6 +581,7 @@ pub struct ThreadView {
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
     pub title_editor: Entity<Editor>,
+    title_editor_sync_version: Option<(gpui::EntityId, clock::Global)>,
     pub config_options_view: Option<Entity<ConfigOptionsView>>,
     pub mode_selector: Option<Entity<ModeSelector>>,
     pub model_selector: Option<Entity<ModelSelectorPopover>>,
@@ -888,22 +891,26 @@ impl ThreadView {
             }));
         }
 
-        let title_editor = {
+        let (title_editor, title_editor_sync_version) = {
             let metadata = ThreadMetadataStore::try_global(cx)
                 .and_then(|store| store.read(cx).entry(root_thread_id).cloned());
             let initial_title = if parent_session_id.is_none() {
-                metadata.as_ref().and_then(|m| m.title())
+                metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.title_override.clone())
             } else {
-                thread.read(cx).title()
+                None
             }
+            .or_else(|| thread.read(cx).title())
             .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_text(initial_title, window, cx);
                 editor
             });
+            let version = Self::title_editor_version(editor.read(cx), cx);
             subscriptions.push(cx.subscribe_in(&editor, window, Self::handle_title_editor_event));
-            editor
+            (editor, version)
         };
 
         subscriptions.push(cx.subscribe_in(
@@ -1015,6 +1022,7 @@ impl ThreadView {
             workspace,
             entry_view_state,
             title_editor,
+            title_editor_sync_version,
             config_options_view,
             mode_selector,
             model_selector,
@@ -1269,9 +1277,7 @@ impl ThreadView {
         else {
             return false;
         };
-        !self.is_subagent()
-            && thread.supports_truncate(cx)
-            && message.client_id.is_some()
+        thread.can_rewind_to(message.client_id.as_ref(), cx)
             && message
                 .content
                 .source_blocks()
@@ -1810,7 +1816,10 @@ impl ThreadView {
         let text = text.trim();
         if text == "/login" || text == "/logout" {
             let connection = thread.read(cx).connection().clone();
-            let can_login = !connection.auth_methods().is_empty();
+            let can_login = connection
+                .auth_methods()
+                .iter()
+                .any(acp_thread::auth_methods::is_supported);
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
                 && self
@@ -2821,6 +2830,29 @@ impl ThreadView {
         cx.notify();
     }
 
+    fn title_editor_version(editor: &Editor, cx: &App) -> Option<(gpui::EntityId, clock::Global)> {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .map(|buffer| (buffer.entity_id(), buffer.read(cx).version()))
+    }
+
+    pub(super) fn sync_title_editor(
+        &mut self,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.title_editor.read(cx).text(cx) == title {
+            return;
+        }
+        self.title_editor_sync_version = self.title_editor.update(cx, |editor, cx| {
+            editor.set_text(title, window, cx);
+            Self::title_editor_version(editor, cx)
+        });
+    }
+
     pub fn handle_title_editor_event(
         &mut self,
         title_editor: &Entity<Editor>,
@@ -2830,13 +2862,15 @@ impl ThreadView {
     ) {
         match event {
             EditorEvent::BufferEdited => {
-                // We only want to set the title if the user has actively edited
-                // it. If the title editor is not focused, we programmatically
-                // changed the text, so we don't want to set the title again.
                 if !title_editor.read(cx).is_focused(window) {
                     return;
                 }
 
+                // BufferEdited has no origin; equal text can still be an explicit user rename.
+                let version = Self::title_editor_version(title_editor.read(cx), cx);
+                if version.is_some() && version == self.title_editor_sync_version {
+                    return;
+                }
                 let new_title = title_editor.read(cx).text(cx);
                 if new_title.is_empty() {
                     return;
@@ -2845,9 +2879,7 @@ impl ThreadView {
             }
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
-                    title_editor.update(cx, |editor, cx| {
-                        editor.set_text(DEFAULT_THREAD_TITLE, window, cx);
-                    });
+                    self.sync_title_editor(DEFAULT_THREAD_TITLE.into(), window, cx);
                 }
             }
             _ => {}
@@ -2859,11 +2891,7 @@ impl ThreadView {
     /// inline rename) so that they go through the same persistence path as
     /// the in-thread title editor.
     pub fn rename(&mut self, title: SharedString, window: &mut Window, cx: &mut Context<Self>) {
-        if self.title_editor.read(cx).text(cx) != title.as_ref() {
-            self.title_editor.update(cx, |editor, cx| {
-                editor.set_text(title.clone(), window, cx);
-            });
-        }
+        self.sync_title_editor(title.clone(), window, cx);
         self.apply_renamed_title(title, cx);
     }
 
@@ -3028,7 +3056,7 @@ impl ThreadView {
                 elicitation_id.clone(),
                 matches!(elicitation.status, ElicitationStatus::Pending { .. }),
                 match &elicitation.request.mode {
-                    acp_v1::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    acp_v2::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
                     _ => None,
                 },
             )
@@ -3078,7 +3106,7 @@ impl ThreadView {
         };
 
         match mode {
-            acp_v1::ElicitationMode::Form(mode) => {
+            acp_v2::ElicitationMode::Form(mode) => {
                 let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) else {
                     return;
                 };
@@ -3108,9 +3136,9 @@ impl ThreadView {
                             Ok(content) => {
                                 this.respond_to_elicitation(
                                     elicitation_id,
-                                    acp_v1::CreateElicitationResponse::new(
-                                        acp_v1::ElicitationAction::Accept(
-                                            acp_v1::ElicitationAcceptAction::new().content(content),
+                                    acp_v2::CreateElicitationResponse::new(
+                                        acp_v2::ElicitationAction::Accept(
+                                            acp_v2::ElicitationAcceptAction::new().content(content),
                                         ),
                                     ),
                                     cx,
@@ -3130,11 +3158,11 @@ impl ThreadView {
                 })
                 .detach();
             }
-            acp_v1::ElicitationMode::Url(_) => {
+            acp_v2::ElicitationMode::Url(_) => {
                 self.respond_to_elicitation(
                     elicitation_id,
-                    acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                        acp_v1::ElicitationAcceptAction::new(),
+                    acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                        acp_v2::ElicitationAcceptAction::new(),
                     )),
                     cx,
                 );
@@ -3151,7 +3179,7 @@ impl ThreadView {
     ) {
         self.respond_to_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
             cx,
         );
     }
@@ -3164,7 +3192,7 @@ impl ThreadView {
     ) {
         self.respond_to_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Cancel),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Cancel),
             cx,
         );
     }
@@ -3185,7 +3213,7 @@ impl ThreadView {
     fn respond_to_elicitation(
         &mut self,
         elicitation_id: ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
         let session_id = self.session_id.clone();
@@ -3400,6 +3428,11 @@ impl ThreadView {
     pub fn restore_checkpoint(&mut self, client_id: &ClientUserMessageId, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| {
+                telemetry::event!(
+                    "Agent Checkpoint Restored",
+                    agent = thread.connection().telemetry_id(),
+                    session = thread.session_id().clone(),
+                );
                 thread.restore_checkpoint(client_id.clone(), cx)
             })
             .detach_and_log_err(cx);
@@ -4490,7 +4523,7 @@ impl ThreadView {
         let is_compacting = compaction.is_in_progress();
         let summary = &compaction.summary;
         let error = compaction.error.clone();
-        let has_details = !summary.is_empty() || error.is_some();
+        let has_details = summary.blocks().len() > 0 || error.is_some();
         let is_expanded = self
             .entry_view_state
             .read(cx)
@@ -4554,23 +4587,18 @@ impl ThreadView {
                     .when_some(details, |this, (summary, error)| {
                         this.border_color(self.tool_card_border_color(cx))
                             .bg(cx.theme().colors().editor_background.opacity(0.2))
-                            .when(!summary.is_empty(), |this| {
+                            .when(summary.blocks().len() > 0, |this| {
                                 this.child(
                                     v_flex()
                                         .id(("compaction-summary", entry_ix))
                                         .p_2()
                                         .gap_2()
                                         .text_ui(cx)
-                                        .children(summary.iter().enumerate().map(
+                                        .children(summary.blocks().enumerate().map(
                                             |(content_ix, content)| {
                                                 self.render_output_content_block(
-                                                    entry_ix,
-                                                    content_ix,
-                                                    content.as_view(),
-                                                    None,
-                                                    true,
-                                                    window,
-                                                    cx,
+                                                    entry_ix, content_ix, content, None, true,
+                                                    window, cx,
                                                 )
                                             },
                                         )),
@@ -6753,9 +6781,10 @@ impl ThreadView {
                     .is_some_and(|checkpoint| checkpoint.show);
 
                 let is_subagent = self.is_subagent();
-                let can_restore_checkpoint = self.thread.read(cx).supports_truncate(cx)
-                    && message.client_id.is_some()
-                    && !is_subagent;
+                let can_restore_checkpoint = self
+                    .thread
+                    .read(cx)
+                    .can_rewind_to(message.client_id.as_ref(), cx);
                 let source_is_representable = message
                     .content
                     .source_blocks()
@@ -7129,12 +7158,14 @@ impl ThreadView {
             .unwrap_or(!is_generating);
 
         let primary = if is_turn_end && !assistant_message_is_blank {
-            let user_message_index = thread
-                .read(cx)
-                .entries()
-                .iter()
-                .take(entry_ix)
-                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)));
+            let user_message_index = {
+                let thread = thread.read(cx);
+                thread
+                    .entries()
+                    .iter()
+                    .take(entry_ix)
+                    .rposition(|entry| thread.is_user_authored_scroll_target(entry))
+            };
 
             v_flex()
                 .w_full()
@@ -7599,7 +7630,8 @@ impl ThreadView {
         user_message_index: Option<usize>,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.thread.read(cx).entries();
+        let thread = self.thread.read(cx);
+        let entries = thread.entries();
         if entries.is_empty() {
             return;
         }
@@ -7609,7 +7641,7 @@ impl ThreadView {
         if let Some(ix) = user_message_index.or_else(|| {
             entries
                 .iter()
-                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+                .rposition(|entry| thread.is_user_authored_scroll_target(entry))
         }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: ix,
@@ -7714,12 +7746,14 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.thread.read(cx).entries();
+        let thread = self.thread.read(cx);
+        let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
-        if let Some(target_ix) = (0..current_ix)
-            .rev()
-            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
-        {
+        if let Some(target_ix) = (0..current_ix).rev().find(|&i| {
+            entries
+                .get(i)
+                .is_some_and(|entry| thread.is_user_authored_scroll_target(entry))
+        }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: target_ix,
                 offset_in_item: px(0.),
@@ -7734,11 +7768,14 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.thread.read(cx).entries();
+        let thread = self.thread.read(cx);
+        let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
-        if let Some(target_ix) = (current_ix + 1..entries.len())
-            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
-        {
+        if let Some(target_ix) = (current_ix + 1..entries.len()).find(|&i| {
+            entries
+                .get(i)
+                .is_some_and(|entry| thread.is_user_authored_scroll_target(entry))
+        }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: target_ix,
                 offset_in_item: px(0.),
@@ -8161,18 +8198,11 @@ impl ThreadView {
                                 ),
                         )
                         .when(is_constrained, |this| {
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .size_full()
-                                    .bg(linear_gradient(
-                                        180.,
-                                        linear_color_stop(panel_bg.opacity(0.8), 0.),
-                                        linear_color_stop(panel_bg.opacity(0.), 0.1),
-                                    ))
-                                    .block_mouse_except_scroll(),
-                            )
+                            this.child(div().absolute().inset_0().size_full().bg(linear_gradient(
+                                180.,
+                                linear_color_stop(panel_bg.opacity(0.8), 0.),
+                                linear_color_stop(panel_bg.opacity(0.), 0.1),
+                            )))
                         }),
                 )
             })
@@ -13345,34 +13375,138 @@ pub(crate) fn open_link(
     cx: &mut App,
 ) {
     let Some(workspace) = workspace.upgrade() else {
-        cx.open_url(&url);
         return;
     };
 
     let path_style = workspace.read(cx).path_style(cx);
-    let (relative_path, fragment) = split_local_url_fragment(&url);
-    if let Some(fragment) = fragment
-        && !relative_path.is_empty()
-        && !path_style.is_absolute(relative_path)
-    {
-        let project = workspace.read(cx).project().clone();
-        let decoded_path = decode_path_escapes(relative_path);
-        let abs_path = project.update(cx, |project, cx| {
-            let resolve_path = |path: &str| {
-                let project_path = project.find_project_path(path, cx)?;
-                project.entry_for_path(&project_path, cx)?;
-                project.absolute_path(&project_path, cx)
-            };
-            resolve_path(&decoded_path).or_else(|| resolve_path(relative_path))
-        });
-        if let Some(abs_path) = abs_path {
-            let point = fragment
-                .strip_prefix('L')
+    let path_url = url
+        .strip_prefix('`')
+        .and_then(|path| path.strip_suffix('`'))
+        .unwrap_or(&url);
+    if let Some((path, fragment)) = file_link_parts(path_url, path_style) {
+        if !path.is_empty() {
+            let fragment_point = fragment
                 .and_then(source_position_from_fragment)
-                .map(|(row, _)| Point::new(row, 0));
-            workspace.update(cx, |workspace, cx| {
-                open_abs_path_at_point(workspace, abs_path, point, window, cx);
-            });
+                .map(|(row, column)| Point::new(row, column));
+            let candidates = file_link_candidates(path, fragment_point, path_style);
+            let project = workspace.read(cx).project().downgrade();
+            let Ok((roots, root_names)) = project.read_with(cx, |project, cx| {
+                project
+                    .visible_worktrees(cx)
+                    .filter_map(|worktree| {
+                        let worktree = worktree.read(cx);
+                        (!worktree.is_single_file())
+                            .then(|| (worktree.abs_path(), worktree.root_name().to_owned()))
+                    })
+                    .unzip::<_, _, Vec<_>, Vec<_>>()
+            }) else {
+                return;
+            };
+            let workspace = workspace.downgrade();
+            window
+                .spawn(cx, async move |cx| {
+                    let mut target = None;
+                    let mut failures = Vec::new();
+                    'resolve: for (path, point) in candidates {
+                        let Ok(project_path) = project.read_with(cx, |project, cx| {
+                            project_path_for_file_link(project, &path, cx)
+                        }) else {
+                            return Ok(());
+                        };
+                        if let Some(project_path) = project_path {
+                            target = Some((
+                                ResolvedPath::ProjectPath {
+                                    project_path,
+                                    is_dir: false,
+                                },
+                                point,
+                            ));
+                            break;
+                        }
+                        let paths = if path_style.is_absolute(&path.to_string_lossy())
+                            || path.starts_with("~")
+                        {
+                            vec![path]
+                        } else {
+                            roots
+                                .iter()
+                                .zip(&root_names)
+                                .flat_map(|(root, root_name)| {
+                                    [
+                                        path.strip_prefix(root_name.as_std_path()).ok(),
+                                        Some(path.as_path()),
+                                    ]
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(move |path| {
+                                        path_style.join_path_preserving_components(root, path).ok()
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        };
+                        for path in paths {
+                            let Some(path_string) = path.to_str() else {
+                                failures.push(format!("{path:?}: path is not valid UTF-8"));
+                                continue;
+                            };
+                            let Ok(task) = project.update(cx, |project, cx| {
+                                project.resolve_abs_file_link(path_string, cx)
+                            }) else {
+                                return Ok(());
+                            };
+                            let resolved_path = match task.await {
+                                Ok(Some(path)) => path,
+                                Ok(None) => {
+                                    failures.push(format!("{path:?}: no matching file"));
+                                    continue;
+                                }
+                                Err(error) => {
+                                    failures.push(format!("{path:?}: {error:#}"));
+                                    continue;
+                                }
+                            };
+                            target = Some((resolved_path, point));
+                            break 'resolve;
+                        }
+                    }
+                    let Some((target, point)) = target else {
+                        let details = if failures.is_empty() {
+                            "no candidate file paths".to_string()
+                        } else {
+                            failures.join("; ")
+                        };
+                        log::warn!(
+                            "Could not resolve agent file link {url:?} against project roots {roots:?}: {details}"
+                        );
+                        return anyhow::Ok(());
+                    };
+                    let Some(task) = workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_resolved_path(target, window, cx)
+                        })
+                        .ok()
+                    else {
+                        return Ok(());
+                    };
+                    let item = task.await?;
+                    if let Some(point) = point
+                        && let Some(editor) = item.downcast::<Editor>()
+                    {
+                        editor
+                            .update_in(cx, |editor, window, cx| {
+                                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                                    let point = buffer
+                                        .read(cx)
+                                        .snapshot()
+                                        .point_from_external_input(point.row, point.column);
+                                    editor.go_to_singleton_buffer_point(point, window, cx);
+                                }
+                            })
+                            .ok();
+                    }
+                    Ok(())
+                })
+                .detach_and_log_err(cx);
             return;
         }
     }
@@ -13483,6 +13617,76 @@ pub(crate) fn open_link(
     }
 }
 
+fn file_link_parts(input: &str, path_style: PathStyle) -> Option<(&str, Option<&str>)> {
+    let (path, fragment) = input
+        .split_once('#')
+        .map_or((input, None), |(path, fragment)| (path, Some(fragment)));
+    if !path_style.is_absolute(path)
+        && let Ok(url) = Url::parse(input)
+        && (!url.scheme().contains('.')
+            || url.path().trim_matches(':').is_empty()
+            || !PathWithPosition::parse_str(path)
+                .path
+                .to_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case(url.scheme())))
+    {
+        return None;
+    }
+    Some((path, fragment))
+}
+
+fn file_link_candidates(
+    path: &str,
+    fragment_point: Option<Point>,
+    path_style: PathStyle,
+) -> Vec<(PathBuf, Option<Point>)> {
+    if path_style.is_windows() && path_style.is_absolute(path) {
+        return [
+            MentionUri::parse_hyperlink(path, path_style).ok(),
+            MentionUri::parse_hyperlink_literal(path, path_style),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(|mention| match mention {
+            MentionUri::File { abs_path } => Some((abs_path, fragment_point)),
+            MentionUri::Selection {
+                abs_path: Some(abs_path),
+                line_range,
+                column,
+            } => Some((
+                abs_path,
+                Some(
+                    fragment_point.unwrap_or(Point::new(*line_range.start(), column.unwrap_or(0))),
+                ),
+            )),
+            _ => None,
+        })
+        .collect();
+    }
+    let decoded_path = decode_path_escapes(path);
+    let mut candidates = Vec::new();
+    for path in std::iter::once(decoded_path.as_ref()).chain((decoded_path != path).then_some(path))
+    {
+        let path = if path_style.is_windows() {
+            PathBuf::from(path.replace('\\', "/"))
+        } else {
+            PathBuf::from(path)
+        };
+        candidates.push((path.clone(), fragment_point));
+        let position = PathWithPosition::parse_str(&path.to_string_lossy());
+        if let Some(row) = position.row.and_then(|row| row.checked_sub(1)) {
+            candidates.push((
+                position.path,
+                Some(fragment_point.unwrap_or(Point::new(
+                    row,
+                    position.column.unwrap_or(1).saturating_sub(1),
+                ))),
+            ));
+        }
+    }
+    candidates
+}
+
 /// Returns the name of the leading built-in (native-category) slash command —
 /// e.g. `compact` for `/compact` or `/compact summarize the API work` — whether
 /// or not the user typed any trailing text after it. Built-in commands ignore
@@ -13495,7 +13699,7 @@ pub(crate) fn open_link(
 /// command is never echoed as a user message (see `send_command_queueing_remainder`).
 fn leading_native_command(
     text: &str,
-    available_commands: &[acp_v1::AvailableCommand],
+    available_commands: &[acp_v2::AvailableCommand],
 ) -> Option<String> {
     let rest = text.trim_start().strip_prefix('/')?;
     let name_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
@@ -13522,9 +13726,11 @@ fn strip_leading_command(text: &str, command_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::UpdateGlobal;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use std::path::Path;
+    use settings::{SettingsStore, SplicingVec};
+    use std::sync::Once;
     use util::path;
     use workspace::MultiWorkspace;
 
@@ -13574,14 +13780,14 @@ mod tests {
         }
     }
 
-    fn native_command(name: &str) -> acp_v1::AvailableCommand {
-        acp_v1::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
+    fn native_command(name: &str) -> acp_v2::AvailableCommand {
+        acp_v2::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Native,
         ))
     }
 
-    fn mcp_command(name: &str) -> acp_v1::AvailableCommand {
-        acp_v1::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
+    fn mcp_command(name: &str) -> acp_v2::AvailableCommand {
+        acp_v2::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Mcp,
         ))
     }
@@ -13632,6 +13838,86 @@ mod tests {
         );
         // No matching prefix: returns the trimmed input unchanged.
         assert_eq!(strip_leading_command("hello", "compact"), "hello");
+    }
+
+    #[test]
+    fn test_file_link_parts() {
+        for (input, expected) in [
+            ("src/main.rs:2", Some(("src/main.rs:2", None))),
+            ("./tel:123", Some(("./tel:123", None))),
+            ("main.rs:2#L3", Some(("main.rs:2", Some("L3")))),
+            ("main.rs:2:4#3C2", Some(("main.rs:2:4", Some("3C2")))),
+            ("main.rs:0", Some(("main.rs:0", None))),
+            ("main.rs:4294967295", Some(("main.rs:4294967295", None))),
+            ("main.rs:4294967296", Some(("main.rs:4294967296", None))),
+            ("main.rs:2:4294967296", Some(("main.rs:2:4294967296", None))),
+            ("custom.proto:123", Some(("custom.proto:123", None))),
+            ("main.rs:2:3:4", None),
+            ("main.rs:2:", Some(("main.rs:2:", None))),
+            ("MAIN.RS:2:", Some(("MAIN.RS:2:", None))),
+            ("main.rs:-2", None),
+            ("tel:123", None),
+            ("custom:123", None),
+            ("com.example.viewer:", None),
+            ("com.example.viewer::", None),
+            ("file:/project/a:2", None),
+            ("file:///project/a%3A2", None),
+            ("https://example.com/main.rs:2#L3", None),
+        ] {
+            assert_eq!(file_link_parts(input, PathStyle::Unix), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn test_file_link_candidates_windows() {
+        for (path, expected_path, expected_point) in [
+            (
+                r"C:\project\main.rs#L2",
+                r"C:\project\main.rs",
+                Point::new(1, 0),
+            ),
+            (
+                "/C:/project/main.rs#42",
+                r"C:\project\main.rs",
+                Point::new(41, 0),
+            ),
+            (
+                "/c/project/main.rs:2#L3C4",
+                r"C:\project\main.rs",
+                Point::new(2, 3),
+            ),
+            (
+                "//server/share/main.rs#42:3",
+                r"\\server\share\main.rs",
+                Point::new(41, 2),
+            ),
+            (
+                "/C:/project/main.rs:2:4",
+                r"C:\project\main.rs",
+                Point::new(1, 3),
+            ),
+            (
+                "/c/project/main.rs:2",
+                r"C:\project\main.rs",
+                Point::new(1, 0),
+            ),
+            (
+                r"C:\project\a%20b.rs:2",
+                r"C:\project\a b.rs",
+                Point::new(1, 0),
+            ),
+        ] {
+            let (path, fragment) = file_link_parts(path, PathStyle::Windows).unwrap();
+            let fragment_point = fragment
+                .and_then(source_position_from_fragment)
+                .map(|(row, column)| Point::new(row, column));
+            let candidates = file_link_candidates(path, fragment_point, PathStyle::Windows);
+            assert_eq!(
+                candidates.first(),
+                Some(&(PathBuf::from(expected_path), Some(expected_point))),
+                "{path}"
+            );
+        }
     }
 
     #[gpui::test]
@@ -13691,6 +13977,235 @@ mod tests {
                 .and_then(|item| item.project_path(cx))
                 .expect("file should be open");
             assert!(*active.path == *"src/main.rs");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_link_relative_positions(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(SplicingVec::from(vec!["**/excluded.rs".to_string()]));
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "src": {"main.rs": "first\naéøbc\nthird\n", "a": "first\nsecond\n", "excluded.rs": "first\nsecond\n"},
+                "main.rs": "first\naéøbc\nthird\n",
+                "project": {"src": {"main.rs": "wrong file"}},
+                "x.rs": {"x.rs": "first\nsecond\n"},
+                "a b.rs": "first\nsecond\n",
+                "a%20b.rs": "wrong file",
+                "literal%20space.rs": "first\nsecond\n",
+                "a%2Fb.rs": "first\nsecond\n",
+            }),
+        )
+        .await;
+        fs.insert_tree(path!("/other"), json!({"main.rs": "one\ntwo\n"}))
+            .await;
+        #[cfg(not(target_os = "windows"))]
+        fs.insert_tree(
+            path!("/project"),
+            json!({"literal.rs": "wrong file", "literal.rs:2": "literal file"}),
+        )
+        .await;
+
+        let project = Project::test(
+            fs,
+            [path!("/project").as_ref(), path!("/other").as_ref()],
+            cx,
+        )
+        .await;
+        let worktree_ids = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| worktree.read(cx).id())
+                .collect::<Vec<_>>()
+        });
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+
+        for (url, expected_path, expected_point) in [
+            (
+                "project/src/excluded.rs:2",
+                path!("/project/src/excluded.rs"),
+                Point::new(1, 0),
+            ),
+            (
+                "src/excluded.rs:2",
+                path!("/project/src/excluded.rs"),
+                Point::new(1, 0),
+            ),
+            (
+                path!("/project/main.rs#2"),
+                path!("/project/main.rs"),
+                Point::new(1, 0),
+            ),
+            (
+                path!("/project/main.rs#L3"),
+                path!("/project/main.rs"),
+                Point::new(2, 0),
+            ),
+            (
+                path!("/project/main.rs#2C4"),
+                path!("/project/main.rs"),
+                Point::new(1, 5),
+            ),
+            ("main.rs:2#L3", path!("/project/main.rs"), Point::new(2, 0)),
+            (
+                "main.rs:3#L2:4",
+                path!("/project/main.rs"),
+                Point::new(1, 5),
+            ),
+            ("./src/a:2", path!("/project/src/a"), Point::new(1, 0)),
+            ("src/a:2:4", path!("/project/src/a"), Point::new(1, 3)),
+            (
+                "src/main.rs:2",
+                path!("/project/src/main.rs"),
+                Point::new(1, 0),
+            ),
+            (
+                "src/main.rs:2:4",
+                path!("/project/src/main.rs"),
+                Point::new(1, 5),
+            ),
+            (
+                "project/src/main.rs:3",
+                path!("/project/src/main.rs"),
+                Point::new(2, 0),
+            ),
+            (
+                "./src/main.rs:1:2",
+                path!("/project/src/main.rs"),
+                Point::new(0, 1),
+            ),
+            ("main.rs:2", path!("/project/main.rs"), Point::new(1, 0)),
+            ("main.rs:2:", path!("/project/main.rs"), Point::new(1, 0)),
+            ("main.rs(2,4)", path!("/project/main.rs"), Point::new(1, 5)),
+            ("other/main.rs:2", path!("/other/main.rs"), Point::new(1, 0)),
+            ("x.rs/x.rs:2", path!("/project/x.rs/x.rs"), Point::new(1, 0)),
+            ("a%20b.rs:2", path!("/project/a b.rs"), Point::new(1, 0)),
+            (
+                "literal%20space.rs:2",
+                path!("/project/literal%20space.rs"),
+                Point::new(1, 0),
+            ),
+            ("a%2Fb.rs:2", path!("/project/a%2Fb.rs"), Point::new(1, 0)),
+            (
+                "src/main.rs#L2",
+                path!("/project/src/main.rs"),
+                Point::new(1, 0),
+            ),
+            (
+                "src/main.rs:2:0",
+                path!("/project/src/main.rs"),
+                Point::new(1, 0),
+            ),
+            (
+                "src/main.rs:4294967295",
+                path!("/project/src/main.rs"),
+                Point::new(3, 0),
+            ),
+            #[cfg(not(target_os = "windows"))]
+            (
+                "file:/project/literal.rs:2",
+                path!("/project/literal.rs:2"),
+                Point::new(0, 0),
+            ),
+            #[cfg(not(target_os = "windows"))]
+            (
+                "literal.rs:2",
+                path!("/project/literal.rs:2"),
+                Point::new(0, 0),
+            ),
+        ] {
+            multi_workspace.update_in(cx, |_, window, cx| {
+                open_link(SharedString::from(url), &workspace_weak, window, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.opened_url(), None, "{url}");
+            let editor = workspace.read_with(cx, |workspace, cx| {
+                let item = workspace.active_item(cx).expect("file should be open");
+                let project_path = item
+                    .project_path(cx)
+                    .expect("item should have a project path");
+                assert_eq!(
+                    project.read(cx).absolute_path(&project_path, cx).as_deref(),
+                    Some(Path::new(expected_path)),
+                    "{url}"
+                );
+                item.downcast::<Editor>()
+                    .expect("file should be open in an editor")
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                assert_eq!(
+                    editor.selections.newest::<Point>(&snapshot).head(),
+                    expected_point,
+                    "{url}"
+                );
+            });
+            project.read_with(cx, |project, cx| {
+                assert_eq!(
+                    project
+                        .worktrees(cx)
+                        .map(|worktree| worktree.read(cx).id())
+                        .collect::<Vec<_>>(),
+                    worktree_ids,
+                    "{url}"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_link_external_urls(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({"src": {"main.rs": ""}, "tel": "not a phone", "custom": "not a URI handler"}),
+        )
+        .await;
+        #[cfg(not(target_os = "windows"))]
+        fs.insert_tree(
+            path!("/project"),
+            json!({"mailto:contact@example.com": "not the email handler"}),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+
+        for url in [
+            "https://example.com/src/main.rs:2",
+            "mailto:contact@example.com",
+            "tel:123",
+            "custom:123",
+            "com.example.viewer:",
+            "com.example.viewer::",
+        ] {
+            multi_workspace.update_in(cx, |_, window, cx| {
+                open_link(SharedString::from(url), &workspace.downgrade(), window, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.opened_url().as_deref(), Some(url));
+            workspace.read_with(cx, |workspace, cx| {
+                assert!(workspace.active_item(cx).is_none());
+            });
+        }
+        project.read_with(cx, |project, cx| {
+            assert_eq!(project.worktrees(cx).count(), 1);
         });
     }
 
@@ -13763,66 +14278,521 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_file_link_parent_traversal_uses_selected_worktree(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/one"), json!({"two": {"src": "not a directory"}}))
+            .await;
+        fs.insert_tree(
+            path!("/two"),
+            json!({"src": {}, "file.rs": "selected file"}),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/one").as_ref(), path!("/two").as_ref()], cx).await;
+        let unindexed_buffer = project
+            .update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(Path::new(path!("/one/file.rs")), cx)
+                    .unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        project.read_with(cx, |project, cx| {
+            let unindexed_path = project
+                .project_path_for_absolute_path(Path::new(path!("/one/file.rs")), cx)
+                .unwrap();
+            assert!(project.entry_for_path(&unindexed_path, cx).is_none());
+            assert_eq!(
+                project.get_open_buffer(&unindexed_path, cx).unwrap(),
+                unindexed_buffer,
+            );
+            let expected = project
+                .project_path_for_absolute_path(Path::new(path!("/two/file.rs")), cx)
+                .unwrap();
+            for path in [
+                "src/../file.rs",
+                "two/src/../file.rs",
+                "two/file.rs",
+                path!("/two/src/../file.rs"),
+            ] {
+                assert_eq!(
+                    project_path_for_file_link(project, Path::new(path), cx),
+                    Some(expected.clone()),
+                    "{path}",
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_link_preserves_project_symlink_buffer(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({"sub": {}, "main.rs": "other file"}),
+        )
+        .await;
+        fs.insert_tree(path!("/outside"), json!({"target.rs": "original\n"}))
+            .await;
+        fs.insert_symlink(
+            path!("/project/link.rs"),
+            PathBuf::from(path!("/outside/target.rs")),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_link(SharedString::from("link.rs"), &workspace_weak, window, cx);
+        });
+        cx.run_until_parked();
+        let original = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        original.update_in(cx, |editor, window, cx| {
+            editor.insert("unsaved ", window, cx)
+        });
+
+        for excluded in [false, true] {
+            if excluded {
+                cx.update(|_, cx| {
+                    SettingsStore::update_global(cx, |store, cx| {
+                        store.update_user_settings(cx, |settings| {
+                            settings.project.worktree.file_scan_exclusions =
+                                Some(SplicingVec::from(vec![
+                                    "**/link.rs".to_string(),
+                                    "**/sub".to_string(),
+                                ]));
+                        });
+                    });
+                });
+                cx.run_until_parked();
+                project.read_with(cx, |project, cx| {
+                    let path = project
+                        .project_path_for_absolute_path(Path::new(path!("/project/link.rs")), cx)
+                        .unwrap();
+                    assert!(project.entry_for_path(&path, cx).is_none());
+                    assert!(project.get_open_buffer(&path, cx).is_some());
+                });
+            }
+            for (url, use_absolute_helper) in [
+                ("link.rs", false),
+                ("project/link.rs", false),
+                (path!("/project/link.rs"), false),
+                (path!("/project//link.rs"), false),
+                (path!("/project//link.rs"), true),
+                (path!("/project/sub/../link.rs"), false),
+                ("project/sub/../link.rs#L1", false),
+                (path!("/project/sub/../link.rs"), true),
+            ] {
+                multi_workspace.update_in(cx, |_, window, cx| {
+                    open_link(SharedString::from("main.rs"), &workspace_weak, window, cx);
+                });
+                cx.run_until_parked();
+                multi_workspace.update_in(cx, |_, window, cx| {
+                    if use_absolute_helper {
+                        workspace.update(cx, |workspace, cx| {
+                            open_abs_path_at_point(workspace, PathBuf::from(url), None, window, cx);
+                        });
+                    } else {
+                        open_link(SharedString::from(url), &workspace_weak, window, cx);
+                    }
+                });
+                cx.run_until_parked();
+                workspace.read_with(cx, |workspace, cx| {
+                    let active = workspace
+                        .active_item(cx)
+                        .unwrap()
+                        .downcast::<Editor>()
+                        .unwrap();
+                    assert_eq!(active.entity_id(), original.entity_id(), "{url}");
+                    assert_eq!(active.read(cx).text(cx), "unsaved original\n");
+                    assert_eq!(project.read(cx).worktrees(cx).count(), 1);
+                });
+                assert_eq!(cx.opened_url(), None);
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_link_does_not_retain_closed_project(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let mut previous_workspace = None;
+        for url in [
+            format!("{}:2", path!("/outside/notes.md")),
+            format!(
+                "{}#L2",
+                Url::from_file_path(path!("/outside/notes.md")).unwrap()
+            ),
+        ] {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(path!("/project"), json!({"main.rs": ""}))
+                .await;
+            fs.insert_tree(path!("/outside"), json!({"notes.md": "first\nsecond\n"}))
+                .await;
+            let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+            let project_weak = project.downgrade();
+            let (multi_workspace, window_cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let multi_workspace_weak = multi_workspace.downgrade();
+            let workspace =
+                multi_workspace.read_with(window_cx, |workspace, _| workspace.workspace().clone());
+            let workspace_weak = workspace.downgrade();
+            if let Some(previous_workspace) = previous_workspace.take() {
+                window_cx.update(|window, cx| {
+                    open_link(
+                        SharedString::from("missing.rs:2"),
+                        &previous_workspace,
+                        window,
+                        cx,
+                    );
+                });
+                assert_eq!(window_cx.opened_url(), None);
+            }
+            drop(project);
+            drop(workspace);
+            drop(multi_workspace);
+
+            window_cx.update(|window, cx| {
+                open_link(SharedString::from(url.clone()), &workspace_weak, window, cx);
+                window.remove_window();
+            });
+            assert!(multi_workspace_weak.upgrade().is_none(), "{url}");
+            assert!(workspace_weak.upgrade().is_none(), "{url}");
+            assert!(project_weak.upgrade().is_none(), "{url}");
+            window_cx.run_until_parked();
+            assert_eq!(window_cx.opened_url(), None, "{url}");
+            previous_workspace = Some(workspace_weak);
+        }
+    }
+
+    #[gpui::test]
     async fn test_open_link_out_of_project_path(cx: &mut gpui::TestAppContext) {
         crate::test_support::init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/project"), json!({"src": {"main.rs": ""}}))
             .await;
-        fs.insert_tree(path!("/outside"), json!({"notes.md": "one\ntwo\nthree\n"}))
-            .await;
+        fs.insert_tree(
+            path!("/outside"),
+            json!({
+                "notes.md": "first\naéøbc\nthird\n",
+                "a b.rs": "first\nsecond\n",
+                "a%20b.rs": "literal file",
+                "literal%20space.rs": "first\nsecond\n",
+                "x.rs": {"x.rs": "first\nsecond\n"},
+            }),
+        )
+        .await;
+
+        fs.insert_symlink(
+            path!("/outside/notes-link.md"),
+            PathBuf::from(path!("/outside/notes.md")),
+        )
+        .await;
+        #[cfg(not(target_os = "windows"))]
+        fs.insert_tree(
+            path!("/outside"),
+            json!({"literal.rs": "base file", "literal.rs:2": "literal file"}),
+        )
+        .await;
 
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let visible_worktree_ids = project.read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).id())
+                .collect::<Vec<_>>()
+        });
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
         let workspace_weak = workspace.downgrade();
 
-        // A nonexistent out-of-project path opens nothing, not even an
-        // empty buffer.
-        multi_workspace.update_in(cx, |_, window, cx| {
-            open_link(
-                path!("/outside/missing.md").to_string().into(),
-                &workspace_weak,
-                window,
-                cx,
-            );
-        });
-        cx.run_until_parked();
-        workspace.read_with(cx, |workspace, cx| {
-            assert!(
-                workspace.active_item(cx).is_none(),
-                "nothing should open for a nonexistent path"
-            );
-        });
+        let missing_file_uri = Url::from_file_path(path!("/outside/missing.md"))
+            .unwrap()
+            .to_string();
+        for (url, attempted_paths) in [
+            (
+                "main.rs:2".to_string(),
+                vec![
+                    PathBuf::from(path!("/project/main.rs:2")),
+                    PathBuf::from(path!("/project/main.rs")),
+                ],
+            ),
+            (
+                "main.rs:2#L3".to_string(),
+                vec![
+                    PathBuf::from(path!("/project/main.rs:2")),
+                    PathBuf::from(path!("/project/main.rs")),
+                ],
+            ),
+            (
+                "crates/editor/src/inlays/inlay_hints.rs:394".to_string(),
+                vec![
+                    Path::new(path!("/project"))
+                        .join("crates/editor/src/inlays/inlay_hints.rs:394"),
+                    Path::new(path!("/project"))
+                        .join("crates/editor/src/inlays")
+                        .join("inlay_hints.rs"),
+                ],
+            ),
+            (
+                "crates/editor/src/element.rs:608".to_string(),
+                vec![
+                    Path::new(path!("/project")).join("crates/editor/src/element.rs:608"),
+                    Path::new(path!("/project"))
+                        .join("crates/editor/src")
+                        .join("element.rs"),
+                ],
+            ),
+            (missing_file_uri.clone(), Vec::new()),
+            (
+                "../outside/missing.md:2".to_string(),
+                vec![
+                    Path::new(path!("/project")).join("../outside/missing.md:2"),
+                    Path::new(path!("/project"))
+                        .join("../outside")
+                        .join("missing.md"),
+                ],
+            ),
+            (
+                path!("/outside/missing.md").to_string(),
+                vec![PathBuf::from(path!("/outside/missing.md"))],
+            ),
+            (
+                path!("/project/src/missing.md").to_string(),
+                vec![PathBuf::from(path!("/project/src/missing.md"))],
+            ),
+            (
+                path!("/outside").to_string(),
+                vec![PathBuf::from(path!("/outside"))],
+            ),
+        ] {
+            let warnings = FileLinkWarningCapture::new();
+            multi_workspace.update_in(cx, |_, window, cx| {
+                open_link(SharedString::from(url.clone()), &workspace_weak, window, cx);
+            });
+            cx.run_until_parked();
+            let expected_warning = if url == missing_file_uri {
+                format!(
+                    "Could not resolve agent file link to {:?}: no matching file",
+                    Path::new(path!("/outside/missing.md"))
+                )
+            } else {
+                let failures = attempted_paths
+                    .into_iter()
+                    .map(|path| format!("{path:?}: no matching file"))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!(
+                    "Could not resolve agent file link {url:?} against project roots {:?}: {failures}",
+                    [Path::new(path!("/project"))]
+                )
+            };
+            assert_eq!(warnings.take(), [expected_warning], "{url}");
+            workspace.read_with(cx, |workspace, cx| {
+                assert!(workspace.active_item(cx).is_none());
+                assert_eq!(workspace.notification_ids().len(), 0);
+                assert_eq!(project.read(cx).worktrees(cx).count(), 1);
+            });
+            assert_eq!(cx.opened_url(), None);
+            assert!(cx.pending_prompt().is_none());
+        }
 
-        // An existing out-of-project file opens at the linked line.
-        multi_workspace.update_in(cx, |_, window, cx| {
-            open_link(
-                format!("{}:2", path!("/outside/notes.md")).into(),
-                &workspace_weak,
-                window,
-                cx,
-            );
-        });
-        cx.run_until_parked();
-        let editor = workspace.read_with(cx, |workspace, cx| {
-            let item = workspace.active_item(cx).expect("file should be open");
-            let project_path = item.project_path(cx).expect("item should have a path");
-            let abs_path = workspace
-                .project()
-                .read(cx)
-                .absolute_path(&project_path, cx);
-            assert_eq!(
-                abs_path.as_deref(),
-                Some(Path::new(path!("/outside/notes.md")))
-            );
-            item.downcast::<Editor>().expect("should be an editor")
-        });
-        editor.update_in(cx, |editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            assert_eq!(editor.selections.newest::<Point>(&snapshot).head().row, 1);
-        });
+        let file_uri = url::Url::from_file_path(path!("/outside/notes.md")).unwrap();
+        let literal_uri = Url::from_file_path(path!("/outside/a%20b.rs")).unwrap();
+        let symlink_uri = Url::from_file_path(path!("/outside/notes-link.md")).unwrap();
+        let mut opened_worktrees = HashMap::default();
+        for (url, expected_path, expected_point) in [
+            (
+                literal_uri.to_string(),
+                path!("/outside/a%20b.rs"),
+                Point::new(0, 0),
+            ),
+            (
+                format!("{}:2", path!("/outside/a%20b.rs")),
+                path!("/outside/a b.rs"),
+                Point::new(1, 0),
+            ),
+            #[cfg(not(target_os = "windows"))]
+            (
+                path!("/outside/literal.rs").to_string(),
+                path!("/outside/literal.rs"),
+                Point::new(0, 0),
+            ),
+            #[cfg(not(target_os = "windows"))]
+            (
+                "../outside/literal.rs:2".to_string(),
+                path!("/outside/literal.rs:2"),
+                Point::new(0, 0),
+            ),
+            (
+                "../outside/notes.md:2:4".to_string(),
+                path!("/outside/notes.md"),
+                Point::new(1, 5),
+            ),
+            (
+                format!("{}:3", path!("/outside/notes.md")),
+                path!("/outside/notes.md"),
+                Point::new(2, 0),
+            ),
+            (
+                format!("{file_uri}#L2"),
+                path!("/outside/notes.md"),
+                Point::new(1, 0),
+            ),
+            (
+                "../outside/notes.md#L3".to_string(),
+                path!("/outside/notes.md"),
+                Point::new(2, 0),
+            ),
+            (
+                "../outside/a%20b.rs:2".to_string(),
+                path!("/outside/a b.rs"),
+                Point::new(1, 0),
+            ),
+            (
+                format!("{}:2", path!("/outside/literal%20space.rs")),
+                path!("/outside/literal%20space.rs"),
+                Point::new(1, 0),
+            ),
+            (
+                "../outside/x.rs/x.rs:2".to_string(),
+                path!("/outside/x.rs/x.rs"),
+                Point::new(1, 0),
+            ),
+            (
+                format!("{symlink_uri}#L2"),
+                path!("/outside/notes.md"),
+                Point::new(1, 0),
+            ),
+            (
+                "../outside/notes-link.md:3".to_string(),
+                path!("/outside/notes.md"),
+                Point::new(2, 0),
+            ),
+        ] {
+            multi_workspace.update_in(cx, |_, window, cx| {
+                open_link(SharedString::from(url.clone()), &workspace_weak, window, cx);
+            });
+            cx.run_until_parked();
+            let editor = workspace.read_with(cx, |workspace, cx| {
+                let item = workspace.active_item(cx).expect("file should be open");
+                let project_path = item.project_path(cx).expect("item should have a path");
+                let project = project.read(cx);
+                assert_eq!(
+                    project.absolute_path(&project_path, cx).as_deref(),
+                    Some(Path::new(expected_path)),
+                    "{url}"
+                );
+                assert!(project_path.path.is_empty());
+                let worktree = project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .unwrap();
+                let worktree = worktree.read(cx);
+                assert!(!worktree.is_visible());
+                assert!(worktree.is_single_file());
+                assert_eq!(worktree.abs_path().as_ref(), Path::new(expected_path));
+                if let Some(previous_id) = opened_worktrees.insert(expected_path, worktree.id()) {
+                    assert_eq!(previous_id, worktree.id());
+                }
+                assert_eq!(project.worktrees(cx).count(), 1 + opened_worktrees.len());
+                assert_eq!(
+                    project
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).id())
+                        .collect::<Vec<_>>(),
+                    visible_worktree_ids
+                );
+                assert_eq!(workspace.notification_ids().len(), 0);
+                item.downcast::<Editor>().expect("should be an editor")
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                assert_eq!(
+                    editor.selections.newest::<Point>(&snapshot).head(),
+                    expected_point,
+                    "{url}"
+                );
+            });
+            assert_eq!(cx.opened_url(), None);
+            assert!(cx.pending_prompt().is_none());
+        }
+    }
+
+    thread_local! {
+        static FILE_LINK_WARNINGS: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    }
+
+    struct FileLinkWarningCapture {
+        previous_level: log::LevelFilter,
+    }
+
+    impl FileLinkWarningCapture {
+        fn new() -> Self {
+            static INSTALL_LOGGER: Once = Once::new();
+            INSTALL_LOGGER.call_once(|| {
+                log::set_logger(&FileLinkTestLogger)
+                    .expect("failed to install file-link test logger");
+            });
+            let previous_level = log::max_level();
+            assert!(FILE_LINK_WARNINGS.replace(Some(Vec::new())).is_none());
+            log::set_max_level(previous_level.max(log::LevelFilter::Warn));
+            Self { previous_level }
+        }
+
+        fn take(&self) -> Vec<String> {
+            FILE_LINK_WARNINGS.with_borrow_mut(|warnings| {
+                std::mem::take(warnings.as_mut().expect("warning capture should be active"))
+            })
+        }
+    }
+
+    impl Drop for FileLinkWarningCapture {
+        fn drop(&mut self) {
+            drop(FILE_LINK_WARNINGS.take());
+            log::set_max_level(self.previous_level);
+        }
+    }
+
+    struct FileLinkTestLogger;
+
+    impl log::Log for FileLinkTestLogger {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::max_level()
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if !self.enabled(record.metadata()) {
+                return;
+            }
+            let captured = FILE_LINK_WARNINGS.with_borrow_mut(|warnings| {
+                if record.level() == log::Level::Warn
+                    && let Some(warnings) = warnings
+                {
+                    warnings.push(record.args().to_string());
+                    true
+                } else {
+                    false
+                }
+            });
+            if !captured {
+                eprintln!("{} {}: {}", record.level(), record.target(), record.args());
+            }
+        }
+
+        fn flush(&self) {}
     }
 }
 

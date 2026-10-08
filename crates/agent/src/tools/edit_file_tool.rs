@@ -917,6 +917,105 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_refreshes_match_after_buffer_change(cx: &mut TestAppContext) {
+        for (content, old_text, new_text, range, replacement, expected) in [
+            (
+                "prefix\nold value\nsuffix\n",
+                "old value",
+                "new value",
+                0..0,
+                "😀\n",
+                "😀\nprefix\nnew value\nsuffix\n",
+            ),
+            (
+                "prefix\nold value\nsuffix\n",
+                "old value",
+                "new value",
+                0..7,
+                "",
+                "new value\nsuffix\n",
+            ),
+            (
+                "prefix\n    old value\n        nested\nsuffix\n",
+                "old value\n    nested",
+                "new value\n    updated",
+                0..7,
+                "😀\n\n",
+                "😀\n\n    new value\n        updated\nsuffix\n",
+            ),
+        ] {
+            let (edit_tool, project, _action_log, _fs, _thread) =
+                setup_test(cx, json!({"file.txt": content})).await;
+            let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
+            let (event_stream, _receiver) = ToolCallEventStream::test();
+            let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
+            sender.send_partial(json!({"path": "root/file.txt"}));
+            cx.run_until_parked();
+            sender.send_partial(json!({
+                "path": "root/file.txt",
+                "edits": [{"old_text": old_text.split_inclusive('\n').next().unwrap()}]
+            }));
+            cx.run_until_parked();
+
+            let buffer = project.read_with(cx, |project, cx| {
+                let path = project.find_project_path("root/file.txt", cx).unwrap();
+                project.get_open_buffer(&path, cx).unwrap()
+            });
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(range, replacement)], None, cx)
+            });
+            sender.send_full(json!({
+                "path": "root/file.txt",
+                "edits": [{"old_text": old_text, "new_text": new_text}]
+            }));
+            let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+                panic!("expected success");
+            };
+            assert_eq!(new_text, expected);
+            assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), expected);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_detects_new_ambiguous_match(cx: &mut TestAppContext) {
+        let (edit_tool, project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "old value\n"})).await;
+        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
+        sender.send_partial(json!({"path": "root/file.txt"}));
+        cx.run_until_parked();
+        sender.send_partial(json!({
+            "path": "root/file.txt",
+            "edits": [{"old_text": "old "}]
+        }));
+        cx.run_until_parked();
+
+        let buffer = project.read_with(cx, |project, cx| {
+            let path = project.find_project_path("root/file.txt", cx).unwrap();
+            project.get_open_buffer(&path, cx).unwrap()
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "old value\n")], None, cx)
+        });
+        sender.send_full(json!({
+            "path": "root/file.txt",
+            "edits": [{"old_text": "old value", "new_text": "new value"}]
+        }));
+        let EditFileToolOutput::Error { error, .. } = task.await.unwrap_err() else {
+            panic!("expected ambiguous match error");
+        };
+        assert_eq!(
+            error,
+            "Edit 0 matched multiple locations in the file at lines: 1, 2. Please provide more context in old_text to uniquely identify the location."
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "old value\nold value\n"
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_no_partials_direct_final(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "line 1\nline 2\nline 3\n"})).await;

@@ -368,6 +368,9 @@ impl Platform for WebPlatform {
         Some(self.active_display.clone())
     }
 
+    // The browser is the only display, and it never changes.
+    fn on_displays_changed(&self, _callback: Box<dyn FnMut()>) {}
+
     fn active_window(&self) -> Option<AnyWindowHandle> {
         *self.active_window.borrow()
     }
