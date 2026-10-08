@@ -14,7 +14,7 @@
 //! The module supports several output types, including:
 //! - Plain text
 //! - Markdown
-//! - Images (PNG and JPEG)
+//! - Images (PNG, JPEG, and SVG)
 //! - Tables
 //! - Error messages
 //!
@@ -67,11 +67,12 @@ use settings::Settings;
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
-        MimeType::DataTable(_) => 7,
-        MimeType::Html(_) => 6,
-        MimeType::Json(_) => 5,
-        MimeType::Png(_) => 4,
-        MimeType::Jpeg(_) => 3,
+        MimeType::DataTable(_) => 8,
+        MimeType::Html(_) => 7,
+        MimeType::Json(_) => 6,
+        MimeType::Png(_) => 5,
+        MimeType::Jpeg(_) => 4,
+        MimeType::Svg(_) => 3,
         MimeType::Markdown(_) => 2,
         MimeType::Plain(_) => 1,
         // All other media types are not supported in Zed at this time
@@ -420,6 +421,13 @@ impl Output {
                     display_id,
                 },
                 Err(error) => Output::Message(format!("Failed to load image: {}", error)),
+            },
+            Some(MimeType::Svg(svg)) => match ImageView::from_svg(svg, cx) {
+                Ok(view) => Output::Image {
+                    content: cx.new(|_| view),
+                    display_id,
+                },
+                Err(error) => Output::Message(format!("Failed to render SVG: {}", error)),
             },
             Some(MimeType::DataTable(data)) => Output::Table {
                 content: cx.new(|cx| TableView::new(data, window, cx)),
@@ -845,7 +853,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use runtimelib::{
-        ClearOutput, ErrorOutput, ExecutionState, InputRequest, JupyterMessage,
+        ClearOutput, DisplayData, ErrorOutput, ExecutionState, InputRequest, JupyterMessage,
         JupyterMessageContent, MimeType, Status, Stdio, StreamContent,
     };
     use settings::SettingsStore;
@@ -859,14 +867,16 @@ mod tests {
         let json = MimeType::Json(serde_json::json!({}));
         let png = MimeType::Png(String::new());
         let jpeg = MimeType::Jpeg(String::new());
+        let svg = MimeType::Svg(String::new());
         let markdown = MimeType::Markdown(String::new());
         let plain = MimeType::Plain(String::new());
 
-        assert_eq!(rank_mime_type(&data_table), 7);
-        assert_eq!(rank_mime_type(&html), 6);
-        assert_eq!(rank_mime_type(&json), 5);
-        assert_eq!(rank_mime_type(&png), 4);
-        assert_eq!(rank_mime_type(&jpeg), 3);
+        assert_eq!(rank_mime_type(&data_table), 8);
+        assert_eq!(rank_mime_type(&html), 7);
+        assert_eq!(rank_mime_type(&json), 6);
+        assert_eq!(rank_mime_type(&png), 5);
+        assert_eq!(rank_mime_type(&jpeg), 4);
+        assert_eq!(rank_mime_type(&svg), 3);
         assert_eq!(rank_mime_type(&markdown), 2);
         assert_eq!(rank_mime_type(&plain), 1);
 
@@ -880,10 +890,8 @@ mod tests {
 
     #[test]
     fn test_rank_mime_type_unsupported_returns_zero() {
-        let svg = MimeType::Svg(String::new());
         let latex = MimeType::Latex(String::new());
 
-        assert_eq!(rank_mime_type(&svg), 0);
         assert_eq!(rank_mime_type(&latex), 0);
     }
 
@@ -1006,6 +1014,28 @@ mod tests {
                     std::mem::discriminant(other)
                 ),
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_push_message_svg_display_data(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>"#;
+                let message = JupyterMessageContent::DisplayData(DisplayData::new(
+                    MimeType::Svg(svg.to_string()).into(),
+                ));
+                view.push_message(&message, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert_eq!(view.outputs.len(), 1);
+            assert!(matches!(view.outputs[0], Output::Image { .. }));
         });
     }
 

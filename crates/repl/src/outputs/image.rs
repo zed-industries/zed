@@ -70,6 +70,18 @@ impl ImageView {
         })
     }
 
+    pub fn from_svg(svg: &str, cx: &App) -> Result<Self> {
+        let image = cx.svg_renderer().render_single_frame(svg.as_bytes(), 1.0)?;
+        // Rasterizes at `SMOOTH_SVG_SCALE_FACTOR` times SVG's size.
+        let size = image.size(0);
+        Ok(ImageView {
+            clipboard_image: Arc::new(Image::from_bytes(ImageFormat::Svg, svg.as_bytes().to_vec())),
+            height: (size.height.0 as f32 / gpui::SMOOTH_SVG_SCALE_FACTOR) as u32,
+            width: (size.width.0 as f32 / gpui::SMOOTH_SVG_SCALE_FACTOR) as u32,
+            image,
+        })
+    }
+
     fn scaled_size(
         &self,
         line_height: Pixels,
