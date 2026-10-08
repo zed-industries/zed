@@ -6273,16 +6273,6 @@ impl AcpThread {
         let completion = async move |thread: WeakEntity<Self>, cx: &mut AsyncApp| {
             let response = rx.await;
 
-            thread
-                .update(cx, |this, cx| {
-                    if this.turn_id == turn_id {
-                        this.update_last_checkpoint(cx)
-                    } else {
-                        Task::ready(Ok(()))
-                    }
-                })?
-                .await?;
-
             thread.update(cx, |this, cx| {
                 if this.turn_id == turn_id && this.parent_session_id.is_none() {
                     this.project
@@ -6309,6 +6299,10 @@ impl AcpThread {
 
                 if this.turn_id == turn_id {
                     this.shrink_message_source_capacity(first_entry_index);
+                    // Detached rather than stored in `update_last_checkpoint_if_changed_task`,
+                    // which git events overwrite. It can take a while in large repos,
+                    // so the thread goes idle without waiting for it.
+                    this.update_last_checkpoint(cx).detach();
                 }
 
                 let Ok(response) = response else {
@@ -6729,17 +6723,17 @@ impl AcpThread {
         })
     }
 
-    fn update_last_checkpoint(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn update_last_checkpoint(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let git_store = self.project.read(cx).git_store().clone();
 
         let Some((_, message)) = self.last_user_message() else {
-            return Task::ready(Ok(()));
+            return Task::ready(());
         };
         let Some(client_id) = message.client_id.clone() else {
-            return Task::ready(Ok(()));
+            return Task::ready(());
         };
         let Some(checkpoint) = message.checkpoint.as_ref() else {
-            return Task::ready(Ok(()));
+            return Task::ready(());
         };
         let old_checkpoint = checkpoint.git_checkpoint.clone();
 
@@ -6750,7 +6744,7 @@ impl AcpThread {
                 .context("failed to get new checkpoint")
                 .log_err()
             else {
-                return Ok(());
+                return;
             };
 
             let Some(equal) = git_store
@@ -6761,9 +6755,10 @@ impl AcpThread {
                 .context("failed to compare checkpoints")
                 .log_err()
             else {
-                return Ok(());
+                return;
             };
 
+            // The thread may be closed before a slow comparison finishes.
             this.update(cx, |this, cx| {
                 if let Some((ix, message)) = this.user_message_mut(&client_id) {
                     if let Some(checkpoint) = message.checkpoint.as_mut() {
@@ -6771,9 +6766,8 @@ impl AcpThread {
                         cx.emit(AcpThreadEvent::EntryUpdated(ix));
                     }
                 }
-            })?;
-
-            Ok(())
+            })
+            .ok();
         })
     }
 
@@ -15215,6 +15209,7 @@ mod tests {
         cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["Lorem".into()], cx)))
             .await
             .unwrap();
+        cx.run_until_parked();
         thread.read_with(cx, |thread, cx| {
             assert_eq!(
                 thread.to_markdown(cx),
@@ -15235,6 +15230,7 @@ mod tests {
         cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["ipsum".into()], cx)))
             .await
             .unwrap();
+        cx.run_until_parked();
         thread.read_with(cx, |thread, cx| {
             assert_eq!(
                 thread.to_markdown(cx),
@@ -15271,6 +15267,7 @@ mod tests {
         cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["dolor".into()], cx)))
             .await
             .unwrap();
+        cx.run_until_parked();
         thread.read_with(cx, |thread, cx| {
             assert_eq!(
                 thread.to_markdown(cx),
@@ -15449,6 +15446,196 @@ mod tests {
             .send(())
             .ok();
         send_task.await.unwrap();
+    }
+
+    fn block_git_jobs(project: &Entity<Project>, cx: &mut App) -> oneshot::Sender<()> {
+        let (unblock_tx, unblock_rx) = oneshot::channel::<()>();
+        let repository = project.read(cx).active_repository(cx).unwrap();
+        repository.update(cx, |repository, _| {
+            // The job runs whether or not its result is awaited.
+            drop(repository.send_job("block", None, move |_, _| async move {
+                unblock_rx.await.ok();
+            }));
+        });
+        unblock_tx
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_thread_goes_idle_before_end_of_turn_checkpoint(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                ".git": {}
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+
+        let unblock_git_jobs = Rc::new(RefCell::new(None));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let unblock_git_jobs = unblock_git_jobs.clone();
+            let fs = fs.clone();
+            move |_request, thread, mut cx| {
+                let unblock_git_jobs = unblock_git_jobs.clone();
+                let fs = fs.clone();
+                async move {
+                    // Block before writing so that no checkpoint can observe
+                    // the change until the test unblocks the git queue.
+                    let unblock =
+                        thread.update(&mut cx, |thread, cx| block_git_jobs(&thread.project, cx))?;
+                    unblock_git_jobs.replace(Some(unblock));
+                    fs.write(Path::new(path!("/test/file")), b"").await?;
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let send = thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send_task = cx.background_executor.spawn(send);
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User
+
+                    hello
+
+                "}
+            );
+        });
+        send_task.await.unwrap();
+
+        unblock_git_jobs.take().unwrap().send(()).unwrap();
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    hello
+
+                "}
+            );
+        });
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_follow_up_turn_before_end_of_turn_checkpoint_resolves(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Either turn may be the one that changes files. Each message's restore
+        // button must only reflect its own turn's changes.
+        for first_turn_writes in [true, false] {
+            let fs = FakeFs::new(cx.background_executor.clone());
+            fs.insert_tree(
+                path!("/test"),
+                json!({
+                    ".git": {}
+                }),
+            )
+            .await;
+            let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+
+            let unblock_git_jobs = Rc::new(RefCell::new(None));
+            let turn_count = Rc::new(std::cell::Cell::new(0));
+            let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+                let unblock_git_jobs = unblock_git_jobs.clone();
+                let turn_count = turn_count.clone();
+                let fs = fs.clone();
+                move |_request, thread, mut cx| {
+                    let unblock_git_jobs = unblock_git_jobs.clone();
+                    let is_first_turn = turn_count.get() == 0;
+                    turn_count.set(turn_count.get() + 1);
+                    let fs = fs.clone();
+                    async move {
+                        if is_first_turn {
+                            let unblock = thread.update(&mut cx, |thread, cx| {
+                                block_git_jobs(&thread.project, cx)
+                            })?;
+                            unblock_git_jobs.replace(Some(unblock));
+                        }
+                        if is_first_turn == first_turn_writes {
+                            fs.write(Path::new(path!("/test/file")), b"").await?;
+                        }
+                        Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+                    }
+                    .boxed_local()
+                }
+            }));
+            let thread = cx
+                .update(|cx| {
+                    connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+                })
+                .await
+                .unwrap();
+
+            let send = thread.update(cx, |thread, cx| thread.send(vec!["Lorem".into()], cx));
+            let send_task = cx.background_executor.spawn(send);
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.status(), ThreadStatus::Idle);
+            });
+            send_task.await.unwrap();
+
+            // The follow-up's pre-send checkpoint queues behind the first turn's
+            // end-of-turn checkpoint, so its prompt isn't sent yet.
+            let send = thread.update(cx, |thread, cx| thread.send(vec!["ipsum".into()], cx));
+            let send_task = cx.background_executor.spawn(send);
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.status(), ThreadStatus::Generating);
+            });
+            assert_eq!(turn_count.get(), 1);
+
+            unblock_git_jobs.take().unwrap().send(()).unwrap();
+            send_task.await.unwrap();
+            cx.run_until_parked();
+            assert_eq!(turn_count.get(), 2);
+            thread.read_with(cx, |thread, cx| {
+                assert_eq!(thread.status(), ThreadStatus::Idle);
+                for entry in &thread.entries {
+                    if let AgentThreadEntry::UserMessage(message) = entry {
+                        assert!(message.checkpoint.is_some());
+                    }
+                }
+                let expected = if first_turn_writes {
+                    indoc! {"
+                        ## User (checkpoint)
+
+                        Lorem
+
+                        ## User
+
+                        ipsum
+
+                    "}
+                } else {
+                    indoc! {"
+                        ## User
+
+                        Lorem
+
+                        ## User (checkpoint)
+
+                        ipsum
+
+                    "}
+                };
+                assert_eq!(thread.to_markdown(cx), expected);
+            });
+        }
     }
 
     #[gpui::test]
