@@ -2040,15 +2040,20 @@ impl PickerDelegate for BranchListDelegate {
                             }))
                     });
 
+                let selected_branch = selected_entry.and_then(|entry| entry.as_branch());
+                let delete_label = if selected_branch.is_some_and(|branch| branch.is_remote()) {
+                    "Delete Local Tracking Branch"
+                } else {
+                    "Delete"
+                };
+
                 let delete_and_select_btns = h_flex()
                     .gap_1()
                     .when(
-                        !selected_entry
-                            .and_then(|entry| entry.as_branch())
-                            .is_some_and(|branch| branch.is_head),
+                        !selected_branch.is_some_and(|branch| branch.is_head),
                         |this| {
                             this.child(
-                                Button::new("delete-branch", "Delete")
+                                Button::new("delete-branch", delete_label)
                                     .key_binding(
                                         KeyBinding::for_action_in(
                                             &branch_picker::DeleteBranch,
