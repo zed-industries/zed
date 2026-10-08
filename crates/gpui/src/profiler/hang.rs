@@ -341,6 +341,28 @@ pub enum SerializedHangContributor {
         dirty_to_draw_ms: Option<f64>,
         /// Invalidations coalesced into the frame.
         invalidations: u64,
+        /// Time spent rendering views and requesting layout, in milliseconds.
+        request_layout_ms: f64,
+        /// Time spent computing layout and prepainting, in milliseconds.
+        prepaint_ms: f64,
+        /// Time spent painting, in milliseconds.
+        paint_ms: f64,
+        /// How many other events in the interval contain this one.
+        depth: usize,
+    },
+    /// One phase of drawing a view whose own work took at least
+    /// [`crate::profiler::VIEW_TIMING_FLOOR`].
+    View {
+        /// The view's type name.
+        name: &'static str,
+        /// The draw phase: `"request_layout"`, `"prepaint"`, or `"paint"`.
+        phase: &'static str,
+        /// When the phase started, in milliseconds since app startup.
+        start_ms: f64,
+        /// How long the phase took, including nested views, in milliseconds.
+        duration_ms: f64,
+        /// How long the phase took excluding nested views, in milliseconds.
+        self_ms: f64,
         /// How many other events in the interval contain this one.
         depth: usize,
     },
@@ -489,6 +511,17 @@ impl SerializedHangContributor {
                 duration_ms,
                 dirty_to_draw_ms: timing.dirty_to_draw_duration().map(as_millis),
                 invalidations: timing.invalidations,
+                request_layout_ms: as_millis(timing.phases.request_layout),
+                prepaint_ms: as_millis(timing.phases.prepaint),
+                paint_ms: as_millis(timing.phases.paint),
+                depth,
+            },
+            ForegroundEvent::View(timing) => Self::View {
+                name: timing.name,
+                phase: timing.phase.as_str(),
+                start_ms: since_startup(timing.start),
+                duration_ms,
+                self_ms: as_millis(timing.self_duration),
                 depth,
             },
             ForegroundEvent::Present(timing) => Self::Present {
@@ -608,13 +641,14 @@ mod tests {
     use scheduler::SpawnTime;
 
     use crate::{
-        self as gpui, Context, FocusHandle, InteractiveElement, IntoElement, Modifiers,
-        MouseButton, Render, Styled, TestAppContext, VisualTestContext, Window, WindowId, div,
-        point, px,
+        self as gpui, AnyView, AppContext as _, Context, FocusHandle, InteractiveElement,
+        IntoElement, Modifiers, MouseButton, ParentElement as _, Render, Styled, TestAppContext,
+        VisualTestContext, Window, WindowId, div, point, px,
     };
 
     use crate::profiler::{
-        ActionTiming, FrameOpportunity, FrameTiming, PresentTiming, TaskTiming, YieldTime,
+        ActionTiming, FrameOpportunity, FrameTiming, PresentTiming, TaskTiming, ViewPhase,
+        YieldTime,
     };
 
     use super::super::journal::{
@@ -785,6 +819,7 @@ mod tests {
             invalidations: 3,
             draw_start: at(350),
             draw_end: at(380),
+            phases: Default::default(),
         };
         let snapshot = FrameSnapshot {
             interval_start: at(150),
@@ -1099,6 +1134,7 @@ mod tests {
                     invalidations: 1,
                     draw_start: at(140),
                     draw_end: at(145),
+                    phases: Default::default(),
                 },
                 presentation: PresentTiming {
                     drawable_wait: None,
@@ -1188,6 +1224,7 @@ mod tests {
                     invalidations: 1,
                     draw_start: at(145),
                     draw_end: at(147),
+                    phases: Default::default(),
                 },
                 presentation: PresentTiming {
                     drawable_wait: None,
@@ -1294,6 +1331,7 @@ mod tests {
                             draw_end: at(submitted_ms - 1),
                             refresh_interval: Some(refresh_interval),
                             opportunity,
+                            phases: Default::default(),
                         },
                         presentation: PresentTiming {
                             window_id,
@@ -1357,6 +1395,7 @@ mod tests {
                     invalidations: 1,
                     draw_start: at(1),
                     draw_end: at(39),
+                    phases: Default::default(),
                 }),
             ],
             small_polls: Vec::new(),
@@ -1402,6 +1441,7 @@ mod tests {
                     invalidations: 1,
                     draw_start: at(148),
                     draw_end: at(149),
+                    phases: Default::default(),
                 },
                 presentation: PresentTiming {
                     drawable_wait: None,
@@ -1480,6 +1520,7 @@ mod tests {
                         draw_end: interval_end,
                         refresh_interval: None,
                         opportunity: FrameOpportunity::Unmeasured,
+                        phases: Default::default(),
                     },
                     presentation: PresentTiming {
                         window_id,
@@ -1659,6 +1700,92 @@ mod tests {
         }
     }
 
+    /// A slow view's draw is journaled under its type name with its own time,
+    /// excluding a slow view nested inside it, even when it's embedded through
+    /// an `AnyView`; fast phases aren't journaled, and the draw records how
+    /// long each of its phases took.
+    #[gpui::test]
+    fn slow_views_are_journaled_with_their_own_time(cx: &mut TestAppContext) {
+        let (journal, _journal_guard) = install_test_foreground_journal(1024, 16);
+        let mut collector = journal.collector();
+        let (_view, cx) = cx.add_window_view(|_, cx| SlowParent {
+            child: cx.new(|_| SlowChild).into(),
+        });
+        draw_window(cx);
+
+        let events: Vec<ForegroundEvent> = collector
+            .collect_unseen()
+            .entries
+            .into_iter()
+            .filter_map(|entry| match entry {
+                ForegroundJournalEntry::Event(event) => Some(event),
+                _ => None,
+            })
+            .collect();
+        let view_timing = |suffix: &str, phase: ViewPhase| {
+            events
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    ForegroundEvent::View(timing)
+                        if timing.name.ends_with(suffix) && timing.phase == phase =>
+                    {
+                        Some(*timing)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected a {phase:?} timing for {suffix}"))
+        };
+        let parent = view_timing("::SlowParent", ViewPhase::RequestLayout);
+        let child = view_timing("::SlowChild", ViewPhase::RequestLayout);
+        let parent_duration = parent.end.duration_since(parent.start);
+        let child_duration = child.end.duration_since(child.start);
+        assert!(child.self_duration >= SLOW_CHILD_RENDER);
+        assert!(parent.self_duration >= SLOW_PARENT_RENDER);
+        assert!(parent_duration >= child_duration + parent.self_duration);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            ForegroundEvent::View(timing) if timing.phase == ViewPhase::Paint
+        )));
+
+        let draw = events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                ForegroundEvent::Draw(timing) => Some(*timing),
+                _ => None,
+            })
+            .expect("a draw");
+        assert!(draw.phases.request_layout >= SLOW_PARENT_RENDER + SLOW_CHILD_RENDER);
+        assert!(
+            draw.phases.request_layout + draw.phases.prepaint + draw.phases.paint
+                <= draw.draw_duration()
+        );
+    }
+
+    const SLOW_PARENT_RENDER: Duration = Duration::from_millis(3);
+    const SLOW_CHILD_RENDER: Duration = Duration::from_millis(2);
+
+    struct SlowParent {
+        child: AnyView,
+    }
+
+    impl Render for SlowParent {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            thread::sleep(SLOW_PARENT_RENDER);
+            div().size_full().child(self.child.clone())
+        }
+    }
+
+    struct SlowChild;
+
+    impl Render for SlowChild {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            thread::sleep(SLOW_CHILD_RENDER);
+            div().size_full()
+        }
+    }
+
     struct Injection {
         kind: HangKind,
         duration: Duration,
@@ -1763,6 +1890,7 @@ mod tests {
             invalidations: 1,
             draw_start: draw_end - Duration::from_millis(1),
             draw_end,
+            phases: Default::default(),
         }
     }
 }

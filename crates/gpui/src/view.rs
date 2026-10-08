@@ -24,6 +24,7 @@ use std::{
 pub struct AnyView {
     entity: AnyEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    view_type_name: &'static str,
 }
 
 impl<V: Render> From<Entity<V>> for AnyView {
@@ -31,6 +32,7 @@ impl<V: Render> From<Entity<V>> for AnyView {
         AnyView {
             entity: value.into_any(),
             render: any_view::render::<V>,
+            view_type_name: type_name::<V>(),
         }
     }
 }
@@ -50,6 +52,7 @@ impl AnyView {
         AnyWeakView {
             entity: self.entity.downgrade(),
             render: self.render,
+            view_type_name: self.view_type_name,
         }
     }
 
@@ -61,6 +64,7 @@ impl AnyView {
             Err(entity) => Err(Self {
                 entity,
                 render: self.render,
+                view_type_name: self.view_type_name,
             }),
         }
     }
@@ -90,6 +94,10 @@ impl Eq for AnyView {}
 impl View for AnyView {
     fn entity_id(&self) -> Option<EntityId> {
         Some(self.entity.entity_id())
+    }
+
+    fn view_type_name(&self) -> &'static str {
+        self.view_type_name
     }
 
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -122,6 +130,7 @@ impl IntoElement for AnyView {
 pub struct AnyWeakView {
     entity: AnyWeakEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    view_type_name: &'static str,
 }
 
 impl AnyWeakView {
@@ -131,6 +140,7 @@ impl AnyWeakView {
         Some(AnyView {
             entity,
             render: self.render,
+            view_type_name: self.view_type_name,
         })
     }
 }
@@ -140,6 +150,7 @@ impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
         AnyWeakView {
             entity: view.into(),
             render: any_view::render::<V>,
+            view_type_name: type_name::<V>(),
         }
     }
 }
@@ -202,6 +213,13 @@ pub trait View: 'static + Sized {
 
     /// Render this view into an element tree, consuming `self`.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
+
+    /// The name of the type that renders this view, which profiling
+    /// attributes the view's draw time to.
+    #[doc(hidden)]
+    fn view_type_name(&self) -> &'static str {
+        type_name::<Self>()
+    }
 }
 
 /// A stateless component (`RenderOnce`) is a `View` with no identity.
@@ -220,6 +238,10 @@ impl<T: RenderOnce> View for T {
 impl<T: Render> View for Entity<T> {
     fn entity_id(&self) -> Option<EntityId> {
         Some(Entity::entity_id(self))
+    }
+
+    fn view_type_name(&self) -> &'static str {
+        type_name::<T>()
     }
 
     #[inline]
@@ -251,6 +273,8 @@ pub struct ViewElement<V: View> {
     view: Option<V>,
     entity_id: Option<EntityId>,
     cached_style: Option<StyleRefinement>,
+    #[cfg(feature = "profiler")]
+    view_type_name: &'static str,
     #[cfg(debug_assertions)]
     source: &'static core::panic::Location<'static>,
 }
@@ -263,6 +287,8 @@ impl<V: View> ViewElement<V> {
         ViewElement {
             entity_id,
             cached_style: None,
+            #[cfg(feature = "profiler")]
+            view_type_name: view.view_type_name(),
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -330,14 +356,23 @@ impl<V: View> Element for ViewElement<V> {
     ) -> (LayoutId, Self::RequestLayoutState) {
         if let Some(entity_id) = self.entity_id {
             // Stateful path: create a reactive boundary.
+            #[cfg(feature = "profiler")]
+            let start = window.window_profiler.begin_view();
             let view = &mut self.view;
-            request_layout_view(
+            let layout = request_layout_view(
                 entity_id,
                 self.cached_style.as_ref(),
                 window,
                 cx,
                 &mut |window, cx| view.take().unwrap().render(window, cx).into_any_element(),
-            )
+            );
+            #[cfg(feature = "profiler")]
+            window.window_profiler.end_view(
+                start,
+                self.view_type_name,
+                crate::profiler::ViewPhase::RequestLayout,
+            );
+            layout
         } else {
             // Stateless path: isolate subtree via type name (no entity identity).
             request_layout_component(type_name::<V>(), window, cx, &mut |window, cx| {
@@ -361,7 +396,9 @@ impl<V: View> Element for ViewElement<V> {
     ) -> Option<AnyElement> {
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
-            prepaint_view(
+            #[cfg(feature = "profiler")]
+            let start = window.window_profiler.begin_view();
+            let prepainted = prepaint_view(
                 entity_id,
                 global_id,
                 bounds,
@@ -375,7 +412,14 @@ impl<V: View> Element for ViewElement<V> {
                         .render(window, cx)
                         .into_any_element()
                 },
-            )
+            );
+            #[cfg(feature = "profiler")]
+            window.window_profiler.end_view(
+                start,
+                self.view_type_name,
+                crate::profiler::ViewPhase::Prepaint,
+            );
+            prepainted
         } else {
             // Stateless path: just prepaint the element.
             prepaint_component(type_name::<V>(), element, window, cx)
@@ -394,6 +438,8 @@ impl<V: View> Element for ViewElement<V> {
     ) {
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
+            #[cfg(feature = "profiler")]
+            let start = window.window_profiler.begin_view();
             paint_view(
                 entity_id,
                 self.cached_style.is_some(),
@@ -401,6 +447,12 @@ impl<V: View> Element for ViewElement<V> {
                 element,
                 window,
                 cx,
+            );
+            #[cfg(feature = "profiler")]
+            window.window_profiler.end_view(
+                start,
+                self.view_type_name,
+                crate::profiler::ViewPhase::Paint,
             );
         } else {
             // Stateless path: just paint the element.

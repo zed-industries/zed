@@ -803,6 +803,70 @@ pub struct FrameTiming {
     /// When the frame could first be worked on, for judging whether it was on
     /// time.
     pub opportunity: FrameOpportunity,
+    /// How long each phase of the draw took.
+    pub phases: DrawPhases,
+}
+
+/// How long each phase of a window draw took.
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+pub struct DrawPhases {
+    /// Rendering views into elements and requesting their layout.
+    pub request_layout: Duration,
+    /// Computing layout and prepainting elements, including deferred draws,
+    /// prompts, drags, and tooltips.
+    pub prepaint: Duration,
+    /// Painting elements into the scene.
+    pub paint: Duration,
+}
+
+/// A phase of drawing a view.
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ViewPhase {
+    /// Rendering the view and requesting its layout.
+    RequestLayout,
+    /// Prepainting the view's elements. Views whose cached elements are
+    /// stale also render and lay out here.
+    Prepaint,
+    /// Painting the view's elements.
+    Paint,
+}
+
+#[cfg(feature = "profiler")]
+impl ViewPhase {
+    /// The phase's name, e.g. `"prepaint"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RequestLayout => "request_layout",
+            Self::Prepaint => "prepaint",
+            Self::Paint => "paint",
+        }
+    }
+}
+
+/// Views whose own work in one draw phase takes less than this aren't
+/// recorded, keeping the journal's per-frame cost bounded while still naming
+/// the views that make a frame late.
+#[cfg(feature = "profiler")]
+pub const VIEW_TIMING_FLOOR: Duration = Duration::from_micros(500);
+
+/// One phase of drawing one view, recorded when its own work took at least
+/// [`VIEW_TIMING_FLOOR`].
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone)]
+pub struct ViewTiming {
+    /// The view's type name.
+    pub name: &'static str,
+    /// The draw phase.
+    pub phase: ViewPhase,
+    /// When the view's phase began.
+    pub start: Instant,
+    /// When the view's phase ended.
+    pub end: Instant,
+    /// The phase's duration excluding views nested inside it, so a parent
+    /// view isn't blamed for its children's work.
+    pub self_duration: Duration,
 }
 
 /// When a frame could first be worked on, for judging whether it was on time.
@@ -1204,6 +1268,10 @@ pub struct WindowProfiler {
     last_signal_at: Option<Instant>,
     offer_interval: Option<Duration>,
     by_refresh_interval: Vec<RefreshIntervalFrames>,
+    draw_phases: DrawPhases,
+    /// For each view phase in progress, the time spent in views nested
+    /// inside it so far.
+    nested_view_time: SmallVec<[Duration; 16]>,
 }
 
 #[cfg(feature = "profiler")]
@@ -1240,6 +1308,8 @@ impl WindowProfiler {
             last_signal_at: None,
             offer_interval: None,
             by_refresh_interval: Vec::new(),
+            draw_phases: DrawPhases::default(),
+            nested_view_time: SmallVec::new(),
         };
         journal::record_frame_pending(window_id, Instant::now());
         Ok(profiler)
@@ -1359,6 +1429,39 @@ impl WindowProfiler {
             .push(WindowActivity::Draw { started_at });
     }
 
+    /// Records the phases of the window draw in progress.
+    pub fn record_draw_phases(&mut self, phases: DrawPhases) {
+        self.draw_phases = phases;
+    }
+
+    /// Records the start of one phase of drawing a view, returning its start
+    /// time to pass to [`WindowProfiler::end_view`].
+    pub fn begin_view(&mut self) -> Instant {
+        self.nested_view_time.push(Duration::ZERO);
+        Instant::now()
+    }
+
+    /// Records the end of a view phase begun at `start`, journaling it when
+    /// its own work reached [`VIEW_TIMING_FLOOR`].
+    pub fn end_view(&mut self, start: Instant, name: &'static str, phase: ViewPhase) {
+        let end = Instant::now();
+        let duration = end.saturating_duration_since(start);
+        let nested = self.nested_view_time.pop().unwrap_or_default();
+        if let Some(parent_nested) = self.nested_view_time.last_mut() {
+            *parent_nested += duration;
+        }
+        let self_duration = duration.saturating_sub(nested);
+        if self_duration >= VIEW_TIMING_FLOOR {
+            journal::record_view(ViewTiming {
+                name,
+                phase,
+                start,
+                end,
+                self_duration,
+            });
+        }
+    }
+
     /// Records the end of a window draw and returns the draw duration.
     pub fn end_draw(&mut self, dirty_at: Option<Instant>, invalidations: u64) -> Duration {
         let Some(WindowActivity::Draw {
@@ -1387,6 +1490,7 @@ impl WindowProfiler {
                 dirty_at,
                 signal_at,
             ),
+            phases: std::mem::take(&mut self.draw_phases),
         };
         let draw_duration = frame_timing.draw_duration();
         if !journal::power_interrupted_since(draw_start) {
@@ -1745,6 +1849,7 @@ mod tests {
             draw_end: at(2),
             refresh_interval: Some(refresh),
             opportunity: FrameOpportunity::At(at(0)),
+            phases: Default::default(),
         };
         for (submitted_ms, missed) in [(7, 0), (10, 0), (20, 1), (25, 2)] {
             assert_eq!(frame.missed_refreshes(at(submitted_ms)), Some(missed));
@@ -1844,6 +1949,7 @@ mod tests {
                     Some(at(0)),
                     frame.signal_ms.map(at),
                 ),
+                phases: Default::default(),
             });
             if frame.responded_to_input {
                 profiler.first_input_at = Some(at(0));
@@ -2243,6 +2349,7 @@ mod tests {
             draw_end,
             refresh_interval: None,
             opportunity: FrameOpportunity::Unmeasured,
+            phases: Default::default(),
         });
     }
 }

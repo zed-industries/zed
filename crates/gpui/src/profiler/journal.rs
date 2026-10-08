@@ -24,7 +24,7 @@ use std::time::Duration;
 use gpui_util::ResultExt;
 use scheduler::Instant;
 
-use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming};
+use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming, ViewTiming};
 use crate::{App, WindowId, WindowVisibility};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +84,8 @@ pub enum ForegroundEvent {
     Input(InputTiming),
     /// A completed window draw.
     Draw(FrameTiming),
+    /// One phase of drawing a view, recorded during the draw that contains it.
+    View(ViewTiming),
     /// Work spent submitting a frame to the platform.
     Present(PresentTiming),
     /// Aggregate of task polls below [`TASK_POLL_FLOOR`], flushed before the
@@ -100,6 +102,7 @@ impl ForegroundEvent {
             Self::Action(timing) => timing.start,
             Self::Input(timing) => timing.start,
             Self::Draw(timing) => timing.draw_start,
+            Self::View(timing) => timing.start,
             Self::Present(timing) => timing.present_start,
             Self::SmallPolls(flush) => flush.since,
         }
@@ -112,6 +115,7 @@ impl ForegroundEvent {
             Self::Action(timing) => timing.end,
             Self::Input(timing) => timing.end,
             Self::Draw(timing) => timing.draw_end,
+            Self::View(timing) => timing.end,
             Self::Present(timing) => timing.present_end,
             Self::SmallPolls(flush) => flush.until,
         }
@@ -1038,6 +1042,10 @@ pub(crate) fn record_input(timing: InputTiming) {
     with_journal(|journal| journal.record_event(ForegroundEvent::Input(timing)));
 }
 
+pub(crate) fn record_view(timing: ViewTiming) {
+    with_journal(|journal| journal.record_event(ForegroundEvent::View(timing)));
+}
+
 pub(crate) fn record_draw(timing: FrameTiming) {
     with_journal(|journal| journal.record_event(ForegroundEvent::Draw(timing)));
 }
@@ -1682,6 +1690,7 @@ mod tests {
             invalidations: 1,
             draw_start: start,
             draw_end: start + Duration::from_millis(20),
+            phases: Default::default(),
         };
         record_draw(frame);
         record_present(presentation_timing(window_id, frame.draw_end), Some(frame));
@@ -1863,6 +1872,7 @@ mod tests {
             invalidations: 1,
             draw_start: start + Duration::from_millis(3),
             draw_end: start + Duration::from_millis(4),
+            phases: Default::default(),
         };
         let presentation = PresentTiming {
             drawable_wait: None,
@@ -2706,6 +2716,7 @@ mod tests {
             ForegroundEvent::Draw(_) => 3,
             ForegroundEvent::Present(_) => 4,
             ForegroundEvent::SmallPolls(_) => 5,
+            ForegroundEvent::View(_) => 6,
         };
         NormalizedEvent {
             kind,
@@ -3498,6 +3509,7 @@ mod tests {
             invalidations: 1,
             draw_start: draw_end,
             draw_end,
+            phases: Default::default(),
         }
     }
 

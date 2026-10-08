@@ -198,7 +198,8 @@ struct ContributorTotal {
     /// Incidents it contributed to.
     incidents: u64,
     /// Its total duration across those incidents, in milliseconds. Nested
-    /// work, such as a draw inside an input dispatch, counts toward both.
+    /// work, such as a draw inside an input dispatch, counts toward both,
+    /// except that views count only their own work, excluding nested views.
     total_ms: f64,
 }
 
@@ -212,6 +213,7 @@ fn contributor_name(event: &ForegroundEvent) -> String {
         ForegroundEvent::Action(timing) => format!("action:{}", timing.name),
         ForegroundEvent::Input(timing) => format!("input:{}", timing.kind),
         ForegroundEvent::Draw(_) => "draw".to_string(),
+        ForegroundEvent::View(timing) => format!("view:{}:{}", timing.name, timing.phase.as_str()),
         ForegroundEvent::Present(_) => "present".to_string(),
         ForegroundEvent::SmallPolls(_) => "small_polls".to_string(),
     }
@@ -251,7 +253,11 @@ impl Reporter {
                     name: name.clone(),
                     ..ContributorTotal::default()
                 });
-            total.total_ms += event.duration().as_secs_f64() * 1000.0;
+            let duration = match event {
+                ForegroundEvent::View(timing) => timing.self_duration,
+                _ => event.duration(),
+            };
+            total.total_ms += duration.as_secs_f64() * 1000.0;
             if !counted.contains(&name) {
                 total.incidents += 1;
                 counted.push(name);
@@ -469,6 +475,32 @@ mod tests {
         );
         assert_eq!(event.contributor_totals_elided, 0);
         assert!(reporter.take_event().contributor_totals.is_empty());
+    }
+
+    #[test]
+    fn reporter_totals_views_by_name_and_phase_using_their_own_time() {
+        use gpui::profiler::{ViewPhase, ViewTiming};
+
+        let start = Instant::now();
+        let mut reporter = Reporter::new();
+        reporter.add_contributors(&incident_with_contributors(vec![ForegroundEvent::View(
+            ViewTiming {
+                name: "markdown_preview::MarkdownPreviewView",
+                phase: ViewPhase::Prepaint,
+                start,
+                end: start + Duration::from_millis(12),
+                self_duration: Duration::from_millis(9),
+            },
+        )]));
+
+        assert_eq!(
+            reporter.take_event().contributor_totals,
+            [ContributorTotal {
+                name: "view:markdown_preview::MarkdownPreviewView:prepaint".to_string(),
+                incidents: 1,
+                total_ms: 9.0,
+            }]
+        );
     }
 
     #[test]

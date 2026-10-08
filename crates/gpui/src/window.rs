@@ -1275,7 +1275,7 @@ pub struct Window {
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "profiler")]
-    window_profiler: profiler::WindowProfiler,
+    pub(crate) window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
     touch_gestures: TouchGestureRecognizer,
     touch_prediction_enabled: bool,
@@ -3696,8 +3696,12 @@ impl Window {
         // stretches to fill the viewport unless explicitly sized, window roots
         // fill the window when their size is `auto`.
         let scale_factor = self.scale_factor();
+        #[cfg(feature = "profiler")]
+        let request_layout_start = Instant::now();
         let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
         let root_layout_id = root_element.request_layout(self, cx);
+        #[cfg(feature = "profiler")]
+        let prepaint_start = Instant::now();
         self.layout_engine
             .as_mut()
             .unwrap()
@@ -3735,6 +3739,8 @@ impl Window {
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
+        #[cfg(feature = "profiler")]
+        let paint_start = Instant::now();
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
@@ -3753,6 +3759,14 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+
+        #[cfg(feature = "profiler")]
+        self.window_profiler
+            .record_draw_phases(profiler::DrawPhases {
+                request_layout: prepaint_start.duration_since(request_layout_start),
+                prepaint: paint_start.duration_since(prepaint_start),
+                paint: Instant::now().duration_since(paint_start),
+            });
 
         // a11y may have been activated/deactivated halfway through the frame
         let a11y_active_start_of_frame = self.a11y.is_active();
