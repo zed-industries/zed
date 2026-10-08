@@ -18,8 +18,7 @@ use agent_client_protocol::schema::{
 };
 use agent_client_protocol::{
     Agent, Builder, Client, ConnectionTo, HandleDispatchFrom, Handled, JsonRpcMessage,
-    JsonRpcResponse, Lines, RequestCancellationHandle, Responder, UntypedMessage, V2Builder,
-    V2ConnectionTo,
+    JsonRpcResponse, Lines, Responder, UntypedMessage, V2Builder, V2ConnectionTo,
 };
 use anyhow::anyhow;
 use async_channel;
@@ -1630,16 +1629,6 @@ fn meta_terminal_auth_task(
     ))
 }
 
-struct NewSessionRequestGuard {
-    cancellation: RequestCancellationHandle,
-}
-
-impl Drop for NewSessionRequestGuard {
-    fn drop(&mut self) {
-        self.cancellation.cancel().log_err();
-    }
-}
-
 impl AgentConnection for AcpConnection {
     fn agent_id(&self) -> AgentId {
         self.id.clone()
@@ -1715,7 +1704,9 @@ impl AgentConnection for AcpConnection {
                 .map_err(map_acp_error)?;
             // Early SDK cancellation is not latched, so arm caller-drop cleanup
             // only after the prepared request's publishing call returns.
-            let _request_guard = NewSessionRequestGuard { cancellation };
+            let _request_guard = util::defer(move || {
+                cancellation.cancel().log_err();
+            });
             let response = response_received
                 .await
                 .context("ACP new-session response callback was cancelled")?
