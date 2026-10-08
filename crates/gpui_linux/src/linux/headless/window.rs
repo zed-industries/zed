@@ -192,6 +192,10 @@ impl PlatformWindow for HeadlessWindow {
 
     fn draw(&self, _scene: &Scene) {}
 
+    fn last_drawable_wait(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         Arc::new(HeadlessAtlas::default())
     }

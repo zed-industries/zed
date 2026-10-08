@@ -157,6 +157,12 @@ impl PlatformDisplay for WindowsDisplay {
             .log_err()
             .and_then(|info| refresh_interval_for_device(&info.szDevice))
     }
+
+    // Windowed apps are composed by DWM, which only varies the refresh rate
+    // in configurations this doesn't detect.
+    fn supports_variable_refresh_rate(&self) -> Option<bool> {
+        None
+    }
 }
 
 /// The refresh rate of the monitor's current mode. With variable refresh

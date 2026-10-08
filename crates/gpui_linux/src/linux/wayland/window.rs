@@ -2008,6 +2008,12 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
+    // Not measured: the renderer's wait for a surface texture isn't
+    // separated from its work.
+    fn last_drawable_wait(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
         let state = &mut *state;

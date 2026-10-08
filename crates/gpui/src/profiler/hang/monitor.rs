@@ -12,7 +12,9 @@ use super::{HangDetector, HangIncident};
 pub struct HangMonitorConfig {
     /// Duration at which a single piece of foreground work counts as a hang.
     pub threshold: Duration,
-    /// Total foreground spend within one interval that counts as a hang.
+    /// Total foreground spend within one interval that counts as a hang,
+    /// for frames on displays whose refresh interval is unknown. Elsewhere a
+    /// frame counts as a hang when it misses several refreshes.
     pub frame_budget: Duration,
     /// How often the monitor thread drains the journal.
     pub interval: Duration,
@@ -45,6 +47,9 @@ pub struct HangMonitorPoll {
     pub incidents: Vec<HangIncident>,
     /// See [`HangDetector::first_present_at`].
     pub first_present_at: Option<Instant>,
+    /// Time since the previous poll that the user was actively using the
+    /// app; see [`HangDetector::take_active_time`].
+    pub active_time: Duration,
     /// Why this poll happened.
     pub reason: HangMonitorPollReason,
 }
@@ -89,9 +94,11 @@ impl HangMonitor {
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
                     let incidents = detector.poll();
+                    let active_time = detector.take_active_time(Instant::now(), interval * 2);
                     on_poll(HangMonitorPoll {
                         incidents,
                         first_present_at: detector.first_present_at(),
+                        active_time,
                         reason,
                     });
                     if let Some(done) = done {

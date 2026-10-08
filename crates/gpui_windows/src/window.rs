@@ -1033,6 +1033,12 @@ impl PlatformWindow for WindowsWindow {
             .set(Some(callback));
     }
 
+    // Not measured: the swap chain's wait for a buffer isn't separated from
+    // the renderer's work.
+    fn last_drawable_wait(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn draw(&self, scene: &Scene) {
         self.state
             .renderer

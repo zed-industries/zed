@@ -45,6 +45,10 @@ impl PlatformDisplay for WaylandDisplay {
     fn refresh_interval(&self) -> Option<Duration> {
         self.refresh_interval
     }
+
+    fn supports_variable_refresh_rate(&self) -> Option<bool> {
+        None
+    }
 }
 
 /// Converts a `wl_output.mode` refresh rate, in millihertz, to an interval.

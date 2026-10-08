@@ -42,6 +42,10 @@ impl PlatformDisplay for X11Display {
         None
     }
 
+    fn supports_variable_refresh_rate(&self) -> Option<bool> {
+        None
+    }
+
     fn id(&self) -> DisplayId {
         DisplayId::new(self.x_screen_index as u64)
     }

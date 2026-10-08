@@ -797,10 +797,81 @@ pub struct FrameTiming {
     pub draw_start: Instant,
     /// When `Window::draw` finished.
     pub draw_end: Instant,
+    /// The refresh interval of the window's display when the frame was drawn,
+    /// or `None` when the platform doesn't report it.
+    pub refresh_interval: Option<Duration>,
+    /// When the frame could first be worked on, for judging whether it was on
+    /// time.
+    pub opportunity: FrameOpportunity,
+}
+
+/// When a frame could first be worked on, for judging whether it was on time.
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum FrameOpportunity {
+    /// The later of when the frame became needed and when the platform offered
+    /// a frame. Waiting for the platform's next frame isn't work, but
+    /// everything the main thread does after this is.
+    At(Instant),
+    /// The platform offered the frame more than two of its frame intervals
+    /// after the frame was needed: it withheld frames, or GPUI throttled the
+    /// window. The frame's work isn't GPUI's to account for.
+    Delayed,
+    /// There's no platform frame time or refresh interval to measure from.
+    Unmeasured,
+}
+
+#[cfg(feature = "profiler")]
+impl FrameOpportunity {
+    /// Determines a frame's opportunity from when it became needed and when
+    /// the platform offered it. `offer_interval` is the time between the
+    /// platform's recent frame offers, which exceeds the refresh interval when
+    /// a variable refresh rate display runs slower than its maximum rate.
+    pub fn new(
+        refresh_interval: Option<Duration>,
+        offer_interval: Option<Duration>,
+        dirty_at: Option<Instant>,
+        signal_at: Option<Instant>,
+    ) -> Self {
+        let (Some(refresh_interval), Some(signal_at)) = (refresh_interval, signal_at) else {
+            return Self::Unmeasured;
+        };
+        let Some(dirty_at) = dirty_at else {
+            return Self::At(signal_at);
+        };
+        // A platform offers a frame within one of its frame intervals of being
+        // asked; two leave room for the request to reach it.
+        let frame_interval = offer_interval.map_or(refresh_interval, |offer_interval| {
+            offer_interval.max(refresh_interval)
+        });
+        if signal_at.saturating_duration_since(dirty_at) > frame_interval * 2 {
+            Self::Delayed
+        } else {
+            Self::At(dirty_at.max(signal_at))
+        }
+    }
 }
 
 #[cfg(feature = "profiler")]
 impl FrameTiming {
+    /// The main-thread time from the frame's opportunity until it was
+    /// submitted at `submitted_at`, when the opportunity was measured.
+    pub fn work(&self, submitted_at: Instant) -> Option<Duration> {
+        match self.opportunity {
+            FrameOpportunity::At(at) => Some(submitted_at.saturating_duration_since(at)),
+            FrameOpportunity::Delayed | FrameOpportunity::Unmeasured => None,
+        }
+    }
+
+    /// How many refreshes the frame missed when submitted at `submitted_at`:
+    /// zero when its work fit within one refresh interval.
+    pub fn missed_refreshes(&self, submitted_at: Instant) -> Option<u64> {
+        let refresh_interval = self.refresh_interval?;
+        let work = self.work(submitted_at)?;
+        let refreshes = work.as_nanos().div_ceil(refresh_interval.as_nanos()).max(1);
+        Some(u64::try_from(refreshes - 1).unwrap_or(u64::MAX))
+    }
+
     /// Time spent inside `Window::draw`.
     pub fn draw_duration(&self) -> Duration {
         self.draw_end.duration_since(self.draw_start)
@@ -827,6 +898,9 @@ pub struct PresentTiming {
     /// The interval since the previous newly drawn frame was submitted, when
     /// both frames belong to an active animation.
     pub animation_interval: Option<Duration>,
+    /// Time the submission spent waiting for the display to free a buffer to
+    /// draw into, or `None` when the platform doesn't measure it.
+    pub drawable_wait: Option<Duration>,
 }
 
 #[cfg(feature = "profiler")]
@@ -834,6 +908,20 @@ impl PresentTiming {
     /// Time spent submitting the frame to the platform.
     pub fn present_duration(&self) -> Duration {
         self.present_end.duration_since(self.present_start)
+    }
+
+    /// When the frame's work ended: the end of the submission minus its wait
+    /// for a buffer. Without a measured wait, the start of the submission,
+    /// since the submission may consist mostly of waiting.
+    pub fn submitted_at(&self) -> Instant {
+        match self.drawable_wait {
+            Some(wait) => self
+                .present_end
+                .checked_sub(wait)
+                .unwrap_or(self.present_start)
+                .max(self.present_start),
+            None => self.present_start,
+        }
     }
 }
 
@@ -859,6 +947,180 @@ pub struct FrameDurationSnapshot {
     /// Histogram of intervals between consecutively presented frames while the
     /// window was animating, in nanoseconds.
     pub present_interval_histogram: Histogram<u64>,
+    /// The same frames, split by the refresh interval of the window's display
+    /// when they were drawn.
+    pub by_refresh_interval: Vec<RefreshIntervalFrames>,
+}
+
+/// Upper bounds, in milliseconds, of the duration buckets in
+/// [`RefreshIntervalFrames`]. Each bucket counts values up to and including its
+/// bound; a final bucket counts everything longer.
+#[cfg(feature = "profiler")]
+pub const FRAME_DURATION_BUCKETS_MS: [u64; 9] = [4, 8, 16, 33, 50, 100, 250, 500, 1000];
+
+/// Upper bounds, in percent of the refresh interval, of the work-per-frame
+/// buckets in [`RefreshIntervalFrames`]. Each bucket counts values up to and
+/// including its bound, so frames in buckets up to 100 were on time; a final
+/// bucket counts everything more.
+#[cfg(feature = "profiler")]
+pub const FRAME_WORK_BUCKETS_PERCENT: [u64; 7] = [25, 50, 75, 100, 150, 200, 400];
+
+/// Statistics for the frames a window drew and presented while its display had
+/// one refresh interval.
+///
+/// A frame's work is the main-thread time from its
+/// [`FrameOpportunity`] until it was submitted
+/// ([`PresentTiming::submitted_at`]). A frame is on time when its work fit
+/// within one refresh interval.
+#[cfg(feature = "profiler")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RefreshIntervalFrames {
+    /// The display's refresh interval, or `None` when the platform doesn't
+    /// report it. Frame pacing is only measured for known intervals.
+    pub refresh_interval: Option<Duration>,
+    /// Frames drawn, whether or not they were presented.
+    pub frames_drawn: u64,
+    /// Draw durations, bucketed by [`FRAME_DURATION_BUCKETS_MS`].
+    pub draw_duration: [u64; 10],
+    /// Durations from the first invalidation to presentation, bucketed by
+    /// [`FRAME_DURATION_BUCKETS_MS`].
+    pub dirty_to_present: [u64; 10],
+    /// Presented frames whose work fit within one refresh interval.
+    pub frames_on_time: u64,
+    /// Presented frames whose work took longer than one refresh interval.
+    pub frames_late: u64,
+    /// Refreshes that late frames missed in total.
+    pub missed_refreshes: u64,
+    /// Presented frames whose opportunity was [`FrameOpportunity::Delayed`].
+    pub frames_delayed: u64,
+    /// Presented frames whose opportunity was [`FrameOpportunity::Unmeasured`].
+    pub frames_unmeasured: u64,
+    /// Work of on-time and late frames, bucketed by
+    /// [`FRAME_WORK_BUCKETS_PERCENT`].
+    pub work: [u64; 8],
+    /// Of `frames_on_time`, the frames that responded to input.
+    pub input_frames_on_time: u64,
+    /// Of `frames_late`, the frames that responded to input.
+    pub input_frames_late: u64,
+    /// Work of on-time and late frames that responded to input, bucketed by
+    /// [`FRAME_WORK_BUCKETS_PERCENT`].
+    pub input_work: [u64; 8],
+    /// How long presented frames waited for a buffer to draw into, as a
+    /// percentage of the refresh interval, bucketed by
+    /// [`FRAME_WORK_BUCKETS_PERCENT`]. Only where the platform measures it.
+    pub drawable_wait: [u64; 8],
+}
+
+#[cfg(feature = "profiler")]
+impl RefreshIntervalFrames {
+    fn new(refresh_interval: Option<Duration>) -> Self {
+        Self {
+            refresh_interval,
+            ..Self::default()
+        }
+    }
+
+    /// The frames recorded since `earlier`, a previous snapshot of the same
+    /// statistics.
+    pub fn since(&self, earlier: &Self) -> Self {
+        fn subtract<const N: usize>(current: &[u64; N], earlier: &[u64; N]) -> [u64; N] {
+            std::array::from_fn(|index| current[index].saturating_sub(earlier[index]))
+        }
+        Self {
+            refresh_interval: self.refresh_interval,
+            frames_drawn: self.frames_drawn.saturating_sub(earlier.frames_drawn),
+            draw_duration: subtract(&self.draw_duration, &earlier.draw_duration),
+            dirty_to_present: subtract(&self.dirty_to_present, &earlier.dirty_to_present),
+            frames_on_time: self.frames_on_time.saturating_sub(earlier.frames_on_time),
+            frames_late: self.frames_late.saturating_sub(earlier.frames_late),
+            missed_refreshes: self
+                .missed_refreshes
+                .saturating_sub(earlier.missed_refreshes),
+            frames_delayed: self.frames_delayed.saturating_sub(earlier.frames_delayed),
+            frames_unmeasured: self
+                .frames_unmeasured
+                .saturating_sub(earlier.frames_unmeasured),
+            work: subtract(&self.work, &earlier.work),
+            input_frames_on_time: self
+                .input_frames_on_time
+                .saturating_sub(earlier.input_frames_on_time),
+            input_frames_late: self
+                .input_frames_late
+                .saturating_sub(earlier.input_frames_late),
+            input_work: subtract(&self.input_work, &earlier.input_work),
+            drawable_wait: subtract(&self.drawable_wait, &earlier.drawable_wait),
+        }
+    }
+
+    fn record_presented_frame(
+        &mut self,
+        frame: &FrameTiming,
+        presentation: &PresentTiming,
+        responded_to_input: bool,
+    ) {
+        if let Some(dirty_at) = frame.dirty_at {
+            self.dirty_to_present
+                [duration_bucket(presentation.present_end.duration_since(dirty_at))] += 1;
+        }
+        let Some(refresh_interval) = self.refresh_interval else {
+            self.frames_unmeasured += 1;
+            return;
+        };
+        if let Some(wait) = presentation.drawable_wait {
+            self.drawable_wait[percent_bucket(wait, refresh_interval)] += 1;
+        }
+        let submitted_at = presentation.submitted_at();
+        match (
+            frame.work(submitted_at),
+            frame.missed_refreshes(submitted_at),
+        ) {
+            (Some(work), Some(missed_refreshes)) => {
+                let bucket = percent_bucket(work, refresh_interval);
+                self.work[bucket] += 1;
+                if responded_to_input {
+                    self.input_work[bucket] += 1;
+                }
+                if missed_refreshes == 0 {
+                    self.frames_on_time += 1;
+                    self.input_frames_on_time += u64::from(responded_to_input);
+                } else {
+                    self.frames_late += 1;
+                    self.input_frames_late += u64::from(responded_to_input);
+                    self.missed_refreshes += missed_refreshes;
+                }
+            }
+            _ => match frame.opportunity {
+                FrameOpportunity::Delayed => self.frames_delayed += 1,
+                FrameOpportunity::At(_) | FrameOpportunity::Unmeasured => {
+                    self.frames_unmeasured += 1
+                }
+            },
+        }
+    }
+}
+
+#[cfg(feature = "profiler")]
+fn percent_bucket(duration: Duration, refresh_interval: Duration) -> usize {
+    bucket_index(
+        &FRAME_WORK_BUCKETS_PERCENT,
+        duration.as_nanos() * 100 / refresh_interval.as_nanos(),
+    )
+}
+
+#[cfg(feature = "profiler")]
+fn duration_bucket(duration: Duration) -> usize {
+    bucket_index(
+        &FRAME_DURATION_BUCKETS_MS,
+        duration.as_nanos().div_ceil(1_000_000),
+    )
+}
+
+#[cfg(feature = "profiler")]
+fn bucket_index(upper_bounds: &[u64], value: u128) -> usize {
+    upper_bounds
+        .iter()
+        .position(|bound| value <= u128::from(*bound))
+        .unwrap_or(upper_bounds.len())
 }
 
 /// A point-in-time snapshot of the input-latency histograms for a window,
@@ -907,6 +1169,11 @@ pub struct WindowProfiler {
     last_present_at: Option<Instant>,
     animating_at_last_present: bool,
     pending_frame: Option<FrameTiming>,
+    refresh_interval: Option<Duration>,
+    frame_signal_at: Option<Instant>,
+    last_signal_at: Option<Instant>,
+    offer_interval: Option<Duration>,
+    by_refresh_interval: Vec<RefreshIntervalFrames>,
 }
 
 #[cfg(feature = "profiler")]
@@ -938,6 +1205,11 @@ impl WindowProfiler {
             last_present_at: None,
             animating_at_last_present: false,
             pending_frame: None,
+            refresh_interval: None,
+            frame_signal_at: None,
+            last_signal_at: None,
+            offer_interval: None,
+            by_refresh_interval: Vec::new(),
         };
         journal::record_frame_pending(window_id, Instant::now());
         Ok(profiler)
@@ -1022,6 +1294,32 @@ impl WindowProfiler {
         journal::end_foreground_turn();
     }
 
+    /// Records when the platform offered the frame the next draw will produce.
+    /// Coalesced requests report their first offer.
+    pub fn record_frame_signal(&mut self, signal_at: Option<Instant>) {
+        self.frame_signal_at = signal_at;
+        let Some(signal_at) = signal_at else {
+            return;
+        };
+        if let (Some(last_signal_at), Some(refresh_interval)) =
+            (self.last_signal_at, self.refresh_interval)
+        {
+            let interval = signal_at.saturating_duration_since(last_signal_at);
+            // Longer gaps are idle time between animations, not the
+            // platform's frame rate.
+            if !interval.is_zero() && interval <= refresh_interval * 8 {
+                self.offer_interval = Some(interval);
+            }
+        }
+        self.last_signal_at = Some(signal_at);
+    }
+
+    /// Sets the refresh interval of the window's display, which frames drawn
+    /// from now on are attributed to.
+    pub fn set_refresh_interval(&mut self, refresh_interval: Option<Duration>) {
+        self.refresh_interval = refresh_interval;
+    }
+
     /// Records the beginning of a window draw.
     pub fn begin_draw(&mut self) {
         journal::begin_foreground_turn();
@@ -1043,12 +1341,22 @@ impl WindowProfiler {
         };
 
         let draw_end = Instant::now();
+        // Taken even when the draw isn't recorded, so a later draw can't claim it.
+        let signal_at = self.frame_signal_at.take();
+        let dirty_at = dirty_at.filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
         let frame_timing = FrameTiming {
             window_id: self.window_id,
-            dirty_at: dirty_at.filter(|at| journal::frame_sample_is_valid(self.window_id, *at)),
+            dirty_at,
             invalidations,
             draw_start,
             draw_end,
+            refresh_interval: self.refresh_interval,
+            opportunity: FrameOpportunity::new(
+                self.refresh_interval,
+                self.offer_interval,
+                dirty_at,
+                signal_at,
+            ),
         };
         let draw_duration = frame_timing.draw_duration();
         if !journal::power_interrupted_since(draw_start) {
@@ -1060,18 +1368,22 @@ impl WindowProfiler {
 
     /// Records that a frame was presented.
     ///
-    /// `next_frame_scheduled` marks the animation state for the interval ending
-    /// at the next newly drawn frame's presentation.
+    /// `drawable_wait` is how long the platform waited for a buffer to draw
+    /// into, when it measures that. `next_frame_scheduled` marks the animation
+    /// state for the interval ending at the next newly drawn frame's
+    /// presentation.
     pub fn record_present(
         &mut self,
         present_start: Instant,
         present_end: Instant,
+        drawable_wait: Option<Duration>,
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
-        self.record_present_at(
+        self.record_presentation(
             present_start,
             present_end,
+            drawable_wait,
             window_active,
             next_frame_scheduled,
         );
@@ -1092,9 +1404,27 @@ impl WindowProfiler {
             dirty_to_present_histogram: self.dirty_to_present_histogram.clone(),
             draw_duration_histogram: self.draw_duration_histogram.clone(),
             present_interval_histogram: self.present_interval_histogram.clone(),
+            by_refresh_interval: self.by_refresh_interval.clone(),
         }
     }
 
+    fn frames_for(&mut self, refresh_interval: Option<Duration>) -> &mut RefreshIntervalFrames {
+        let index = match self
+            .by_refresh_interval
+            .iter()
+            .position(|frames| frames.refresh_interval == refresh_interval)
+        {
+            Some(index) => index,
+            None => {
+                self.by_refresh_interval
+                    .push(RefreshIntervalFrames::new(refresh_interval));
+                self.by_refresh_interval.len() - 1
+            }
+        };
+        &mut self.by_refresh_interval[index]
+    }
+
+    #[cfg(test)]
     fn record_present_at(
         &mut self,
         present_start: Instant,
@@ -1102,9 +1432,28 @@ impl WindowProfiler {
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
+        self.record_presentation(
+            present_start,
+            present_end,
+            None,
+            window_active,
+            next_frame_scheduled,
+        );
+    }
+
+    fn record_presentation(
+        &mut self,
+        present_start: Instant,
+        present_end: Instant,
+        drawable_wait: Option<Duration>,
+        window_active: bool,
+        next_frame_scheduled: bool,
+    ) {
+        let mut responded_to_input = false;
         if let Some(first_input_at) = self.first_input_at.take()
             && journal::frame_sample_is_valid(self.window_id, first_input_at)
         {
+            responded_to_input = true;
             let latency_nanos = present_end.duration_since(first_input_at).as_nanos() as u64;
             self.input_latency_histogram.record(latency_nanos).ok();
             if self.pending_input_count > 0 {
@@ -1138,12 +1487,15 @@ impl WindowProfiler {
             present_start,
             present_end,
             animation_interval,
+            drawable_wait,
         };
         journal::record_present(present_timing, frame);
 
         let Some(frame) = frame else {
             return;
         };
+        self.frames_for(frame.refresh_interval)
+            .record_presented_frame(&frame, &present_timing, responded_to_input);
 
         if let Some(dirty_at) = frame.dirty_at
             && let Err(error) = self
@@ -1166,6 +1518,9 @@ impl WindowProfiler {
 
     fn record_draw_timing(&mut self, timing: FrameTiming) {
         self.record_draw_duration(timing.draw_duration());
+        let frames = self.frames_for(timing.refresh_interval);
+        frames.frames_drawn += 1;
+        frames.draw_duration[duration_bucket(timing.draw_duration())] += 1;
         self.pending_frame = Some(timing);
         record_frame_event(FrameEvent::Draw(timing));
         journal::record_draw(timing);
@@ -1301,6 +1656,201 @@ mod tests {
             profiler.record_present_at(now, now, true, true);
             assert_eq!(profiler.dirty_to_present_histogram.len(), 2);
         }
+    }
+
+    #[test]
+    fn frame_work_is_measured_from_the_frame_opportunity() {
+        let refresh = Duration::from_millis(10);
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let opportunity = |offer_interval: Option<u64>, dirty: Option<u64>, signal: Option<u64>| {
+            FrameOpportunity::new(
+                Some(refresh),
+                offer_interval.map(Duration::from_millis),
+                dirty.map(at),
+                signal.map(at),
+            )
+        };
+
+        // Waiting for the platform's next frame isn't work.
+        assert_eq!(
+            opportunity(None, Some(0), Some(8)),
+            FrameOpportunity::At(at(8))
+        );
+        // A frame needed after the platform offered one is measured from when
+        // it was needed.
+        assert_eq!(
+            opportunity(None, Some(5), Some(0)),
+            FrameOpportunity::At(at(5))
+        );
+        // Animation frames have no invalidation to wait for.
+        assert_eq!(
+            opportunity(None, None, Some(0)),
+            FrameOpportunity::At(at(0))
+        );
+        assert_eq!(
+            opportunity(None, Some(0), Some(21)),
+            FrameOpportunity::Delayed
+        );
+        // A variable refresh rate display offering frames every 25 ms isn't
+        // withholding them.
+        assert_eq!(
+            opportunity(Some(25), Some(0), Some(40)),
+            FrameOpportunity::At(at(40))
+        );
+        assert_eq!(
+            opportunity(None, Some(0), None),
+            FrameOpportunity::Unmeasured
+        );
+        assert_eq!(
+            FrameOpportunity::new(None, None, Some(at(0)), Some(at(1))),
+            FrameOpportunity::Unmeasured
+        );
+
+        let frame = FrameTiming {
+            window_id: WindowId::from(1),
+            dirty_at: Some(at(0)),
+            invalidations: 1,
+            draw_start: at(1),
+            draw_end: at(2),
+            refresh_interval: Some(refresh),
+            opportunity: FrameOpportunity::At(at(0)),
+        };
+        for (submitted_ms, missed) in [(7, 0), (10, 0), (20, 1), (25, 2)] {
+            assert_eq!(frame.missed_refreshes(at(submitted_ms)), Some(missed));
+        }
+    }
+
+    #[test]
+    fn frames_are_split_by_refresh_interval_and_classified() {
+        let (_journal, _guard) = journal::install_test_foreground_journal(64, 4);
+        let mut profiler = WindowProfiler::new(WindowId::from(1)).expect("valid histograms");
+        let sixty_hertz = Duration::from_secs(1) / 60;
+        let one_hundred_twenty_hertz = Duration::from_secs(1) / 120;
+        let base = Instant::now();
+        let at = |ms| base + Duration::from_millis(ms);
+
+        struct Frame {
+            refresh_interval: Option<Duration>,
+            signal_ms: Option<u64>,
+            present_start_ms: u64,
+            drawable_wait_ms: Option<u64>,
+            responded_to_input: bool,
+        }
+        let frames = [
+            // On time, responding to input.
+            Frame {
+                refresh_interval: Some(sixty_hertz),
+                signal_ms: Some(1),
+                present_start_ms: 5,
+                drawable_wait_ms: None,
+                responded_to_input: true,
+            },
+            // 40 ms of work once the 10 ms wait for a drawable is excluded.
+            Frame {
+                refresh_interval: Some(sixty_hertz),
+                signal_ms: Some(0),
+                present_start_ms: 39,
+                drawable_wait_ms: Some(10),
+                responded_to_input: true,
+            },
+            Frame {
+                refresh_interval: Some(sixty_hertz),
+                signal_ms: None,
+                present_start_ms: 5,
+                drawable_wait_ms: None,
+                responded_to_input: false,
+            },
+            Frame {
+                refresh_interval: Some(sixty_hertz),
+                signal_ms: Some(40),
+                present_start_ms: 42,
+                drawable_wait_ms: None,
+                responded_to_input: false,
+            },
+            Frame {
+                refresh_interval: Some(one_hundred_twenty_hertz),
+                signal_ms: Some(0),
+                present_start_ms: 12,
+                drawable_wait_ms: None,
+                responded_to_input: false,
+            },
+            Frame {
+                refresh_interval: None,
+                signal_ms: Some(0),
+                present_start_ms: 2,
+                drawable_wait_ms: None,
+                responded_to_input: false,
+            },
+        ];
+        for frame in frames {
+            profiler.set_refresh_interval(frame.refresh_interval);
+            profiler.record_draw_timing(FrameTiming {
+                window_id: profiler.window_id,
+                dirty_at: Some(at(0)),
+                invalidations: 1,
+                draw_start: at(0),
+                draw_end: at(1),
+                refresh_interval: frame.refresh_interval,
+                opportunity: FrameOpportunity::new(
+                    frame.refresh_interval,
+                    None,
+                    Some(at(0)),
+                    frame.signal_ms.map(at),
+                ),
+            });
+            if frame.responded_to_input {
+                profiler.first_input_at = Some(at(0));
+            }
+            let drawable_wait = frame.drawable_wait_ms.map(Duration::from_millis);
+            let present_end = at(frame.present_start_ms)
+                + drawable_wait.unwrap_or_default()
+                + Duration::from_millis(1);
+            profiler.record_presentation(
+                at(frame.present_start_ms),
+                present_end,
+                drawable_wait,
+                true,
+                false,
+            );
+        }
+
+        let snapshot = profiler.frame_duration_snapshot();
+        let frames_for = |refresh_interval| {
+            snapshot
+                .by_refresh_interval
+                .iter()
+                .find(|frames| frames.refresh_interval == refresh_interval)
+                .cloned()
+                .expect("frames for the refresh interval")
+        };
+        let sixty = frames_for(Some(sixty_hertz));
+        assert_eq!(sixty.frames_drawn, 4);
+        assert_eq!(sixty.frames_on_time, 1);
+        assert_eq!(sixty.frames_late, 1);
+        // 40 ms of work at 16.7 ms per refresh.
+        assert_eq!(sixty.missed_refreshes, 2);
+        assert_eq!(sixty.frames_unmeasured, 1);
+        assert_eq!(sixty.frames_delayed, 1);
+        assert_eq!(sixty.work, [1, 0, 0, 0, 0, 0, 1, 0]);
+        assert_eq!(sixty.input_frames_on_time, 1);
+        assert_eq!(sixty.input_frames_late, 1);
+        assert_eq!(sixty.input_work, sixty.work);
+        assert_eq!(sixty.drawable_wait, [0, 0, 1, 0, 0, 0, 0, 0]);
+
+        let one_hundred_twenty = frames_for(Some(one_hundred_twenty_hertz));
+        assert_eq!(one_hundred_twenty.frames_late, 1);
+        assert_eq!(one_hundred_twenty.missed_refreshes, 1);
+        assert_eq!(one_hundred_twenty.input_frames_late, 0);
+
+        let unknown = frames_for(None);
+        assert_eq!(unknown.frames_drawn, 1);
+        assert_eq!(unknown.frames_unmeasured, 1);
+        assert_eq!(unknown.work, [0; 8]);
+
+        let later = profiler.frame_duration_snapshot();
+        let delta = later.by_refresh_interval[0].since(&snapshot.by_refresh_interval[0]);
+        assert_eq!(delta, RefreshIntervalFrames::new(Some(sixty_hertz)));
     }
 
     #[test]
@@ -1639,6 +2189,8 @@ mod tests {
             invalidations: 1,
             draw_start: draw_end - Duration::from_millis(2),
             draw_end,
+            refresh_interval: None,
+            opportunity: FrameOpportunity::Unmeasured,
         });
     }
 }

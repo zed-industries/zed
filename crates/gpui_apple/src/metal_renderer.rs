@@ -112,6 +112,7 @@ pub struct MetalRenderer {
     is_apple_gpu: bool,
     is_unified_memory: bool,
     presents_with_transaction: bool,
+    last_drawable_wait: Option<std::time::Duration>,
     /// For headless rendering, tracks whether output should be opaque
     opaque: bool,
     command_queue: CommandQueue,
@@ -369,6 +370,7 @@ impl MetalRenderer {
             device,
             layer,
             presents_with_transaction: false,
+            last_drawable_wait: None,
             is_apple_gpu,
             is_unified_memory,
             opaque,
@@ -486,7 +488,10 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        let drawable = if let Some(drawable) = layer.next_drawable() {
+        let wait_start = std::time::Instant::now();
+        let next_drawable = layer.next_drawable();
+        self.last_drawable_wait = Some(wait_start.elapsed());
+        let drawable = if let Some(drawable) = next_drawable {
             drawable
         } else {
             log::error!(
@@ -512,6 +517,12 @@ impl MetalRenderer {
             command_buffer.present_drawable(drawable);
             command_buffer.commit();
         }
+    }
+
+    /// How long the latest [`Self::draw`] waited for a drawable, which the
+    /// layer hands out only once the display has released one.
+    pub fn last_drawable_wait(&self) -> Option<std::time::Duration> {
+        self.last_drawable_wait
     }
 
     fn render_frame(

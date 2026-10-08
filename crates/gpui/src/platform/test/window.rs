@@ -544,6 +544,10 @@ impl PlatformWindow for TestWindow {
         self.0.lock().appearance_change_callback = Some(callback);
     }
 
+    fn last_drawable_wait(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn draw(&self, scene: &Scene) {
         let scale_factor = self.scale_factor();
         let mut state = self.0.lock();

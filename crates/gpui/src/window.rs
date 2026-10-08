@@ -1884,6 +1884,10 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
+                                #[cfg(feature = "profiler")]
+                                window
+                                    .window_profiler
+                                    .record_frame_signal(request_frame_options.signal_at);
                                 if force_render {
                                     // Bypass cached view reuse so we don't replay stale
                                     // atlas tile references after a GPU device recovery.
@@ -3559,6 +3563,8 @@ impl Window {
 
         #[cfg(feature = "profiler")]
         {
+            self.window_profiler
+                .set_refresh_interval(self.refresh_interval(cx));
             let draw_duration = self
                 .window_profiler
                 .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
@@ -3603,6 +3609,7 @@ impl Window {
         self.window_profiler.record_present(
             present_start,
             Instant::now(),
+            self.platform_window.last_drawable_wait(),
             self.active.get(),
             !self.next_frame_callbacks.borrow().is_empty(),
         );

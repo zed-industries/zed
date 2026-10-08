@@ -23,7 +23,7 @@ pub(crate) use monitor::HangMonitor;
 pub use monitor::{HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason};
 
 /// Version of the power/visibility-aware measurement rules.
-pub const MEASUREMENT_VERSION: u32 = 2;
+pub const MEASUREMENT_VERSION: u32 = 3;
 
 use super::SerializedLocation;
 use super::journal::{
@@ -42,6 +42,60 @@ pub struct HangDetector {
     threshold: Duration,
     frame_budget: Duration,
     first_present_at: Option<Instant>,
+    activity: ActiveUse,
+}
+
+/// The user counts as actively using the app for this long after any input.
+pub const ACTIVE_USE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Accumulates the time the user was actively using the app: within
+/// [`ACTIVE_USE_WINDOW`] of input, excluding stretches interrupted by a system
+/// suspend.
+#[derive(Default)]
+struct ActiveUse {
+    accounted_until: Option<Instant>,
+    active_until: Option<Instant>,
+    first_input_since_accounted: Option<Instant>,
+    last_input_since_accounted: Option<Instant>,
+    suspended: bool,
+}
+
+impl ActiveUse {
+    fn observe(&mut self, entry: &ForegroundJournalEntry) {
+        match entry {
+            ForegroundJournalEntry::Event(ForegroundEvent::Input(input)) => {
+                self.first_input_since_accounted.get_or_insert(input.start);
+                self.last_input_since_accounted = Some(
+                    self.last_input_since_accounted
+                        .map_or(input.end, |last| last.max(input.end)),
+                );
+            }
+            ForegroundJournalEntry::Boundary(IntervalBoundary::PowerTransition { .. }) => {
+                self.suspended = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn take(&mut self, now: Instant, max_elapsed: Duration) -> Duration {
+        let since = self.accounted_until.replace(now);
+        let previous_until = self.active_until;
+        let first_input = self.first_input_since_accounted.take();
+        if let Some(last_input) = self.last_input_since_accounted.take() {
+            let until = last_input + ACTIVE_USE_WINDOW;
+            self.active_until = Some(previous_until.map_or(until, |previous| previous.max(until)));
+        }
+        let (Some(since), false) = (since, std::mem::take(&mut self.suspended)) else {
+            return Duration::ZERO;
+        };
+        let continued_until = previous_until.map_or(since, |until| until.min(now).max(since));
+        let mut active = continued_until.duration_since(since);
+        if let (Some(first_input), Some(active_until)) = (first_input, self.active_until) {
+            let start = first_input.max(continued_until);
+            active += active_until.min(now).saturating_duration_since(start);
+        }
+        active.min(max_elapsed)
+    }
 }
 
 /// One sealed interval that contained at least one hang.
@@ -69,14 +123,15 @@ pub struct HangIncident {
 pub enum HangTrigger {
     /// A single event blocked the foreground for at least the hang threshold.
     Threshold,
-    /// No single event crossed the threshold, but the interval's total
-    /// foreground spend reached the frame budget.
+    /// No single event crossed the threshold, but the interval presented a
+    /// frame that missed several refreshes (see [`HangIncident::detect`]).
     Budget,
 }
 
 impl HangDetector {
     /// Creates a detector reporting single events at or above `threshold`
-    /// and intervals whose total foreground spend reached `frame_budget`.
+    /// and late frames (see [`HangIncident::detect`]), using `frame_budget`
+    /// for frames on displays whose refresh interval is unknown.
     /// Only events recorded from this point on are observed.
     pub fn new(journal: ForegroundJournal, threshold: Duration, frame_budget: Duration) -> Self {
         Self {
@@ -85,7 +140,17 @@ impl HangDetector {
             threshold,
             frame_budget,
             first_present_at: None,
+            activity: ActiveUse::default(),
         }
+    }
+
+    /// The time since the previous call that the user was actively using
+    /// the app, as of the journal entries polled so far: within
+    /// [`ACTIVE_USE_WINDOW`] of input, excluding polls that observed a system
+    /// suspend. Capped at `max_elapsed`, so time this thread spent suspended
+    /// isn't counted.
+    pub fn take_active_time(&mut self, now: Instant, max_elapsed: Duration) -> Duration {
+        self.activity.take(now, max_elapsed)
     }
 
     /// When the first newly drawn frame observed by this detector finished
@@ -98,6 +163,9 @@ impl HangDetector {
     /// the previous poll.
     pub fn poll(&mut self) -> Vec<HangIncident> {
         let drained = self.collector.collect_unseen();
+        for entry in &drained.entries {
+            self.activity.observe(entry);
+        }
         if self.first_present_at.is_none() {
             self.first_present_at = drained.entries.iter().find_map(|entry| match entry {
                 ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(presented)) => {
@@ -429,11 +497,13 @@ impl HangIncident {
     }
 
     /// Returns an incident when the snapshot contains at least one event
-    /// that blocked the foreground for `threshold` or longer, or when the
-    /// interval's total foreground spend — event time plus folded
-    /// small-poll time — reached `frame_budget` even though no single event
-    /// did. In the latter case every event in the interval becomes a
-    /// contributor, since no single stall explains the busy interval.
+    /// that blocked the foreground for `threshold` or longer, or when no
+    /// single event did but the interval presented a frame that missed
+    /// several refreshes of its display. On displays whose refresh interval
+    /// is unknown, the interval's total foreground spend — event time plus
+    /// folded small-poll time — reaching `frame_budget` counts instead. For
+    /// such budget incidents every event in the interval becomes a
+    /// contributor, since no single stall explains the late frame.
     pub fn detect(
         snapshot: FrameSnapshot,
         threshold: Duration,
@@ -446,11 +516,7 @@ impl HangIncident {
             .copied()
             .collect();
         let trigger = if contributors.is_empty() {
-            if snapshot.journal_discontinuous {
-                return None;
-            }
-            let spend = snapshot.occupancy_within(snapshot.interval_start, snapshot.interval_end());
-            if spend < frame_budget {
+            if snapshot.journal_discontinuous || !presented_late_frame(&snapshot, frame_budget) {
                 return None;
             }
             contributors = snapshot.events.clone();
@@ -465,6 +531,29 @@ impl HangIncident {
             contributors,
         })
     }
+}
+
+/// A frame missing this many refreshes of its display is a budget hang. Fewer
+/// would report most frames on high refresh rate displays, where one refresh
+/// is a few milliseconds.
+const BUDGET_MISSED_REFRESHES: u64 = 2;
+
+/// Whether the interval presented a frame that missed
+/// [`BUDGET_MISSED_REFRESHES`] or more refreshes. On displays whose refresh
+/// interval is unknown, whether the interval's foreground spend reached
+/// `frame_budget` instead.
+fn presented_late_frame(snapshot: &FrameSnapshot, frame_budget: Duration) -> bool {
+    let IntervalBoundary::Presented(presented) = snapshot.boundary else {
+        return false;
+    };
+    if presented.frame.refresh_interval.is_none() {
+        let spend = snapshot.occupancy_within(snapshot.interval_start, snapshot.interval_end());
+        return spend >= frame_budget;
+    }
+    presented
+        .frame
+        .missed_refreshes(presented.presentation.submitted_at())
+        .is_some_and(|missed_refreshes| missed_refreshes >= BUDGET_MISSED_REFRESHES)
 }
 
 #[cfg(test)]
@@ -484,7 +573,9 @@ mod tests {
         point, px,
     };
 
-    use crate::profiler::{ActionTiming, FrameTiming, PresentTiming, TaskTiming, YieldTime};
+    use crate::profiler::{
+        ActionTiming, FrameOpportunity, FrameTiming, PresentTiming, TaskTiming, YieldTime,
+    };
 
     use super::super::journal::{
         FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameSkipReason, FrameSkipped,
@@ -538,8 +629,8 @@ mod tests {
                     panic!("expected one snapshot, got {snapshots:?}");
                 };
                 let incident = HangIncident::detect(snapshot.clone(), HANG_THRESHOLD, FRAME_BUDGET);
-                if discontinuous && trigger == HangTrigger::Budget {
-                    assert!(incident.is_none(), "skips must not exempt journal gaps");
+                if trigger == HangTrigger::Budget {
+                    assert!(incident.is_none(), "budget hangs need a presented frame");
                     continue;
                 }
                 let incident = incident.expect("real work still qualifies across a skip");
@@ -610,6 +701,7 @@ mod tests {
                 IntervalBoundary::Presented(PresentedFrame {
                     frame: frame(window_id, presented_at),
                     presentation: PresentTiming {
+                        drawable_wait: None,
                         window_id,
                         present_start: presented_at - Duration::from_millis(1),
                         present_end: presented_at,
@@ -639,12 +731,15 @@ mod tests {
         let window_id = WindowId::from(0xF1E1D);
 
         let presentation = PresentTiming {
+            drawable_wait: None,
             window_id,
             present_start: at(380),
             present_end: at(400),
             animation_interval: None,
         };
         let frame = FrameTiming {
+            refresh_interval: None,
+            opportunity: FrameOpportunity::Unmeasured,
             window_id,
             dirty_at: Some(at(100)),
             invalidations: 3,
@@ -957,6 +1052,8 @@ mod tests {
             interval_start: at(0),
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame: FrameTiming {
+                    refresh_interval: None,
+                    opportunity: FrameOpportunity::Unmeasured,
                     window_id,
                     dirty_at: Some(at(0)),
                     invalidations: 1,
@@ -964,6 +1061,7 @@ mod tests {
                     draw_end: at(145),
                 },
                 presentation: PresentTiming {
+                    drawable_wait: None,
                     window_id,
                     present_start: at(145),
                     present_end: at(150),
@@ -1043,6 +1141,8 @@ mod tests {
             interval_start: at(0),
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame: FrameTiming {
+                    refresh_interval: None,
+                    opportunity: FrameOpportunity::Unmeasured,
                     window_id,
                     dirty_at: Some(at(0)),
                     invalidations: 1,
@@ -1050,6 +1150,7 @@ mod tests {
                     draw_end: at(147),
                 },
                 presentation: PresentTiming {
+                    drawable_wait: None,
                     window_id,
                     present_start: at(149),
                     present_end: at(150),
@@ -1065,11 +1166,46 @@ mod tests {
         assert!(HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).is_none());
     }
 
-    /// The budget applies to idle-sealed intervals too: a headless app (or
-    /// a stretch with no repaint pending) can still starve the foreground
-    /// with accumulated sub-threshold work.
     #[test]
-    fn an_idle_sealed_interval_over_budget_is_an_incident() {
+    fn active_use_counts_time_within_a_minute_of_input() {
+        let start = scheduler::Instant::now();
+        let at = |seconds: u64| start + Duration::from_secs(seconds);
+        let input = |seconds: u64| {
+            ForegroundJournalEntry::Event(ForegroundEvent::Input(InputTiming {
+                kind: "test",
+                start: at(seconds),
+                end: at(seconds),
+                caused_invalidation: true,
+            }))
+        };
+        let max = Duration::from_secs(10);
+        let mut activity = super::ActiveUse::default();
+        assert_eq!(activity.take(at(0), max), Duration::ZERO);
+        // Idle until input at 5 s.
+        activity.observe(&input(5));
+        assert_eq!(activity.take(at(8), max), Duration::from_secs(3));
+        // Active until 65 s, a minute after the input.
+        assert_eq!(activity.take(at(16), max), Duration::from_secs(8));
+        for second in (24..=64).step_by(8) {
+            activity.take(at(second), max);
+        }
+        assert_eq!(activity.take(at(70), max), Duration::from_secs(1));
+        assert_eq!(activity.take(at(78), max), Duration::ZERO);
+        // A suspend discards the poll it was observed in.
+        activity.observe(&input(80));
+        activity.observe(&ForegroundJournalEntry::Boundary(
+            IntervalBoundary::PowerTransition { ended_at: at(81) },
+        ));
+        assert_eq!(activity.take(at(84), max), Duration::ZERO);
+        assert_eq!(activity.take(at(88), max), Duration::from_secs(4));
+        // Time the monitor itself was suspended isn't counted.
+        assert_eq!(activity.take(at(130), max), max);
+    }
+
+    /// Budget hangs are late frames, so busy intervals that presented no frame
+    /// aren't budget hangs.
+    #[test]
+    fn busy_intervals_without_a_presented_frame_are_not_budget_hangs() {
         let startup = scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let snapshot = FrameSnapshot {
@@ -1082,15 +1218,55 @@ mod tests {
             dropped_events: 0,
             journal_discontinuous: false,
         };
+        assert!(HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).is_none());
+    }
 
-        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
-            .expect("foreground spend exceeded the frame budget");
-        assert_eq!(incident.contributors.len(), 10);
-        let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(startup));
-        assert_eq!(serialized.sealed_by, "idle");
-        assert_eq!(serialized.dirty_to_present_ms, None);
-        assert_eq!(serialized.stall_ms, 5.0);
-        assert_eq!(serialized.contributors_elided, 2);
+    /// With a known refresh interval, a frame is a budget hang when it missed
+    /// two or more refreshes, measured from its opportunity to its submission.
+    #[test]
+    fn frames_missing_several_refreshes_are_budget_hangs() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(0xB0D6E7);
+        let detect = |opportunity: FrameOpportunity, submitted_ms: u64| {
+            let snapshot = FrameSnapshot {
+                interval_start: at(0),
+                boundary: IntervalBoundary::Presented(PresentedFrame {
+                    frame: FrameTiming {
+                        window_id,
+                        dirty_at: Some(at(0)),
+                        invalidations: 1,
+                        draw_start: at(1),
+                        draw_end: at(submitted_ms - 1),
+                        refresh_interval: Some(Duration::from_millis(10)),
+                        opportunity,
+                    },
+                    presentation: PresentTiming {
+                        window_id,
+                        present_start: at(submitted_ms),
+                        // Waiting for a drawable doesn't make the frame late.
+                        present_end: at(submitted_ms + 50),
+                        animation_interval: None,
+                        drawable_wait: Some(Duration::from_millis(50)),
+                    },
+                }),
+                events: vec![
+                    task_poll_event(at(1), at(6)),
+                    task_poll_event(at(10), at(15)),
+                ],
+                small_polls: Vec::new(),
+                dropped_events: 0,
+                journal_discontinuous: false,
+            };
+            HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
+        };
+
+        let incident = detect(FrameOpportunity::At(at(0)), 25).expect("missed two refreshes");
+        assert_eq!(incident.trigger, HangTrigger::Budget);
+        assert_eq!(incident.contributors.len(), 2);
+        assert!(detect(FrameOpportunity::At(at(0)), 19).is_none());
+        assert!(detect(FrameOpportunity::Delayed, 25).is_none());
+        assert!(detect(FrameOpportunity::Unmeasured, 25).is_none());
     }
 
     /// Contributors serialize in start order with their nesting depth: an
@@ -1114,6 +1290,8 @@ mod tests {
                     caused_invalidation: true,
                 }),
                 ForegroundEvent::Draw(FrameTiming {
+                    refresh_interval: None,
+                    opportunity: FrameOpportunity::Unmeasured,
                     window_id,
                     dirty_at: Some(at(0)),
                     invalidations: 1,
@@ -1157,6 +1335,8 @@ mod tests {
             interval_start: at(0),
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame: FrameTiming {
+                    refresh_interval: None,
+                    opportunity: FrameOpportunity::Unmeasured,
                     window_id,
                     dirty_at: Some(at(0)),
                     invalidations: 1,
@@ -1164,6 +1344,7 @@ mod tests {
                     draw_end: at(149),
                 },
                 presentation: PresentTiming {
+                    drawable_wait: None,
                     window_id,
                     present_start: at(149),
                     present_end: at(150),
@@ -1225,11 +1406,29 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             let interval_end_ms = cursor_ms.max(1);
+            let interval_end = origin + Duration::from_millis(interval_end_ms);
+            // Without a refresh interval, the budget is the foreground spend.
+            let window_id = WindowId::from(1);
             let snapshot = FrameSnapshot {
                 interval_start: origin,
-                boundary: IntervalBoundary::Idle {
-                    ended_at: origin + Duration::from_millis(interval_end_ms),
-                },
+                boundary: IntervalBoundary::Presented(PresentedFrame {
+                    frame: FrameTiming {
+                        window_id,
+                        dirty_at: Some(origin),
+                        invalidations: 1,
+                        draw_start: interval_end,
+                        draw_end: interval_end,
+                        refresh_interval: None,
+                        opportunity: FrameOpportunity::Unmeasured,
+                    },
+                    presentation: PresentTiming {
+                        window_id,
+                        present_start: interval_end,
+                        present_end: interval_end,
+                        animation_interval: None,
+                        drawable_wait: None,
+                    },
+                }),
                 events,
                 small_polls: vec![SmallPollFlush {
                     summary: PollSummary {
@@ -1487,6 +1686,7 @@ mod tests {
 
     fn presentation(window_id: WindowId, present_end: scheduler::Instant) -> PresentTiming {
         PresentTiming {
+            drawable_wait: None,
             window_id,
             present_start: present_end - Duration::from_millis(1),
             present_end,
@@ -1496,6 +1696,8 @@ mod tests {
 
     fn frame(window_id: WindowId, draw_end: scheduler::Instant) -> FrameTiming {
         FrameTiming {
+            refresh_interval: None,
+            opportunity: FrameOpportunity::Unmeasured,
             window_id,
             dirty_at: Some(draw_end - Duration::from_millis(2)),
             invalidations: 1,

@@ -2125,6 +2125,10 @@ impl PlatformWindow for MacWindow {
         this.renderer.draw(scene);
     }
 
+    fn last_drawable_wait(&self) -> Option<std::time::Duration> {
+        self.0.lock().renderer.last_drawable_wait()
+    }
+
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }

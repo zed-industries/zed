@@ -1505,7 +1505,10 @@ mod tests {
     use scheduler::SpawnTime;
 
     use super::*;
-    use crate::{WindowId, profiler::YieldTime};
+    use crate::{
+        WindowId,
+        profiler::{FrameOpportunity, YieldTime},
+    };
 
     #[test]
     fn platform_signals_are_journaled_without_sealing_or_occupying_time() {
@@ -1672,6 +1675,8 @@ mod tests {
         assert!(sealer.push_entries(entries).is_empty());
 
         let frame = FrameTiming {
+            refresh_interval: None,
+            opportunity: FrameOpportunity::Unmeasured,
             window_id,
             dirty_at: Some(start),
             invalidations: 1,
@@ -1851,6 +1856,8 @@ mod tests {
             caused_invalidation: true,
         };
         let frame = FrameTiming {
+            refresh_interval: None,
+            opportunity: FrameOpportunity::Unmeasured,
             window_id: WindowId::from(1),
             dirty_at: Some(input.start),
             invalidations: 1,
@@ -1858,6 +1865,7 @@ mod tests {
             draw_end: start + Duration::from_millis(4),
         };
         let presentation = PresentTiming {
+            drawable_wait: None,
             window_id: frame.window_id,
             present_start: start + Duration::from_millis(5),
             present_end: start + Duration::from_millis(6),
@@ -3483,6 +3491,8 @@ mod tests {
 
     fn frame_timing(window_id: WindowId, dirty_at: Instant, draw_end: Instant) -> FrameTiming {
         FrameTiming {
+            refresh_interval: None,
+            opportunity: FrameOpportunity::Unmeasured,
             window_id,
             dirty_at: Some(dirty_at),
             invalidations: 1,
@@ -3493,6 +3503,7 @@ mod tests {
 
     fn presentation_timing(window_id: WindowId, present_end: Instant) -> PresentTiming {
         PresentTiming {
+            drawable_wait: None,
             window_id,
             present_start: present_end,
             present_end,

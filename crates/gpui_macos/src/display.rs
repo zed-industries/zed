@@ -179,6 +179,25 @@ impl PlatformDisplay for MacDisplay {
                 .and_then(|mode| refresh_interval_from_hz(mode.refresh_rate()))
         })
     }
+
+    fn supports_variable_refresh_rate(&self) -> Option<bool> {
+        // Adaptive-sync screens report a longer minimum refresh rate than
+        // their maximum; `NSScreen` added these intervals in macOS 12.
+        unsafe {
+            let screen = self.get_nsscreen();
+            if screen == nil {
+                return None;
+            }
+            let supports_intervals: BOOL =
+                msg_send![screen, respondsToSelector: sel!(maximumRefreshInterval)];
+            if supports_intervals != YES {
+                return None;
+            }
+            let minimum_interval: f64 = msg_send![screen, minimumRefreshInterval];
+            let maximum_interval: f64 = msg_send![screen, maximumRefreshInterval];
+            Some(maximum_interval > minimum_interval)
+        }
+    }
 }
 
 impl MacDisplay {

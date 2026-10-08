@@ -623,6 +623,11 @@ pub trait PlatformDisplay: Debug {
     /// [`Window::refresh_interval`](crate::Window::refresh_interval).
     fn refresh_interval(&self) -> Option<Duration>;
 
+    /// Whether the display can vary its refresh rate below the maximum
+    /// [`Self::refresh_interval`] reports, or `None` when the platform doesn't
+    /// report it.
+    fn supports_variable_refresh_rate(&self) -> Option<bool>;
+
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
     /// This is the usable area where windows can be placed without being obscured.
     /// Defaults to the full display bounds if not overridden.
@@ -1274,6 +1279,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
+    /// How long the latest [`Self::draw`] waited for the display to free a
+    /// buffer to draw into, or `None` when the platform doesn't measure it.
+    /// That wait paces drawing to the display rather than being work.
+    fn last_drawable_wait(&self) -> Option<Duration>;
     fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;

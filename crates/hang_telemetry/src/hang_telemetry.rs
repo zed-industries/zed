@@ -15,7 +15,6 @@ use gpui::profiler::hang::{
     HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason, HangTrigger,
     MEASUREMENT_VERSION, SerializedHangIncident,
 };
-use hdrhistogram::Histogram;
 use serde_json::Value;
 use telemetry_events::FlexibleEvent;
 
@@ -34,6 +33,11 @@ const SEND_INTERVAL: Duration = Duration::from_mins(30);
 
 const MONITOR_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Upper bounds, in milliseconds, of the stall buckets each event reports.
+/// Each bucket counts stalls up to and including its bound; a final bucket
+/// counts longer ones.
+const STALL_BUCKETS_MS: [u64; 8] = [50, 100, 250, 500, 1000, 2000, 5000, 10000];
+
 /// Duration at which a single piece of foreground work counts as a hang.
 pub fn hang_threshold() -> Duration {
     if cfg!(debug_assertions) {
@@ -49,7 +53,9 @@ pub fn hang_threshold() -> Duration {
     }
 }
 
-/// Total foreground spend within one interval that counts as a hang.
+/// Total foreground spend within one interval that counts as a hang, for
+/// frames on displays whose refresh interval is unknown. Elsewhere a frame
+/// counts as a hang when it misses several refreshes.
 pub fn frame_budget() -> Duration {
     if cfg!(debug_assertions) {
         // Unoptimized builds routinely spend more than a release frame budget
@@ -118,6 +124,7 @@ impl HangTelemetry {
 
     fn handle_poll(&mut self, poll: HangMonitorPoll) {
         let flush = poll.reason == HangMonitorPollReason::Flush;
+        let active_time = poll.active_time;
         let incidents = serialize_incidents(self.startup, poll);
         if !incidents.is_empty()
             && let Some(observe_incidents) = self.observe_incidents.as_mut()
@@ -127,6 +134,7 @@ impl HangTelemetry {
         for incident in incidents {
             self.reporter.add(incident);
         }
+        self.reporter.active_time += active_time;
         if flush || self.reporter.last_send.elapsed() > SEND_INTERVAL {
             (self.send_event)(self.reporter.take_event().into_flexible_event());
         }
@@ -152,8 +160,12 @@ struct Reporter {
     pending: Vec<SerializedHangIncident>,
     threshold_incidents: u64,
     budget_incidents: u64,
-    /// Every incident's stall, in milliseconds; `pending` keeps only the largest.
-    stalls: Histogram<u64>,
+    /// Every incident's stall, bucketed by [`STALL_BUCKETS_MS`]; `pending`
+    /// keeps only the largest incidents.
+    stall_buckets: [u64; 9],
+    stall_max_ms: u64,
+    /// See [`gpui::profiler::hang::HangDetector::take_active_time`].
+    active_time: Duration,
 }
 
 impl Reporter {
@@ -163,7 +175,9 @@ impl Reporter {
             pending: Vec::new(),
             threshold_incidents: 0,
             budget_incidents: 0,
-            stalls: Histogram::new(3).expect("3 significant figures is a valid histogram"),
+            stall_buckets: [0; 9],
+            stall_max_ms: 0,
+            active_time: Duration::ZERO,
         }
     }
 
@@ -172,7 +186,13 @@ impl Reporter {
             HangTrigger::Threshold => self.threshold_incidents += 1,
             HangTrigger::Budget => self.budget_incidents += 1,
         }
-        self.stalls.record(incident.stall_ms as u64).ok();
+        let stall_ms = incident.stall_ms.max(0.0).ceil() as u64;
+        let bucket = STALL_BUCKETS_MS
+            .iter()
+            .position(|bound| stall_ms <= *bound)
+            .unwrap_or(STALL_BUCKETS_MS.len());
+        self.stall_buckets[bucket] += 1;
+        self.stall_max_ms = self.stall_max_ms.max(stall_ms);
         self.pending.push(incident);
         if self.pending.len() > MAX_REPORTED_INCIDENTS {
             self.pending
@@ -194,12 +214,11 @@ impl Reporter {
             total_incidents: threshold_incidents + budget_incidents,
             threshold_incidents,
             budget_incidents,
-            stall_p50_ms: self.stalls.value_at_quantile(0.5),
-            stall_p95_ms: self.stalls.value_at_quantile(0.95),
-            stall_max_ms: self.stalls.max(),
+            stall_buckets: std::mem::take(&mut self.stall_buckets),
+            stall_max_ms: std::mem::take(&mut self.stall_max_ms),
             report_window_seconds,
+            active_seconds: std::mem::take(&mut self.active_time).as_secs(),
         };
-        self.stalls.reset();
         event
     }
 }
@@ -210,36 +229,48 @@ struct HangIncidentsEvent {
     total_incidents: u64,
     threshold_incidents: u64,
     budget_incidents: u64,
-    stall_p50_ms: u64,
-    stall_p95_ms: u64,
+    stall_buckets: [u64; 9],
     stall_max_ms: u64,
     report_window_seconds: u64,
+    /// Of `report_window_seconds`, how long the user was actively using the
+    /// app, for rates such as hangs per active hour.
+    active_seconds: u64,
 }
 
 impl HangIncidentsEvent {
     fn into_flexible_event(self) -> FlexibleEvent {
+        let mut event_properties = HashMap::from([
+            ("incidents".to_string(), to_value(&self.incidents)),
+            ("total_incidents".to_string(), self.total_incidents.into()),
+            (
+                "threshold_incidents".to_string(),
+                self.threshold_incidents.into(),
+            ),
+            ("budget_incidents".to_string(), self.budget_incidents.into()),
+            ("stall_max_ms".to_string(), self.stall_max_ms.into()),
+            (
+                "report_window_seconds".to_string(),
+                self.report_window_seconds.into(),
+            ),
+            ("active_seconds".to_string(), self.active_seconds.into()),
+            (
+                "measurement_version".to_string(),
+                MEASUREMENT_VERSION.into(),
+            ),
+        ]);
+        for (index, count) in self.stall_buckets.iter().enumerate() {
+            let name = match STALL_BUCKETS_MS.get(index) {
+                Some(bound) => format!("stall_ms_le_{bound}"),
+                None => format!(
+                    "stall_ms_gt_{}",
+                    STALL_BUCKETS_MS.last().copied().unwrap_or_default()
+                ),
+            };
+            event_properties.insert(name, (*count).into());
+        }
         FlexibleEvent {
             event_type: EVENT_TYPE.to_string(),
-            event_properties: HashMap::from([
-                ("incidents".to_string(), to_value(&self.incidents)),
-                ("total_incidents".to_string(), self.total_incidents.into()),
-                (
-                    "threshold_incidents".to_string(),
-                    self.threshold_incidents.into(),
-                ),
-                ("budget_incidents".to_string(), self.budget_incidents.into()),
-                ("stall_p50_ms".to_string(), self.stall_p50_ms.into()),
-                ("stall_p95_ms".to_string(), self.stall_p95_ms.into()),
-                ("stall_max_ms".to_string(), self.stall_max_ms.into()),
-                (
-                    "report_window_seconds".to_string(),
-                    self.report_window_seconds.into(),
-                ),
-                (
-                    "measurement_version".to_string(),
-                    MEASUREMENT_VERSION.into(),
-                ),
-            ]),
+            event_properties,
         }
     }
 }
@@ -280,8 +311,7 @@ mod tests {
         assert_eq!(event.total_incidents, 12);
         assert_eq!(event.threshold_incidents, 6);
         assert_eq!(event.budget_incidents, 6);
-        assert_eq!(event.stall_p50_ms, 5);
-        assert_eq!(event.stall_p95_ms, 11);
+        assert_eq!(event.stall_buckets, [12, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(event.stall_max_ms, 11);
         assert_eq!(
             stalls,
@@ -304,17 +334,15 @@ mod tests {
         assert_eq!(event.threshold_incidents, 0);
         assert_eq!(event.budget_incidents, 1);
         assert_eq!(event.incidents[0].stall_ms, 20.9);
-        assert_eq!(event.stall_p50_ms, 20);
-        assert_eq!(event.stall_p95_ms, 20);
-        assert_eq!(event.stall_max_ms, 20);
+        assert_eq!(event.stall_buckets, [1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(event.stall_max_ms, 21);
 
         let empty = reporter.take_event();
         assert!(empty.incidents.is_empty());
         assert_eq!(empty.total_incidents, 0);
         assert_eq!(empty.threshold_incidents, 0);
         assert_eq!(empty.budget_incidents, 0);
-        assert_eq!(empty.stall_p50_ms, 0);
-        assert_eq!(empty.stall_p95_ms, 0);
+        assert_eq!(empty.stall_buckets, [0; 9]);
         assert_eq!(empty.stall_max_ms, 0);
     }
 
@@ -335,11 +363,19 @@ mod tests {
                 "total_incidents": 0,
                 "threshold_incidents": 0,
                 "budget_incidents": 0,
-                "stall_p50_ms": 0,
-                "stall_p95_ms": 0,
                 "stall_max_ms": 0,
+                "stall_ms_le_50": 0,
+                "stall_ms_le_100": 0,
+                "stall_ms_le_250": 0,
+                "stall_ms_le_500": 0,
+                "stall_ms_le_1000": 0,
+                "stall_ms_le_2000": 0,
+                "stall_ms_le_5000": 0,
+                "stall_ms_le_10000": 0,
+                "stall_ms_gt_10000": 0,
                 "report_window_seconds": report_window_seconds,
-                "measurement_version": 2
+                "active_seconds": 0,
+                "measurement_version": 3
             })
         );
     }
@@ -351,10 +387,10 @@ mod tests {
             total_incidents: 3,
             threshold_incidents: 2,
             budget_incidents: 1,
-            stall_p50_ms: 25,
-            stall_p95_ms: 125,
+            stall_buckets: [1, 0, 2, 0, 0, 0, 0, 0, 0],
             stall_max_ms: 125,
             report_window_seconds: 1800,
+            active_seconds: 900,
         }
         .into_flexible_event();
 
@@ -363,7 +399,7 @@ mod tests {
             serde_json::to_value(event.event_properties).unwrap(),
             json!({
                 "incidents": [{
-                    "measurement_version": 2,
+                    "measurement_version": 3,
                     "phase": "steady",
                     "trigger": "threshold",
                     "start_ms": 10.0,
@@ -383,11 +419,19 @@ mod tests {
                 "total_incidents": 3,
                 "threshold_incidents": 2,
                 "budget_incidents": 1,
-                "stall_p50_ms": 25,
-                "stall_p95_ms": 125,
                 "stall_max_ms": 125,
+                "stall_ms_le_50": 1,
+                "stall_ms_le_100": 0,
+                "stall_ms_le_250": 2,
+                "stall_ms_le_500": 0,
+                "stall_ms_le_1000": 0,
+                "stall_ms_le_2000": 0,
+                "stall_ms_le_5000": 0,
+                "stall_ms_le_10000": 0,
+                "stall_ms_gt_10000": 0,
                 "report_window_seconds": 1800,
-                "measurement_version": 2
+                "active_seconds": 900,
+                "measurement_version": 3
             })
         );
     }
