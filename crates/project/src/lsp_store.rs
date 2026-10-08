@@ -17760,7 +17760,7 @@ mod tests {
         assert!(tree_memory >= parent_memory + child_memory);
 
         let _ = child.kill();
-        let _ = child.wait();
+        let _ = smol::block_on(child.status());
     }
 
     fn inlay_hint_for_test(position: Anchor, label: &str) -> InlayHint {
