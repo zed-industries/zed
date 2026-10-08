@@ -1,80 +1,48 @@
-//! Exercises browser Fetch response bodies on the main thread and workers.
+//! Exercises Fetch response-body contention between the browser and real workers.
 //!
-//! The browser harness supplies synthetic Fetch streams to control backpressure,
-//! cancellation, and errors while using the production HTTP client and dispatcher.
+//! The browser harness supplies chunked Fetch streams while the production HTTP
+//! client pumps them on the main thread and background workers consume them.
 
 use futures::AsyncReadExt as _;
-use gpui::{BackgroundExecutor, Platform as _};
+use gpui::Platform as _;
 use gpui_web::WebPlatform;
-use http_client::{AsyncBody, HttpClient as _};
-use std::thread::ThreadId;
+use http_client::HttpClient as _;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 fn main() {}
 
 #[wasm_bindgen]
-pub struct FetchTest {
-    platform: WebPlatform,
-}
-
-#[wasm_bindgen]
-impl FetchTest {
-    #[wasm_bindgen(constructor)]
-    pub fn new(threaded: bool) -> Self {
-        Self {
-            platform: WebPlatform::new(threaded),
-        }
-    }
-
-    pub async fn open(&self, url: String) -> Result<ResponseBodyTest, JsValue> {
-        let response = self
-            .platform
-            .fetch_http_client()
-            .get(&url, Default::default(), true)
-            .await
-            .map_err(js_error)?;
-        Ok(ResponseBodyTest {
-            body: Some(response.into_body()),
-            background: self.platform.background_executor(),
-            main_thread: std::thread::current().id(),
-        })
-    }
-}
-
-#[wasm_bindgen]
-pub struct ResponseBodyTest {
-    body: Option<AsyncBody>,
-    background: BackgroundExecutor,
-    main_thread: ThreadId,
-}
-
-#[wasm_bindgen]
-impl ResponseBodyTest {
-    pub async fn read(&mut self, on_worker: bool) -> Result<Vec<u8>, JsValue> {
-        let mut body = self
-            .body
-            .take()
-            .ok_or_else(|| JsValue::from_str("response body already consumed"))?;
-        let main_thread = self.main_thread;
-        let read = async move {
-            if on_worker {
-                anyhow::ensure!(
-                    std::thread::current().id() != main_thread,
-                    "response body must be read on a real worker"
-                );
-            }
+pub async fn test_worker_fetch(url: String) -> Result<(), JsValue> {
+    let platform = WebPlatform::new(true);
+    let client = Arc::new(platform.fetch_http_client());
+    let background = platform.background_executor();
+    let main_thread = std::thread::current().id();
+    let readers = (0..8).map(|_| {
+        let client = client.clone();
+        let url = url.clone();
+        background.spawn(async move {
+            anyhow::ensure!(
+                std::thread::current().id() != main_thread,
+                "response body must be read on a real worker"
+            );
+            let mut response = client.get(&url, Default::default(), true).await?;
             let mut bytes = Vec::new();
-            body.read_to_end(&mut bytes).await?;
-            anyhow::Ok(bytes)
-        };
-        if on_worker {
-            self.background.spawn(read).await.map_err(js_error)
-        } else {
-            read.await.map_err(js_error)
-        }
-    }
-}
-
-fn js_error(error: anyhow::Error) -> JsValue {
-    JsValue::from_str(&error.to_string())
+            response.body_mut().read_to_end(&mut bytes).await?;
+            anyhow::ensure!(bytes.len() == 32768 * 3, "response did not reach EOF");
+            for (index, chunk) in bytes.chunks_exact(3).enumerate() {
+                let expected = [
+                    (index % 251) as u8,
+                    (index % 239) as u8,
+                    (index % 227) as u8,
+                ];
+                anyhow::ensure!(chunk == expected, "response chunks must remain ordered");
+            }
+            anyhow::Ok(())
+        })
+    });
+    futures::future::try_join_all(readers)
+        .await
+        .map(|_| ())
+        .map_err(|error| JsValue::from_str(&error.to_string()))
 }

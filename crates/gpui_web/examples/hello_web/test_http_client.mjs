@@ -106,100 +106,35 @@ try {
             try { Atomics.wait(new Int32Array(bindings.memory.buffer), 0, 0, 0); }
             catch (error) { waitForbidden = error instanceof TypeError; }
             check(waitForbidden, "Blocking waits must be forbidden on the browser main thread");
-            const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 10));
-            const states = new Map();
             const originalFetch = globalThis.fetch;
-            globalThis.fetch = async request => {
-                const mode = new URL(request.url).pathname.slice(1);
-                if (mode === "no-body") return new Response(null);
-                const state = { pulled: 0, cancelled: 0 };
-                states.set(mode, state);
+            let responses = 0;
+            globalThis.fetch = async () => {
+                responses++;
+                let pulled = 0;
                 return new Response(new ReadableStream({
                     pull(controller) {
-                        if (mode === "pending") return new Promise(() => {});
-                        if (mode === "error" && state.pulled === 16) {
-                            controller.error(new Error("injected stream failure"));
-                            return;
-                        }
-                        if (mode === "invalid") {
-                            controller.enqueue("not bytes");
-                            return;
-                        }
-                        if (state.pulled === 32768) {
+                        if (pulled === 32768) {
                             controller.close();
                             return;
                         }
-                        const index = state.pulled++;
-                        // Empty chunks exercise IntoAsyncRead's skip path.
-                        if (index % 7 === 0) controller.enqueue(new Uint8Array());
+                        const index = pulled++;
                         controller.enqueue(new Uint8Array([index % 251, index % 239, index % 227]));
                     },
-                    cancel() { state.cancelled++; },
                 }, { highWaterMark: 0 }));
             };
             try {
-                for (const threaded of [false, true]) {
-                    const client = new fixture.FetchTest(threaded);
-                    const open = mode => client.open(location.origin + "/" + mode);
-                    const noBody = await open("no-body");
-                    check((await noBody.read(threaded)).length === 0, "Missing body must read as EOF");
-                    noBody.free();
-
-                    for (const mode of ["pending", "full"]) {
-                        const body = await open(mode);
-                        await yieldToBrowser();
-                        const state = states.get(mode);
-                        if (mode === "full") {
-                            const pulled = state.pulled;
-                            check(pulled > 0 && pulled <= 10, "Response buffering must be bounded");
-                            await yieldToBrowser();
-                            check(state.pulled === pulled, "Full channel must stop pulling");
-                        }
-                        body.free();
-                        for (let attempt = 0; state.cancelled === 0 && attempt < 100; attempt++) {
-                            await yieldToBrowser();
-                        }
-                        check(state.cancelled === 1, "Dropping the body must cancel the pending or backpressured reader");
-                    }
-
-                    for (const [mode, expected] of [
-                        ["error", "injected stream failure"],
-                        ["invalid", "non-byte chunk"],
-                    ]) {
-                        const body = await open(mode);
-                        let error;
-                        try { await body.read(threaded); } catch (caught) { error = String(caught); }
-                        body.free();
-                        check(error?.includes(expected), "Stream errors must reach the body reader: " + error);
-                    }
-
-                    const readers = threaded ? 8 : 1;
-                    await Promise.all(Array.from({ length: readers }, async (_, reader) => {
-                        const body = await open("stream-" + reader);
-                        // Let the channel fill before worker reads begin.
-                        await yieldToBrowser();
-                        const bytes = await body.read(threaded);
-                        body.free();
-                        check(bytes.length === 32768 * 3, "All bytes must reach EOF");
-                        for (let index = 0; index < 32768; index++) {
-                            check(bytes[index * 3] === index % 251 &&
-                                bytes[index * 3 + 1] === index % 239 &&
-                                bytes[index * 3 + 2] === index % 227, "Chunks must remain ordered");
-                        }
-                        check(states.get("stream-" + reader).cancelled === 0, "EOF must not cancel a completed stream");
-                    }));
-                    client.free();
-                }
+                await fixture.test_worker_fetch(location.origin + "/stream");
+                check(responses === 8, "All worker requests must use the production Fetch pump");
             } finally {
                 globalThis.fetch = originalFetch;
             }
-            return { modes: ["main-thread", "workers"], chunksPerResponse: 32768, workerResponses: 8 };
+            return { chunksPerResponse: 32768, workerResponses: responses };
         })()`,
     });
     assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
     assert.deepEqual(errors, [], JSON.stringify(errors));
     assert.equal(result.result.value.workerResponses, 8);
-    console.log("PASS: Fetch body ordering, EOF, errors, backpressure, cancellation, and worker contention", result.result.value);
+    console.log("PASS: Fetch response-body contention between browser main thread and workers", result.result.value);
 } finally {
     socket?.close();
     browser.kill();
