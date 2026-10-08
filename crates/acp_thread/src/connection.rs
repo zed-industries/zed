@@ -164,17 +164,17 @@ pub trait AgentConnection {
         false
     }
 
-    fn auth_methods(&self) -> &[acp_v1::AuthMethod];
+    fn auth_methods(&self) -> &[acp_v2::AuthMethod];
 
     fn terminal_auth_task(
         &self,
-        _method: &acp_v1::AuthMethodId,
+        _method: &acp_v2::AuthMethodId,
         _cx: &App,
     ) -> Option<Task<Result<SpawnInTerminal>>> {
         None
     }
 
-    fn authenticate(&self, method: acp_v1::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
+    fn authenticate(&self, method: acp_v2::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
     fn supports_logout(&self) -> bool {
         false
@@ -1078,7 +1078,7 @@ mod test_support {
             self.telemetry_id.clone()
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
@@ -1126,7 +1126,7 @@ mod test_support {
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             unimplemented!()

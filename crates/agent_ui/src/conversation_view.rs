@@ -540,7 +540,7 @@ impl Conversation {
         &mut self,
         session_id: acp_v1::SessionId,
         elicitation_id: ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let thread = self.threads.get(&session_id)?.clone();
@@ -804,7 +804,11 @@ pub struct ConversationView {
 impl ConversationView {
     pub fn has_auth_methods(&self) -> bool {
         self.as_connected().map_or(false, |connected| {
-            !connected.connection.auth_methods().is_empty()
+            connected
+                .connection
+                .auth_methods()
+                .iter()
+                .any(acp_thread::auth_methods::is_supported)
         })
     }
 
@@ -936,7 +940,7 @@ enum AuthState {
     Ok,
     Unauthenticated {
         description: Option<Entity<Markdown>>,
-        pending_auth_method: Option<acp_v1::AuthMethodId>,
+        pending_auth_method: Option<acp_v2::AuthMethodId>,
     },
 }
 
@@ -2174,7 +2178,7 @@ impl ConversationView {
 
     fn authenticate(
         &mut self,
-        method: acp_v1::AuthMethodId,
+        method: acp_v2::AuthMethodId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2185,6 +2189,11 @@ impl ConversationView {
             return;
         };
         let connection = connected.connection.clone();
+        if !connection.auth_methods().iter().any(|advertised| {
+            advertised.method_id() == &method && acp_thread::auth_methods::is_supported(advertised)
+        }) {
+            return;
+        }
 
         let AuthState::Unauthenticated {
             pending_auth_method,
@@ -2374,7 +2383,7 @@ impl ConversationView {
         login: task::SpawnInTerminal,
         workspace: Entity<Workspace>,
         project: Entity<Project>,
-        method: acp_v1::AuthMethodId,
+        method: acp_v2::AuthMethodId,
         previous_attempt: bool,
         window: &mut Window,
         cx: &mut App,
@@ -2513,11 +2522,15 @@ impl ConversationView {
         &self,
         connection: &Rc<dyn AgentConnection>,
         description: Option<&Entity<Markdown>>,
-        pending_auth_method: Option<&acp_v1::AuthMethodId>,
+        pending_auth_method: Option<&acp_v2::AuthMethodId>,
         window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let auth_methods = connection.auth_methods();
+        let auth_methods = connection
+            .auth_methods()
+            .iter()
+            .filter(|method| acp_thread::auth_methods::is_supported(method))
+            .collect::<Vec<_>>();
 
         let agent_display_name = self
             .agent_server_store
@@ -2530,43 +2543,34 @@ impl ConversationView {
 
         let auth_buttons = || {
             h_flex().justify_end().flex_wrap().gap_1().children(
-                connection
-                    .auth_methods()
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .map(|(ix, method)| {
-                        let (method_id, name) = (method.id().0.clone(), method.name().to_string());
-                        let agent_telemetry_id = connection.telemetry_id();
+                auth_methods.iter().enumerate().rev().map(|(ix, method)| {
+                    let (method_id, name) = (method.method_id().clone(), method.name().to_string());
+                    let agent_telemetry_id = connection.telemetry_id();
 
-                        Button::new(method_id.clone(), name)
-                            .label_size(LabelSize::Small)
-                            .map(|this| {
-                                if ix == 0 {
-                                    this.style(ButtonStyle::Tinted(TintColor::Accent))
-                                } else {
-                                    this.style(ButtonStyle::Outlined)
-                                }
-                            })
-                            .when_some(method.description(), |this, description| {
-                                this.tooltip(Tooltip::text(description.to_string()))
-                            })
-                            .on_click({
-                                cx.listener(move |this, _, window, cx| {
-                                    telemetry::event!(
-                                        "Authenticate Agent Started",
-                                        agent = agent_telemetry_id,
-                                        method = method_id
-                                    );
+                    Button::new(method_id.0.clone(), name)
+                        .label_size(LabelSize::Small)
+                        .map(|this| {
+                            if ix == 0 {
+                                this.style(ButtonStyle::Tinted(TintColor::Accent))
+                            } else {
+                                this.style(ButtonStyle::Outlined)
+                            }
+                        })
+                        .when_some(method.description(), |this, description| {
+                            this.tooltip(Tooltip::text(description.to_string()))
+                        })
+                        .on_click({
+                            cx.listener(move |this, _, window, cx| {
+                                telemetry::event!(
+                                    "Authenticate Agent Started",
+                                    agent = agent_telemetry_id,
+                                    method = method_id.0
+                                );
 
-                                    this.authenticate(
-                                        acp_v1::AuthMethodId::new(method_id.clone()),
-                                        window,
-                                        cx,
-                                    )
-                                })
+                                this.authenticate(method_id.clone(), window, cx)
                             })
-                    }),
+                        })
+                }),
             )
         };
 
@@ -2630,7 +2634,7 @@ impl ConversationView {
             .map(|elicitation| {
                 let is_pending = matches!(elicitation.status, ElicitationStatus::Pending { .. });
                 let schema = match &elicitation.request.mode {
-                    acp_v1::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    acp_v2::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
                     _ => None,
                 };
                 (elicitation.id.clone(), is_pending, schema)
@@ -2810,7 +2814,7 @@ impl ConversationView {
         };
 
         match mode {
-            acp_v1::ElicitationMode::Form(mode) => {
+            acp_v2::ElicitationMode::Form(mode) => {
                 let Some(state) = self
                     .request_elicitation_form_states
                     .get_mut(&elicitation_id)
@@ -2843,9 +2847,9 @@ impl ConversationView {
                             Ok(content) => {
                                 this.respond_to_request_elicitation(
                                     elicitation_id,
-                                    acp_v1::CreateElicitationResponse::new(
-                                        acp_v1::ElicitationAction::Accept(
-                                            acp_v1::ElicitationAcceptAction::new().content(content),
+                                    acp_v2::CreateElicitationResponse::new(
+                                        acp_v2::ElicitationAction::Accept(
+                                            acp_v2::ElicitationAcceptAction::new().content(content),
                                         ),
                                     ),
                                     cx,
@@ -2864,11 +2868,11 @@ impl ConversationView {
                 })
                 .detach();
             }
-            acp_v1::ElicitationMode::Url(_) => {
+            acp_v2::ElicitationMode::Url(_) => {
                 self.respond_to_request_elicitation(
                     elicitation_id,
-                    acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                        acp_v1::ElicitationAcceptAction::new(),
+                    acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                        acp_v2::ElicitationAcceptAction::new(),
                     )),
                     cx,
                 );
@@ -2885,7 +2889,7 @@ impl ConversationView {
     ) {
         self.respond_to_request_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
             cx,
         );
     }
@@ -2898,7 +2902,7 @@ impl ConversationView {
     ) {
         self.respond_to_request_elicitation(
             elicitation_id,
-            acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Cancel),
+            acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Cancel),
             cx,
         );
     }
@@ -2920,7 +2924,7 @@ impl ConversationView {
     fn respond_to_request_elicitation(
         &mut self,
         elicitation_id: ElicitationEntryId,
-        response: acp_v1::CreateElicitationResponse,
+        response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
         self.request_elicitation_form_states.remove(&elicitation_id);
@@ -4139,7 +4143,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
         assert!(matches!(
             response.lock().as_ref(),
-            Some(acp_v1::ElicitationAction::Cancel)
+            Some(acp_v2::ElicitationAction::Cancel)
         ));
     }
 
@@ -4194,7 +4198,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
         assert!(matches!(
             response.lock().as_ref(),
-            Some(acp_v1::ElicitationAction::Cancel)
+            Some(acp_v2::ElicitationAction::Cancel)
         ));
     }
 
@@ -4226,7 +4230,7 @@ pub(crate) mod tests {
                 .elicitations()
                 .iter()
                 .find_map(|elicitation| {
-                    let acp_v1::ElicitationScope::Request(scope) = elicitation.request.scope()
+                    let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope()
                     else {
                         return None;
                     };
@@ -4238,8 +4242,8 @@ pub(crate) mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &first_elicitation_id,
-                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
-                    acp_v1::ElicitationAcceptAction::new(),
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
@@ -4248,7 +4252,7 @@ pub(crate) mod tests {
 
         assert!(matches!(
             response.lock().as_ref(),
-            Some(acp_v1::ElicitationAction::Accept(_))
+            Some(acp_v2::ElicitationAction::Accept(_))
         ));
         conversation_view.read_with(cx, |view, _cx| {
             let connected = view
@@ -4266,7 +4270,7 @@ pub(crate) mod tests {
                     store.elicitations()
                 );
             };
-            let acp_v1::ElicitationScope::Request(scope) = remaining.request.scope() else {
+            let acp_v2::ElicitationScope::Request(scope) = remaining.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
             assert_eq!(scope.request_id, second_request_id);
@@ -5345,12 +5349,26 @@ pub(crate) mod tests {
         let notice =
             acp_v1::Notice::new(acp_v1::NoticeSeverity::Error, "Optional integration failed")
                 .description("**Plain text**, not Markdown. Work continues.");
+        let shared_notice = acp_thread::notices::from_v1(notice.clone()).expect("shared notice");
+        let custom_notice = acp_v2::Notice::new(
+            acp_v2::NoticeSeverity::Other("_custom/β".into()),
+            "**Plain text**, not Markdown",
+        )
+        .description("")
+        .meta(acp_v2::Meta::from_iter([(
+            "extension".into(),
+            json!({"nested": [null, true, {"value": "retained"}]}),
+        )]));
         thread.update(cx, |thread, cx| {
-            for _ in 0..2 {
-                thread
-                    .handle_session_update(acp_v1::SessionUpdate::Notice(notice.clone()), cx)
-                    .expect("notice should be accepted");
-            }
+            thread
+                .handle_session_update(acp_v1::SessionUpdate::Notice(notice), cx)
+                .expect("notice should be accepted");
+            thread.push_notice(custom_notice.clone(), cx);
+            assert_eq!(
+                thread.notices(),
+                &[(0, shared_notice), (1, custom_notice.clone())]
+            );
+            assert!(thread.to_markdown(cx).is_empty());
         });
         cx.run_until_parked();
 
@@ -5366,7 +5384,7 @@ pub(crate) mod tests {
         cx.simulate_click(dismiss.center(), gpui::Modifiers::default());
         cx.run_until_parked();
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.notices(), &[(1, notice)]);
+            assert_eq!(thread.notices(), &[(1, custom_notice)]);
         });
         assert!(cx.debug_bounds("dismiss-session-notice-0").is_none());
 
@@ -5765,13 +5783,13 @@ pub(crate) mod tests {
             }
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -6368,7 +6386,7 @@ pub(crate) mod tests {
 
         let connection = AuthGatedAgentConnection::new();
         let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
 
         // When new_session returns AuthRequired, the server should transition
         // to Connected + Unauthenticated rather than getting stuck in Loading.
@@ -6376,6 +6394,53 @@ pub(crate) mod tests {
             let connected = view
                 .as_connected()
                 .expect("Should be in Connected state even though auth is required");
+            assert!(view.has_auth_methods());
+            assert_eq!(
+                connected.connection.auth_methods(),
+                connection.auth_methods()
+            );
+            let [unknown, agent, terminal] = connected.connection.auth_methods() else {
+                panic!("expected the complete mixed authentication advertisement");
+            };
+            assert!(matches!(unknown, acp_v2::AuthMethod::Other(_)));
+            assert_eq!(
+                serde_json::to_value(unknown).expect("unknown auth method must serialize"),
+                json!({
+                    "type": "_future_login",
+                    "methodId": AuthGatedAgentConnection::OTHER_AUTH_METHOD_ID,
+                    "name": "Future Login",
+                    "description": "Not supported by this client",
+                    "_meta": {
+                        "terminal-auth": {"command": "must-not-run", "args": ["login"]}
+                    },
+                    "args": ["must-not-run"],
+                    "details": {"nested": [1, {"preserve": true}]}
+                })
+            );
+            assert_eq!(
+                agent.method_id(),
+                &acp_v2::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID)
+            );
+            assert_eq!(agent.name(), "Test Login");
+            assert_eq!(agent.description(), Some("Sign in with the test provider"));
+            assert_eq!(
+                agent.meta().and_then(|meta| meta.get("fixture")),
+                Some(&json!({"nested": ["retain", 7]}))
+            );
+            assert_eq!(terminal.name(), "Terminal Login");
+            assert_eq!(
+                connected
+                    .connection
+                    .auth_methods()
+                    .iter()
+                    .filter(|method| acp_thread::auth_methods::is_supported(method))
+                    .map(|method| method.method_id().clone())
+                    .collect::<Vec<_>>(),
+                vec![
+                    acp_v2::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID),
+                    acp_v2::AuthMethodId::new(AuthGatedAgentConnection::TERMINAL_AUTH_METHOD_ID),
+                ]
+            );
             assert!(
                 !connected.auth_state.is_ok(),
                 "Auth state should be Unauthenticated"
@@ -6425,23 +6490,76 @@ pub(crate) mod tests {
             assert!(view.has_pending_selections());
         });
 
+        for method_id in [
+            AuthGatedAgentConnection::OTHER_AUTH_METHOD_ID,
+            "unadvertised:login",
+        ] {
+            conversation_view.update_in(cx, |view, window, cx| {
+                view.authenticate(acp_v2::AuthMethodId::new(method_id), window, cx);
+                assert!(view.auth_task.is_none());
+                assert!(matches!(
+                    &view
+                        .as_connected()
+                        .expect("connection must remain")
+                        .auth_state,
+                    AuthState::Unauthenticated {
+                        pending_auth_method: None,
+                        ..
+                    }
+                ));
+            });
+        }
+        cx.run_until_parked();
+        assert!(connection.authenticate_calls.lock().is_empty());
+        assert!(connection.terminal_auth_calls.lock().is_empty());
+        assert!(!*connection.authenticated.lock());
+        conversation_view.read_with(cx, |view, _cx| {
+            assert!(view.active_thread().is_none());
+            assert!(view.has_pending_selections());
+        });
+
         // Authenticate using the real authenticate flow on ConnectionView.
         // This calls connection.authenticate(), which flips the internal flag,
         // then on success triggers reset() -> new_session() which now succeeds.
         conversation_view.update_in(cx, |view, window, cx| {
-            view.authenticate(
-                acp_v1::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID),
-                window,
-                cx,
-            );
+            let method_id = acp_v2::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID);
+            view.authenticate(method_id.clone(), window, cx);
+            let AuthState::Unauthenticated {
+                pending_auth_method,
+                ..
+            } = &view
+                .as_connected()
+                .expect("connection must remain")
+                .auth_state
+            else {
+                panic!("authentication should be pending before reset");
+            };
+            assert_eq!(pending_auth_method.as_ref(), Some(&method_id));
+            assert!(view.auth_task.is_some());
         });
         cx.run_until_parked();
+        assert_eq!(
+            *connection.authenticate_calls.lock(),
+            vec![acp_v2::AuthMethodId::new(
+                AuthGatedAgentConnection::AUTH_METHOD_ID
+            )]
+        );
+        assert_eq!(
+            *connection.terminal_auth_calls.lock(),
+            vec![acp_v2::AuthMethodId::new(
+                AuthGatedAgentConnection::AUTH_METHOD_ID
+            )]
+        );
 
         // After auth, the server should have an active thread in the Ok state.
         conversation_view.read_with(cx, |view, cx| {
             let connected = view
                 .as_connected()
                 .expect("Should still be in Connected state after auth");
+            assert_eq!(
+                connected.connection.auth_methods(),
+                connection.auth_methods()
+            );
             assert!(connected.auth_state.is_ok(), "Auth state should be Ok");
             assert!(
                 view.supports_logout(),
@@ -6509,6 +6627,55 @@ pub(crate) mod tests {
                 "Unauthenticated auth UI should render request elicitations outside ThreadView"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_auth_unavailable_without_supported_methods(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = AuthGatedAgentConnection::new();
+        let unsupported_methods = connection
+            .auth_methods()
+            .iter()
+            .filter(|method| !acp_thread::auth_methods::is_supported(method))
+            .cloned()
+            .collect::<Vec<_>>();
+        for auth_methods in [unsupported_methods, Vec::new()] {
+            let mut connection = connection.clone();
+            connection.auth_methods = auth_methods;
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            conversation_view.update_in(cx, |view, window, cx| {
+                assert!(!view.has_auth_methods());
+                assert!(!view.supports_logout());
+                assert_eq!(
+                    view.as_connected()
+                        .expect("auth-required connection must remain")
+                        .connection
+                        .auth_methods(),
+                    connection.auth_methods()
+                );
+                view.authenticate(
+                    acp_v2::AuthMethodId::new(AuthGatedAgentConnection::OTHER_AUTH_METHOD_ID),
+                    window,
+                    cx,
+                );
+                assert!(view.auth_task.is_none());
+                assert!(matches!(
+                    &view
+                        .as_connected()
+                        .expect("connection must remain")
+                        .auth_state,
+                    AuthState::Unauthenticated {
+                        pending_auth_method: None,
+                        ..
+                    }
+                ));
+            });
+            cx.run_until_parked();
+            assert!(connection.authenticate_calls.lock().is_empty());
+            assert!(connection.terminal_auth_calls.lock().is_empty());
+        }
     }
 
     #[gpui::test]
@@ -7944,10 +8111,12 @@ pub(crate) mod tests {
             thread.update(cx, |thread, cx| {
                 thread
                     .request_elicitation(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationFormMode::new(
-                                acp_v1::ElicitationSessionScope::new(session_id),
-                                acp_v1::ElicitationSchema::new().string("name", true),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationFormMode::new(
+                                acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                    session_id.0,
+                                )),
+                                acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
                         ),
@@ -7969,13 +8138,13 @@ pub(crate) mod tests {
             Task::ready(Ok(thread))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -7998,7 +8167,7 @@ pub(crate) mod tests {
 
     struct SessionCreationRequestElicitationServer {
         store: Entity<ElicitationStore>,
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentServer for SessionCreationRequestElicitationServer {
@@ -8030,7 +8199,7 @@ pub(crate) mod tests {
 
     struct SessionCreationRequestElicitationConnection {
         store: Entity<ElicitationStore>,
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentConnection for SessionCreationRequestElicitationConnection {
@@ -8058,10 +8227,10 @@ pub(crate) mod tests {
             let first_response_task = self.store.update(cx, |store, cx| {
                 store
                     .request_elicitation(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationFormMode::new(
-                                acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                                acp_v1::ElicitationSchema::new().string("name", true),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationFormMode::new(
+                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
                         ),
@@ -8073,12 +8242,12 @@ pub(crate) mod tests {
                 .update(cx, |store, cx| {
                     store
                         .request_elicitation(
-                            acp_v1::CreateElicitationRequest::new(
-                                acp_v1::ElicitationFormMode::new(
-                                    acp_v1::ElicitationRequestScope::new(
+                            acp_v2::CreateElicitationRequest::new(
+                                acp_v2::ElicitationFormMode::new(
+                                    acp_v2::ElicitationRequestScope::new(
                                         acp_v1::RequestId::Number(2),
                                     ),
-                                    acp_v1::ElicitationSchema::new().string("account", true),
+                                    acp_v2::ElicitationSchema::new().string("account", true),
                                 ),
                                 "Provide an account",
                             ),
@@ -8100,13 +8269,13 @@ pub(crate) mod tests {
             Some(self.store.clone())
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -8128,7 +8297,7 @@ pub(crate) mod tests {
     }
 
     struct ReleaseRequestElicitationServer {
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentServer for ReleaseRequestElicitationServer {
@@ -8160,7 +8329,7 @@ pub(crate) mod tests {
 
     struct ReleaseRequestElicitationConnection {
         store: Entity<ElicitationStore>,
-        response: Arc<Mutex<Option<acp_v1::ElicitationAction>>>,
+        response: Arc<Mutex<Option<acp_v2::ElicitationAction>>>,
     }
 
     impl AgentConnection for ReleaseRequestElicitationConnection {
@@ -8188,10 +8357,10 @@ pub(crate) mod tests {
             let response_task = self.store.update(cx, |store, cx| {
                 store
                     .request_elicitation(
-                        acp_v1::CreateElicitationRequest::new(
-                            acp_v1::ElicitationFormMode::new(
-                                acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
-                                acp_v1::ElicitationSchema::new().string("name", true),
+                        acp_v2::CreateElicitationRequest::new(
+                            acp_v2::ElicitationFormMode::new(
+                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
                         ),
@@ -8212,13 +8381,13 @@ pub(crate) mod tests {
             Some(self.store.clone())
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -8284,13 +8453,13 @@ pub(crate) mod tests {
             Task::ready(Ok(thread))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -8317,19 +8486,54 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct AuthGatedAgentConnection {
         authenticated: Arc<Mutex<bool>>,
-        auth_method: acp_v1::AuthMethod,
+        auth_methods: Vec<acp_v2::AuthMethod>,
+        authenticate_calls: Arc<Mutex<Vec<acp_v2::AuthMethodId>>>,
+        terminal_auth_calls: Arc<Mutex<Vec<acp_v2::AuthMethodId>>>,
     }
 
     impl AuthGatedAgentConnection {
-        const AUTH_METHOD_ID: &str = "test-login";
+        const AUTH_METHOD_ID: &str = "login:provider/β?scope=team";
+        const TERMINAL_AUTH_METHOD_ID: &str = "terminal:login/opaque";
+        const OTHER_AUTH_METHOD_ID: &str = "future:login/opaque";
 
         fn new() -> Self {
             Self {
                 authenticated: Arc::new(Mutex::new(false)),
-                auth_method: acp_v1::AuthMethod::Agent(acp_v1::AuthMethodAgent::new(
-                    Self::AUTH_METHOD_ID,
-                    "Test Login",
-                )),
+                auth_methods: vec![
+                    acp_v2::AuthMethod::Other(
+                        acp_v2::OtherAuthMethod::new(
+                            "_future_login",
+                            Self::OTHER_AUTH_METHOD_ID,
+                            "Future Login",
+                            std::collections::BTreeMap::from([
+                                ("args".into(), json!(["must-not-run"])),
+                                ("details".into(), json!({"nested": [1, {"preserve": true}]})),
+                            ]),
+                        )
+                        .description("Not supported by this client")
+                        .meta(serde_json::Map::from_iter([(
+                            "terminal-auth".into(),
+                            json!({"command": "must-not-run", "args": ["login"]}),
+                        )])),
+                    ),
+                    acp_v2::AuthMethod::Agent(
+                        acp_v2::AuthMethodAgent::new(Self::AUTH_METHOD_ID, "Test Login")
+                            .description("Sign in with the test provider")
+                            .meta(serde_json::Map::from_iter([(
+                                "fixture".into(),
+                                json!({"nested": ["retain", 7]}),
+                            )])),
+                    ),
+                    acp_v2::AuthMethod::Terminal(
+                        acp_v2::AuthMethodTerminal::new(
+                            Self::TERMINAL_AUTH_METHOD_ID,
+                            "Terminal Login",
+                        )
+                        .description("Sign in with the terminal"),
+                    ),
+                ],
+                authenticate_calls: Arc::new(Mutex::new(Vec::new())),
+                terminal_auth_calls: Arc::new(Mutex::new(Vec::new())),
             }
         }
     }
@@ -8377,16 +8581,26 @@ pub(crate) mod tests {
             })))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
-            std::slice::from_ref(&self.auth_method)
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
+            &self.auth_methods
+        }
+
+        fn terminal_auth_task(
+            &self,
+            method_id: &acp_v2::AuthMethodId,
+            _cx: &App,
+        ) -> Option<Task<Result<task::SpawnInTerminal>>> {
+            self.terminal_auth_calls.lock().push(method_id.clone());
+            None
         }
 
         fn authenticate(
             &self,
-            method_id: acp_v1::AuthMethodId,
+            method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            if &method_id == self.auth_method.id() {
+            self.authenticate_calls.lock().push(method_id.clone());
+            if method_id == acp_v2::AuthMethodId::new(Self::AUTH_METHOD_ID) {
                 *self.authenticated.lock() = true;
                 Task::ready(Ok(()))
             } else {
@@ -8460,13 +8674,13 @@ pub(crate) mod tests {
             })))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             unimplemented!()
@@ -8575,13 +8789,13 @@ pub(crate) mod tests {
             Task::ready(Ok(thread))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))
@@ -9073,6 +9287,238 @@ pub(crate) mod tests {
             view.scroll_to_user_message_index(None, cx);
             let scroll_top = view.list_state.logical_scroll_top();
             assert_eq!(scroll_top.item_ix, 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_user_message_lands_on_ask_user_elicitation_answer(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let tool_call_id = acp_v1::ToolCallId::new("ask-user-1");
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new(tool_call_id.clone(), "Which directory should we explore?")
+                .kind(acp_v1::ToolKind::Other)
+                .status(acp_v1::ToolCallStatus::InProgress)
+                .meta(acp_thread::meta_with_tool_name("ask_user")),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("List the top directories, then ask which to explore", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0.clone(),
+                            ))
+                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationSchema::new().string("other", true),
+                        ),
+                        "Which directory should we explore?",
+                    ),
+                    cx,
+                )
+                .expect("ask_user elicitation should be accepted")
+        });
+
+        let elicitation_id = thread.read_with(cx, |thread, _| {
+            thread.entries().iter().find_map(|entry| {
+                if let AgentThreadEntry::Elicitation(id) = entry {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        let elicitation_id = elicitation_id.expect("elicitation entry should exist");
+
+        let other_answer = std::collections::BTreeMap::from([(
+            "other".to_string(),
+            acp_v2::ElicitationContentValue::from("delve into src"),
+        )]);
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new().content(other_answer),
+                )),
+                cx,
+            );
+        });
+        response_task.await;
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp_v1::ToolCallUpdateFields::new()
+                            .title("Answered: delve into src")
+                            .status(acp_v1::ToolCallStatus::Completed),
+                    )),
+                    cx,
+                )
+                .expect("ask_user tool call should update");
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                        "I'll explore src in depth.".into(),
+                    )),
+                    cx,
+                )
+                .expect("follow-up assistant message should apply");
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            let entries = thread.entries();
+            assert_eq!(entries.len(), 4);
+            assert!(matches!(entries[0], AgentThreadEntry::UserMessage(_)));
+            assert!(matches!(entries[1], AgentThreadEntry::ToolCall(_)));
+            assert!(matches!(entries[2], AgentThreadEntry::Elicitation(_)));
+            assert!(matches!(entries[3], AgentThreadEntry::AssistantMessage(_)));
+        });
+
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
+            view.scroll_to_top(cx);
+            view.scroll_to_user_message_index(None, cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(
+                scroll_top.item_ix, 1,
+                "scroll should land on the ask_user tool call that holds the Other answer, not the original prompt"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_user_message_skips_accepted_url_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp_v1::ToolCallId::new("sign-in-1");
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new(tool_call_id.clone(), "Sign in to continue")
+                .kind(acp_v1::ToolKind::Other)
+                .status(acp_v1::ToolCallStatus::InProgress),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Fetch my private repos", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
+                                session_id.0.clone(),
+                            ))
+                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationId::new("sign-in-url-1"),
+                            "https://example.com/sign-in",
+                        ),
+                        "Continue in the browser",
+                    ),
+                    cx,
+                )
+                .expect("URL elicitation should be accepted")
+        });
+
+        let elicitation_id = thread.read_with(cx, |thread, _| {
+            thread.entries().iter().find_map(|entry| {
+                if let AgentThreadEntry::Elicitation(id) = entry {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        let elicitation_id = elicitation_id.expect("elicitation entry should exist");
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        response_task.await;
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                        "Waiting for sign-in to finish.".into(),
+                    )),
+                    cx,
+                )
+                .expect("follow-up assistant message should apply");
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            let entries = thread.entries();
+            assert_eq!(entries.len(), 4);
+            assert!(matches!(entries[0], AgentThreadEntry::UserMessage(_)));
+            assert!(matches!(entries[1], AgentThreadEntry::ToolCall(_)));
+            assert!(matches!(entries[2], AgentThreadEntry::Elicitation(_)));
+            assert!(matches!(entries[3], AgentThreadEntry::AssistantMessage(_)));
+            let (_, elicitation) = thread
+                .elicitation(&elicitation_id)
+                .expect("elicitation should be stored");
+            assert!(matches!(
+                elicitation.status,
+                acp_thread::ElicitationStatus::Accepted
+            ));
+        });
+
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
+            view.scroll_to_top(cx);
+            view.scroll_to_user_message_index(None, cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(
+                scroll_top.item_ix, 0,
+                "consenting to open a URL is not a user answer, so scroll should land on the prompt"
+            );
         });
     }
 
@@ -9712,6 +10158,92 @@ pub(crate) mod tests {
             cx.debug_bounds("MENU_ITEM-Copy This Agent Response")
                 .is_some()
         );
+    }
+
+    #[gpui::test]
+    async fn test_thinking_preview_copies_selected_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(r#"{ "agent": { "thinking_display": "preview" } }"#, cx)
+                    .expect("thinking preview settings");
+            });
+        });
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentThoughtChunk(
+            acp_v1::ContentChunk::new("**first**".into()),
+        )]);
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Think first", cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, cx| {
+                state.auto_expand_streaming_thought(view.thread.read(cx), cx);
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        for is_constrained in [true, false] {
+            if !is_constrained {
+                thread_view.update(cx, |view, cx| {
+                    view.entry_view_state.update(cx, |state, cx| {
+                        state.toggle_thinking_block_expansion((1, 0), cx);
+                    });
+                    cx.notify();
+                });
+                cx.run_until_parked();
+            }
+            thread_view.read_with(cx, |view, cx| {
+                assert_eq!(
+                    view.entry_view_state
+                        .read(cx)
+                        .thinking_block_state((1, 0), cx),
+                    (true, is_constrained),
+                );
+            });
+
+            for (menu_item, expected) in [
+                ("MENU_ITEM-Copy", "first"),
+                ("MENU_ITEM-Copy as Markdown", "**first**"),
+            ] {
+                let bounds = cx
+                    .debug_bounds("message-content-1-0-0")
+                    .expect("thinking content");
+                let position = bounds.origin + point(px(12.), bounds.size.height / 2.);
+                cx.simulate_event(gpui::MouseDownEvent {
+                    position,
+                    button: gpui::MouseButton::Left,
+                    modifiers: gpui::Modifiers::default(),
+                    click_count: 2,
+                    first_mouse: false,
+                });
+                cx.simulate_mouse_up(
+                    position,
+                    gpui::MouseButton::Left,
+                    gpui::Modifiers::default(),
+                );
+                cx.simulate_mouse_down(
+                    position,
+                    gpui::MouseButton::Right,
+                    gpui::Modifiers::default(),
+                );
+                cx.simulate_mouse_up(
+                    position,
+                    gpui::MouseButton::Right,
+                    gpui::Modifiers::default(),
+                );
+                let copy = cx
+                    .debug_bounds(menu_item)
+                    .expect("thinking selection copy command");
+                cx.simulate_click(copy.center(), gpui::Modifiers::default());
+                let copied =
+                    cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+                assert_eq!(copied.as_deref(), Some(expected));
+            }
+        }
     }
 
     #[gpui::test]
@@ -10896,33 +11428,51 @@ pub(crate) mod tests {
         let search_bar = thread_view
             .read_with(cx, |view, _| view.thread_search_bar.clone())
             .expect("thread search bar should be open");
-        let resource =
-            acp_v1::EmbeddedResource::new(acp_v1::EmbeddedResourceResource::TextResourceContents(
-                acp_v1::TextResourceContents::new("retained resource details", "summary://context")
-                    .mime_type("text/markdown".to_string()),
-            ));
+        let source_json = json!([
+            {
+                "type": "text",
+                "text": "Retained summary",
+                "_meta": {"origin": {"parts": ["context", {"revision": 1}]}}
+            },
+            {
+                "type": "resource",
+                "resource": {
+                    "text": "retained resource details",
+                    "uri": "summary://context",
+                    "mimeType": "text/markdown",
+                    "_meta": {"snapshot": {"revision": 2}}
+                },
+                "_meta": {"origin": {"kind": "summary"}}
+            },
+            {
+                "type": "_future_summary",
+                "payload": {"nested": [1, {"value": "original"}]},
+                "_meta": {"origin": {"kind": "future"}}
+            }
+        ]);
+        let source: Vec<acp_v2::ContentBlock> =
+            serde_json::from_value(source_json.clone()).expect("valid shared summary content");
 
-        for (update, query) in [
+        for (update, query, expected_source) in [
             (
-                acp_v1::CompactionUpdate::new("failed", acp_v1::CompactionStatus::Failed)
+                acp_v2::CompactionUpdate::new("failed", acp_v2::CompactionStatus::Failed)
                     .error("model *still* unavailable <details>"),
                 "model *still* unavailable <details>",
+                Vec::new(),
             ),
             (
-                acp_v1::CompactionUpdate::new("completed", acp_v1::CompactionStatus::Completed)
-                    .summary(vec![
-                        acp_v1::ContentBlock::Text(acp_v1::TextContent::new("Retained summary")),
-                        acp_v1::ContentBlock::Resource(resource),
-                    ]),
+                acp_v2::CompactionUpdate::new("completed", acp_v2::CompactionStatus::Completed)
+                    .summary(source.clone()),
                 "retained resource details",
+                source,
             ),
         ] {
-            thread
-                .update(cx, |thread, cx| {
-                    thread
-                        .handle_session_update(acp_v1::SessionUpdate::CompactionUpdate(update), cx)
-                })
-                .expect("failed to receive compaction details");
+            let compaction_id = update.compaction_id.clone();
+            let status = update.status.clone();
+            let is_error = expected_source.is_empty();
+            thread.update(cx, |thread, cx| {
+                thread.upsert_context_compaction_update(update, cx);
+            });
             cx.run_until_parked();
 
             let (entry_index, markdown) = thread.read_with(cx, |thread, cx| {
@@ -10935,10 +11485,17 @@ pub(crate) mod tests {
                 let AgentThreadEntry::ContextCompaction(compaction) = entry else {
                     panic!("expected a compaction entry");
                 };
+                assert_eq!(compaction.summary.source_blocks(), expected_source);
+                if !is_error {
+                    assert_eq!(
+                        serde_json::to_value(compaction.summary.source_blocks())
+                            .expect("serializable shared summary"),
+                        source_json
+                    );
+                }
                 let markdown = compaction
                     .summary
-                    .iter()
-                    .filter_map(|content| content.markdown())
+                    .markdowns()
                     .chain(compaction.error.iter())
                     .find(|markdown| markdown.read(cx).source().contains(query))
                     .expect("compaction should retain searchable details")
@@ -10965,6 +11522,65 @@ pub(crate) mod tests {
                 "the visible compaction details should be highlighted",
             );
 
+            let replacement_query = "updated searchable details";
+            let replacement_source = if is_error {
+                Vec::new()
+            } else {
+                vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                    replacement_query,
+                ))]
+            };
+            let replacement = acp_v2::CompactionUpdate::new(compaction_id.clone(), status.clone());
+            let replacement = if is_error {
+                replacement.error(replacement_query)
+            } else {
+                replacement.summary(replacement_source.clone())
+            };
+            thread.update(cx, |thread, cx| {
+                thread.upsert_context_compaction_update(replacement, cx);
+            });
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                0,
+                "replacement should refresh search without changing the query"
+            );
+            assert!(markdown.read_with(cx, |markdown, _| markdown.search_highlights().is_empty()));
+            let replacement_markdown = thread.read_with(cx, |thread, cx| {
+                let AgentThreadEntry::ContextCompaction(compaction) = thread
+                    .entries()
+                    .get(entry_index)
+                    .expect("compaction entry should remain")
+                else {
+                    panic!("replacement should retain the compaction entry");
+                };
+                assert_eq!(compaction.summary.source_blocks(), replacement_source);
+                compaction
+                    .summary
+                    .markdowns()
+                    .chain(compaction.error.iter())
+                    .find(|markdown| markdown.read(cx).source().as_ref() == replacement_query)
+                    .expect("replacement should have searchable details")
+                    .clone()
+            });
+            search_bar.update_in(cx, |search_bar, window, cx| {
+                search_bar.query_editor.update(cx, |editor, cx| {
+                    editor.set_text(replacement_query, window, cx);
+                });
+                search_bar.update_matches(window, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                1
+            );
+            assert!(replacement_markdown.read_with(cx, |markdown, _| {
+                !markdown.search_highlights().is_empty()
+            }));
+
             thread_view.update_in(cx, |view, window, cx| {
                 view.toggle_compaction_expansion(entry_index, window, cx);
             });
@@ -10973,7 +11589,50 @@ pub(crate) mod tests {
                 search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
                 0
             );
-            assert!(markdown.read_with(cx, |markdown, _| markdown.search_highlights().is_empty()));
+            assert!(replacement_markdown.read_with(cx, |markdown, _| {
+                markdown.search_highlights().is_empty()
+            }));
+
+            thread_view.update_in(cx, |view, window, cx| {
+                view.toggle_compaction_expansion(entry_index, window, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                1
+            );
+            thread.update(cx, |thread, cx| {
+                thread.upsert_context_compaction_update(
+                    acp_v2::CompactionUpdate::new(compaction_id, status)
+                        .summary(None::<Vec<acp_v2::ContentBlock>>)
+                        .error(None::<String>),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                let AgentThreadEntry::ContextCompaction(compaction) = thread
+                    .entries()
+                    .get(entry_index)
+                    .expect("compaction entry should remain")
+                else {
+                    panic!("clearing details should retain the compaction entry");
+                };
+                assert!(compaction.summary.source_blocks().is_empty());
+                assert_eq!(compaction.summary.blocks().len(), 0);
+                assert!(compaction.error.is_none());
+            });
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                0,
+                "clearing visible details should refresh search"
+            );
+            assert!(replacement_markdown.read_with(cx, |markdown, _| {
+                markdown.search_highlights().is_empty()
+            }));
         }
     }
 
@@ -17139,13 +17798,13 @@ pub(crate) mod tests {
             Task::ready(Ok(()))
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             Task::ready(Ok(()))

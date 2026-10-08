@@ -72,3 +72,6 @@ rand.workspace = true
 tempfile.workspace = true
 util_macros.workspace = true
 path = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+which.workspace = true
