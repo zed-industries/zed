@@ -8484,6 +8484,62 @@ impl Editor {
         ))
     }
 
+    fn format_modifications(
+        &mut self,
+        _: &FormatModifications,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+
+        let Some(project) = self.project.as_ref().map(|e| e.clone()) else {
+            return None;
+        };
+
+        let Some(buffer) = self.active_buffer(cx) else {
+            return None;
+        };
+
+        fn mode_fn(_: &LanguageSettings) -> items::FormatTargetComputeMode {
+            items::FormatTargetComputeMode::Modifications
+        }
+
+        let buffers = HashSet::from_iter([buffer].into_iter());
+        let git_store = project.read(cx).git_store();
+        let format_targets =
+            items::compute_format_target_impl(mode_fn, &buffers, &self.buffer, git_store, cx);
+
+        if format_targets.is_empty() {
+            return None;
+        }
+
+        Some(
+            cx.spawn_in(window, async move |editor: WeakEntity<Editor>, cx| {
+                let tasks = editor.update_in(cx, |editor: &mut Editor, window, cx| {
+                    format_targets
+                        .into_iter()
+                        .filter(|target| matches!(target, FormatTarget::Ranges(_)))
+                        .map(|target| {
+                            editor.perform_format(
+                                project.clone(),
+                                FormatTrigger::Manual,
+                                target,
+                                window,
+                                cx,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })?;
+                for task in tasks {
+                    task.await?;
+                }
+                Ok(())
+            }),
+        )
+    }
+
     fn perform_format(
         &mut self,
         project: Entity<Project>,
