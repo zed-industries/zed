@@ -470,8 +470,6 @@ impl Element for UniformList {
                         scroll_offset = *updated_scroll_offset
                     }
 
-                    // In long lists, content offsets exceed the range where f32 represents
-                    // every pixel, so derive the visible items and their positions in f64.
                     let scroll_top = -scroll_offset.y.to_f64();
                     let item_height_f64 = item_height.to_f64();
                     let first_visible_element_ix =
