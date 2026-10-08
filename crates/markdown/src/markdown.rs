@@ -6483,6 +6483,105 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_hit_testing_outside_text_preserves_source_indices(cx: &mut TestAppContext) {
+        let empty = render_markdown("", cx);
+        assert_eq!(
+            empty.source_index_for_position(point(px(0.), px(0.))),
+            Err(0)
+        );
+
+        let rendered = render_markdown("First\n\nSecond", cx);
+        let mut lines = rendered.lines.iter();
+        let first = lines.next().expect("first paragraph should be rendered");
+        let second = lines.next().expect("second paragraph should be rendered");
+        let first_bounds = first.layout.bounds();
+        let second_bounds = second.layout.bounds();
+        assert!(first_bounds.bottom() < second_bounds.top());
+        for (position, source_index) in [
+            (
+                point(first_bounds.center().x, first_bounds.top() - px(1.)),
+                0,
+            ),
+            (
+                point(first_bounds.left() - px(1.), first_bounds.center().y),
+                0,
+            ),
+            (
+                point(first_bounds.right() + px(1.), first_bounds.center().y),
+                5,
+            ),
+            (
+                point(
+                    first_bounds.center().x,
+                    (first_bounds.bottom() + second_bounds.top()) / 2.,
+                ),
+                5,
+            ),
+            (
+                point(second_bounds.center().x, second_bounds.bottom() + px(1.)),
+                13,
+            ),
+        ] {
+            assert_eq!(
+                rendered.source_index_for_position(position),
+                Err(source_index)
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_hit_testing_mouse_selection_in_paragraphs_and_table_cells(cx: &mut TestAppContext) {
+        for (source, start_word, end_word, expected) in [
+            (
+                "Hello world\n\nSecond paragraph",
+                "Hello",
+                "world",
+                "Hello worl",
+            ),
+            (
+                "| first | second |\n| --- | --- |\n| alpha | beta |",
+                "alpha",
+                "beta",
+                "alpha\nbet",
+            ),
+        ] {
+            let (view, cx) = open_link_interaction_test_window(source, cx);
+            let markdown = view.read_with(cx, |view, _| view.markdown.clone());
+            let rendered = view
+                .read_with(cx, |view, _| view.rendered_text.borrow().clone())
+                .expect("markdown should be rendered");
+            let start = source
+                .find(start_word)
+                .expect("start word should be present");
+            let end =
+                source.find(end_word).expect("end word should be present") + end_word.len() - 1;
+            let start_position = rendered
+                .bounds_for_source_range(start..start + 1)
+                .into_iter()
+                .next()
+                .expect("first character should have bounds")
+                .center();
+            let end_position = rendered
+                .bounds_for_source_range(end..end + 1)
+                .into_iter()
+                .next()
+                .expect("last character should have bounds")
+                .center();
+
+            cx.simulate_mouse_down(start_position, MouseButton::Left, Modifiers::default());
+            cx.simulate_mouse_move(end_position, Some(MouseButton::Left), Modifiers::default());
+            cx.simulate_mouse_up(end_position, MouseButton::Left, Modifiers::default());
+            markdown.read_with(cx, |markdown, _| {
+                assert_eq!(markdown.selection.start..markdown.selection.end, start..end);
+                assert!(!markdown.selection.pending);
+                assert!(markdown.pressed_link.is_none());
+                assert_eq!(rendered.text_for_range(start..end), expected);
+            });
+            view.read_with(cx, |view, _| assert!(view.opened_urls.borrow().is_empty()));
+        }
+    }
+
+    #[gpui::test]
     fn test_table_columns_are_sized_to_their_content(cx: &mut TestAppContext) {
         fn cells(row: &str) -> impl Iterator<Item = &str> {
             row.trim().trim_matches('|').split('|')
