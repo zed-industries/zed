@@ -4576,7 +4576,7 @@ pub struct LspStore {
     semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
     buffer_reload_tasks: HashMap<BufferId, Task<anyhow::Result<()>>>,
-    memory_usage_task: Option<Task<()>>,
+    _memory_usage_task: Option<Task<()>>,
     next_hint_id: Arc<AtomicUsize>,
 }
 
@@ -4986,7 +4986,7 @@ impl LspStore {
             active_entry: None,
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
-            memory_usage_task: Some(cx.spawn(async move |this, cx| {
+            _memory_usage_task: Some(cx.spawn(async move |this, cx| {
                 let mut last_memory_usage = HashMap::default();
 
                 loop {
@@ -5140,7 +5140,7 @@ impl LspStore {
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
 
-            memory_usage_task: None,
+            _memory_usage_task: None,
         }
     }
 
