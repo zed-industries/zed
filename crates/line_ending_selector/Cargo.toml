@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/line_ending_selector.rs"
 doctest = false
+test = false
 
 [dependencies]
 editor.workspace = true

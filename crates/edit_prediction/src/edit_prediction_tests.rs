@@ -3,12 +3,12 @@ use clock::FakeSystemClock;
 use clock::ReplicaId;
 use cloud_api_types::{
     CreateLlmTokenResponse, LlmToken, Organization, OrganizationConfiguration,
-    OrganizationEditPredictionConfiguration, OrganizationId, SettledEditPrediction,
+    OrganizationEditPredictionConfiguration, OrganizationId, Plan, SettledEditPrediction,
     SubmitEditPredictionSettledBatchBody, SubmitEditPredictionSettledResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsRequestTrigger,
-    RejectEditPredictionsBody,
+    RejectEditPredictionsBody, UsageLimit,
     predict_edits_v3::{
         PredictEditsV3Request, PredictEditsV3Response, RawCompletionChoice, RawCompletionRequest,
         RawCompletionResponse, RawCompletionUsage,
@@ -17,7 +17,7 @@ use cloud_llm_client::{
 };
 use db::AppDatabase;
 use edit_prediction_types::EditPredictionRequestTrigger;
-use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings};
+use feature_flags::FeatureFlagsSettings;
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
     channel::{mpsc, oneshot},
@@ -767,8 +767,8 @@ fn make_collaborator_replica(
 ) -> (Entity<Buffer>, clock::Global) {
     let (state, version) =
         buffer.read_with(cx, |buffer, _cx| (buffer.to_proto(_cx), buffer.version()));
-    let collaborator = cx.new(|_cx| {
-        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap()
+    let collaborator = cx.new(|cx| {
+        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None, cx).unwrap()
     });
     (collaborator, version)
 }
@@ -2859,6 +2859,76 @@ fn set_test_organization(user_store: &Entity<UserStore>, cx: &mut TestAppContext
             )
         });
     });
+}
+
+#[gpui::test]
+async fn test_free_plan_edit_predictions_ended_for_zed_provider(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let user_store = ep_store.read_with(cx, |ep_store, _| ep_store.user_store.clone());
+
+    let set_plan_and_usage = |plan, amount, cx: &mut TestAppContext| {
+        user_store.update(cx, |user_store, cx| {
+            user_store.set_current_organization_plan_for_test(plan, cx);
+            user_store.update_edit_prediction_usage(
+                EditPredictionUsage(client::RequestUsage {
+                    limit: UsageLimit::Limited(0),
+                    amount,
+                }),
+                cx,
+            );
+            cx.emit(client::user::Event::PrivateUserInfoUpdated);
+        });
+        cx.run_until_parked();
+    };
+    let set_provider = |provider: Option<EditPredictionProvider>, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .provider = provider;
+                });
+            });
+        });
+    };
+    let excluded_from_plan = |cx: &mut TestAppContext| {
+        cx.read(|cx| zed_edit_predictions_excluded_from_plan(user_store.read(cx), cx))
+    };
+    let off_for_plan = |cx: &mut TestAppContext| {
+        cx.read(|cx| zed_edit_predictions_off_for_plan(user_store.read(cx), cx))
+    };
+    let notice_shown =
+        |cx: &mut TestAppContext| cx.read(|cx| FreePlanEditPredictionsEndedNotice::dismissed(cx));
+
+    set_provider(None, cx);
+    set_plan_and_usage(Plan::ZedPro, 250, cx);
+    assert!(!excluded_from_plan(cx));
+    assert!(!off_for_plan(cx));
+    assert!(!notice_shown(cx));
+
+    // Local Zeta models don't go through Zed's servers.
+    set_provider(Some(EditPredictionProvider::Ollama), cx);
+    set_plan_and_usage(Plan::ZedFree, 250, cx);
+    assert!(!excluded_from_plan(cx));
+    assert!(!notice_shown(cx));
+
+    // Free users who never accepted a prediction this period don't need to be told.
+    set_provider(None, cx);
+    set_plan_and_usage(Plan::ZedFree, 0, cx);
+    assert!(excluded_from_plan(cx));
+    assert!(off_for_plan(cx));
+    assert!(!notice_shown(cx));
+
+    // Explicitly choosing Zed keeps it on, so the status bar can explain why it isn't working.
+    set_provider(Some(EditPredictionProvider::Zed), cx);
+    assert!(excluded_from_plan(cx));
+    assert!(!off_for_plan(cx));
+
+    set_plan_and_usage(Plan::ZedFree, 250, cx);
+    assert!(notice_shown(cx));
 }
 
 #[gpui::test]

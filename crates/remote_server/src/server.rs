@@ -30,6 +30,8 @@ use paths::logs_dir;
 use project::{project_settings::ProjectSettings, trusted_worktrees};
 use proto::CrashReport;
 use release_channel::{AppCommitSha, AppVersion, RELEASE_CHANNEL, ReleaseChannel};
+#[cfg(unix)]
+use remote::command::RemoteCommand;
 use remote::{
     RemoteClient,
     json_log::LogRecord,
@@ -56,6 +58,14 @@ use std::{
     sync::{Arc, LazyLock},
     time::Instant,
 };
+#[cfg(unix)]
+use std::{
+    ffi::OsString,
+    os::{
+        fd::AsFd as _,
+        unix::{ffi::OsStrExt as _, process::CommandExt as _},
+    },
+};
 use thiserror::Error;
 use util::{ResultExt, command::new_command};
 
@@ -80,6 +90,8 @@ pub enum Commands {
         identifier: String,
     },
     Version,
+    #[cfg(unix)]
+    Exec,
 }
 
 pub fn run(command: Commands) -> anyhow::Result<()> {
@@ -104,6 +116,8 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
             identifier,
             reconnect,
         } => execute_proxy(identifier, reconnect).context("running proxy on the remote server"),
+        #[cfg(unix)]
+        Commands::Exec => execute_command(),
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
@@ -138,6 +152,105 @@ pub static VERSION: LazyLock<String> = LazyLock::new(|| match *RELEASE_CHANNEL {
         }
     }
 });
+
+#[cfg(unix)]
+fn execute_command() -> Result<()> {
+    let mut stdin = File::from(std::io::stdin().as_fd().try_clone_to_owned()?);
+    let descriptor = RemoteCommand::read(&mut stdin)?;
+    drop(stdin);
+
+    let working_dir = descriptor
+        .working_dir
+        .as_deref()
+        .map(|working_dir| shellexpand::tilde(working_dir).into_owned());
+    if let Some(working_dir) = &working_dir {
+        std::env::set_current_dir(working_dir)
+            .with_context(|| format!("Failed to change directory to {working_dir}"))?;
+    }
+    let error = exec_with_script_fallback(&descriptor, working_dir.as_deref(), |mut command| {
+        command.exec()
+    });
+    Err(error).with_context(|| format!("Failed to execute {}", descriptor.program))
+}
+
+#[cfg(unix)]
+fn exec_with_script_fallback(
+    descriptor: &RemoteCommand,
+    working_dir: Option<&str>,
+    mut exec: impl FnMut(std::process::Command) -> std::io::Error,
+) -> std::io::Error {
+    let error = exec(exec_command(
+        descriptor,
+        working_dir,
+        &descriptor.program,
+        &descriptor.args,
+    ));
+    if error.raw_os_error() != Some(libc::ENOEXEC) {
+        return error;
+    }
+    let path = descriptor
+        .env
+        .get("PATH")
+        .map(OsString::from)
+        .or_else(|| std::env::var_os("PATH"));
+    for candidate in script_candidates(&descriptor.program, path.as_deref()) {
+        let candidate_error = exec(exec_command(
+            descriptor,
+            working_dir,
+            &candidate,
+            &descriptor.args,
+        ));
+        match candidate_error.raw_os_error() {
+            Some(libc::ENOEXEC) => {
+                let args = std::iter::once(candidate.into_os_string())
+                    .chain(descriptor.args.iter().map(OsString::from))
+                    .collect::<Vec<_>>();
+                return exec(exec_command(descriptor, working_dir, "/bin/sh", &args));
+            }
+            Some(libc::ENOENT | libc::ENOTDIR | libc::EACCES) => {}
+            _ => return candidate_error,
+        }
+    }
+    error
+}
+
+#[cfg(unix)]
+fn script_candidates(program: &str, path: Option<&OsStr>) -> Vec<PathBuf> {
+    let explicit = |candidate: PathBuf| {
+        if candidate.is_absolute() {
+            candidate
+        } else {
+            Path::new(".").join(candidate)
+        }
+    };
+    if program.contains('/') {
+        return vec![explicit(PathBuf::from(program))];
+    }
+    path.unwrap_or(OsStr::new(DEFAULT_PATH))
+        .as_bytes()
+        .split(|byte| *byte == b':')
+        .map(|directory| explicit(Path::new(OsStr::from_bytes(directory)).join(program)))
+        .collect()
+}
+
+#[cfg(unix)]
+const DEFAULT_PATH: &str = "/usr/local/bin:/bin:/usr/bin";
+
+#[cfg(unix)]
+fn exec_command(
+    descriptor: &RemoteCommand,
+    working_dir: Option<&str>,
+    program: impl AsRef<OsStr>,
+    args: impl IntoIterator<Item = impl AsRef<OsStr>>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    if let Some(working_dir) = working_dir {
+        command.env("PWD", working_dir);
+    }
+    command.envs(&descriptor.env);
+    command
+}
 
 fn init_logging_proxy() {
     env_logger::builder()
@@ -281,8 +394,6 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         let thread_name = current_thread.name().unwrap_or("<unnamed>");
 
         let msg = format!("thread '{thread_name}' panicked at {location}:\n{message}\n{backtrace}");
-        // NOTE: This log never reaches the client, as the communication is handled on a main thread task
-        // which will never run once we panic.
         log::error!("{msg}");
         old_hook(info);
     }));
@@ -460,76 +571,74 @@ fn start_server(
                 break;
             };
 
+            let _log_task = cx.background_spawn({
+                let log_rx = log_rx.clone();
+                async move {
+                    while let Ok(log_message) = log_rx.recv().await {
+                        if let Err(error) = stderr_stream.write_all(&log_message).await {
+                            log::error!("failed to write log message to stderr: {error:?}");
+                            break;
+                        }
+                        if let Err(error) = stderr_stream.flush().await {
+                            log::error!("failed to flush stderr stream: {error:?}");
+                            break;
+                        }
+                    }
+                }
+            });
+
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
 
-            let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
-            cx.background_spawn(async move {
+            let stdin_task = cx.background_spawn({
+                let incoming_tx = incoming_tx.clone();
+                async move {
+                    loop {
+                        match read_message(&mut stdin_stream, &mut input_buffer).await {
+                            Ok(msg) => {
+                                if let Err(error) = incoming_tx.unbounded_send(msg) {
+                                    log::error!("failed to send message to application: {error:?}. exiting.");
+                                    return Err(anyhow!(error));
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!("stdin read failed: {error:?}");
+                                break;
+                            }
+                        }
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            let stdout_task = async {
                 loop {
-                    match read_message(&mut stdin_stream, &mut input_buffer).await {
-                        Ok(msg) => {
-                            if (stdin_msg_tx.send(msg).await).is_err() {
-                                log::info!("stdin message channel closed, stopping stdin reader");
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            log::warn!("stdin read failed: {error:?}");
-                            break;
-                        }
+                    let Some(message) = outgoing_rx.next().await else {
+                        log::error!("stdout handler, no message");
+                        break;
+                    };
+
+                    if let Err(error) =
+                        write_message(&mut stdout_stream, &mut output_buffer, message).await
+                    {
+                        log::error!("failed to write stdout message: {:?}", error);
+                        break;
+                    }
+                    if let Err(error) = stdout_stream.flush().await {
+                        log::error!("failed to flush stdout message: {:?}", error);
+                        break;
                     }
                 }
-            }).detach();
+            };
 
-            loop {
-
-                select_biased! {
-                    _ = app_quit_rx.next().fuse() => {
-                        return anyhow::Ok(());
-                    }
-
-                    stdin_message = stdin_msg_rx.next().fuse() => {
-                        let Some(message) = stdin_message else {
-                            log::warn!("error reading message on stdin, dropping connection.");
-                            break;
-                        };
-                        if let Err(error) = incoming_tx.unbounded_send(message) {
-                            log::error!("failed to send message to application: {error:?}. exiting.");
-                            return Err(anyhow!(error));
-                        }
-                    }
-
-                    outgoing_message  = outgoing_rx.next().fuse() => {
-                        let Some(message) = outgoing_message else {
-                            log::error!("stdout handler, no message");
-                            break;
-                        };
-
-                        if let Err(error) =
-                            write_message(&mut stdout_stream, &mut output_buffer, message).await
-                        {
-                            log::error!("failed to write stdout message: {:?}", error);
-                            break;
-                        }
-                        if let Err(error) = stdout_stream.flush().await {
-                            log::error!("failed to flush stdout message: {:?}", error);
-                            break;
-                        }
-                    }
-
-                    log_message = log_rx.recv().fuse() => {
-                        if let Ok(log_message) = log_message {
-                            if let Err(error) = stderr_stream.write_all(&log_message).await {
-                                log::error!("failed to write log message to stderr: {:?}", error);
-                                break;
-                            }
-                            if let Err(error) = stderr_stream.flush().await {
-                                log::error!("failed to flush stderr stream: {:?}", error);
-                                break;
-                            }
-                        }
-                    }
+            select_biased! {
+                _ = app_quit_rx.next().fuse() => {
+                    return anyhow::Ok(());
                 }
+                result = stdin_task.fuse() => {
+                    result?;
+                }
+                _ = stdout_task.fuse() => {}
             }
         }
         anyhow::Ok(())
@@ -677,7 +786,7 @@ pub fn execute_run(
         json_schema_store::init(cx);
 
         let project = cx.new(|cx| {
-            let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
+            let fs = RealFs::new(None, cx.background_executor().clone());
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 
             let proxy_url = read_proxy_settings(cx);
@@ -1374,6 +1483,139 @@ fn is_file_in_use(file_name: &OsStr) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    mod unix {
+        use super::*;
+        use gpui::TestAppContext;
+        use proto::EnvelopedMessage as _;
+
+        // Windows did not reproduce socket backpressure.
+        #[gpui::test]
+        async fn rpc_responds_when_stderr_is_blocked(cx: &mut TestAppContext) {
+            cx.executor().allow_parking();
+
+            let temp_dir = tempfile::tempdir().expect("create socket directory");
+            let stdin_path = temp_dir.path().join("stdin.sock");
+            let stdout_path = temp_dir.path().join("stdout.sock");
+            let stderr_path = temp_dir.path().join("stderr.sock");
+            let listeners =
+                ServerListeners::new(stdin_path.clone(), stdout_path.clone(), stderr_path.clone())
+                    .expect("bind server sockets");
+
+            let (log_tx, log_rx) = async_channel::unbounded();
+
+            let handler = cx.new(|_| ());
+            let server = cx.update(|cx| start_server(listeners, log_rx, cx, false));
+            server.add_request_handler::<proto::Ping, _, _, _>(
+                handler.downgrade(),
+                |_, _, _| async { Ok(proto::Ack {}) },
+            );
+
+            select! {
+                _ = async {
+                    let (mut stdin, mut stdout, mut stderr) = futures::future::try_join3(
+                        UnixStream::connect(&stdin_path),
+                        UnixStream::connect(&stdout_path),
+                        UnixStream::connect(&stderr_path),
+                    ).await.expect("connect server sockets");
+
+                    log_tx
+                        .try_send(vec![b'x'; 16 * 1024 * 1024])
+                        .expect("queue a log larger than the socket buffer");
+
+                    stderr
+                        .read_exact(&mut [0])
+                        .await
+                        .expect("wait until log forwarding starts");
+
+                    let mut buffer = Vec::new();
+                    write_message(
+                        &mut stdin,
+                        &mut buffer,
+                        proto::Ping {}.into_envelope(1, None, None),
+                    ).await.expect("send ping");
+
+                    loop {
+                        let response = read_message(&mut stdout, &mut buffer)
+                            .await
+                            .expect("read server message");
+
+                        if response.responding_to == Some(1) {
+                            assert!(matches!(response.payload, Some(proto::envelope::Payload::Ack(_))));
+                            break;
+                        }
+                    }
+                }.fuse() => {}
+
+                _ = cx.executor().timer(std::time::Duration::from_secs(2)).fuse() => {
+                    panic!("RPC response blocked by an unread log stream");
+                }
+            }
+        }
+
+        #[gpui::test]
+        async fn ping_is_handled_while_stdout_is_blocked(cx: &mut TestAppContext) {
+            cx.executor().allow_parking();
+
+            let temp_dir = tempfile::tempdir().expect("create socket directory");
+            let stdin_path = temp_dir.path().join("stdin.sock");
+            let stdout_path = temp_dir.path().join("stdout.sock");
+            let stderr_path = temp_dir.path().join("stderr.sock");
+            let listeners =
+                ServerListeners::new(stdin_path.clone(), stdout_path.clone(), stderr_path.clone())
+                    .expect("bind server sockets");
+
+            let (_log_tx, log_rx) = async_channel::unbounded();
+            let (ping_tx, mut ping_rx) = mpsc::unbounded();
+            let handler = cx.new(|_| ());
+            let server = cx.update(|cx| start_server(listeners, log_rx, cx, false));
+            server.add_request_handler::<proto::Ping, _, _, _>(
+                handler.downgrade(),
+                move |_, _, _| {
+                    ping_tx.unbounded_send(()).expect("report handled ping");
+                    async { Ok(proto::Ack {}) }
+                },
+            );
+
+            select! {
+                _ = async {
+                    let (mut stdin, mut stdout, _stderr) = futures::future::try_join3(
+                        UnixStream::connect(&stdin_path),
+                        UnixStream::connect(&stdout_path),
+                        UnixStream::connect(&stderr_path),
+                    ).await.expect("connect server sockets");
+
+                    let mut buffer = Vec::new();
+                    read_message(&mut stdout, &mut buffer)
+                        .await
+                        .expect("read server startup message");
+
+                    server.send(proto::CreateBufferForPeer {
+                        variant: Some(proto::create_buffer_for_peer::Variant::State(proto::BufferState {
+                            base_text: "x".repeat(16 * 1024 * 1024),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    }).expect("queue a buffer larger than the socket buffer");
+
+                    stdout.read_exact(&mut [0]).await.expect("wait until buffer forwarding starts");
+
+                    write_message(
+                        &mut stdin,
+                        &mut buffer,
+                        proto::Ping {}.into_envelope(1, None, None),
+                    ).await.expect("send ping");
+
+                    ping_rx.next().await.expect("ping handled without draining stdout");
+                }.fuse() => {}
+
+                _ = cx.executor().timer(std::time::Duration::from_secs(2)).fuse() => {
+                    panic!("Ping handling blocked by an unread stdout stream");
+                }
+            }
+        }
+    }
+
     #[test]
     fn rotated_remote_log_path_uses_numbered_log_suffix() {
         assert_eq!(
@@ -1427,5 +1669,138 @@ mod tests {
             std::fs::read(&log_path).expect("read active log"),
             new_contents
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn script_candidates_never_start_with_a_dash() {
+        assert_eq!(
+            script_candidates("agent", Some(OsStr::new("/usr/bin:bin::-bin"))),
+            [
+                PathBuf::from("/usr/bin/agent"),
+                PathBuf::from("./bin/agent"),
+                PathBuf::from("./agent"),
+                PathBuf::from("./-bin/agent"),
+            ]
+        );
+        assert_eq!(
+            script_candidates("-a", Some(OsStr::new("/opt/bin"))),
+            [PathBuf::from("/opt/bin/-a")]
+        );
+        assert_eq!(
+            script_candidates("-x/agent", Some(OsStr::new("/opt/bin"))),
+            [PathBuf::from("./-x/agent")]
+        );
+        assert_eq!(
+            script_candidates("/srv/agent", Some(OsStr::new("/opt/bin"))),
+            [PathBuf::from("/srv/agent")]
+        );
+        assert_eq!(
+            script_candidates("agent", Some(OsStr::from_bytes(b"/not-utf8-\xff"))),
+            [PathBuf::from(OsStr::from_bytes(b"/not-utf8-\xff/agent"))]
+        );
+        assert_eq!(
+            script_candidates("agent", None),
+            [
+                PathBuf::from("/usr/local/bin/agent"),
+                PathBuf::from("/bin/agent"),
+                PathBuf::from("/usr/bin/agent"),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn script_fallback_runs_option_like_wrapper_instead_of_its_arguments() {
+        use std::cell::RefCell;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().expect("create temp dir");
+        let missing_directory = directory.path().join("missing");
+        let binary_directory = directory.path().join("bin");
+        std::fs::create_dir(&binary_directory).expect("create bin dir");
+        let wrapper = binary_directory.join("-a");
+        std::fs::write(
+            &wrapper,
+            "printf 'WRAPPER_RAN|%s|%s|%s|%s\\n' \"$TOKEN\" \"$#\" \"$1\" \"$2\"\n",
+        )
+        .expect("write wrapper");
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod wrapper");
+        let descriptor = RemoteCommand {
+            program: String::from("-a"),
+            args: vec![
+                String::from("spoofed-argv0"),
+                String::from("/usr/bin/printf"),
+                String::from("OPTION_INTERPRETED"),
+            ],
+            env: HashMap::from_iter([
+                (String::from("TOKEN"), String::from("controlled")),
+                (
+                    String::from("PATH"),
+                    format!(
+                        "{}:{}",
+                        missing_directory.display(),
+                        binary_directory.display()
+                    ),
+                ),
+            ]),
+            working_dir: None,
+        };
+
+        let attempts = RefCell::new(Vec::new());
+        let shell_output = RefCell::new(None);
+        let error = exec_with_script_fallback(&descriptor, None, |command| {
+            let program = command.get_program().to_owned();
+            if program == "/bin/sh" {
+                let output = smol::block_on(smol::process::Command::from(command).output())
+                    .expect("run /bin/sh");
+                *shell_output.borrow_mut() = Some(output);
+                return std::io::Error::from_raw_os_error(libc::EIO);
+            }
+            attempts.borrow_mut().push(program.clone());
+            if program == "-a" || program == wrapper.as_os_str() {
+                std::io::Error::from_raw_os_error(libc::ENOEXEC)
+            } else {
+                std::io::Error::from_raw_os_error(libc::ENOENT)
+            }
+        });
+        assert_eq!(error.raw_os_error(), Some(libc::EIO));
+        assert_eq!(
+            attempts.into_inner(),
+            [
+                OsString::from("-a"),
+                missing_directory.join("-a").into_os_string(),
+                wrapper.into_os_string(),
+            ]
+        );
+        let shell_output = shell_output.into_inner().expect("shell fallback ran");
+        assert_eq!(
+            String::from_utf8_lossy(&shell_output.stderr),
+            "",
+            "{shell_output:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&shell_output.stdout),
+            "WRAPPER_RAN|controlled|3|spoofed-argv0|/usr/bin/printf\n"
+        );
+        assert_eq!(shell_output.status.code(), Some(0));
+
+        let attempts = RefCell::new(0);
+        let error = exec_with_script_fallback(&descriptor, None, |_| {
+            *attempts.borrow_mut() += 1;
+            std::io::Error::from_raw_os_error(libc::EACCES)
+        });
+        assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+        assert_eq!(attempts.into_inner(), 1);
+
+        let error = exec_with_script_fallback(&descriptor, None, |command| {
+            if command.get_program() == "-a" {
+                std::io::Error::from_raw_os_error(libc::ENOEXEC)
+            } else {
+                std::io::Error::from_raw_os_error(libc::ELOOP)
+            }
+        });
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
     }
 }

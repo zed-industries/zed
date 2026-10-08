@@ -45,6 +45,9 @@ impl Editor {
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
+        if self.cycle_inline_input_history(InlineInputHistoryDirection::Older, window, cx) {
+            return;
+        }
 
         if self.mode.is_single_line() {
             cx.propagate();
@@ -260,6 +263,9 @@ impl Editor {
 
     pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         if self.take_rename(true, window, cx).is_some() {
+            return;
+        }
+        if self.cycle_inline_input_history(InlineInputHistoryDirection::Newer, window, cx) {
             return;
         }
 
@@ -1403,7 +1409,8 @@ impl Editor {
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
         Some(cx.spawn_in(window, async move |editor, cx| {
-            let _cleanup = cx.on_drop(&editor, move |editor, _| {
+            let _cleanup = cx.on_drop(&editor, move |editor, cx| {
+                let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
                 if let Ok(i) = editor
                     .find_all_references_task_sources
                     .binary_search_by(|anchor| anchor.cmp(&head_anchor, &multi_buffer_snapshot))
@@ -2062,17 +2069,12 @@ impl Editor {
         cx: &mut Context<Self>,
         offset: i8,
     ) -> Task<Result<()>> {
-        let editor_snapshot = self.snapshot(window, cx);
-
         // We don't care about multi-buffer symbols
-        if !editor_snapshot.is_singleton() {
+        if !self.buffer.read(cx).is_singleton() {
             return Task::ready(Ok(()));
         }
 
-        let cursor_offset = self
-            .selections
-            .newest::<MultiBufferOffset>(&editor_snapshot.display_snapshot)
-            .head();
+        let cursor = self.selections.newest_anchor().head();
 
         cx.spawn_in(window, async move |editor, wcx| -> Result<()> {
             let Ok(Some(remote_id)) = editor.update(wcx, |ed, cx| {
@@ -2085,12 +2087,14 @@ impl Editor {
             let task = editor.update(wcx, |ed, cx| ed.buffer_outline_items(remote_id, cx))?;
             let outline_items: Vec<OutlineItem<text::Anchor>> = task.await;
 
-            let multi_snapshot = editor_snapshot.buffer();
+            let multi_snapshot =
+                editor.read_with(wcx, |editor, cx| editor.buffer.read(cx).snapshot(cx))?;
+            let cursor_offset = cursor.to_offset(&multi_snapshot);
             let buffer_range = |range: &Range<_>| {
                 Some(
                     multi_snapshot
                         .buffer_anchor_range_to_anchor_range(range.clone())?
-                        .to_offset(multi_snapshot),
+                        .to_offset(&multi_snapshot),
                 )
             };
 
@@ -2353,10 +2357,11 @@ impl Editor {
             .iter()
             .flat_map(|selection| {
                 snapshot
-                    .range_to_buffer_ranges(selection.range())
-                    .into_iter()
-                    .filter_map(|(buffer_snapshot, range, _)| {
-                        snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
+                    .range_to_buffer_ranges_with_deleted_hunks(selection.range())
+                    .filter_map(|(buffer_snapshot, range, deleted_hunk_anchor)| {
+                        deleted_hunk_anchor.or_else(|| {
+                            snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
+                        })
                     })
             })
             .collect::<Vec<_>>();

@@ -3,12 +3,12 @@ use crate::NoopTextSystem;
 #[cfg(any(test, feature = "test-support"))]
 use crate::PathPromptOptions;
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, Platform, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SharedString,
-    SourceMetadata, SystemNotification, SystemNotificationResponse, Task, TestDisplay, TestWindow,
-    ThermalState, WindowAppearance, WindowParams, size,
+    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
+    DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform,
+    PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SharedString, SourceMetadata, SystemNotification, SystemNotificationResponse, Task,
+    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
@@ -16,10 +16,14 @@ use collections::VecDeque;
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 /// TestPlatform implements the Platform trait for use in tests.
@@ -28,7 +32,8 @@ pub(crate) struct TestPlatform {
     foreground_executor: ForegroundExecutor,
 
     pub(crate) active_window: RefCell<Option<TestWindow>>,
-    active_display: Rc<dyn PlatformDisplay>,
+    displays: RefCell<Vec<TestDisplay>>,
+    displays_changed_callback: RefCell<Option<Box<dyn FnMut()>>>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -43,8 +48,13 @@ pub(crate) struct TestPlatform {
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart:
         RefCell<Option<oneshot::Sender<(Option<PathBuf>, Vec<std::ffi::OsString>)>>>,
-    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    idle_sleep_prevention_count: Arc<AtomicUsize>,
+    idle_sleep_prevention_delay: Cell<Duration>,
+    idle_sleep_prevention_fails: Cell<bool>,
+    headless_renderer_factory:
+        Option<Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>>,
     weak: Weak<Self>,
+    menus: RefCell<Vec<OwnedMenu>>,
 }
 
 #[derive(Clone)]
@@ -131,12 +141,63 @@ impl TestPlatform {
         Self::with_platform(executor, foreground_executor, text_system, None)
     }
 
+    pub(crate) fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.connect_display(display_id, refresh_interval);
+        self.report_displays_changed();
+    }
+
+    /// Adds a display without telling App yet, as when the platform's
+    /// notifications about a window arrive before those about displays.
+    pub(crate) fn connect_display(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        let mut display = TestDisplay::with_id(display_id);
+        display.refresh_interval = refresh_interval;
+        self.displays.borrow_mut().push(display);
+    }
+
+    pub(crate) fn simulate_display_removed(&self, display_id: DisplayId) {
+        self.displays
+            .borrow_mut()
+            .retain(|display| display.id() != display_id);
+        self.report_displays_changed();
+    }
+
+    pub(crate) fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        for display in self.displays.borrow_mut().iter_mut() {
+            if display.id() == display_id {
+                display.refresh_interval = refresh_interval;
+            }
+        }
+        self.report_displays_changed();
+    }
+
+    fn report_displays_changed(&self) {
+        let callback = self.displays_changed_callback.borrow_mut().take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.displays_changed_callback
+                .borrow_mut()
+                .get_or_insert(callback);
+        }
+    }
+
     pub fn with_platform(
         executor: BackgroundExecutor,
         foreground_executor: ForegroundExecutor,
         text_system: Arc<dyn PlatformTextSystem>,
         headless_renderer_factory: Option<
-            Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>,
+            Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>,
         >,
     ) -> Rc<Self> {
         Rc::new_cyclic(|weak| TestPlatform {
@@ -146,7 +207,8 @@ impl TestPlatform {
             prompts: Default::default(),
             screen_capture_sources: Default::default(),
             active_cursor: Default::default(),
-            active_display: Rc::new(TestDisplay::new()),
+            displays: RefCell::new(vec![TestDisplay::new()]),
+            displays_changed_callback: Default::default(),
             active_window: Default::default(),
             expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
@@ -154,11 +216,15 @@ impl TestPlatform {
             current_primary_item: Mutex::new(None),
             #[cfg(target_os = "macos")]
             current_find_pasteboard_item: Mutex::new(None),
+            idle_sleep_prevention_count: Arc::new(AtomicUsize::new(0)),
+            idle_sleep_prevention_delay: Cell::new(Duration::ZERO),
+            idle_sleep_prevention_fails: Cell::new(false),
             weak: weak.clone(),
             opened_url: Default::default(),
             system_notifications: Default::default(),
             text_system,
             headless_renderer_factory,
+            menus: Default::default(),
         })
     }
 
@@ -307,6 +373,21 @@ impl TestPlatform {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn active_idle_sleep_preventions(&self) -> usize {
+        self.idle_sleep_prevention_count.load(Ordering::SeqCst)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_idle_sleep_prevention_delay(&self, delay: Duration) {
+        self.idle_sleep_prevention_delay.set(delay);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_idle_sleep_prevention_fails(&self, fails: bool) {
+        self.idle_sleep_prevention_fails.set(fails);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn app_identity(&self) -> Option<(SharedString, SharedString)> {
         self.system_notifications.borrow().app_identity.clone()
     }
@@ -375,6 +456,32 @@ impl Platform for TestPlatform {
         ThermalState::Nominal
     }
 
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        let count = self.idle_sleep_prevention_count.clone();
+        let fails = self.idle_sleep_prevention_fails.get();
+        let reason = reason.to_owned();
+        let acquire = move || {
+            if fails {
+                anyhow::bail!("Idle sleep prevention for {reason:?} is set to fail in this test");
+            }
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok(ActivityGuard::new(move || {
+                count.fetch_sub(1, Ordering::SeqCst);
+            }))
+        };
+
+        let delay = self.idle_sleep_prevention_delay.get();
+        if delay.is_zero() {
+            Task::ready(acquire())
+        } else {
+            let delay = self.background_executor.timer(delay);
+            self.foreground_executor.spawn(async move {
+                delay.await;
+                acquire()
+            })
+        }
+    }
+
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
         unimplemented!()
     }
@@ -404,11 +511,22 @@ impl Platform for TestPlatform {
     }
 
     fn displays(&self) -> Vec<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        vec![self.active_display.clone()]
+        self.displays
+            .borrow()
+            .iter()
+            .map(|display| Rc::new(display.clone()) as Rc<dyn PlatformDisplay>)
+            .collect()
     }
 
     fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        Some(self.active_display.clone())
+        self.displays
+            .borrow()
+            .first()
+            .map(|display| Rc::new(display.clone()) as Rc<dyn PlatformDisplay>)
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        *self.displays_changed_callback.borrow_mut() = Some(callback);
     }
 
     fn is_screen_capture_supported(&self) -> bool {
@@ -441,12 +559,16 @@ impl Platform for TestPlatform {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
-        let renderer = self.headless_renderer_factory.as_ref().and_then(|f| f());
+        let renderer = match self.headless_renderer_factory.as_ref() {
+            Some(factory) => factory()?,
+            None => None,
+        };
         let window = TestWindow::new(
             handle,
             params,
             self.weak.clone(),
-            self.active_display.clone(),
+            self.primary_display()
+                .unwrap_or_else(|| Rc::new(TestDisplay::new())),
             renderer,
         );
         Ok(Box::new(window))
@@ -531,6 +653,8 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 
     fn set_app_identity(&self, identifier: &str, name: &str) {
@@ -573,7 +697,14 @@ impl Platform for TestPlatform {
         self.system_notifications.borrow_mut().response_callback = Some(callback);
     }
 
-    fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
+    fn set_menus(&self, menus: Vec<crate::Menu>, _keymap: &Keymap) {
+        *self.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect()
+    }
+
+    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        Some(self.menus.borrow().clone())
+    }
+
     fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
 
     fn add_recent_document(&self, _paths: &Path) {}
