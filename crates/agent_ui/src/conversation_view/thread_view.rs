@@ -454,7 +454,7 @@ fn highlight_code_runs(
 
     let mut runs = Vec::new();
     let mut offset = 0;
-    let highlights = language.highlight_text_resolved(&Rope::from(code), 0..code.len());
+    let highlights = language.highlight_text_resolved(code, 0..code.len());
     for (range, highlight_id) in highlights.runs.iter() {
         if range.start > offset {
             runs.push(code_text_style.to_run(range.start - offset));

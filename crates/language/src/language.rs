@@ -49,6 +49,7 @@ pub use language_core::{
 
 use futures::future::FutureExt as _;
 use language_core::highlight_cache::{MAX_TEXT_HIGHLIGHT_ENTRY_BYTES, TextHighlightKey};
+use language_core::highlight_map::HighlightCaptureRef;
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,
     BracketsPatternConfig, CodeLabel, CodeLabelBuilder, DebugVariablesConfig, DebuggerTextObject,
@@ -78,13 +79,14 @@ use std::{
     ffi::OsStr,
     fmt::Debug,
     hash::Hash,
-    mem,
+    iter, mem,
     ops::{DerefMut, Range},
     path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
 };
-use syntax_map::{QueryCursorHandle, SyntaxSnapshot, flattened_highlight_regions};
+use streaming_iterator::StreamingIterator as _;
+use syntax_map::{QueryCursorHandle, TextProvider, flatten_capture_regions};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider};
 pub use text_diff::{
@@ -1130,18 +1132,18 @@ impl Language {
         self.toolchain.clone()
     }
 
-    pub fn highlight_text<'a>(
-        self: &'a Arc<Self>,
-        text: &'a Rope,
+    pub fn highlight_text(
+        self: &Arc<Self>,
+        text: &(impl HighlightSource + ?Sized),
         range: Range<usize>,
     ) -> Vec<(Range<usize>, HighlightId)> {
-        let highlights = self.highlight_text_resolved(text, 0..text.len());
+        let highlights = self.highlight_text_resolved(text, 0..text.source_len());
         highlight_runs_in_range(&highlights.runs, range).collect()
     }
 
     pub fn highlight_text_resolved(
         self: &Arc<Self>,
-        text: &Rope,
+        text: &(impl HighlightSource + ?Sized),
         range: Range<usize>,
     ) -> ResolvedHighlights {
         let Some(grammar) = &self.grammar else {
@@ -1150,27 +1152,28 @@ impl Language {
         let Some(highlights_config) = &grammar.highlights_config else {
             return ResolvedHighlights::default();
         };
-        let highlights = if text.len() > MAX_TEXT_HIGHLIGHT_ENTRY_BYTES {
-            self.compute_resolved_highlights(grammar, text)
+        let text_len = text.source_len();
+        let highlights = if text_len > MAX_TEXT_HIGHLIGHT_ENTRY_BYTES {
+            Self::compute_resolved_highlights(grammar, &highlights_config.query, text)
         } else {
-            let key = TextHighlightKey::new(text.chunks(), text.len());
+            let key = TextHighlightKey::new(text.source_chunks(), text_len);
             match highlights_config
                 .text_highlight_cache
-                .get(&key, text.chunks())
+                .get(&key, text.source_chunks())
             {
                 Some(highlights) => highlights,
                 None => {
-                    let mut cached_text = String::with_capacity(text.len());
-                    cached_text.extend(text.chunks());
+                    let mut cached_text = String::with_capacity(text_len);
+                    cached_text.extend(text.source_chunks());
                     highlights_config.text_highlight_cache.insert(
                         key,
                         cached_text,
-                        self.compute_resolved_highlights(grammar, text),
+                        Self::compute_resolved_highlights(grammar, &highlights_config.query, text),
                     )
                 }
             }
         };
-        if range.start == 0 && range.end >= text.len() {
+        if range.start == 0 && range.end >= text_len {
             return highlights;
         }
         ResolvedHighlights {
@@ -1180,21 +1183,31 @@ impl Language {
     }
 
     fn compute_resolved_highlights(
-        self: &Arc<Self>,
         grammar: &Arc<Grammar>,
-        text: &Rope,
+        query: &tree_sitter::Query,
+        text: &(impl HighlightSource + ?Sized),
     ) -> ResolvedHighlights {
         let highlight_map = grammar.highlight_map();
-        let tree = parse_text(grammar, text, None);
-        let captures =
-            SyntaxSnapshot::single_tree_captures(0..text.len(), text, &tree, self, |grammar| {
-                grammar
-                    .highlights_config
-                    .as_ref()
-                    .map(|config| &config.query)
+        let text_len = text.source_len();
+        let tree = text.parse(grammar);
+        let regions = with_query_cursor(|cursor| {
+            cursor.set_byte_range(0..text_len);
+            let mut captures = cursor.captures(query, tree.root_node(), text.text_provider());
+            let capture_refs = iter::from_fn(move || {
+                let (query_match, capture_index) = captures.next()?;
+                let capture = query_match.captures[*capture_index];
+                Some((
+                    capture.node.byte_range(),
+                    HighlightCaptureRef {
+                        grammar_index: 0,
+                        capture_id: CaptureId(capture.index),
+                    },
+                ))
             });
+            flatten_capture_regions(0..text_len, capture_refs)
+        });
         let mut runs = Vec::<(Range<usize>, HighlightId)>::new();
-        for region in flattened_highlight_regions(captures, 0..text.len()) {
+        for region in regions {
             let highlight_id = region
                 .stack
                 .iter()
@@ -1451,6 +1464,54 @@ impl Debug for Language {
         f.debug_struct("Language")
             .field("name", &self.config.name)
             .finish()
+    }
+}
+
+pub trait HighlightSource {
+    fn source_len(&self) -> usize;
+    fn source_chunks(&self) -> impl Iterator<Item = &str>;
+    fn parse(&self, grammar: &Grammar) -> Tree;
+    fn text_provider<'a>(&'a self) -> impl tree_sitter::TextProvider<&'a [u8]> + 'a;
+}
+
+impl HighlightSource for str {
+    fn source_len(&self) -> usize {
+        self.len()
+    }
+
+    fn source_chunks(&self) -> impl Iterator<Item = &str> {
+        iter::once(self)
+    }
+
+    fn parse(&self, grammar: &Grammar) -> Tree {
+        with_parser(|parser| {
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse(self, None).unwrap()
+        })
+    }
+
+    fn text_provider<'a>(&'a self) -> impl tree_sitter::TextProvider<&'a [u8]> + 'a {
+        self.as_bytes()
+    }
+}
+
+impl HighlightSource for Rope {
+    fn source_len(&self) -> usize {
+        self.len()
+    }
+
+    fn source_chunks(&self) -> impl Iterator<Item = &str> {
+        self.chunks()
+    }
+
+    fn parse(&self, grammar: &Grammar) -> Tree {
+        parse_text(grammar, self, None)
+    }
+
+    fn text_provider<'a>(&'a self) -> impl tree_sitter::TextProvider<&'a [u8]> + 'a {
+        TextProvider(self)
     }
 }
 
@@ -1847,6 +1908,11 @@ mod tests {
             Arc::ptr_eq(&highlights.runs, &memoized.runs),
             "repeated highlighting of the same text must be memoized"
         );
+        let memoized_str = language.highlight_text_resolved(code, 0..code.len());
+        assert!(
+            Arc::ptr_eq(&highlights.runs, &memoized_str.runs),
+            "str and rope sources of the same text must share memoized highlights"
+        );
         let partial = language.highlight_text_resolved(&Rope::from(code), 0..2);
         assert!(
             !Arc::ptr_eq(&highlights.runs, &partial.runs),
@@ -1924,6 +1990,14 @@ mod tests {
             first_highlights.runs.as_ref(),
             small_highlights.runs.as_ref(),
             "texts over the cache entry cap must still be highlighted"
+        );
+        assert_eq!(
+            language
+                .highlight_text_resolved(oversized_code.as_str(), 0..oversized_code.len())
+                .runs
+                .as_ref(),
+            first_highlights.runs.as_ref(),
+            "str and rope sources must be highlighted identically"
         );
         let second_highlights =
             language.highlight_text_resolved(&oversized_rope, 0..oversized_code.len());

@@ -2427,7 +2427,7 @@ impl RenderOnce for SyntaxHighlightedText {
 
         let highlights = self
             .language
-            .highlight_text_resolved(&text.as_ref().into(), 0..text.len());
+            .highlight_text_resolved(text.as_str(), 0..text.len());
         let mut runs = Vec::with_capacity(highlights.runs.len());
         let mut offset = 0;
 

@@ -1674,20 +1674,23 @@ fn compute_code_block_highlights(parsed: &ParsedMarkdown) -> CodeBlockHighlights
 }
 
 fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut CodeBlockHighlights) {
-    let mut combined = Rope::new();
+    if let [(event_index, text)] = block.texts.as_slice() {
+        let resolved = block.language.highlight_text_resolved(*text, 0..text.len());
+        if !resolved.runs.is_empty() {
+            code_block_highlights.insert(*event_index, resolved);
+        }
+        return;
+    }
+    let mut combined = String::new();
     let mut text_offsets = Vec::with_capacity(block.texts.len());
     for (_, text) in &block.texts {
         text_offsets.push(combined.len());
-        combined.push(text);
+        combined.push_str(text);
     }
     let resolved = block
         .language
-        .highlight_text_resolved(&combined, 0..combined.len());
+        .highlight_text_resolved(combined.as_str(), 0..combined.len());
     if resolved.runs.is_empty() {
-        return;
-    }
-    if let [(event_index, _)] = block.texts.as_slice() {
-        code_block_highlights.insert(*event_index, resolved);
         return;
     }
     let mut runs = resolved.runs.iter().peekable();
@@ -4169,9 +4172,7 @@ impl MarkdownElementBuilder {
             let runs = if resolved.is_current() {
                 resolved.runs.clone()
             } else {
-                language
-                    .highlight_text_resolved(&Rope::from(text), 0..text.len())
-                    .runs
+                language.highlight_text_resolved(text, 0..text.len()).runs
             };
             let mut offset = 0;
             for (run_range, highlight_id) in runs.iter() {

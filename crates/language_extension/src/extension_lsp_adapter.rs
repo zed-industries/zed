@@ -514,7 +514,7 @@ fn labels_from_extension(
                 Arc::default()
             } else {
                 language
-                    .highlight_text_resolved(&label.code.as_str().into(), 0..label.code.len())
+                    .highlight_text_resolved(label.code.as_str(), 0..label.code.len())
                     .runs
             };
             build_code_label(&label, &runs, language)

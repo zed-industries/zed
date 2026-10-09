@@ -81,7 +81,7 @@ impl RenderedPreview {
         let highlights = match (preview, language) {
             (InlineInputPreview::Text(_), Some(language)) => {
                 language
-                    .highlight_text_resolved(&Rope::from(text.as_str()), 0..text.len())
+                    .highlight_text_resolved(text.as_str(), 0..text.len())
                     .runs
             }
             _ => Arc::default(),
