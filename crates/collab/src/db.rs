@@ -521,6 +521,7 @@ pub struct RejoinedRoom {
     pub room: proto::Room,
     pub rejoined_projects: Vec<RejoinedProject>,
     pub reshared_projects: Vec<ResharedProject>,
+    pub deleted_project_ids: Vec<ProjectId>,
     pub channel: Option<channel::Model>,
 }
 

@@ -1224,6 +1224,42 @@ impl Database {
         .await
     }
 
+    pub async fn cache_language_server_memory_usage_for_connection(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+        language_server_id: u64,
+        memory_usage: u64,
+    ) -> Result<HashSet<ConnectionId>> {
+        let project_connection_ids = self
+            .project_transaction(project_id, |tx| async move {
+                let connection_ids = self
+                    .internal_project_connection_ids(project_id, connection_id, true, &tx)
+                    .await?;
+
+                let language_server_exists =
+                    language_server::Entity::find_by_id((project_id, language_server_id as i64))
+                        .one(&*tx)
+                        .await?
+                        .is_some();
+
+                if !language_server_exists {
+                    return Err(anyhow!("no such language server").into());
+                }
+
+                Ok(connection_ids)
+            })
+            .await?;
+
+        let connection_ids = project_connection_ids.iter().copied().collect();
+
+        self.update_language_server_memory_usage(project_id, language_server_id, memory_usage);
+
+        drop(project_connection_ids);
+
+        Ok(connection_ids)
+    }
+
     /// Returns the connection IDs in the given project.
     ///
     /// The provided `connection_id` must also be a collaborator in the project,

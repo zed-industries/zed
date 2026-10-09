@@ -561,6 +561,22 @@ impl Database {
                 });
             }
 
+            let deleted_project_ids = project::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(project::Column::RoomId.eq(room_id))
+                        .add(project::Column::HostUserId.eq(user_id))
+                        .add(
+                            project::Column::Id
+                                .is_not_in(reshared_projects.iter().map(|project| project.id)),
+                        ),
+                )
+                .all(&*tx)
+                .await?
+                .into_iter()
+                .map(|project| project.id)
+                .collect::<Vec<_>>();
+
             project::Entity::delete_many()
                 .filter(
                     Condition::all()
@@ -591,6 +607,7 @@ impl Database {
                 channel,
                 rejoined_projects,
                 reshared_projects,
+                deleted_project_ids,
             })
         })
         .await

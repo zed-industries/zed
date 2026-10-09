@@ -34,7 +34,6 @@ pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
 use rpc::proto::split_repository_update;
-use sea_orm::EntityTrait;
 use tracing::Span;
 use util::paths::PathStyle;
 
@@ -1512,11 +1511,15 @@ async fn rejoin_room(
     let room;
     let channel;
     {
-        let mut rejoined_room = session
-            .db()
-            .await
+        let db = session.db().await;
+        let mut rejoined_room = db
             .rejoin_room(request, session.user_id(), session.connection_id)
             .await?;
+
+        for project_id in &rejoined_room.deleted_project_ids {
+            db.remove_project_language_server_memory_usage(*project_id);
+        }
+        drop(db);
 
         response.send(proto::RejoinRoomResponse {
             room: Some(rejoined_room.room.clone()),
@@ -2391,27 +2394,23 @@ async fn update_language_server(
     let project_id = ProjectId::from_proto(request.project_id);
     let db = session.db().await;
 
-    let project_connection_ids = db
-        .project_connection_ids(project_id, session.connection_id, true)
-        .await?
-        .into_inner();
-
-    if let Some(proto::update_language_server::Variant::MemoryUsageUpdated(update)) =
-        &request.variant
-    {
-        if db::language_server::Entity::find_by_id((project_id, request.language_server_id as i64))
-            .one(&db.pool)
+    let project_connection_ids = match request.variant.as_ref() {
+        Some(proto::update_language_server::Variant::MemoryUsageUpdated(update)) => {
+            db.cache_language_server_memory_usage_for_connection(
+                project_id,
+                session.connection_id,
+                request.language_server_id,
+                update.memory_usage,
+            )
             .await?
-            .is_none()
-        {
-            return Err(anyhow!("no such language server").into());
         }
-        db.0.update_language_server_memory_usage(
-            project_id,
-            request.language_server_id,
-            update.memory_usage,
-        );
-    } else if let Some(proto::update_language_server::Variant::Removed(_)) = &request.variant {
+        _ => db
+            .project_connection_ids(project_id, session.connection_id, true)
+            .await?
+            .into_inner(),
+    };
+
+    if let Some(proto::update_language_server::Variant::Removed(_)) = &request.variant {
         db.0.remove_language_server_memory_usage(project_id, request.language_server_id);
     }
 
@@ -4184,9 +4183,12 @@ async fn leave_room_for_session(session: &Session, connection_id: ConnectionId) 
         channel = mem::take(&mut left_room.channel);
 
         room_updated(&room, &session.peer);
+        drop(left_room);
     } else {
         return Ok(());
     }
+
+    drop(db);
 
     if let Some(channel) = channel {
         channel_updated(
