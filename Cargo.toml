@@ -602,7 +602,6 @@ core-foundation-sys = "0.8.6"
 core-graphics = "0.24"
 core-services = "1"
 core-text = "21"
-core-video = { version = "0.5", default-features = false, features = ["link"] }
 coreaudio-rs = { version = "0.12", default-features = false }
 cpal = { git = "https://github.com/RustAudio/cpal", rev = "e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7" }
 crash-handler = "0.8"
@@ -726,6 +725,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 objc2-core-foundation = { version = "=0.3.2", default-features = false }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["CGDirectDisplay"] }
 objc2-core-media = { version = "=0.3.2", default-features = false, features = ["CMSampleBuffer", "objc2-core-video"] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor"] }
 objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBuffer", "CVImageBuffer"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
@@ -750,6 +750,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "std",
 ] }
+objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
 objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer"] }
 objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
     "block2",
