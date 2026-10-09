@@ -448,12 +448,7 @@ impl TextFinder {
                 if let Some(options) = seed_query.options {
                     picker.delegate.search_options = options;
                 }
-                let query = seed_query.query.into_query(
-                    picker
-                        .delegate
-                        .search_options
-                        .contains(SearchOptions::REGEX),
-                );
+                let query = seed_query.query.into_query(picker.delegate.search_options);
                 picker.set_query(&query, window, cx);
                 picker.select_query(window, cx);
             }

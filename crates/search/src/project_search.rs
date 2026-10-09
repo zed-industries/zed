@@ -1836,8 +1836,7 @@ impl ProjectSearchView {
             if let Some(query) = action.query.as_deref().filter(|query| !query.is_empty()) {
                 search.set_query(query, window, cx);
             } else if let Some(query_seed) = query_seed {
-                let query =
-                    query_seed.into_query(search.search_options.contains(SearchOptions::REGEX));
+                let query = query_seed.into_query(search.search_options);
                 search.set_query(&query, window, cx);
             }
             if let Some(included_files) = action.included_files.as_deref() {
@@ -2576,10 +2575,10 @@ pub(crate) enum QuerySeed {
 }
 
 impl QuerySeed {
-    pub(crate) fn into_query(self, regex: bool) -> String {
+    pub(crate) fn into_query(self, options: SearchOptions) -> String {
         match self {
             QuerySeed::Query(query) => query,
-            QuerySeed::Text(text) if regex => regex::escape(&text),
+            QuerySeed::Text(text) if options.contains(SearchOptions::REGEX) => regex::escape(&text),
             QuerySeed::Text(text) => text,
         }
     }
