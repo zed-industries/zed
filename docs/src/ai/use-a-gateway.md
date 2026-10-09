@@ -177,45 +177,6 @@ For a Bedrock API key, choose API key authentication:
 
 The API key itself is stored in the system keychain, not in `settings.json`.
 
-### Bedrock Custom Endpoints {#bedrock-custom-endpoints}
-
-To send Bedrock requests to a proxy or gateway instead of AWS, set `endpoint_url`:
-
-```json [settings]
-{
-  "language_models": {
-    "bedrock": {
-      "endpoint_url": "https://gateway.example.com/bedrock",
-      "region": "us-east-1",
-      "authentication_method": "api_key"
-    }
-  }
-}
-```
-
-`endpoint_url` applies only to the Bedrock Converse API. The built-in GPT and Grok models are [Mantle models](#bedrock-mantle-models), which are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
-
-If a gateway exposes the Bedrock Converse API but not an OpenAI-compatible one, declare its models under `available_models` so they're called over the Converse wire instead:
-
-```json [settings]
-{
-  "language_models": {
-    "bedrock": {
-      "endpoint_url": "https://gateway.example.com/bedrock",
-      "available_models": [
-        {
-          "name": "us.openai.gpt-5.6-luna",
-          "display_name": "GPT-5.6 Luna",
-          "max_tokens": 200000
-        }
-      ]
-    }
-  }
-}
-```
-
-Model names in `available_models` are sent verbatim, without a cross-region inference prefix, so include the `us.` or `eu.` prefix yourself if the endpoint expects one.
-
 ### Bedrock Cross-Region Inference {#bedrock-cross-region-inference}
 
 Zed uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for Bedrock on a best-effort basis.
@@ -290,6 +251,48 @@ Add models that are not yet built into Zed with `available_models`. Use the Bedr
 ```
 
 `name` is sent to Bedrock as the model ID. Use the full ID, including a geo prefix or ARN when the model requires one (for example `us.anthropic.claude-sonnet-4-7` or `us.xai.grok-4.6`). Set `supports_tools` and `supports_images` for models that support those features. Set `thinking` to `true` to enable thinking, or to an object with `"adaptive": true`, optional `"has_xhigh": true`, and optional `budget_tokens`. Leave `default_temperature` unset for models that reject the temperature field, such as xAI and MoonshotAI models.
+
+### Bedrock Custom Endpoints {#bedrock-custom-endpoints}
+
+To send Bedrock Converse requests to a proxy or gateway instead of AWS, set `endpoint_url`:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "endpoint_url": "https://gateway.example.com/bedrock",
+      "region": "us-east-1",
+      "authentication_method": "api_key"
+    }
+  }
+}
+```
+
+[Mantle models](#bedrock-mantle-models), including the built-in GPT-5.6, GPT-5.5, GPT-5.4, and Grok 4.3 models and any models in `mantle_available_models`, are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
+
+If your gateway serves one of those models over the Converse API, add it as a [custom Bedrock model](#bedrock-custom-models) so Zed calls it through `endpoint_url`. Use the model ID your gateway expects as `name`:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "endpoint_url": "https://gateway.example.com/bedrock",
+      "available_models": [
+        {
+          "name": "us.openai.gpt-5.6-luna",
+          "display_name": "GPT-5.6 Luna (Gateway)",
+          "max_tokens": 1000000,
+          "max_output_tokens": 128000,
+          "supports_tools": true,
+          "supports_images": true
+        }
+      ]
+    }
+  }
+}
+```
+
+Don't use an ID that a Mantle model already uses as `name`, whether it's built in (such as `gpt-5.6-luna`) or listed in `mantle_available_models`. A Mantle model with the same ID replaces the custom model, so requests go to AWS instead of your gateway.
 
 ### Bedrock Mantle Models {#bedrock-mantle-models}
 
