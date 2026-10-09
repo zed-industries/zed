@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
 use serde::{Deserialize, Serialize};
@@ -863,6 +863,25 @@ mod tests {
     use util::{path, uri};
 
     use super::*;
+
+    #[test]
+    fn thread_mention_preserves_legacy_id_serialization() {
+        for value in ["", "session/ \0 雪 😀"] {
+            let wire = serde_json::json!({
+                "Thread": {
+                    "id": agent_client_protocol::schema::v1::SessionId::new(value),
+                    "name": "Thread",
+                },
+            });
+            let mention: MentionUri =
+                serde_json::from_value(wire.clone()).expect("legacy thread mention");
+            let MentionUri::Thread { id, .. } = &mention else {
+                panic!("thread mention");
+            };
+            assert_eq!(id, &acp::SessionId::new(value));
+            assert_eq!(serde_json::to_value(mention).expect("thread mention"), wire);
+        }
+    }
 
     #[test]
     fn test_parse_file_uri() {

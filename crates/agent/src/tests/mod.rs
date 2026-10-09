@@ -169,12 +169,12 @@ impl crate::TerminalHandle for FakeTerminalHandle {
 }
 
 struct FakeSubagentHandle {
-    session_id: acp::SessionId,
+    session_id: acp_v2::SessionId,
     send_task: Shared<Task<String>>,
 }
 
 impl SubagentHandle for FakeSubagentHandle {
-    fn id(&self) -> acp::SessionId {
+    fn id(&self) -> acp_v2::SessionId {
         self.session_id.clone()
     }
 
@@ -1296,7 +1296,7 @@ async fn test_replayed_tool_call_ids_scoped_across_messages(cx: &mut TestAppCont
         let templates = thread.templates.clone();
         cx.new(|cx| {
             Thread::from_db(
-                acp::SessionId::new("restored"),
+                acp_v2::SessionId::new("restored"),
                 db_thread,
                 project,
                 project_context.clone(),
@@ -3917,7 +3917,7 @@ async fn test_cumulative_token_usage(cx: &mut TestAppContext) {
         let templates = thread.templates.clone();
         cx.new(|cx| {
             Thread::from_db(
-                acp::SessionId::new("restored"),
+                acp_v2::SessionId::new("restored"),
                 db_thread,
                 project,
                 project_context.clone(),
@@ -4568,7 +4568,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let tool_call = expect_tool_call(&mut events).await;
     assert_eq!(
         tool_call,
-        acp::ToolCall::new(tool_call_id.clone(), "Echo")
+        acp::ToolCall::new(acp::ToolCallId::new(tool_call_id.0.clone()), "Echo")
             .name("echo")
             .raw_input(json!({}))
     );
@@ -4576,7 +4576,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     assert_eq!(
         update,
         acp::ToolCallUpdate::new(
-            tool_call_id.clone(),
+            acp::ToolCallId::new(tool_call_id.0.clone()),
             acp::ToolCallUpdateFields::new()
                 .title("Echo")
                 .kind(acp::ToolKind::Other)
@@ -4587,7 +4587,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     assert_eq!(
         update,
         acp::ToolCallUpdate::new(
-            tool_call_id.clone(),
+            acp::ToolCallId::new(tool_call_id.0.clone()),
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress)
         )
     );
@@ -4595,7 +4595,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     assert_eq!(
         update,
         acp::ToolCallUpdate::new(
-            tool_call_id,
+            acp::ToolCallId::new(tool_call_id.0),
             acp::ToolCallUpdateFields::new()
                 .status(acp::ToolCallStatus::Completed)
                 .raw_output("Hello!")
@@ -5892,7 +5892,7 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
         let acp_v2::ElicitationScope::Session(scope) = elicitation.request.scope() else {
             panic!("ask_user elicitation should be session-scoped");
         };
-        assert_ne!(tool_call_id, acp::ToolCallId::new("call_1"));
+        assert_ne!(tool_call_id, acp_v2::ToolCallId::new("call_1"));
         assert_eq!(
             scope.tool_call_id.as_ref().map(|id| &id.0),
             Some(&tool_call_id.0),
@@ -5942,7 +5942,7 @@ async fn test_spawn_agent_tool_forwards_explicit_model(cx: &mut TestAppContext) 
 
     let environment = Rc::new(
         FakeThreadEnvironment::default().with_subagent(FakeSubagentHandle {
-            session_id: acp::SessionId::new("subagent-id"),
+            session_id: acp_v2::SessionId::new("subagent-id"),
             send_task: Task::ready("done".to_string()).shared(),
         }),
     );
@@ -5989,7 +5989,7 @@ async fn test_spawn_agent_tool_rejects_model_when_resuming(cx: &mut TestAppConte
                 ToolInput::resolved(SpawnAgentToolInput {
                     label: "task".to_string(),
                     message: "prompt".to_string(),
-                    session_id: Some(acp::SessionId::new("subagent-id")),
+                    session_id: Some(acp_v2::SessionId::new("subagent-id")),
                     model: Some("fake-corp/other-model".to_string()),
                 }),
                 event_stream,
@@ -6818,7 +6818,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
             cx,
         );
         thread.set_subagent_context(SubagentContext {
-            parent_thread_id: acp::SessionId::new("parent-id"),
+            parent_thread_id: acp_v2::SessionId::new("parent-id"),
             depth: MAX_SUBAGENT_DEPTH - 1,
         });
         thread
