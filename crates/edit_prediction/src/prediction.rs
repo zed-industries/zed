@@ -2,8 +2,9 @@ use std::{ops::Range, sync::Arc};
 
 use cloud_llm_client::{EditPredictionRejectReason, PredictEditsRequestTrigger};
 use edit_prediction_types::{PredictedCursorPosition, interpolate_edits};
-use gpui::{AsyncApp, Entity, SharedString};
-use language::{Anchor, Buffer, BufferSnapshot, EditPreview, TextBufferSnapshot};
+use gpui::{App, AsyncApp, Entity, SharedString, WeakEntity};
+use language::{Anchor, Buffer, BufferSnapshot, EditPreview, Language, TextBufferSnapshot};
+use util::rel_path::RelPath;
 use zeta_prompt::{Zeta2PromptInput, Zeta3PromptInput};
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -167,6 +168,44 @@ impl std::fmt::Debug for EditPrediction {
             .field("id", &self.id)
             .field("edits", &self.edits)
             .finish()
+    }
+}
+
+#[derive(Clone)]
+pub struct RateableEditPrediction {
+    pub id: EditPredictionId,
+    pub edits: Arc<[(Range<Anchor>, Arc<str>)]>,
+    pub cursor_position: Option<PredictedCursorPosition>,
+    pub editable_range: Option<Range<Anchor>>,
+    pub snapshot: TextBufferSnapshot,
+    pub language: Option<Arc<Language>>,
+    pub path: Option<Arc<RelPath>>,
+    pub file_name: Option<SharedString>,
+    pub edit_preview: EditPreview,
+    pub inputs: EditPredictionInputs,
+    pub buffer: WeakEntity<Buffer>,
+    pub model_version: Option<String>,
+    pub trigger: PredictEditsRequestTrigger,
+}
+
+impl RateableEditPrediction {
+    pub(crate) fn new(prediction: &EditPrediction, cx: &App) -> Self {
+        let file = prediction.snapshot.file();
+        Self {
+            id: prediction.id.clone(),
+            edits: prediction.edits.clone(),
+            cursor_position: prediction.cursor_position,
+            editable_range: prediction.editable_range.clone(),
+            snapshot: prediction.snapshot.text.clone(),
+            language: prediction.snapshot.language().cloned(),
+            path: file.map(|file| file.path().clone()),
+            file_name: file.map(|file| SharedString::new(file.file_name(cx))),
+            edit_preview: prediction.edit_preview.clone(),
+            inputs: prediction.inputs.clone(),
+            buffer: prediction.buffer.downgrade(),
+            model_version: prediction.model_version.clone(),
+            trigger: prediction.trigger,
+        }
     }
 }
 

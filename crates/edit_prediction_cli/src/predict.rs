@@ -301,9 +301,10 @@ pub async fn run_prediction(
 
         let actual_patch = prediction.and_then(|result| {
             let prediction = result.prediction;
-            prediction
-                .edit_preview
-                .as_unified_diff(prediction.snapshot.file(), &prediction.edits)
+            prediction.edit_preview.as_unified_diff(
+                prediction.snapshot.file().map(|file| file.path().as_ref()),
+                &prediction.edits,
+            )
         });
 
         let has_prediction = actual_patch.as_ref().is_some_and(|p| !p.is_empty());

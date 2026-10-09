@@ -1,7 +1,7 @@
 use buffer_diff::BufferDiff;
 use cloud_llm_client::PredictEditsRequestTrigger;
 use edit_prediction::{
-    EditPrediction, EditPredictionInputs, EditPredictionRating, EditPredictionStore,
+    EditPredictionInputs, EditPredictionRating, EditPredictionStore, RateableEditPrediction,
 };
 use editor::{Editor, Inlay, MultiBuffer};
 use feature_flags::{FeatureFlag, PresenceFlag, register_feature_flag};
@@ -10,7 +10,8 @@ use gpui::{
     Length, StyleRefinement, Task, TextStyleRefinement, Window, actions, prelude::*,
 };
 use language::{
-    Bias, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, Point, ToOffset, ToPoint,
+    Bias, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, Point, TextBufferSnapshot, ToOffset,
+    ToPoint,
     language_settings::{self, InlayHintKind},
 };
 use markdown::{Markdown, MarkdownStyle};
@@ -68,7 +69,7 @@ pub struct RatePredictionsModal {
 }
 
 struct ActivePrediction {
-    prediction: EditPrediction,
+    prediction: RateableEditPrediction,
     feedback_editor: Entity<Editor>,
     expected_buffer: Entity<Buffer>,
     expected_editor: Entity<Editor>,
@@ -311,7 +312,7 @@ impl RatePredictionsModal {
     fn update_buffer_diff(
         diff: &Entity<BufferDiff>,
         new_buffer_snapshot: BufferSnapshot,
-        old_buffer_snapshot: BufferSnapshot,
+        old_buffer_snapshot: TextBufferSnapshot,
         cx: &mut App,
     ) -> Task<()> {
         diff.update(cx, |diff, cx| {
@@ -403,9 +404,9 @@ impl RatePredictionsModal {
 
         let path = active_prediction
             .prediction
-            .snapshot
-            .file()
-            .map(|file| file.path().as_unix_str());
+            .path
+            .as_ref()
+            .map(|path| path.as_unix_str());
         let header = match path {
             Some(path) => format!("--- a/{path}\n+++ b/{path}\n"),
             None => String::new(),
@@ -555,7 +556,7 @@ impl RatePredictionsModal {
 
     pub fn select_completion(
         &mut self,
-        prediction: Option<EditPrediction>,
+        prediction: Option<RateableEditPrediction>,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -670,17 +671,19 @@ impl RatePredictionsModal {
             let mut formatted_inputs = String::new();
             Self::write_formatted_inputs(&mut formatted_inputs, &prediction.inputs);
 
-            let current_editable_region = editable_range.as_ref().map(|range| {
-                prediction
-                    .buffer
-                    .read(cx)
-                    .snapshot()
-                    .text_for_range(range.clone())
-                    .collect::<String>()
-            });
+            let current_editable_region = editable_range
+                .as_ref()
+                .zip(prediction.buffer.upgrade())
+                .map(|(range, buffer)| {
+                    buffer
+                        .read(cx)
+                        .snapshot()
+                        .text_for_range(range.clone())
+                        .collect::<String>()
+                });
             let expected_buffer = cx.new(|cx| {
                 let mut buffer = Buffer::local(prediction.snapshot.text(), cx);
-                buffer.set_language_async(prediction.snapshot.language().cloned(), cx);
+                buffer.set_language_async(prediction.language.clone(), cx);
                 buffer
             });
             let expected_editable_range = editable_range.as_ref().map(|editable_range| {
@@ -1267,12 +1270,14 @@ impl RatePredictionsModal {
                     PredictEditsRequestTrigger::Other => (IconName::CircleHelp, "Other"),
                 };
 
-                let file = completion.buffer.read(cx).file();
-                let file_name = file.as_ref().map_or(
-                    SharedString::new_static(MultiBuffer::DEFAULT_TITLE),
-                    |file| file.file_name(cx).to_string().into(),
-                );
-                let file_path = file.map(|file| file.path().as_unix_str().to_string());
+                let file_name = completion
+                    .file_name
+                    .clone()
+                    .unwrap_or(SharedString::new_static(MultiBuffer::DEFAULT_TITLE));
+                let file_path = completion
+                    .path
+                    .as_ref()
+                    .map(|path| path.as_unix_str().to_string());
 
                 ListItem::new(completion.id.clone())
                     .inset(true)

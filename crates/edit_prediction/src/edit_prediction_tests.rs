@@ -27,7 +27,7 @@ use futures::{
 };
 use gpui::App;
 use gpui::{
-    Entity, TestAppContext, UpdateGlobal,
+    Entity, SharedString, TestAppContext, UpdateGlobal, WeakEntity,
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
@@ -38,7 +38,7 @@ use language::{
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
-use project::{FakeFs, Project};
+use project::{FakeFs, Project, Worktree};
 use serde_json::json;
 use settings::EditPredictionDataCollectionChoice;
 use settings::SettingsStore;
@@ -551,6 +551,55 @@ async fn test_edit_history_releases_single_file_worktree_when_buffer_is_dropped(
              three
         "}],
     );
+}
+
+#[gpui::test]
+async fn test_rateable_predictions_release_single_file_worktree(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let (project, buffer, worktree) = open_external_buffer(cx).await;
+    let position = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 3)));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        ep_store.refresh_prediction_from_buffer(
+            project.clone(),
+            buffer.clone(),
+            position,
+            Duration::ZERO,
+            EditPredictionRequestTrigger::Explicit,
+            cx,
+        );
+    });
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    let response = model_response(&request, "");
+    let request_id = response.request_id.clone();
+    respond_tx.send(response).unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(REJECT_REQUEST_DEBOUNCE);
+    cx.run_until_parked();
+    let (rejection, respond_tx) = requests.reject.next().await.unwrap();
+    assert_eq!(rejection.rejections[0].request_id, request_id);
+    respond_tx.send(()).unwrap();
+    requests.settled.next().await.unwrap();
+    cx.run_until_parked();
+
+    let weak_buffer = buffer.downgrade();
+    cx.update(|_| drop(buffer));
+    cx.run_until_parked();
+    weak_buffer.assert_released();
+    worktree.assert_released();
+
+    ep_store.read_with(cx, |ep_store, _| {
+        assert_eq!(
+            ep_store
+                .rateable_predictions()
+                .map(|prediction| (
+                    prediction.id.to_string(),
+                    prediction.file_name.as_ref().map(SharedString::to_string),
+                ))
+                .collect::<Vec<_>>(),
+            [(request_id, Some("external.md".to_string()))],
+        );
+    });
 }
 
 #[gpui::test]
@@ -5053,4 +5102,34 @@ async fn test_upsell_dismissed_via_dismissable_api(cx: &mut TestAppContext) {
 #[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
+}
+
+async fn open_external_buffer(
+    cx: &mut TestAppContext,
+) -> (Entity<Project>, Entity<Buffer>, WeakEntity<Worktree>) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/"),
+        json!({
+            "root": { "other.md": "other\n" },
+            "external.md": "one\n\nthree\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/external.md"), cx)
+        })
+        .await
+        .unwrap();
+    let worktree = project.read_with(cx, |project, cx| {
+        let (worktree, _) = project
+            .find_worktree(Path::new(path!("/external.md")), cx)
+            .unwrap();
+        assert!(worktree.read(cx).is_single_file());
+        assert!(!worktree.read(cx).is_visible());
+        worktree.downgrade()
+    });
+    (project, buffer, worktree)
 }

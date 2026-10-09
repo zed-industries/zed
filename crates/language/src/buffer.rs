@@ -812,7 +812,7 @@ impl EditPreview {
 
     pub fn as_unified_diff(
         &self,
-        file: Option<&Arc<dyn File>>,
+        path: Option<&RelPath>,
         edits: &[(Range<Anchor>, impl AsRef<str>)],
     ) -> Option<String> {
         let (first, _) = edits.first()?;
@@ -842,8 +842,7 @@ impl EditPreview {
             start.row,
         );
 
-        let path = file.map(|f| f.path().as_unix_str());
-        let header = match path {
+        let header = match path.map(RelPath::as_unix_str) {
             Some(p) => format!("--- a/{}\n+++ b/{}\n", p, p),
             None => String::new(),
         };

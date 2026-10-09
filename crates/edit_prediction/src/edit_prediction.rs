@@ -106,7 +106,9 @@ use crate::mercury::Mercury;
 pub use crate::metrics::{KeptRateResult, compute_kept_rate};
 use crate::onboarding_modal::ZedPredictModal;
 use crate::prediction::EditPredictionResult;
-pub use crate::prediction::{EditPrediction, EditPredictionId, EditPredictionInputs};
+pub use crate::prediction::{
+    EditPrediction, EditPredictionId, EditPredictionInputs, RateableEditPrediction,
+};
 pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
@@ -182,7 +184,7 @@ pub struct EditPredictionStore {
     legacy_data_collection_enabled: bool,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejectionPayload>,
     settled_predictions_tx: mpsc::UnboundedSender<Instant>,
-    rateable_predictions: VecDeque<EditPrediction>,
+    rateable_predictions: VecDeque<RateableEditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
     #[cfg(test)]
     settled_event_callback: Option<Box<dyn Fn(EditPredictionId, String)>>,
@@ -2238,7 +2240,7 @@ impl EditPredictionStore {
         &mut self,
         project: &Entity<Project>,
         display_type: edit_prediction_types::SuggestionDisplayType,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
@@ -2263,7 +2265,10 @@ impl EditPredictionStore {
 
         if is_first_non_jump_show {
             self.rateable_predictions
-                .push_front(current_prediction.prediction.clone());
+                .push_front(RateableEditPrediction::new(
+                    &current_prediction.prediction,
+                    cx,
+                ));
             if self.rateable_predictions.len() > 50 {
                 let completion = self.rateable_predictions.pop_back().unwrap();
                 self.rated_predictions.remove(&completion.id);
@@ -2668,7 +2673,8 @@ impl EditPredictionStore {
                         );
 
                         if should_allow_rating_prediction {
-                            this.rateable_predictions.push_front(prediction);
+                            this.rateable_predictions
+                                .push_front(RateableEditPrediction::new(&prediction, cx));
                             if this.rateable_predictions.len() > 50
                                 && let Some(completion) = this.rateable_predictions.pop_back()
                             {
@@ -3324,7 +3330,7 @@ impl EditPredictionStore {
             })
     }
 
-    pub fn rateable_predictions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {
+    pub fn rateable_predictions(&self) -> impl DoubleEndedIterator<Item = &RateableEditPrediction> {
         self.rateable_predictions.iter()
     }
 
@@ -3338,7 +3344,7 @@ impl EditPredictionStore {
 
     pub fn rate_prediction(
         &mut self,
-        prediction: &EditPrediction,
+        prediction: &RateableEditPrediction,
         rating: EditPredictionRating,
         feedback: String,
         expected_output: Option<String>,
@@ -3354,7 +3360,7 @@ impl EditPredictionStore {
             let inputs = serde_json::to_value(&prediction.inputs);
             let output = prediction
                 .edit_preview
-                .as_unified_diff(prediction.snapshot.file(), &prediction.edits);
+                .as_unified_diff(prediction.path.as_deref(), &prediction.edits);
             async move {
                 client
                     .cloud_client()
