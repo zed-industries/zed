@@ -5809,7 +5809,7 @@ pub(crate) mod tests {
         let (conversation_view, cx) = setup_conversation_view(FakeAcpAgentServer::new(), cx).await;
         let root_session_id =
             active_thread(&conversation_view, cx).read_with(cx, |view, _| view.session_id.clone());
-        let subagent_session_id = acp_v1::SessionId::new("subagent");
+        let subagent_session_id = acp_v2::SessionId::new("subagent");
         let created_views = Rc::new(RefCell::new(Vec::new()));
         let _subscription = cx.update(|_, cx| {
             cx.observe_new::<ThreadView>({

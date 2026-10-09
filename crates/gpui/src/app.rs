@@ -2097,18 +2097,19 @@ impl App {
             return;
         }
 
-        for handle_id in dropped_handles.drain(..) {
-            handles.remove(handle_id);
-        }
         let windows = self
             .windows
             .values()
             .filter_map(|window| {
                 let window = window.as_ref()?;
-                let focus = window.focus?;
-                (!handles.contains_key(focus)).then_some(window.handle)
+                dropped_handles
+                    .contains(&window.focus?)
+                    .then_some(window.handle)
             })
             .collect::<SmallVec<[_; 1]>>();
+        for handle_id in dropped_handles.drain(..) {
+            handles.remove(handle_id);
+        }
         drop(focus_handles);
 
         for window_handle in windows {
