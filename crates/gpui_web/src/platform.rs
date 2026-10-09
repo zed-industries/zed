@@ -1,8 +1,10 @@
+use crate::CanvasFontFallback;
 use crate::dispatcher::WebDispatcher;
 use crate::display::WebDisplay;
 use crate::events::EventListenerHandle;
 use crate::http_client::FetchHttpClient;
 use crate::keyboard::WebKeyboardLayout;
+use crate::text_system::WebTextSystem;
 use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -150,6 +152,22 @@ impl WebPlatform {
         allow_multi_threading: bool,
         backend_preference: WebBackendPreference,
     ) -> Self {
+        Self::new_with_backend_and_font_fallback(
+            allow_multi_threading,
+            backend_preference,
+            CanvasFontFallback::default(),
+        )
+    }
+
+    /// Configures browser fallback before any fonts or layouts are cached.
+    ///
+    /// Loaded fonts remain preferred, except when they cannot supply requested
+    /// emoji presentation. The policy cannot be changed after construction.
+    pub fn new_with_backend_and_font_fallback(
+        allow_multi_threading: bool,
+        backend_preference: WebBackendPreference,
+        canvas_font_fallback: CanvasFontFallback,
+    ) -> Self {
         let browser_window =
             web_sys::window().expect("must be running in a browser window context");
         let dispatcher = Arc::new(WebDispatcher::new(
@@ -158,9 +176,7 @@ impl WebPlatform {
         ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
-        let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
-            "IBM Plex Sans",
-        ));
+        let text_system = Arc::new(WebTextSystem::new("IBM Plex Sans", canvas_font_fallback));
         let text_system: Arc<dyn PlatformTextSystem> = text_system;
         let active_display: Rc<dyn PlatformDisplay> =
             Rc::new(WebDisplay::new(browser_window.clone()));
@@ -351,6 +367,9 @@ impl Platform for WebPlatform {
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         Some(self.active_display.clone())
     }
+
+    // The browser is the only display, and it never changes.
+    fn on_displays_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         *self.active_window.borrow()
