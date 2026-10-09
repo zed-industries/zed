@@ -2487,6 +2487,12 @@ fn legacy_native_completion(stop_reason: acp_v2::StopReason) -> Result<acp_v1::P
         acp_v2::StopReason::MaxTurnRequests => acp_v1::StopReason::MaxTurnRequests,
         acp_v2::StopReason::Refusal => acp_v1::StopReason::Refusal,
         acp_v2::StopReason::Cancelled => acp_v1::StopReason::Cancelled,
+        acp_v2::StopReason::Error(reason) => {
+            return Err(match reason.error {
+                Some(error) => anyhow::Error::new(*error),
+                None => anyhow!("Native agent stopped with an error"),
+            });
+        }
         _ => anyhow::bail!("Native agent returned an unsupported stop reason"),
     };
     Ok(acp_v1::PromptResponse::new(stop_reason))
@@ -4001,9 +4007,21 @@ mod internal_tests {
             assert_eq!(legacy_native_completion(native)?.stop_reason, legacy);
         }
         assert!(
-            legacy_native_completion(acp_v2::StopReason::Other("_future".into())).is_err(),
+            legacy_native_completion(acp_v2::StopReason::Other(acp_v2::OtherStopReason::new(
+                "_future",
+                Default::default(),
+            )))
+            .is_err(),
             "an unsupported reason must not masquerade as successful completion"
         );
+        let error = legacy_native_completion(acp_v2::ErrorStopReason::new().into())
+            .expect_err("an error without details is not successful completion");
+        assert_eq!(error.to_string(), "Native agent stopped with an error");
+        let details = acp_v2::Error::auth_required().data(json!({"hint": "sign in"}));
+        let error =
+            legacy_native_completion(acp_v2::ErrorStopReason::new().error(details.clone()).into())
+                .expect_err("reported error details propagate");
+        assert_eq!(error.downcast_ref::<acp_v2::Error>(), Some(&details));
         Ok(())
     }
 
@@ -4297,10 +4315,6 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_compact_prompt_routes_to_manual_compaction(cx: &mut TestAppContext) {
-        use feature_flags::{
-            AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings,
-        };
-
         let fake = init_test(cx);
         let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
@@ -4309,16 +4323,6 @@ mod internal_tests {
         let old_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
-            cx.update_flags(true, Vec::new());
-            FeatureFlagsSettings::override_global(
-                FeatureFlagsSettings {
-                    overrides: HashMap::from_iter([(
-                        AcpBetaFeatureFlag::NAME.into(),
-                        "off".into(),
-                    )]),
-                },
-                cx,
-            );
             let path_style = project.read(cx).path_style(cx);
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
@@ -4334,7 +4338,6 @@ mod internal_tests {
 
         let compact_message_id = ClientUserMessageId::new();
         let prompt_task = cx.update(|cx| {
-            assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 compact_message_id,

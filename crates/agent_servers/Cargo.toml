@@ -40,7 +40,6 @@ env_logger = { workspace = true, optional = true }
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-feature_flags.workspace = true
 gpui_tokio = { workspace = true, optional = true }
 http_client.workspace = true
 indoc = { workspace = true, optional = true }
