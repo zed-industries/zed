@@ -7919,9 +7919,7 @@ impl Editor {
                     *head.column_mut() += 1;
                     head = display_map.clip_point(head, Bias::Right);
                     let goal = SelectionGoal::HorizontalPosition(
-                        display_map
-                            .x_for_display_point(head, text_layout_details)
-                            .into(),
+                        display_map.x_for_display_point(head, text_layout_details),
                     );
                     selection.collapse_to(head, goal);
 
@@ -11167,7 +11165,7 @@ impl Editor {
         }
         let source_x = editor_snapshot.x_for_display_point(source, &text_layout_details);
         let source_y = line_height * (source.row().as_f64() - scroll_top) as f32;
-        Some(gpui::Point::new(source_x, source_y))
+        Some(gpui::Point::new(Pixels::from(source_x), source_y))
     }
 
     pub fn register_addon<T: Addon>(&mut self, instance: T) {

@@ -1207,13 +1207,13 @@ impl EditorElement {
                         [cursor_position.row().minus(visible_display_row_range.start) as usize];
                     let cursor_column = cursor_position.column() as usize;
 
-                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column)
-                        + cursor_row_layout
-                            .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
-                    let cursor_next_x = cursor_row_layout.x_for_index(cursor_column + 1)
-                        + cursor_row_layout
-                            .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
-                    let mut cell_width = cursor_next_x - cursor_character_x;
+                    let alignment_offset = cursor_row_layout
+                        .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
+                    let cursor_character_x =
+                        cursor_row_layout.x_for_index(cursor_column) + alignment_offset;
+                    let cursor_next_x =
+                        cursor_row_layout.x_for_index(cursor_column + 1) + alignment_offset;
+                    let mut cell_width = Pixels::from(cursor_next_x - cursor_character_x);
                     if cell_width == Pixels::ZERO {
                         cell_width = em_advance;
                     }
@@ -1282,7 +1282,7 @@ impl EditorElement {
                         }
                     }
 
-                    let x = cursor_character_x - scroll_pixel_position.x.into();
+                    let x = Pixels::from(cursor_character_x - scroll_pixel_position.x);
                     let y = ((cursor_position.row().as_f64() - scroll_position.y)
                         * ScrollPixelOffset::from(line_height))
                     .into();
@@ -1458,10 +1458,11 @@ impl EditorElement {
         let row_index = label_row.minus(context.visible_display_row_range.start) as usize;
         let row_layout = &context.line_layouts[row_index];
         let label_column = label_display_point.column().min(row_layout.len as u32) as usize;
-        let label_x = row_layout.x_for_index(label_column)
-            + row_layout.alignment_offset(context.text_align, context.content_width)
-            - context.scroll_pixel_position.x.into()
-            + label.x_offset;
+        let label_x = Pixels::from(
+            row_layout.x_for_index(label_column)
+                + row_layout.alignment_offset(context.text_align, context.content_width)
+                - context.scroll_pixel_position.x,
+        ) + label.x_offset;
         let label_y = ((label_row.as_f64() - context.scroll_position.y)
             * ScrollPixelOffset::from(context.line_height))
         .into();
@@ -1836,13 +1837,13 @@ impl EditorElement {
                 let size = element.layout_as_root(available_space, window, cx);
 
                 let line = &lines[ix];
-                let padding = if line.width == Pixels::ZERO {
+                let padding = if line.width == 0. {
                     Pixels::ZERO
                 } else {
                     4. * em_width
                 };
                 let position = point(
-                    Pixels::from(scroll_pixel_position.x) + line.width + padding,
+                    Pixels::from(line.width - scroll_pixel_position.x) + padding,
                     line_height
                         * (DisplayRow(start_row.0 + ix as u32).as_f64() - scroll_position.y) as f32,
                 );
@@ -2008,7 +2009,7 @@ impl EditorElement {
                     crease_trailer.bounds.right()
                 } else {
                     Pixels::from(
-                        ScrollPixelOffset::from(content_origin.x + line_layout.width)
+                        ScrollPixelOffset::from(content_origin.x) + line_layout.width
                             - scroll_pixel_position.x,
                     )
                 };
@@ -2181,7 +2182,7 @@ impl EditorElement {
                 crease_trailer.bounds.right()
             } else {
                 Pixels::from(
-                    ScrollPixelOffset::from(content_origin.x + line_layout.width)
+                    ScrollPixelOffset::from(content_origin.x) + line_layout.width
                         - scroll_pixel_position.x,
                 )
             };
@@ -3220,7 +3221,7 @@ impl EditorElement {
                     );
 
                     LineWithInvisibles {
-                        width: line.width,
+                        width: ScrollPixelOffset::from(line.width),
                         len: line.len,
                         fragments: smallvec![LineFragment::Text(line)],
                         invisibles: Vec::new(),
@@ -3299,7 +3300,7 @@ impl EditorElement {
         em_width: Pixels,
         text_hitbox: &Hitbox,
         editor_width: Pixels,
-        scroll_width: &mut Pixels,
+        scroll_width: &mut ScrollPixelOffset,
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
         row_block_types: &mut HashMap<DisplayRow, bool>,
         selections: &[Selection<Point>],
@@ -3321,10 +3322,11 @@ impl EditorElement {
                     return None;
                 }
                 let align_to = block_start.to_display_point(snapshot);
+                let text_x = ScrollPixelOffset::from(text_x);
                 let x_and_width = |layout: &LineWithInvisibles| {
                     (
-                        text_x + layout.x_for_index(align_to.column() as usize),
-                        text_x + layout.width,
+                        Pixels::from(text_x + layout.x_for_index(align_to.column() as usize)),
+                        Pixels::from(text_x + layout.width),
                     )
                 };
                 let line_ix = align_to.row().0.checked_sub(rows.start.0);
@@ -3371,7 +3373,7 @@ impl EditorElement {
                             block_id,
                             height: custom.height.unwrap_or(1),
                             selected,
-                            max_width: text_hitbox.size.width.max(*scroll_width),
+                            max_width: text_hitbox.size.width.max(Pixels::from(*scroll_width)),
                             editor_style: &self.style,
                             indent_guide_padding: indent_guides
                                 .as_ref()
@@ -3625,12 +3627,12 @@ impl EditorElement {
         hitbox: &Hitbox,
         text_hitbox: &Hitbox,
         editor_width: Pixels,
-        scroll_width: &mut Pixels,
+        scroll_width: &mut ScrollPixelOffset,
         editor_margins: &EditorMargins,
         em_width: Pixels,
         text_x: Pixels,
         line_height: Pixels,
-        line_layouts: &mut [LineWithInvisibles],
+        line_layouts: &[LineWithInvisibles],
         selections: &[Selection<Point>],
         selected_buffer_ids: &Vec<BufferId>,
         latest_selection_anchors: &HashMap<BufferId, Anchor>,
@@ -3712,14 +3714,16 @@ impl EditorElement {
                     .width
                     .max(fixed_block_max_width)
                     .max(
-                        editor_margins.gutter.width + *scroll_width + editor_margins.extended_right,
+                        editor_margins.gutter.width
+                            + Pixels::from(*scroll_width)
+                            + editor_margins.extended_right,
                     )
                     .into(),
                 (BlockStyle::Spacer, _) => hitbox
                     .size
                     .width
                     .max(fixed_block_max_width)
-                    .max(*scroll_width + editor_margins.extended_right)
+                    .max(Pixels::from(*scroll_width) + editor_margins.extended_right)
                     .into(),
                 (BlockStyle::Fixed, _) => unreachable!(),
             };
@@ -3784,7 +3788,9 @@ impl EditorElement {
                 BlockStyle::Fixed => AvailableSpace::MinContent,
                 BlockStyle::Flex => {
                     AvailableSpace::Definite(hitbox.size.width.max(fixed_block_max_width).max(
-                        editor_margins.gutter.width + *scroll_width + editor_margins.extended_right,
+                        editor_margins.gutter.width
+                            + Pixels::from(*scroll_width)
+                            + editor_margins.extended_right,
                     ))
                 }
                 BlockStyle::Spacer => AvailableSpace::Definite(
@@ -3792,7 +3798,7 @@ impl EditorElement {
                         .size
                         .width
                         .max(fixed_block_max_width)
-                        .max(*scroll_width + editor_margins.extended_right),
+                        .max(Pixels::from(*scroll_width) + editor_margins.extended_right),
                 ),
                 BlockStyle::Sticky => AvailableSpace::Definite(hitbox.size.width),
             };
@@ -3838,8 +3844,9 @@ impl EditorElement {
         }
 
         if resized_blocks.is_empty() {
-            *scroll_width =
-                (*scroll_width).max(fixed_block_max_width - editor_margins.gutter.width);
+            *scroll_width = (*scroll_width).max(ScrollPixelOffset::from(
+                fixed_block_max_width - editor_margins.gutter.width,
+            ));
         }
 
         RenderBlocksOutput {
@@ -3967,9 +3974,8 @@ impl EditorElement {
                 x: cmp::max(
                     px(0.),
                     Pixels::from(
-                        ScrollPixelOffset::from(
-                            cursor_row_layout.x_for_index(cursor.column() as usize),
-                        ) - scroll_pixel_position.x,
+                        cursor_row_layout.x_for_index(cursor.column() as usize)
+                            - scroll_pixel_position.x,
                     ),
                 ),
                 y: cmp::max(
@@ -4491,8 +4497,10 @@ impl EditorElement {
             as usize];
 
         // Compute Hovered Point
-        let x = hovered_row_layout.x_for_index(popover_position.column() as usize)
-            - Pixels::from(scroll_pixel_position.x);
+        let x = Pixels::from(
+            hovered_row_layout.x_for_index(popover_position.column() as usize)
+                - scroll_pixel_position.x,
+        );
         let y = Pixels::from(
             popover_position.row().as_f64() * ScrollPixelOffset::from(line_height)
                 - scroll_pixel_position.y,
@@ -4930,8 +4938,10 @@ impl EditorElement {
             return;
         };
 
-        let target_x = cursor_row_layout.x_for_index(newest_selection_head.column() as usize)
-            - Pixels::from(scroll_pixel_position.x);
+        let target_x = Pixels::from(
+            cursor_row_layout.x_for_index(newest_selection_head.column() as usize)
+                - scroll_pixel_position.x,
+        );
         let target_y = Pixels::from(
             selection_row.as_f64() * ScrollPixelOffset::from(line_height) - scroll_pixel_position.y,
         );
@@ -6563,31 +6573,31 @@ impl EditorElement {
                             start_x: if row == range.start.row() {
                                 layout.content_origin.x
                                     + Pixels::from(
-                                        ScrollPixelOffset::from(
-                                            line_layout.x_for_index(range.start.column() as usize)
-                                                + alignment_offset,
-                                        ) - layout.position_map.scroll_pixel_position.x,
+                                        line_layout.x_for_index(range.start.column() as usize)
+                                            + alignment_offset
+                                            - layout.position_map.scroll_pixel_position.x,
                                     )
                             } else {
-                                layout.content_origin.x + alignment_offset
-                                    - Pixels::from(layout.position_map.scroll_pixel_position.x)
+                                layout.content_origin.x
+                                    + Pixels::from(
+                                        alignment_offset
+                                            - layout.position_map.scroll_pixel_position.x,
+                                    )
                             },
                             end_x: if row == range.end.row() {
                                 layout.content_origin.x
                                     + Pixels::from(
-                                        ScrollPixelOffset::from(
-                                            line_layout.x_for_index(range.end.column() as usize)
-                                                + alignment_offset,
-                                        ) - layout.position_map.scroll_pixel_position.x,
+                                        line_layout.x_for_index(range.end.column() as usize)
+                                            + alignment_offset
+                                            - layout.position_map.scroll_pixel_position.x,
                                     )
                             } else {
                                 Pixels::from(
                                     ScrollPixelOffset::from(
-                                        layout.content_origin.x
-                                            + line_layout.width
-                                            + alignment_offset
-                                            + line_end_overshoot,
-                                    ) - layout.position_map.scroll_pixel_position.x,
+                                        layout.content_origin.x + line_end_overshoot,
+                                    ) + alignment_offset
+                                        + line_layout.width
+                                        - layout.position_map.scroll_pixel_position.x,
                                 )
                             },
                         }
@@ -7357,7 +7367,7 @@ pub(crate) struct LineWithInvisibles {
     diagnostic_underline_severity_ranges: Vec<(Range<usize>, lsp::DiagnosticSeverity)>,
     point_diagnostics: Vec<PointDiagnostic>,
     len: usize,
-    pub(crate) width: Pixels,
+    pub(crate) width: ScrollPixelOffset,
     font_size: Pixels,
 }
 
@@ -7551,7 +7561,7 @@ impl LineWithInvisibles {
 
                         fragments.push(LineFragment::Text(shaped_line));
                         layouts.push(Self {
-                            width: mem::take(&mut width),
+                            width: ScrollPixelOffset::from(mem::take(&mut width)),
                             len: mem::take(&mut len),
                             fragments: mem::take(&mut fragments),
                             invisibles: std::mem::take(&mut invisibles),
@@ -7784,8 +7794,7 @@ impl LineWithInvisibles {
     ) {
         let mut fragment_origin = content_origin
             + point(
-                self.alignment_offset(text_align, content_width)
-                    - Pixels::from(scroll_pixel_position.x),
+                self.origin_x(text_align, content_width, scroll_pixel_position.x),
                 line_y,
             );
         for fragment in &mut self.fragments {
@@ -7847,8 +7856,11 @@ impl LineWithInvisibles {
         let line_height = layout.position_map.line_height;
         let mut fragment_origin = content_origin
             + point(
-                self.alignment_offset(layout.text_align, layout.content_width)
-                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
+                self.origin_x(
+                    layout.text_align,
+                    layout.content_width,
+                    layout.position_map.scroll_pixel_position.x,
+                ),
                 line_y,
             );
         let mut points = self
@@ -8057,8 +8069,11 @@ impl LineWithInvisibles {
 
         let mut fragment_origin = content_origin
             + point(
-                self.alignment_offset(layout.text_align, layout.content_width)
-                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
+                self.origin_x(
+                    layout.text_align,
+                    layout.content_width,
+                    layout.position_map.scroll_pixel_position.x,
+                ),
                 line_y,
             );
 
@@ -8095,12 +8110,7 @@ impl LineWithInvisibles {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let line_origin = content_origin
-            + point(
-                self.alignment_offset(layout.text_align, layout.content_width)
-                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
-                line_y,
-            );
+        let alignment_offset = self.alignment_offset(layout.text_align, layout.content_width);
         let extract_whitespace_info = |invisible: &Invisible| {
             let (token_offset, token_end_offset, invisible_symbol) = match invisible {
                 Invisible::Tab {
@@ -8120,9 +8130,19 @@ impl LineWithInvisibles {
             let token_x = self.x_for_index(token_offset);
             // Center the marker inside the actual glyph's width so it lines up with
             // proportional fonts instead of assuming a monospace `em_width` cell.
-            let glyph_width = (self.x_for_index(token_end_offset) - token_x).max(Pixels::ZERO);
-            let invisible_offset = (glyph_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0;
-            let origin = line_origin + point(token_x + invisible_offset, Pixels::ZERO);
+            let glyph_width =
+                Pixels::from(self.x_for_index(token_end_offset) - token_x).max(Pixels::ZERO);
+            let invisible_offset = ScrollPixelOffset::from(
+                (glyph_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0,
+            );
+            let origin = content_origin
+                + point(
+                    Pixels::from(
+                        alignment_offset + token_x + invisible_offset
+                            - layout.position_map.scroll_pixel_position.x,
+                    ),
+                    line_y,
+                );
 
             (
                 [token_offset, token_end_offset],
@@ -8206,7 +8226,7 @@ impl LineWithInvisibles {
         }
     }
 
-    pub fn x_for_index(&self, index: usize) -> Pixels {
+    pub fn x_for_index(&self, index: usize) -> ScrollPixelOffset {
         let mut fragment_start_x = Pixels::ZERO;
         let mut fragment_start_index = 0;
 
@@ -8215,8 +8235,10 @@ impl LineWithInvisibles {
                 LineFragment::Text(shaped_line) => {
                     let fragment_end_index = fragment_start_index + shaped_line.len;
                     if index < fragment_end_index {
-                        return fragment_start_x
-                            + shaped_line.x_for_index(index - fragment_start_index);
+                        return ScrollPixelOffset::from(
+                            fragment_start_x
+                                + shaped_line.x_for_index(index - fragment_start_index),
+                        );
                     }
                     fragment_start_x += shaped_line.width;
                     fragment_start_index = fragment_end_index;
@@ -8224,7 +8246,7 @@ impl LineWithInvisibles {
                 LineFragment::Element { len, size, .. } => {
                     let fragment_end_index = fragment_start_index + len;
                     if index < fragment_end_index {
-                        return fragment_start_x;
+                        return ScrollPixelOffset::from(fragment_start_x);
                     }
                     fragment_start_x += size.width;
                     fragment_start_index = fragment_end_index;
@@ -8232,10 +8254,11 @@ impl LineWithInvisibles {
             }
         }
 
-        fragment_start_x
+        ScrollPixelOffset::from(fragment_start_x)
     }
 
-    pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
+    pub fn index_for_x(&self, x: ScrollPixelOffset) -> Option<usize> {
+        let x = Pixels::from(x);
         let mut fragment_start_x = Pixels::ZERO;
         let mut fragment_start_index = 0;
 
@@ -8290,13 +8313,26 @@ impl LineWithInvisibles {
         None
     }
 
-    pub fn alignment_offset(&self, text_align: TextAlign, content_width: Pixels) -> Pixels {
-        let line_width = self.width;
+    pub fn alignment_offset(
+        &self,
+        text_align: TextAlign,
+        content_width: Pixels,
+    ) -> ScrollPixelOffset {
+        let free_width = ScrollPixelOffset::from(content_width) - self.width;
         match text_align {
-            TextAlign::Left => px(0.0),
-            TextAlign::Center => (content_width - line_width) / 2.0,
-            TextAlign::Right => content_width - line_width,
+            TextAlign::Left => 0.,
+            TextAlign::Center => free_width / 2.,
+            TextAlign::Right => free_width,
         }
+    }
+
+    fn origin_x(
+        &self,
+        text_align: TextAlign,
+        content_width: Pixels,
+        scroll_x: ScrollPixelOffset,
+    ) -> Pixels {
+        Pixels::from(self.alignment_offset(text_align, content_width) - scroll_x)
     }
 }
 
@@ -9182,7 +9218,7 @@ impl Element for EditorElement {
                         text_hitbox.bounds,
                         glyph_grid_cell,
                         size(
-                            longest_line_width,
+                            Pixels::from(longest_line_width),
                             Pixels::from(max_row.as_f64() * f64::from(line_height)),
                         ),
                         longest_line_blame_width,
@@ -9190,7 +9226,8 @@ impl Element for EditorElement {
                         scroll_beyond_last_line,
                     );
 
-                    let mut scroll_width = scrollbar_layout_information.scroll_range.width;
+                    let mut scroll_width =
+                        longest_line_width + ScrollPixelOffset::from(longest_line_blame_width);
 
                     let sticky_header_excerpt = if snapshot.buffer_snapshot().show_headers() {
                         snapshot.sticky_header_excerpt(scroll_position.y)
@@ -9235,7 +9272,7 @@ impl Element for EditorElement {
                                     em_width,
                                     gutter_dimensions.full_width(),
                                     line_height,
-                                    &mut line_layouts,
+                                    &line_layouts,
                                     &local_selections,
                                     &selected_buffer_ids,
                                     &latest_selection_anchors,
@@ -9302,9 +9339,9 @@ impl Element for EditorElement {
                     };
 
                     let scroll_max: gpui::Point<ScrollPixelOffset> = point(
-                        ScrollPixelOffset::from(
-                            ((scroll_width - editor_width) / em_layout_width).max(0.0),
-                        ),
+                        ((scroll_width - ScrollPixelOffset::from(editor_width))
+                            / ScrollPixelOffset::from(em_layout_width))
+                        .max(0.0),
                         max_scroll_top,
                     );
 
@@ -10781,9 +10818,10 @@ impl PositionMap {
         let row = ((position.y / self.line_height) as f64 + self.scroll_position.y) as u32;
         let line_index = row.checked_sub(self.visible_row_range.start.0)?;
         let line = self.line_layouts.get(line_index as usize)?;
-        let x = position.x + (self.scroll_position.x as f32 * self.em_layout_width)
+        let x = ScrollPixelOffset::from(position.x)
+            + self.scroll_position.x * ScrollPixelOffset::from(self.em_layout_width)
             - line.alignment_offset(self.text_align, self.content_width);
-        if x < Pixels::ZERO {
+        if x < 0. {
             return None;
         }
         let glyph = DisplayPoint::new(DisplayRow(row), line.index_for_x(x)? as u32);
@@ -10795,48 +10833,14 @@ impl PositionMap {
         let scroll_position = self.scroll_position;
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
-        let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
+        let x = ScrollPixelOffset::from(position.x)
+            + scroll_position.x * ScrollPixelOffset::from(self.em_layout_width);
         let row = ((y / self.line_height) as f64 + scroll_position.y) as u32;
 
-        let (column, x_overshoot_after_line_end) = if let Some(line_index) =
-            row.checked_sub(self.visible_row_range.start.0)
-            && let Some(line) = self.line_layouts.get(line_index as usize)
-        {
-            let alignment_offset = line.alignment_offset(self.text_align, self.content_width);
-            let x_relative_to_text = x - alignment_offset;
-            if let Some(ix) = line.index_for_x(x_relative_to_text) {
-                (ix as u32, px(0.))
-            } else {
-                (line.len as u32, px(0.).max(x_relative_to_text - line.width))
-            }
-        } else {
-            (0, x)
-        };
-
-        let mut exact_unclipped = DisplayPoint::new(DisplayRow(row), column);
-        let previous_valid = self.snapshot.clip_point(exact_unclipped, Bias::Left);
-        let next_valid = self.snapshot.clip_point(exact_unclipped, Bias::Right);
-
-        let nearest_valid = if previous_valid == next_valid {
-            previous_valid
-        } else {
-            match self.snapshot.inlay_bias_at(exact_unclipped) {
-                Some(Bias::Left) => next_valid,
-                Some(Bias::Right) => previous_valid,
-                None => previous_valid,
-            }
-        };
-
-        let column_overshoot_after_line_end =
-            (x_overshoot_after_line_end / self.em_layout_width) as u32;
-        *exact_unclipped.column_mut() += column_overshoot_after_line_end;
-        PointForPosition {
-            previous_valid,
-            next_valid,
-            nearest_valid,
-            exact_unclipped,
-            column_overshoot_after_line_end,
-        }
+        let line = row
+            .checked_sub(self.visible_row_range.start.0)
+            .and_then(|line_index| self.line_layouts.get(line_index as usize));
+        self.resolve_point_for_position(DisplayRow(row), x, line)
     }
 
     fn point_for_position_on_line(
@@ -10848,16 +10852,31 @@ impl PositionMap {
         let text_bounds = self.text_hitbox.bounds;
         let scroll_position = self.scroll_position;
         let position = position - text_bounds.origin;
-        let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
+        let x = ScrollPixelOffset::from(position.x)
+            + scroll_position.x * ScrollPixelOffset::from(self.em_layout_width);
 
-        let alignment_offset = line.alignment_offset(self.text_align, self.content_width);
-        let x_relative_to_text = x - alignment_offset;
-        let (column, x_overshoot_after_line_end) =
+        self.resolve_point_for_position(row, x, Some(line))
+    }
+
+    fn resolve_point_for_position(
+        &self,
+        row: DisplayRow,
+        x: ScrollPixelOffset,
+        line: Option<&LineWithInvisibles>,
+    ) -> PointForPosition {
+        let (column, x_overshoot_after_line_end) = if let Some(line) = line {
+            let x_relative_to_text = x - line.alignment_offset(self.text_align, self.content_width);
             if let Some(ix) = line.index_for_x(x_relative_to_text) {
                 (ix as u32, px(0.))
             } else {
-                (line.len as u32, px(0.).max(x_relative_to_text - line.width))
-            };
+                (
+                    line.len as u32,
+                    px(0.).max(Pixels::from(x_relative_to_text - line.width)),
+                )
+            }
+        } else {
+            (0, Pixels::from(x))
+        };
 
         let mut exact_unclipped = DisplayPoint::new(row, column);
         let previous_valid = self.snapshot.clip_point(exact_unclipped, Bias::Left);
@@ -12497,11 +12516,11 @@ mod tests {
         // click at the end of the second line
         let target_point = DisplayPoint::new(DisplayRow(1), 3);
         let click_x = state.content_origin.x
-            + editor.update_in(cx, |editor, window, cx| {
+            + Pixels::from(editor.update_in(cx, |editor, window, cx| {
                 editor
                     .snapshot(window, cx)
                     .x_for_display_point(target_point, &editor.text_layout_details(window, cx))
-            });
+            }));
 
         let point = state
             .position_map
@@ -13855,7 +13874,7 @@ mod tests {
             diagnostic_underline_severity_ranges: vec![(0..1, ERROR)],
             point_diagnostics: Vec::new(),
             len: 1,
-            width: px(3.25),
+            width: 3.25,
             font_size: px(13.),
         };
         let underline = point_diagnostic_test_style(WARNING);

@@ -134,6 +134,7 @@ use std::{
 
 use crate::{
     EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
+    scroll::ScrollPixelOffset,
 };
 use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
 use fold_map::{FoldPointCursor, FoldSnapshot};
@@ -2109,19 +2110,19 @@ impl DisplaySnapshot {
         &self,
         display_point: DisplayPoint,
         text_layout_details: &TextLayoutDetails,
-    ) -> Pixels {
+    ) -> ScrollPixelOffset {
         let line = self.layout_row(display_point.row(), text_layout_details);
-        line.x_for_index(display_point.column() as usize)
+        ScrollPixelOffset::from(line.x_for_index(display_point.column() as usize))
     }
 
     pub fn display_column_for_x(
         &self,
         display_row: DisplayRow,
-        x: Pixels,
+        x: ScrollPixelOffset,
         details: &TextLayoutDetails,
     ) -> u32 {
         let layout_line = self.layout_row(display_row, details);
-        layout_line.closest_index_for_x(x) as u32
+        layout_line.closest_index_for_x(Pixels::from(x)) as u32
     }
 
     #[instrument(skip_all)]
@@ -3152,33 +3153,33 @@ pub mod tests {
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 7),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x))
+                    language::SelectionGoal::HorizontalPosition(x)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 7),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
+                    language::SelectionGoal::HorizontalPosition(x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x))
+                    language::SelectionGoal::HorizontalPosition(x)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
+                    language::SelectionGoal::HorizontalPosition(x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(2), 4),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x))
+                    language::SelectionGoal::HorizontalPosition(x)
                 )
             );
 
