@@ -238,7 +238,7 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
                 ),
             ]);
             if let Some(beta_header) = binding_controls_beta {
-                // Fable 5.1 binds replayed thinking to the prefix, which Zed can change.
+                // Opus 5.5 and Fable 5.1 bind replayed thinking to the prefix, which Zed can change.
                 thinking_fields.insert(
                     "block_binding".to_string(),
                     value_to_aws_document(&serde_json::json!({
