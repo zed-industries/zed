@@ -35,6 +35,54 @@ struct FontInfo {
     font_collection: IDWriteFontCollection1,
 }
 
+struct FontTable<'a> {
+    font_face: &'a IDWriteFontFace3,
+    bytes: &'a [u8],
+    context: *mut c_void,
+}
+
+impl<'a> FontTable<'a> {
+    fn new(font_face: &'a IDWriteFontFace3, tag: &str) -> Option<Self> {
+        let mut data = std::ptr::null_mut::<c_void>();
+        let mut size = 0u32;
+        let mut context = std::ptr::null_mut::<c_void>();
+        let mut exists = BOOL(0);
+        unsafe {
+            font_face.TryGetFontTable(
+                make_open_type_tag(tag),
+                &mut data,
+                &mut size,
+                &mut context,
+                &mut exists,
+            )
+        }
+        .log_err()?;
+        if !exists.as_bool() {
+            return None;
+        }
+        let bytes = if data.is_null() {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size as usize) }
+        };
+        Some(Self {
+            font_face,
+            bytes,
+            context,
+        })
+    }
+
+    fn bytes(&self) -> &[u8] {
+        self.bytes
+    }
+}
+
+impl Drop for FontTable<'_> {
+    fn drop(&mut self) {
+        unsafe { self.font_face.ReleaseFontTable(self.context) };
+    }
+}
+
 pub(crate) struct DirectWriteTextSystem {
     components: DirectWriteComponents,
     state: RwLock<DirectWriteState>,
@@ -307,6 +355,56 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         } else {
             TextRenderingMode::Grayscale
         }
+    }
+
+    fn ascii_shaping_preserves_advances(&self, font_id: FontId, features: &FontFeatures) -> bool {
+        let lock = self.state.read();
+        let Some(font_info) = lock.fonts.get(font_id.0) else {
+            return false;
+        };
+        let Some(ascii_glyphs) = (0x20u8..=0x7E)
+            .map(|byte| {
+                lock.glyph_for_char(font_id, char::from(byte))
+                    .filter(|glyph| glyph.0 != 0)
+                    .and_then(|glyph| u16::try_from(glyph.0).ok())
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        let table = |tag: &str| FontTable::new(&font_info.font_face, tag);
+        let (Some(head), Some(hhea), Some(maxp)) = (table("head"), table("hhea"), table("maxp"))
+        else {
+            return false;
+        };
+        let (hmtx, gsub, gpos, morx, kern, kerx) = (
+            table("hmtx"),
+            table("GSUB"),
+            table("GPOS"),
+            table("morx"),
+            table("kern"),
+            table("kerx"),
+        );
+        gpui::ascii_shaping_preserves_advances(
+            gpui::ShapingTables {
+                head: head.bytes(),
+                hhea: hhea.bytes(),
+                maxp: maxp.bytes(),
+                hmtx: hmtx.as_ref().map(FontTable::bytes),
+                gsub: gsub.as_ref().map(FontTable::bytes),
+                gpos: gpos.as_ref().map(FontTable::bytes),
+                morx: morx.as_ref().map(FontTable::bytes),
+                kern: kern.as_ref().map(FontTable::bytes),
+                kerx: kerx.as_ref().map(FontTable::bytes),
+            },
+            &ascii_glyphs,
+            features.tag_value_list(),
+            |glyph| {
+                lock.get_advance(font_id, GlyphId(u32::from(glyph)))
+                    .ok()
+                    .map(|advance| advance.width)
+            },
+        )
     }
 }
 

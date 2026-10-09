@@ -4,6 +4,7 @@ use core_foundation::{
     array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
+    data::CFData,
     number::CFNumber,
     string::CFString,
 };
@@ -233,6 +234,53 @@ impl PlatformTextSystem for AppleTextSystem {
         let luminance = 0.2126 * rgba.r + 0.7152 * rgba.g + 0.0722 * rgba.b;
         let level = ((4.0 * luminance) + 0.5).floor() as i32;
         level.clamp(0, 4) as u8
+    }
+
+    fn ascii_shaping_preserves_advances(&self, font_id: FontId, features: &FontFeatures) -> bool {
+        let lock = self.0.read();
+        let Some(font) = lock.fonts.get(font_id.0) else {
+            return false;
+        };
+        let native = font.native_font();
+        let table = |tag: &[u8; 4]| native.get_font_table(u32::from_be_bytes(*tag));
+        let (Some(head), Some(hhea), Some(maxp)) = (table(b"head"), table(b"hhea"), table(b"maxp"))
+        else {
+            return false;
+        };
+        let (hmtx, gsub, gpos, morx, kern, kerx) = (
+            table(b"hmtx"),
+            table(b"GSUB"),
+            table(b"GPOS"),
+            table(b"morx"),
+            table(b"kern"),
+            table(b"kerx"),
+        );
+        let Some(ascii_glyphs) = (0x20u8..=0x7E)
+            .map(|byte| font.glyph_for_char(byte as char).map(|glyph| glyph as u16))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        gpui::ascii_shaping_preserves_advances(
+            gpui::ShapingTables {
+                head: head.bytes(),
+                hhea: hhea.bytes(),
+                maxp: maxp.bytes(),
+                hmtx: hmtx.as_ref().map(CFData::bytes),
+                gsub: gsub.as_ref().map(CFData::bytes),
+                gpos: gpos.as_ref().map(CFData::bytes),
+                morx: morx.as_ref().map(CFData::bytes),
+                kern: kern.as_ref().map(CFData::bytes),
+                kerx: kerx.as_ref().map(CFData::bytes),
+            },
+            &ascii_glyphs,
+            features.tag_value_list(),
+            |glyph| {
+                font.advance(u32::from(glyph))
+                    .ok()
+                    .map(|advance| advance.x())
+            },
+        )
     }
 }
 
@@ -775,7 +823,10 @@ mod lenient_font_attributes {
 #[cfg(test)]
 mod tests {
     use crate::AppleTextSystem;
-    use gpui::{FontFallbacks, FontFeatures, FontRun, GlyphId, PlatformTextSystem, font, px};
+    use gpui::{
+        Font, FontFallbacks, FontFeatures, FontId, FontRun, GlyphId, LineLayout,
+        PlatformTextSystem, font, px,
+    };
     use std::sync::Arc;
 
     #[test]
@@ -932,5 +983,82 @@ mod tests {
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, 0);
         assert!(layout.runs.is_empty());
+    }
+
+    #[test]
+    fn test_ascii_shaping_preserves_advances() {
+        let fonts = AppleTextSystem::new();
+        fonts
+            .add_fonts(vec![
+                include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf")
+                    .as_slice()
+                    .into(),
+            ])
+            .unwrap();
+        let probes = [
+            "1/2 fi ffi fl != -> === <= >= :: <!-- --> www AV To ".repeat(64),
+            (0x20u8..=0x7E).map(char::from).collect::<String>(),
+        ];
+        for (family, features, expected) in [
+            ("Lilex", &[][..], true),
+            ("Lilex", &[("calt", 0)][..], true),
+            ("Lilex", &[("frac", 1)][..], false),
+            ("Menlo", &[][..], true),
+            ("Menlo", &[("liga", 0)][..], true),
+            ("Menlo", &[("liga", 1)][..], false),
+            ("Times", &[][..], false),
+        ] {
+            let font = Font {
+                features: FontFeatures(Arc::new(
+                    features
+                        .iter()
+                        .map(|(tag, value)| (tag.to_string(), *value))
+                        .collect(),
+                )),
+                ..font(family)
+            };
+            let font_id = fonts.font_id(&font).unwrap();
+            assert_eq!(
+                fonts.ascii_shaping_preserves_advances(font_id, &font.features),
+                expected,
+                "{family} {features:?}"
+            );
+            if expected {
+                let cell = layout_line(&fonts, font_id, "x").width;
+                for probe in &probes {
+                    let width = layout_line(&fonts, font_id, probe).width;
+                    assert!(
+                        (width - cell * probe.len() as f32).abs() < px(0.01),
+                        "{family} {features:?}: {width:?} for {} cells of {cell:?}",
+                        probe.len()
+                    );
+                }
+            }
+        }
+        assert!(
+            !fonts.ascii_shaping_preserves_advances(FontId(usize::MAX), &FontFeatures::default())
+        );
+    }
+
+    #[test]
+    fn test_glyph_boundaries_exclude_positions_inside_ligatures() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Times")).unwrap();
+        let layout = layout_line(&fonts, font_id, "xfix");
+        let boundaries = (0..=5)
+            .filter(|index| layout.is_glyph_boundary(*index))
+            .collect::<Vec<_>>();
+        assert_eq!(boundaries, vec![0, 1, 3, 4, 5]);
+    }
+
+    fn layout_line(fonts: &AppleTextSystem, font_id: FontId, text: &str) -> LineLayout {
+        fonts.layout_line(
+            text,
+            px(14.),
+            &[FontRun {
+                font_id,
+                len: text.len(),
+            }],
+        )
     }
 }

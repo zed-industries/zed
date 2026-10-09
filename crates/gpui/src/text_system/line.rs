@@ -1,7 +1,7 @@
 use crate::{
     App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
-    SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
-    WrappedLineLayout, black, fill, point, px, size, underline_y_offset,
+    ShapedGlyph, ShapedRun, SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window,
+    WrapBoundary, WrappedLineLayout, black, fill, point, px, size, underline_y_offset,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -102,6 +102,69 @@ impl ShapedLine {
             len,
         });
         self
+    }
+
+    /// Returns the part of this line covering the given utf-8 byte range, rebased to the range start.
+    pub fn slice(&self, range: Range<usize>, width: Option<Pixels>) -> Self {
+        let layout = self.layout.as_ref();
+        let origin = if range.start > 0 {
+            layout.x_for_index(range.start)
+        } else {
+            px(0.)
+        };
+        let end = if range.end < layout.len {
+            layout.x_for_index(range.end)
+        } else {
+            layout.width
+        };
+        let runs = layout
+            .runs
+            .iter()
+            .filter_map(|run| {
+                let glyphs = run
+                    .glyphs
+                    .iter()
+                    .filter(|glyph| range.contains(&glyph.index))
+                    .map(|glyph| ShapedGlyph {
+                        index: glyph.index - range.start,
+                        position: point(glyph.position.x - origin, glyph.position.y),
+                        ..glyph.clone()
+                    })
+                    .collect::<Vec<_>>();
+                (!glyphs.is_empty()).then_some(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs,
+                })
+            })
+            .collect();
+
+        let mut decoration_runs = SmallVec::new();
+        let mut offset = 0usize;
+        for decoration in &self.decoration_runs {
+            let decoration_range = offset..offset + decoration.len as usize;
+            offset = decoration_range.end;
+            let start = decoration_range.start.max(range.start);
+            let end = decoration_range.end.min(range.end);
+            if start < end {
+                decoration_runs.push(DecorationRun {
+                    len: (end - start) as u32,
+                    ..decoration.clone()
+                });
+            }
+        }
+
+        Self {
+            layout: Arc::new(LineLayout {
+                font_size: layout.font_size,
+                width: width.unwrap_or(end - origin),
+                ascent: layout.ascent,
+                descent: layout.descent,
+                runs,
+                len: range.len(),
+            }),
+            text: SharedString::new(&self.text[range]),
+            decoration_runs,
+        }
     }
 
     /// Paint the line of text to the window.

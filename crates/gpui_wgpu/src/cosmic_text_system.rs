@@ -281,6 +281,48 @@ impl PlatformTextSystem for CosmicTextSystem {
     ) -> TextRenderingMode {
         TextRenderingMode::Subpixel
     }
+
+    fn ascii_shaping_preserves_advances(&self, font_id: FontId, features: &FontFeatures) -> bool {
+        let lock = self.0.read();
+        let Some(loaded_font) = lock.loaded_fonts.get(font_id.0) else {
+            return false;
+        };
+        let font = loaded_font.font.as_swash();
+        let table = |tag: &[u8; 4]| font.table(swash::tag_from_bytes(tag));
+        let (Some(head), Some(hhea), Some(maxp)) = (table(b"head"), table(b"hhea"), table(b"maxp"))
+        else {
+            return false;
+        };
+        let Some(ascii_glyphs) = (0x20u8..=0x7E)
+            .map(|byte| {
+                lock.glyph_for_char(font_id, char::from(byte))
+                    .and_then(|glyph| u16::try_from(glyph.0).ok())
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        gpui::ascii_shaping_preserves_advances(
+            gpui::ShapingTables {
+                head,
+                hhea,
+                maxp,
+                hmtx: table(b"hmtx"),
+                gsub: table(b"GSUB"),
+                gpos: table(b"GPOS"),
+                morx: table(b"morx"),
+                kern: table(b"kern"),
+                kerx: table(b"kerx"),
+            },
+            &ascii_glyphs,
+            features.tag_value_list(),
+            |glyph| {
+                lock.advance(font_id, GlyphId(u32::from(glyph)))
+                    .ok()
+                    .map(|advance| advance.width)
+            },
+        )
+    }
 }
 
 impl CosmicTextSystemState {
