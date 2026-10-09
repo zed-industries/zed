@@ -131,7 +131,7 @@ use std::{
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
     pin::pin,
-    rc::Rc,
+    rc::{self, Rc},
     sync::{
         Arc,
         atomic::{self, AtomicUsize},
@@ -321,7 +321,7 @@ pub struct LocalLspStore {
     yarn: Entity<YarnPathStore>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
     buffers_being_formatted: HashSet<BufferId>,
-    last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
+    workspace_edit_captures: HashMap<LanguageServerId, rc::Weak<RefCell<ProjectTransaction>>>,
     language_server_watched_paths: HashMap<LanguageServerId, LanguageServerWatchedPaths>,
     watched_manifest_filenames: HashSet<ManifestName>,
     language_server_paths_watched_for_rename:
@@ -2411,11 +2411,10 @@ impl LocalLspStore {
                     )?;
                     zlog::info!(logger => "Executing command {}", &command.command);
 
-                    lsp_store.update(cx, |this, _| {
+                    let workspace_edits = lsp_store.update(cx, |this, _| {
                         this.as_local_mut()
                             .unwrap()
-                            .last_workspace_edits_by_language_server
-                            .remove(&server.server_id());
+                            .capture_workspace_edits(server.server_id())
                     })?;
 
                     let execute_command_result = server
@@ -2440,13 +2439,7 @@ impl LocalLspStore {
                         continue 'actions;
                     }
 
-                    let mut project_transaction_command = lsp_store.update(cx, |this, _| {
-                        this.as_local_mut()
-                            .unwrap()
-                            .last_workspace_edits_by_language_server
-                            .remove(&server.server_id())
-                            .unwrap_or_default()
-                    })?;
+                    let mut project_transaction_command = workspace_edits.take();
 
                     if let Some(transaction) = project_transaction_command.0.remove(&buffer.handle)
                     {
@@ -3570,11 +3563,10 @@ impl LocalLspStore {
                 continue;
             }
 
-            lsp_store.update(cx, |lsp_store, _| {
-                if let LspStoreMode::Local(mode) = &mut lsp_store.mode {
-                    mode.last_workspace_edits_by_language_server
-                        .remove(&language_server.server_id());
-                }
+            let workspace_edits = lsp_store.update(cx, |lsp_store, _| {
+                lsp_store
+                    .as_local_mut()
+                    .map(|local| local.capture_workspace_edits(server_id))
             })?;
 
             language_server
@@ -3590,16 +3582,9 @@ impl LocalLspStore {
                 .into_response()
                 .context("execute command")?;
 
-            lsp_store.update(cx, |this, _| {
-                if let LspStoreMode::Local(mode) = &mut this.mode {
-                    project_transaction.0.extend(
-                        mode.last_workspace_edits_by_language_server
-                            .remove(&language_server.server_id())
-                            .unwrap_or_default()
-                            .0,
-                    )
-                }
-            })?;
+            if let Some(workspace_edits) = workspace_edits {
+                project_transaction.0.extend(workspace_edits.take().0);
+            }
         }
         Ok(())
     }
@@ -4028,10 +4013,15 @@ impl LocalLspStore {
             if let Some(transaction) = transaction {
                 cx.emit(LspStoreEvent::WorkspaceEditApplied(transaction.clone()));
 
-                this.as_local_mut()
+                if let Some(workspace_edits) = this
+                    .as_local()
                     .unwrap()
-                    .last_workspace_edits_by_language_server
-                    .insert(server_id, transaction);
+                    .workspace_edit_captures
+                    .get(&server_id)
+                    .and_then(rc::Weak::upgrade)
+                {
+                    *workspace_edits.borrow_mut() = transaction;
+                }
             }
         });
         Ok(lsp::ApplyWorkspaceEditResponse {
@@ -4039,6 +4029,23 @@ impl LocalLspStore {
             failed_change: None,
             failure_reason: None,
         })
+    }
+
+    fn capture_workspace_edits(
+        &mut self,
+        server_id: LanguageServerId,
+    ) -> Rc<RefCell<ProjectTransaction>> {
+        if let Some(workspace_edits) = self
+            .workspace_edit_captures
+            .get(&server_id)
+            .and_then(rc::Weak::upgrade)
+        {
+            return workspace_edits;
+        }
+        let workspace_edits = Rc::default();
+        self.workspace_edit_captures
+            .insert(server_id, Rc::downgrade(&workspace_edits));
+        workspace_edits
     }
 
     fn remove_worktree(
@@ -4071,8 +4078,7 @@ impl LocalLspStore {
                 .remove(server_id_to_remove);
             self.language_server_paths_watched_for_rename
                 .remove(server_id_to_remove);
-            self.last_workspace_edits_by_language_server
-                .remove(server_id_to_remove);
+            self.workspace_edit_captures.remove(server_id_to_remove);
             self.language_servers.remove(server_id_to_remove);
             self.language_server_dynamic_registrations
                 .remove(server_id_to_remove);
@@ -4927,7 +4933,7 @@ impl LspStore {
                 languages: languages.clone(),
                 language_server_ids: Default::default(),
                 language_servers: Default::default(),
-                last_workspace_edits_by_language_server: Default::default(),
+                workspace_edit_captures: Default::default(),
                 language_server_watched_paths: Default::default(),
                 language_server_paths_watched_for_rename: Default::default(),
                 language_server_dynamic_registrations: Default::default(),
@@ -6646,11 +6652,10 @@ impl LspStore {
                         .get_request_timeout()
                 });
 
-                this.update(cx, |this, _| {
+                let workspace_edits = this.update(cx, |this, _| {
                     this.as_local_mut()
                         .unwrap()
-                        .last_workspace_edits_by_language_server
-                        .remove(&lang_server.server_id());
+                        .capture_workspace_edits(lang_server.server_id())
                 })?;
 
                 let _result = lang_server
@@ -6666,13 +6671,7 @@ impl LspStore {
                     .into_response()
                     .context("execute command")?;
 
-                return this.update(cx, |this, _| {
-                    this.as_local_mut()
-                        .unwrap()
-                        .last_workspace_edits_by_language_server
-                        .remove(&lang_server.server_id())
-                        .unwrap_or_default()
-                });
+                Ok(workspace_edits.take())
             })
         } else {
             Task::ready(Err(anyhow!("no upstream client and not local")))

@@ -8467,6 +8467,124 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_unconsumed_workspace_edits_release_buffers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.ts": "a" })).await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["_the/command".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(|fake_server| {
+                let language_server = fake_server.server.clone();
+                fake_server.set_request_handler::<lsp::request::ExecuteCommand, _, _>(
+                    move |params, _| {
+                        let language_server = language_server.clone();
+                        async move {
+                            language_server
+                                .request::<lsp::request::ApplyWorkspaceEdit>(
+                                    lsp::ApplyWorkspaceEditParams {
+                                        label: None,
+                                        edit: lsp::WorkspaceEdit {
+                                            changes: Some(
+                                                [(
+                                                    lsp::Uri::from_file_path(path!("/dir/a.ts"))
+                                                        .unwrap(),
+                                                    vec![lsp::TextEdit::new(
+                                                        lsp::Range::default(),
+                                                        "X".to_string(),
+                                                    )],
+                                                )]
+                                                .into_iter()
+                                                .collect(),
+                                            ),
+                                            ..lsp::WorkspaceEdit::default()
+                                        },
+                                    },
+                                    DEFAULT_LSP_REQUEST_TIMEOUT,
+                                )
+                                .await
+                                .into_response()
+                                .unwrap();
+                            if params.arguments.is_empty() {
+                                Ok(None)
+                            } else {
+                                Err(anyhow::anyhow!("command failed"))
+                            }
+                        }
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    for failing_code_action in [true, false] {
+        let (buffer, handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+            })
+            .await
+            .unwrap();
+        if failing_code_action {
+            fake_language_servers.next().await.unwrap();
+        }
+        cx.executor().run_until_parked();
+        let server_id = project.read_with(cx, |project, cx| {
+            project
+                .lsp_store()
+                .read(cx)
+                .language_server_statuses()
+                .next()
+                .unwrap()
+                .0
+        });
+
+        if failing_code_action {
+            let action = CodeAction {
+                server_id,
+                range: language::Anchor::min_max_range_for_buffer(
+                    buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                ),
+                lsp_action: LspAction::Command(lsp::Command {
+                    title: "The command".into(),
+                    command: "_the/command".into(),
+                    arguments: Some(vec![json!("fail")]),
+                }),
+                resolved: true,
+            };
+            let apply = project.update(cx, |project, cx| {
+                project.apply_code_action(buffer.clone(), action, true, cx)
+            });
+            assert!(apply.await.is_err());
+        } else {
+            let execute = project.update(cx, |project, cx| {
+                project.lsp_store().update(cx, |lsp_store, cx| {
+                    lsp_store.execute_lsp_command(server_id, "_the/command".into(), Vec::new(), cx)
+                })
+            });
+            assert_eq!(execute.await.unwrap(), None);
+        }
+        assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), "Xa");
+
+        let weak_buffer = buffer.downgrade();
+        cx.update(|_| drop((buffer, handle)));
+        cx.executor().run_until_parked();
+        weak_buffer.assert_released();
+    }
+}
+
+#[gpui::test]
 async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
