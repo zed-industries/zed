@@ -1583,14 +1583,7 @@ impl NativeAgent {
             session
                 .acp_thread
                 .update(cx, |thread, cx| {
-                    thread
-                        .handle_session_update(
-                            acp_v1::SessionUpdate::AvailableCommandsUpdate(
-                                acp_v1::AvailableCommandsUpdate::new(available_commands.clone()),
-                            ),
-                            cx,
-                        )
-                        .log_err();
+                    thread.update_available_commands(available_commands.clone(), cx);
                 })
                 .ok();
         }
@@ -1599,11 +1592,11 @@ impl NativeAgent {
     fn build_available_commands_for_project(
         project_state: Option<&ProjectState>,
         cx: &App,
-    ) -> Vec<acp_v1::AvailableCommand> {
+    ) -> Vec<acp_v2::AvailableCommand> {
         let Some(state) = project_state else {
             return Vec::new();
         };
-        let compact_command = acp_v1::AvailableCommand::new(
+        let compact_command = acp_v2::AvailableCommand::new(
             COMPACT_COMMAND_NAME,
             "Summarize the conversation so far to free up context",
         )
@@ -1633,7 +1626,7 @@ impl NativeAgent {
             };
 
             let mut command =
-                acp_v1::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
+                acp_v2::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
                     .meta(acp_thread::meta_with_command_category(
                         acp_thread::CommandCategory::Mcp,
                     ));
@@ -1642,8 +1635,8 @@ impl NativeAgent {
                 Some([arg]) => {
                     let hint = format!("<{}>", arg.name);
 
-                    command = command.input(acp_v1::AvailableCommandInput::Unstructured(
-                        acp_v1::UnstructuredCommandInput::new(hint),
+                    command = command.input(acp_v2::AvailableCommandInput::Text(
+                        acp_v2::TextCommandInput::new(hint),
                     ));
                 }
                 Some([]) | None => {}
@@ -4304,11 +4297,15 @@ mod internal_tests {
         cx.update(|cx| {
             let commands = acp_thread.read(cx).available_commands();
 
-            let compact = commands.iter().find(|command| command.name == "compact");
-            let compact = compact.expect("compact command should be available");
             assert_eq!(
-                acp_thread::command_category_from_meta(&compact.meta),
-                Some(acp_thread::CommandCategory::Native),
+                commands,
+                &[acp_v2::AvailableCommand::new(
+                    COMPACT_COMMAND_NAME,
+                    "Summarize the conversation so far to free up context",
+                )
+                .meta(acp_thread::meta_with_command_category(
+                    acp_thread::CommandCategory::Native,
+                ))],
             );
         });
     }
@@ -6166,11 +6163,8 @@ mod internal_tests {
         let project_id = project.entity_id();
         let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
 
-        agent.read_with(cx, |agent, cx| {
-            let commands = NativeAgent::build_available_commands_for_project(
-                agent.projects.get(&project_id),
-                cx,
-            );
+        acp_thread.read_with(cx, |thread, _cx| {
+            let commands = thread.available_commands();
             let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
             assert!(
                 !names.contains(&"visible-skill"),
@@ -6287,7 +6281,7 @@ mod internal_tests {
                     .map(|s| s.name.as_str())
                     .collect::<Vec<_>>()
             );
-            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
+            let commands = acp_thread.read(cx).available_commands();
             let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
             assert!(
                 !names.contains(&"my-skill"),
