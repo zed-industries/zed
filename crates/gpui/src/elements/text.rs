@@ -646,11 +646,6 @@ impl TextLayout {
                 .to_pixels(font_size.into(), window.rem_size()),
         );
 
-        let runs = if let Some(runs) = runs {
-            runs
-        } else {
-            vec![text_style.to_run(text.len())]
-        };
         window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
@@ -700,6 +695,13 @@ impl TextLayout {
                     return size;
                 }
 
+                let default_run;
+                let runs = if let Some(runs) = runs.as_deref() {
+                    runs
+                } else {
+                    default_run = text_style.to_run(text.len());
+                    std::slice::from_ref(&default_run)
+                };
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let (text, runs) = if let Some(truncate_width) = truncate_width {
                     if let Some(max_lines) = text_style.line_clamp
@@ -710,12 +712,12 @@ impl TextLayout {
                             wrap_width,
                             max_lines,
                             &truncation_affix,
-                            &runs,
+                            runs,
                             truncate_from,
                         )
                     } else if let Some(unclipped) = window
                         .text_system()
-                        .shape_text(text.clone(), font_size, &runs, None, None)
+                        .shape_text(text.clone(), font_size, runs, None, None)
                         .log_err()
                         && unclipped
                             .iter()
@@ -727,18 +729,18 @@ impl TextLayout {
                         // whenever the honestly-shaped text fits; the shaping result
                         // comes from the line layout cache when the same text was
                         // already measured untruncated this frame.
-                        (text.clone(), Cow::Borrowed(&*runs))
+                        (text.clone(), Cow::Borrowed(runs))
                     } else {
                         line_wrapper.truncate_line(
                             text.clone(),
                             truncate_width,
                             &truncation_affix,
-                            &runs,
+                            runs,
                             truncate_from,
                         )
                     }
                 } else {
-                    (text.clone(), Cow::Borrowed(&*runs))
+                    (text.clone(), Cow::Borrowed(runs))
                 };
                 let len = text.len();
 
@@ -1316,6 +1318,90 @@ impl IntoElement for InteractiveText {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{px, size};
+
+    #[gpui::test]
+    fn default_and_explicit_text_runs_preserve_shaping(cx: &mut crate::TestAppContext) {
+        let window = cx.add_empty_window();
+        window.update(|window, cx| {
+            window
+                .invalidator
+                .set_phase(crate::window::DrawPhase::Prepaint);
+            let text: SharedString = "first words\nsecond words".into();
+            let refinement = crate::TextStyleRefinement {
+                background_color: Some(crate::red()),
+                underline: Some(crate::UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(crate::blue()),
+                    wavy: true,
+                }),
+                strikethrough: Some(crate::StrikethroughStyle {
+                    thickness: px(2.),
+                    color: Some(crate::green()),
+                }),
+                ..Default::default()
+            };
+            let text_style =
+                window.with_text_style(Some(refinement.clone()), |window| window.text_style());
+            let default_runs = vec![text_style.to_run(text.len())];
+            let mut styled_runs = vec![text_style.to_run(6), text_style.to_run(text.len() - 6)];
+            if let Some(run) = styled_runs.last_mut() {
+                run.color = crate::blue();
+                run.underline = None;
+            }
+            let mut override_runs = default_runs.clone();
+            StyledText::apply_font_family_overrides(
+                &mut override_runs,
+                &[(0..text.len(), "other family".into())],
+            );
+            for (runs, expected_runs, overrides) in [
+                (None, default_runs.clone(), None),
+                (Some(default_runs.clone()), default_runs, None),
+                (Some(styled_runs.clone()), styled_runs, None),
+                (
+                    None,
+                    override_runs,
+                    Some(vec![(0..text.len(), "other family".into())]),
+                ),
+            ] {
+                let mut element = StyledText::new(text.clone());
+                element.runs = runs;
+                element.delayed_font_family_overrides = overrides;
+                let (layout_id, ()) = window.with_text_style(Some(refinement.clone()), |window| {
+                    element.request_layout(None, None, window, cx)
+                });
+                let width = px(80.);
+                window.compute_layout(
+                    layout_id,
+                    size(
+                        crate::AvailableSpace::Definite(width),
+                        crate::AvailableSpace::MinContent,
+                    ),
+                    cx,
+                );
+                let expected = window
+                    .text_system()
+                    .shape_text(
+                        text.clone(),
+                        text_style.font_size.to_pixels(window.rem_size()),
+                        &expected_runs,
+                        Some(width),
+                        None,
+                    )
+                    .expect("reference text should shape");
+                let actual = element.layout.0.borrow();
+                let actual = actual.as_ref().expect("text should be measured");
+                assert_eq!(format!("{:?}", actual.lines), format!("{expected:?}"));
+                assert!(
+                    actual
+                        .lines
+                        .iter()
+                        .any(|line| !line.decoration_runs.is_empty())
+                );
+            }
+            window.invalidator.set_phase(crate::window::DrawPhase::None);
+        });
+    }
 
     #[test]
     fn test_into_element_for() {
