@@ -742,9 +742,8 @@ mod tests {
         ) -> Option<String> {
             use futures::StreamExt as _;
             while let Some(event) = receiver.next().await {
-                let Ok(crate::ThreadEvent::ToolCallUpdate(
-                    acp_thread::ToolCallUpdate::ProtocolFields(update),
-                )) = event
+                let Ok(crate::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update))) =
+                    event
                 else {
                     continue;
                 };

@@ -10495,7 +10495,7 @@ pub(crate) mod tests {
         }))
         .expect("new patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("new patch should apply");
         cx.run_until_parked();
 
@@ -10535,7 +10535,7 @@ pub(crate) mod tests {
         }))
         .expect("metadata patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(metadata, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(metadata, cx))
             .expect("metadata patch should apply");
         cx.run_until_parked();
         thread_view.read_with(cx, |view, cx| {
@@ -10586,7 +10586,7 @@ pub(crate) mod tests {
         }))
         .expect("patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("patch should apply");
         cx.run_until_parked();
         let _authorization = thread
@@ -10689,7 +10689,7 @@ pub(crate) mod tests {
         }))
         .expect("initial tool patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("initial tool patch should apply");
         cx.run_until_parked();
 
@@ -10751,7 +10751,7 @@ pub(crate) mod tests {
         }))
         .expect("diff patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("diff patch should apply");
         cx.run_until_parked();
         cx.executor()
@@ -10980,7 +10980,7 @@ pub(crate) mod tests {
         }))
         .expect("clear patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("clear patch should apply");
         cx.run_until_parked();
         cx.executor()
@@ -11045,7 +11045,7 @@ pub(crate) mod tests {
         ] {
             thread
                 .update(cx, |thread, cx| {
-                    thread.upsert_tool_call_patch(
+                    thread.upsert_wire_tool_call(
                         acp_v2::ToolCallUpdate::new(id)
                             .title("Inspect output")
                             .status(acp_v2::ToolCallStatus::Completed)
@@ -13496,7 +13496,7 @@ pub(crate) mod tests {
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
         thread.update(cx, |thread, cx| {
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("tool")
                         .title("Run command")
                         .kind(acp_v2::ToolKind::Execute)
@@ -13516,7 +13516,7 @@ pub(crate) mod tests {
         });
         let terminal = thread.read_with(cx, |thread, _| {
             thread
-                .terminal(acp_v1::TerminalId::new("display"))
+                .terminal(acp_v2::TerminalId::new("display"))
                 .expect("placeholder")
         });
         let renderer = terminal.read_with(cx, |terminal, _| terminal.inner().clone());
@@ -13693,7 +13693,7 @@ pub(crate) mod tests {
             });
             let acp_terminal = thread.read_with(cx, |thread, _| {
                 thread
-                    .terminal(terminal_id.clone())
+                    .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
                     .expect("terminal tool call should contain a terminal")
             });
             let terminal_view = entry_state.read_with(cx, |state, _| {
@@ -13794,7 +13794,7 @@ pub(crate) mod tests {
 
         let acp_terminal = thread.update(cx, |thread, cx| {
             let acp_terminal = thread.register_terminal_created(
-                terminal_id.clone(),
+                acp_v2::TerminalId::new(terminal_id.0.clone()),
                 "client-owned command".into(),
                 None,
                 None,

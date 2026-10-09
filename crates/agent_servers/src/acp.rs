@@ -3037,7 +3037,7 @@ mod tests {
         fn terminal(&self, id: &str, cx: &gpui::TestAppContext) -> Entity<acp_thread::Terminal> {
             self.thread.read_with(cx, |thread, _| {
                 thread
-                    .terminal(acp::TerminalId::new(id))
+                    .terminal(acp_v2::TerminalId::new(id))
                     .expect("display terminal")
             })
         }
@@ -3049,7 +3049,7 @@ mod tests {
         harness
             .thread
             .update(cx, |thread, cx| {
-                thread.upsert_tool_call_patch(
+                thread.upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("terminal-tool").content(vec![
                         acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("terminal-1")),
                     ]),
@@ -3291,7 +3291,7 @@ mod tests {
         assert_eq!(observe(cx), before);
         assert_eq!(harness.terminal("terminal-1", cx), terminal);
         harness.thread.read_with(cx, |thread, _| {
-            assert!(thread.terminal(acp::TerminalId::new("unseen")).is_err());
+            assert!(thread.terminal(acp_v2::TerminalId::new("unseen")).is_err());
         });
         assert_eq!(
             harness.received.lock().expect("receive mutex").len(),
@@ -7903,7 +7903,7 @@ fn handle_create_terminal(
 
             let terminal_entity = thread.update(cx, |thread, cx| {
                 thread.register_terminal_created(
-                    acp::TerminalId::new(uuid::Uuid::new_v4().to_string()),
+                    acp_v2::TerminalId::new(uuid::Uuid::new_v4().to_string()),
                     format!("{} {}", args.command, args.args.join(" ")),
                     args.cwd.clone(),
                     args.output_byte_limit,
@@ -7919,7 +7919,9 @@ fn handle_create_terminal(
         match result {
             Ok(terminal_id) => {
                 responder
-                    .respond(acp::CreateTerminalResponse::new(terminal_id))
+                    .respond(acp::CreateTerminalResponse::new(acp::TerminalId::new(
+                        terminal_id.0,
+                    )))
                     .log_err();
             }
             Err(e) => respond_err(responder, e),
@@ -7940,7 +7942,9 @@ fn handle_kill_terminal(
     };
 
     match thread
-        .update(cx, |thread, cx| thread.kill_terminal(args.terminal_id, cx))
+        .update(cx, |thread, cx| {
+            thread.kill_terminal(acp_v2::TerminalId::new(args.terminal_id.0), cx)
+        })
         .flatten_acp()
     {
         Ok(()) => {
@@ -7965,7 +7969,7 @@ fn handle_release_terminal(
 
     match thread
         .update(cx, |thread, cx| {
-            thread.release_terminal(args.terminal_id, cx)
+            thread.release_terminal(acp_v2::TerminalId::new(args.terminal_id.0), cx)
         })
         .flatten_acp()
     {
@@ -7992,7 +7996,7 @@ fn handle_terminal_output(
     match thread
         .read_with(cx, |thread, cx| -> anyhow::Result<_> {
             let out = thread
-                .terminal(args.terminal_id)?
+                .terminal(acp_v2::TerminalId::new(args.terminal_id.0))?
                 .read(cx)
                 .current_output(cx);
             Ok(out)
@@ -8023,7 +8027,10 @@ fn handle_wait_for_terminal_exit(
             .run_until_cancelled(async {
                 let exit_status = thread
                     .update(cx, |thread, cx| {
-                        thread.terminal(args.terminal_id)?.read(cx).wait_for_exit()
+                        thread
+                            .terminal(acp_v2::TerminalId::new(args.terminal_id.0))?
+                            .read(cx)
+                            .wait_for_exit()
                     })
                     .flatten_acp()?
                     .await;

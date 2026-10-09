@@ -2092,9 +2092,8 @@ fn run_agent_thread_view_test(
     let mut tool_locations: Vec<acp::ToolCallLocation> = Vec::new();
 
     while let Ok(event) = event_receiver.try_recv() {
-        if let Ok(agent::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(
-            update,
-        ))) = event
+        if let Ok(agent::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update))) =
+            event
         {
             if let Some(content) = update.content.take() {
                 for content in content {

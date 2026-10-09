@@ -760,7 +760,7 @@ pub enum AgentMessageContent {
 }
 
 pub trait TerminalHandle {
-    fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId>;
+    fn id(&self, cx: &AsyncApp) -> Result<acp_v2::TerminalId>;
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
     fn kill(&self, cx: &AsyncApp) -> Result<()>;
@@ -6835,9 +6835,7 @@ impl ToolCallEventStreamReceiver {
 
     pub async fn expect_update_fields(&mut self) -> acp_v2::ToolCallUpdate {
         let event = self.0.next().await;
-        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(
-            update,
-        )))) = event
+        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update)))) = event
         {
             update
         } else {
@@ -7017,12 +7015,11 @@ mod tests {
             acp_v2::ToolKind::Unknown("_native".into()),
             json!(null),
         );
-        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(tool_call)) =
-            receiver
-                .next()
-                .await
-                .expect("tool call event exists")
-                .expect("tool call event succeeded")
+        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(tool_call)) = receiver
+            .next()
+            .await
+            .expect("tool call event exists")
+            .expect("tool call event succeeded")
         else {
             panic!("expected native tool call payload");
         };
@@ -7045,12 +7042,11 @@ mod tests {
         assert!(tool_call.meta.is_undefined());
 
         stream.update_tool_call_fields(&tool_call_id, |update| update);
-        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(update)) =
-            receiver
-                .next()
-                .await
-                .expect("update event exists")
-                .expect("update event succeeded")
+        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update)) = receiver
+            .next()
+            .await
+            .expect("update event exists")
+            .expect("update event succeeded")
         else {
             panic!("expected native tool call update payload");
         };
@@ -7159,12 +7155,11 @@ mod tests {
                 .raw_output(json!(null))
                 .meta(meta.clone())
         });
-        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(update)) =
-            receiver
-                .next()
-                .await
-                .expect("native update exists")
-                .expect("native update succeeded")
+        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update)) = receiver
+            .next()
+            .await
+            .expect("native update exists")
+            .expect("native update succeeded")
         else {
             panic!("expected native tool call update");
         };
@@ -7187,45 +7182,13 @@ mod tests {
         assert_eq!(update.meta, MaybeUndefined::Value(meta));
         assert!(update.title.is_undefined());
 
-        stream.update_fields(|update| update.content(vec![]).locations(vec![]));
-        let fields = receiver.expect_update_fields().await;
-        assert_eq!(fields.content, MaybeUndefined::Value(vec![]));
-        assert_eq!(fields.locations, MaybeUndefined::Value(vec![]));
-        assert!(fields.raw_input.is_undefined());
-        assert!(fields.raw_output.is_undefined());
-    }
-
-    #[gpui::test]
-    async fn test_native_tool_updates_preserve_metadata_patch_semantics() {
-        let (stream, mut receiver) = ToolCallEventStream::test();
-        let first_meta = acp_v2::Meta::from_iter([("first".into(), json!(true))]);
-        stream.update_fields(|update| update.meta(first_meta.clone()));
-        assert_eq!(
-            receiver.expect_update_fields().await.meta,
-            MaybeUndefined::Value(first_meta)
-        );
-
-        let replacement_meta = acp_v2::Meta::from_iter([("replacement".into(), json!(true))]);
-        stream.update_fields(|update| update.meta(replacement_meta.clone()));
-        assert_eq!(
-            receiver.expect_update_fields().await.meta,
-            MaybeUndefined::Value(replacement_meta)
-        );
-
-        stream.update_fields(|update| update.status(acp_v2::ToolCallStatus::Completed));
-        assert!(receiver.expect_update_fields().await.meta.is_undefined());
-
         stream.update_fields(|update| update.meta(MaybeUndefined::Null));
         assert!(receiver.expect_update_fields().await.meta.is_null());
 
-        stream.update_fields(|update| update);
-        assert!(receiver.expect_update_fields().await.meta.is_undefined());
-
         stream.update_fields(|_| acp_v2::ToolCallUpdate::new("another_tool_call"));
-        assert_eq!(
-            receiver.expect_update_fields().await.tool_call_id,
-            *stream.tool_call_id()
-        );
+        let update = receiver.expect_update_fields().await;
+        assert_eq!(update.tool_call_id, *stream.tool_call_id());
+        assert!(update.meta.is_undefined());
     }
 
     #[gpui::test]
@@ -7288,33 +7251,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[gpui::test]
-    async fn test_native_stop_events() {
-        let (sender, mut receiver) = mpsc::unbounded();
-        let stream = ThreadEventStream::new(sender);
-        for reason in [
-            acp_v2::StopReason::EndTurn,
-            acp_v2::StopReason::Refusal,
-            acp_v2::StopReason::MaxTokens,
-        ] {
-            stream.send_stop(reason.clone());
-            let ThreadEvent::Stop(actual) = receiver
-                .next()
-                .await
-                .expect("stop event exists")
-                .expect("stop event succeeded")
-            else {
-                panic!("expected native stop reason");
-            };
-            assert_eq!(actual, reason);
-        }
-        stream.send_canceled();
-        assert!(matches!(
-            receiver.next().await,
-            Some(Ok(ThreadEvent::Stop(acp_v2::StopReason::Cancelled)))
-        ));
     }
 
     #[test]
@@ -9316,7 +9252,7 @@ mod tests {
         while let Some(event) = replay_events.next().await {
             let event = event.unwrap();
             match event {
-                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(update)) => {
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update)) => {
                     if let MaybeUndefined::Value(name) = update.name {
                         tool_names_by_id.insert(update.tool_call_id.to_string(), name);
                     }

@@ -1154,19 +1154,19 @@ enum ToolContentPatch {
 
 #[derive(Clone, Copy)]
 struct ToolTerminalResolver<'a> {
-    terminals: &'a HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+    terminals: &'a HashMap<acp_v2::TerminalId, Entity<Terminal>>,
     client_managed_only: bool,
 }
 
 impl<'a> ToolTerminalResolver<'a> {
-    fn registered(terminals: &'a HashMap<acp_v1::TerminalId, Entity<Terminal>>) -> Self {
+    fn registered(terminals: &'a HashMap<acp_v2::TerminalId, Entity<Terminal>>) -> Self {
         Self {
             terminals,
             client_managed_only: false,
         }
     }
 
-    fn resolve(self, id: &acp_v1::TerminalId, cx: &App) -> Result<Entity<Terminal>> {
+    fn resolve(self, id: &acp_v2::TerminalId, cx: &App) -> Result<Entity<Terminal>> {
         let terminal = self
             .terminals
             .get(id)
@@ -1273,7 +1273,7 @@ impl ToolCall {
         tool_call: acp_v1::ToolCall,
         status: Option<ToolCallStatus>,
         language_registry: Arc<LanguageRegistry>,
-        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        terminals: &HashMap<acp_v2::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
         let update = acp_v1::ToolCallUpdate::from(tool_call);
@@ -1450,7 +1450,7 @@ impl ToolCall {
         fields: acp_v1::ToolCallUpdateFields,
         meta: Option<acp_v1::Meta>,
         language_registry: Arc<LanguageRegistry>,
-        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        terminals: &HashMap<acp_v2::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
         self.apply_patch(
@@ -3007,7 +3007,7 @@ impl PreparedToolCallContent {
                 acp_v1::ToolCallContent::Terminal(acp_v1::Terminal {
                     terminal_id, meta, ..
                 }) => Self::Terminal {
-                    terminal: terminals.resolve(&terminal_id, cx)?,
+                    terminal: terminals.resolve(&acp_v2::TerminalId::new(terminal_id.0), cx)?,
                     meta,
                 },
                 _ => continue,
@@ -3036,13 +3036,10 @@ impl PreparedToolCallContent {
         match content {
             acp_v2::ToolCallContent::Content(content) => Ok(Self::ContentBlock(*content)),
             acp_v2::ToolCallContent::Diff(diff) => Ok(Self::DiffPatch(diff)),
-            acp_v2::ToolCallContent::Terminal(terminal) => {
-                let terminal_id = acp_v1::TerminalId::new(terminal.terminal_id.0);
-                Ok(Self::Terminal {
-                    terminal: terminals.resolve(&terminal_id, cx)?,
-                    meta: terminal.meta,
-                })
-            }
+            acp_v2::ToolCallContent::Terminal(terminal) => Ok(Self::Terminal {
+                terminal: terminals.resolve(&terminal.terminal_id, cx)?,
+                meta: terminal.meta,
+            }),
             other => Ok(Self::Other(other)),
         }
     }
@@ -3190,8 +3187,8 @@ impl ToolCallContent {
 
 #[derive(Debug, PartialEq)]
 pub enum ToolCallUpdate {
-    ProtocolFields(acp_v2::ToolCallUpdate),
-    UpdateFields(acp_v1::ToolCallUpdate),
+    V2(acp_v2::ToolCallUpdate),
+    V1(acp_v1::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
 }
@@ -3199,8 +3196,8 @@ pub enum ToolCallUpdate {
 impl ToolCallUpdate {
     fn id(&self) -> acp_v2::ToolCallId {
         match self {
-            Self::ProtocolFields(update) => update.tool_call_id.clone(),
-            Self::UpdateFields(update) => acp_v2::ToolCallId::new(update.tool_call_id.0.clone()),
+            Self::V2(update) => update.tool_call_id.clone(),
+            Self::V1(update) => acp_v2::ToolCallId::new(update.tool_call_id.0.clone()),
             Self::UpdateDiff(diff) => diff.id.clone(),
             Self::UpdateTerminal(terminal) => terminal.id.clone(),
         }
@@ -3209,13 +3206,13 @@ impl ToolCallUpdate {
 
 impl From<acp_v2::ToolCallUpdate> for ToolCallUpdate {
     fn from(update: acp_v2::ToolCallUpdate) -> Self {
-        Self::ProtocolFields(update)
+        Self::V2(update)
     }
 }
 
 impl From<acp_v1::ToolCallUpdate> for ToolCallUpdate {
     fn from(update: acp_v1::ToolCallUpdate) -> Self {
-        Self::UpdateFields(update)
+        Self::V1(update)
     }
 }
 
@@ -3474,9 +3471,9 @@ pub struct AcpThread {
     available_commands: Vec<acp_v2::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
     _idle_sleep_subscriptions: Vec<Subscription>,
-    terminals: HashMap<acp_v1::TerminalId, Entity<Terminal>>,
-    pending_terminal_output: HashMap<acp_v1::TerminalId, Vec<Vec<u8>>>,
-    pending_terminal_exit: HashMap<acp_v1::TerminalId, acp_v1::TerminalExitStatus>,
+    terminals: HashMap<acp_v2::TerminalId, Entity<Terminal>>,
+    pending_terminal_output: HashMap<acp_v2::TerminalId, Vec<Vec<u8>>>,
+    pending_terminal_exit: HashMap<acp_v2::TerminalId, acp_v1::TerminalExitStatus>,
     had_error: bool,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
@@ -3647,16 +3644,16 @@ pub enum TerminalProviderEvent {
 #[derive(Debug, Clone)]
 pub enum TerminalProviderCommand {
     WriteInput {
-        terminal_id: acp_v1::TerminalId,
+        terminal_id: acp_v2::TerminalId,
         bytes: Vec<u8>,
     },
     Resize {
-        terminal_id: acp_v1::TerminalId,
+        terminal_id: acp_v2::TerminalId,
         cols: u16,
         rows: u16,
     },
     Close {
-        terminal_id: acp_v1::TerminalId,
+        terminal_id: acp_v2::TerminalId,
     },
 }
 
@@ -5305,8 +5302,8 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let update = match update.into() {
-            ToolCallUpdate::ProtocolFields(update) => {
-                return self.upsert_tool_call_update(update, cx);
+            ToolCallUpdate::V2(update) => {
+                return self.upsert_local_tool_call(update, cx);
             }
             update => update,
         };
@@ -5336,10 +5333,8 @@ impl AcpThread {
         };
 
         let patch = match update {
-            ToolCallUpdate::ProtocolFields(_) => unreachable!(),
-            ToolCallUpdate::UpdateFields(update) => {
-                Some(ToolCallPatch::legacy(update.fields, update.meta))
-            }
+            ToolCallUpdate::V2(_) => unreachable!(),
+            ToolCallUpdate::V1(update) => Some(ToolCallPatch::legacy(update.fields, update.meta)),
             ToolCallUpdate::UpdateDiff(update) => {
                 call.structured_content.clear();
                 call.structured_content
@@ -5495,7 +5490,8 @@ impl AcpThread {
         Ok(())
     }
 
-    pub fn upsert_tool_call_patch(
+    /// Wire updates may create agent-reported display terminals.
+    pub fn upsert_wire_tool_call(
         &mut self,
         update: acp_v2::ToolCallUpdate,
         cx: &mut Context<Self>,
@@ -5507,22 +5503,22 @@ impl AcpThread {
         }
         let id = update.tool_call_id.clone();
         let patch = ToolCallPatch::protocol(update);
-        self.upsert_tool_call_patch_inner(id, patch, false, cx)
+        self.upsert_tool_call_patch(id, patch, false, cx)
     }
 
     /// In-process updates may reference registered client-managed terminals, but
     /// must not create or take ownership of agent-reported display terminals.
-    pub fn upsert_tool_call_update(
+    pub fn upsert_local_tool_call(
         &mut self,
         update: acp_v2::ToolCallUpdate,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let id = update.tool_call_id.clone();
         let patch = ToolCallPatch::protocol(update);
-        self.upsert_tool_call_patch_inner(id, patch, true, cx)
+        self.upsert_tool_call_patch(id, patch, true, cx)
     }
 
-    fn upsert_tool_call_patch_inner(
+    fn upsert_tool_call_patch(
         &mut self,
         id: acp_v2::ToolCallId,
         patch: ToolCallPatch,
@@ -5604,10 +5600,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) {
         if let acp_v2::ToolCallContent::Terminal(terminal) = content {
-            self.ensure_display_terminal(
-                acp_v1::TerminalId::new(terminal.terminal_id.0.clone()),
-                cx,
-            );
+            self.ensure_display_terminal(terminal.terminal_id.clone(), cx);
         }
     }
 
@@ -5894,7 +5887,7 @@ impl AcpThread {
             .or_else(|| tool_call.status.value().cloned());
         let current_status = ToolCallStatus::from_reported(current_status.as_ref())
             .unwrap_or(ToolCallStatus::Pending);
-        self.upsert_tool_call_update(tool_call, cx)?;
+        self.upsert_local_tool_call(tool_call, cx)?;
         let (_, call) = self
             .tool_call_mut(&tool_call_id)
             .context("tool call disappeared while requesting authorization")?;
@@ -6835,7 +6828,7 @@ impl AcpThread {
                 this.flush_streaming_text(cx);
                 if let Some((ix, _)) = this.user_message_mut(&client_id) {
                     // Collect all terminals from entries that will be removed
-                    let terminals_to_remove: Vec<acp_v1::TerminalId> = this.entries[ix..]
+                    let terminals_to_remove: Vec<acp_v2::TerminalId> = this.entries[ix..]
                         .iter()
                         .flat_map(|entry| entry.terminals())
                         .filter_map(|terminal| terminal.read(cx).id().clone().into())
@@ -7225,7 +7218,7 @@ impl AcpThread {
         // without a PTY in that case.
         let headless = HeadlessTerminal::is_enabled(cx);
 
-        let terminal_id = acp_v1::TerminalId::new(Uuid::new_v4().to_string());
+        let terminal_id = acp_v2::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
@@ -7346,7 +7339,7 @@ impl AcpThread {
 
     pub fn kill_terminal(
         &mut self,
-        terminal_id: acp_v1::TerminalId,
+        terminal_id: acp_v2::TerminalId,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.terminals
@@ -7361,7 +7354,7 @@ impl AcpThread {
 
     pub fn release_terminal(
         &mut self,
-        terminal_id: acp_v1::TerminalId,
+        terminal_id: acp_v2::TerminalId,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.terminals
@@ -7374,7 +7367,7 @@ impl AcpThread {
         Ok(())
     }
 
-    pub fn terminal(&self, terminal_id: acp_v1::TerminalId) -> Result<Entity<Terminal>> {
+    pub fn terminal(&self, terminal_id: acp_v2::TerminalId) -> Result<Entity<Terminal>> {
         self.terminals
             .get(&terminal_id)
             .context("Terminal not found")
@@ -7403,7 +7396,7 @@ impl AcpThread {
 
     pub fn register_terminal_created(
         &mut self,
-        terminal_id: acp_v1::TerminalId,
+        terminal_id: acp_v2::TerminalId,
         command_label: String,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<u64>,
@@ -7446,7 +7439,7 @@ impl AcpThread {
         patch: DisplayTerminalPatch,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let terminal = self.ensure_display_terminal(acp_v1::TerminalId::new(terminal_id.0), cx);
+        let terminal = self.ensure_display_terminal(terminal_id, cx);
         terminal.update(cx, |terminal, cx| terminal.apply_display_patch(patch, cx))
     }
 
@@ -7456,13 +7449,13 @@ impl AcpThread {
         data: &[u8],
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let terminal = self.ensure_display_terminal(acp_v1::TerminalId::new(terminal_id.0), cx);
+        let terminal = self.ensure_display_terminal(terminal_id, cx);
         terminal.update(cx, |terminal, cx| terminal.append_display_bytes(data, cx))
     }
 
     fn ensure_display_terminal(
         &mut self,
-        terminal_id: acp_v1::TerminalId,
+        terminal_id: acp_v2::TerminalId,
         cx: &mut Context<Self>,
     ) -> Entity<Terminal> {
         if let Some(terminal) = self.terminals.get(&terminal_id) {
@@ -7482,7 +7475,7 @@ impl AcpThread {
 
     fn register_display_terminal(
         &mut self,
-        terminal_id: acp_v1::TerminalId,
+        terminal_id: acp_v2::TerminalId,
         command: Option<&str>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
@@ -7541,6 +7534,7 @@ impl AcpThread {
                 output_byte_limit,
                 terminal,
             } => {
+                let terminal_id = acp_v2::TerminalId::new(terminal_id.0);
                 let entity = self
                     .terminals
                     .get(&terminal_id)
@@ -7568,6 +7562,7 @@ impl AcpThread {
                 cx.notify();
             }
             TerminalProviderEvent::Output { terminal_id, data } => {
+                let terminal_id = acp_v2::TerminalId::new(terminal_id.0);
                 if let Some(entity) = self.terminals.get(&terminal_id) {
                     entity.update(cx, |term, cx| {
                         term.write_display_output(&data, cx);
@@ -7580,6 +7575,7 @@ impl AcpThread {
                 }
             }
             TerminalProviderEvent::TitleChanged { terminal_id, title } => {
+                let terminal_id = acp_v2::TerminalId::new(terminal_id.0);
                 if let Some(entity) = self.terminals.get(&terminal_id) {
                     entity.update(cx, |term, cx| {
                         term.inner().update(cx, |inner, cx| {
@@ -7593,6 +7589,7 @@ impl AcpThread {
                 terminal_id,
                 status,
             } => {
+                let terminal_id = acp_v2::TerminalId::new(terminal_id.0);
                 if let Some(entity) = self.terminals.get(&terminal_id) {
                     entity.update(cx, |term, cx| term.finish_display(status, cx));
                 } else {
@@ -9573,7 +9570,9 @@ mod tests {
 
         // After Created, buffered Output should have been flushed into the renderer
         let content = thread.read_with(cx, |thread, cx| {
-            let term = thread.terminal(terminal_id.clone()).unwrap();
+            let term = thread
+                .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
+                .unwrap();
             term.read_with(cx, |t, cx| t.inner().read(cx).get_content())
         });
 
@@ -9629,7 +9628,7 @@ mod tests {
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
             let terminal = thread
-                .terminal(terminal_id.clone())
+                .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
                 .expect("display terminal");
             terminal.update(cx, |terminal, cx| {
                 assert!(!terminal.is_process_backed());
@@ -9660,7 +9659,7 @@ mod tests {
         cx.run_until_parked();
         thread.read_with(cx, |thread, cx| {
             let terminal = thread
-                .terminal(terminal_id.clone())
+                .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
                 .expect("display terminal");
             let output = terminal.read(cx).current_output(cx);
             assert!(output.output.contains("line 14999"));
@@ -9679,7 +9678,9 @@ mod tests {
         cx.run_until_parked();
 
         let content = thread.read_with(cx, |thread, cx| {
-            let term = thread.terminal(terminal_id.clone()).unwrap();
+            let term = thread
+                .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
+                .unwrap();
             let output = term.read(cx).current_output(cx);
             assert_eq!(
                 output.exit_status.and_then(|status| status.exit_code),
@@ -9696,7 +9697,7 @@ mod tests {
 
         let terminal = thread.read_with(cx, |thread, _| {
             thread
-                .terminal(terminal_id.clone())
+                .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
                 .expect("display terminal")
         });
         let ended_at = terminal.read_with(cx, |terminal, _| {
@@ -9715,7 +9716,7 @@ mod tests {
             );
             assert_eq!(
                 thread
-                    .terminal(terminal_id.clone())
+                    .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
                     .expect("terminal")
                     .entity_id(),
                 terminal.entity_id(),
@@ -9763,7 +9764,7 @@ mod tests {
         for reference_first in [true, false] {
             let thread = new_test_thread(cx).await;
             let terminal_id = acp_v2::TerminalId::new("shared-terminal");
-            let lookup_id = acp_v1::TerminalId::new("shared-terminal");
+            let lookup_id = terminal_id.clone();
             let tool_id = acp_v2::ToolCallId::new("terminal-tool");
             let reference = acp_v2::ToolCallUpdate::new("terminal-tool")
                 .title("Tool caption")
@@ -9774,7 +9775,7 @@ mod tests {
             if reference_first {
                 thread
                     .update(cx, |thread, cx| {
-                        thread.upsert_tool_call_patch(reference.clone(), cx)
+                        thread.upsert_wire_tool_call(reference.clone(), cx)
                     })
                     .expect("reference creates a placeholder");
             } else {
@@ -9798,9 +9799,7 @@ mod tests {
                     .expect("append to placeholder");
             } else {
                 thread
-                    .update(cx, |thread, cx| {
-                        thread.upsert_tool_call_patch(reference, cx)
-                    })
+                    .update(cx, |thread, cx| thread.upsert_wire_tool_call(reference, cx))
                     .expect("reference existing display terminal");
             }
             thread
@@ -9817,7 +9816,7 @@ mod tests {
                 .expect("update display terminal");
             thread
                 .update(cx, |thread, cx| {
-                    thread.upsert_tool_call_patch(
+                    thread.upsert_wire_tool_call(
                         acp_v2::ToolCallUpdate::new("terminal-tool").title("New caption"),
                         cx,
                     )
@@ -9886,7 +9885,7 @@ mod tests {
                         ),
                         ("unrelated-tool", Vec::new()),
                     ] {
-                        thread.upsert_tool_call_patch(
+                        thread.upsert_wire_tool_call(
                             acp_v2::ToolCallUpdate::new(id).content(content),
                             cx,
                         )?;
@@ -9944,14 +9943,16 @@ mod tests {
                 cx,
             );
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("tool").content(vec![
                         acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("mixed")),
                     ]),
                     cx,
                 )
                 .expect("reference consumes queued legacy output");
-            let terminal = thread.terminal(terminal_id.clone()).expect("placeholder");
+            let terminal = thread
+                .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
+                .expect("placeholder");
             let renderer = terminal.read(cx).inner().clone();
             assert!(renderer.read(cx).get_content().contains("old\noutput"));
             let ended_at = terminal.read(cx).output().expect("reported exit").ended_at;
@@ -9996,7 +9997,9 @@ mod tests {
                     cx,
                 );
             }
-            let reused = thread.terminal(terminal_id).expect("hydrated terminal");
+            let reused = thread
+                .terminal(acp_v2::TerminalId::new(terminal_id.0))
+                .expect("hydrated terminal");
             assert_eq!(reused, terminal);
             let terminal = reused.read(cx);
             assert_eq!(terminal.inner(), &renderer);
@@ -10053,7 +10056,7 @@ mod tests {
         init_test(cx);
         let thread = new_test_thread(cx).await;
         let terminal_id = acp_v2::TerminalId::new("snapshot-terminal");
-        let lookup_id = acp_v1::TerminalId::new("snapshot-terminal");
+        let lookup_id = terminal_id.clone();
         let terminal_meta = acp_v2::Meta::from_iter([("terminal".into(), 1.into())]);
         let output_meta = acp_v2::Meta::from_iter([("output".into(), 2.into())]);
         let status_meta = acp_v2::Meta::from_iter([("exit".into(), 3.into())]);
@@ -10139,7 +10142,7 @@ mod tests {
             .update(cx, |thread, cx| {
                 thread.on_terminal_provider_event(
                     TerminalProviderEvent::Exit {
-                        terminal_id: lookup_id.clone(),
+                        terminal_id: acp_v1::TerminalId::new(lookup_id.0.clone()),
                         status: acp_v1::TerminalExitStatus::new().exit_code(5),
                     },
                     cx,
@@ -10155,7 +10158,7 @@ mod tests {
                 )?;
                 thread.on_terminal_provider_event(
                     TerminalProviderEvent::Exit {
-                        terminal_id: lookup_id.clone(),
+                        terminal_id: acp_v1::TerminalId::new(lookup_id.0.clone()),
                         status: acp_v1::TerminalExitStatus::new().exit_code(6),
                     },
                     cx,
@@ -10231,7 +10234,7 @@ mod tests {
     ) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
-        let terminal_id = acp_v1::TerminalId::new("native-terminal");
+        let terminal_id = acp_v2::TerminalId::new("native-terminal");
         let lower = cx.new(|cx| {
             ::terminal::TerminalBuilder::new_display_only(
                 ::terminal::terminal_settings::CursorShape::default(),
@@ -10383,7 +10386,9 @@ mod tests {
 
         // Output should be present after Created (flushed from buffer)
         let content = thread.read_with(cx, |thread, cx| {
-            let term = thread.terminal(terminal_id.clone()).unwrap();
+            let term = thread
+                .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
+                .unwrap();
             let output = term.read(cx).current_output(cx);
             let exit_status = output.exit_status.expect("buffered exit status");
             assert_eq!(exit_status.signal.as_deref(), Some("SIGTERM"));
@@ -10442,7 +10447,7 @@ mod tests {
             .await
             .unwrap();
 
-        let terminal_id = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        let terminal_id = acp_v2::TerminalId::new(uuid::Uuid::new_v4().to_string());
 
         // We use printf instead of echo and chain with && sleep to ensure proper execution
         let (program, args) = ShellBuilder::new(&Shell::System, false).build(
@@ -10500,12 +10505,12 @@ mod tests {
             assert!(terminal.read(cx).is_process_backed());
             let tool_id = acp_v2::ToolCallId::new("native-process-tool");
             thread
-                .upsert_tool_call_update(
+                .upsert_local_tool_call(
                     acp_v2::ToolCallUpdate::new(tool_id.clone())
                         .title("Native process")
                         .kind(acp_v2::ToolKind::Execute)
                         .content(vec![acp_v2::ToolCallContent::Terminal(
-                            acp_v2::Terminal::new(acp_v2::TerminalId::new(terminal_id.0.clone())),
+                            acp_v2::Terminal::new(terminal_id.clone()),
                         )]),
                     cx,
                 )
@@ -13415,154 +13420,54 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_native_tool_updates_follow_v2_patch_semantics(cx: &mut TestAppContext) {
+    async fn test_native_tool_updates_preserve_json_null(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
         thread.update(cx, |thread, cx| {
             let id = acp_v2::ToolCallId::new("native");
-            let meta = acp_v2::Meta::from_iter([
-                (TOOL_NAME_META_KEY.into(), json!("native_name")),
-                (
-                    SUBAGENT_SESSION_INFO_META_KEY.into(),
-                    json!({"session_id": "child", "message_start_index": 0}),
-                ),
-            ]);
-            let location = acp_v2::ToolCallLocation::new(PathBuf::from("src//./../file.rs"))
-                .line(7)
-                .meta(acp_v2::Meta::from_iter([(
-                    "item".into(),
-                    json!({"keep": true}),
-                )]));
             thread
-                .upsert_tool_call_update(
+                .upsert_local_tool_call(
                     acp_v2::ToolCallUpdate::new(id.clone())
-                        .title("Native tool")
-                        .name("native_name")
-                        .kind(acp_v2::ToolKind::Read)
-                        .status(acp_v2::ToolCallStatus::InProgress)
-                        .content(vec!["content".into()])
-                        .locations(vec![location.clone()])
                         .raw_input(json!({"input": true}))
-                        .raw_output(json!({"output": true}))
-                        .meta(meta.clone()),
+                        .raw_output(json!({"output": true})),
                     cx,
                 )
                 .expect("native creation");
-            let omitted = acp_v2::ToolCallUpdate::new(id.clone());
-            assert_eq!(omitted.raw_input, MaybeUndefined::Undefined);
-            assert_eq!(omitted.raw_output, MaybeUndefined::Undefined);
             thread
-                .update_tool_call(omitted, cx)
-                .expect("omitted fields preserve native state");
+                .update_tool_call(acp_v2::ToolCallUpdate::new(id.clone()), cx)
+                .expect("omitted raw fields preserve native state");
             let (_, call) = thread.tool_call(&id).expect("tool");
-            assert_eq!(call.title.as_deref(), Some("Native tool"));
-            assert_eq!(call.name.as_deref(), Some("native_name"));
-            assert_eq!(call.reported_kind, Some(acp_v2::ToolKind::Read));
-            assert_eq!(
-                call.reported_status,
-                Some(acp_v2::ToolCallStatus::InProgress)
-            );
-            assert_eq!(call.structured_content.len(), 1);
-            assert_eq!(call.locations, vec![ToolCallLocation::from(location)]);
-            assert_eq!(
-                call.locations.first().expect("location").path.as_os_str(),
-                "src//./../file.rs"
-            );
             assert_eq!(call.raw_input, Some(json!({"input": true})));
             assert_eq!(call.raw_output, Some(json!({"output": true})));
-            assert_eq!(call.meta, Some(meta.clone()));
-            assert!(call.subagent_session_info.is_some());
 
-            let json_null = acp_v2::ToolCallUpdate::new(id.clone())
-                .raw_input(json!(null))
-                .raw_output(json!(null));
-            assert_eq!(json_null.raw_input, MaybeUndefined::Value(json!(null)));
-            assert_eq!(json_null.raw_output, MaybeUndefined::Value(json!(null)));
             thread
-                .update_tool_call(json_null, cx)
+                .update_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .raw_input(json!(null))
+                        .raw_output(json!(null)),
+                    cx,
+                )
                 .expect("JSON null remains data in a typed update");
             let (_, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.raw_input, Some(json!(null)));
             assert_eq!(call.raw_output, Some(json!(null)));
 
-            let replacement_meta =
-                acp_v2::Meta::from_iter([(TOOL_NAME_META_KEY.into(), json!("replacement_name"))]);
             thread
                 .update_tool_call(
                     acp_v2::ToolCallUpdate::new(id.clone())
-                        .name(MaybeUndefined::Null)
-                        .meta(replacement_meta.clone()),
+                        .raw_input(None)
+                        .raw_output(None),
                     cx,
                 )
-                .expect("metadata replaces derived hints instead of keeping them sticky");
+                .expect("explicit clear removes raw fields");
             let (_, call) = thread.tool_call(&id).expect("tool");
-            assert!(call.name.is_none());
-            assert_eq!(call.tool_name.as_deref(), Some("replacement_name"));
-            assert_eq!(call.meta, Some(replacement_meta));
-            assert!(call.subagent_session_info.is_none());
-            thread
-                .update_tool_call(
-                    acp_v2::ToolCallUpdate::new(id.clone()).meta(acp_v2::Meta::new()),
-                    cx,
-                )
-                .expect("empty metadata removes derived tool name");
-            let (_, call) = thread.tool_call(&id).expect("tool");
-            assert_eq!(call.meta, Some(acp_v2::Meta::new()));
-            assert!(call.tool_name.is_none());
-            thread
-                .update_tool_call(acp_v2::ToolCallUpdate::new(id.clone()).meta(meta), cx)
-                .expect("restore metadata before explicitly clearing it");
-            let (_, call) = thread.tool_call(&id).expect("tool");
-            assert_eq!(call.tool_name.as_deref(), Some("native_name"));
-            assert!(call.subagent_session_info.is_some());
-
-            let clear = acp_v2::ToolCallUpdate::new(id.clone())
-                .title(MaybeUndefined::Null)
-                .kind(MaybeUndefined::Null)
-                .status(MaybeUndefined::Null)
-                .content(MaybeUndefined::Null)
-                .locations(MaybeUndefined::Null)
-                .raw_input(None)
-                .raw_output(None)
-                .meta(MaybeUndefined::Null);
-            assert_eq!(clear.raw_input, MaybeUndefined::Null);
-            assert_eq!(clear.raw_output, MaybeUndefined::Null);
-            thread
-                .update_tool_call(clear, cx)
-                .expect("explicit null clears reported fields");
-            let (_, call) = thread.tool_call(&id).expect("tool");
-            assert!(call.title.is_none());
-            assert!(call.name.is_none());
-            assert!(call.structured_content.is_empty());
-            assert!(call.locations.is_empty());
             assert!(call.raw_input.is_none());
             assert!(call.raw_output.is_none());
-            assert!(call.meta.is_none());
-            assert!(call.subagent_session_info.is_none());
-            assert!(call.tool_name.is_none());
-            assert_eq!(call.reported_kind, None);
-            assert_eq!(call.reported_status, None);
-            assert_eq!(call.kind(), &acp_v2::ToolKind::Other);
-            assert_eq!(call.status(), ToolCallStatus::Pending);
-            assert_eq!(call.label.read(cx).source(), "Tool call");
-
-            let missing_id = acp_v2::ToolCallId::new("missing-native");
-            thread
-                .update_tool_call(acp_v2::ToolCallUpdate::new(missing_id.clone()), cx)
-                .expect("unknown v2 update upserts without a title");
-            let (_, missing) = thread.tool_call(&missing_id).expect("new tool");
-            assert_eq!(missing.title, None);
-            assert_eq!(missing.reported_kind, None);
-            assert_eq!(missing.reported_status, None);
-            assert_eq!(missing.kind(), &acp_v2::ToolKind::Other);
-            assert_eq!(missing.status(), ToolCallStatus::Pending);
-            assert_eq!(missing.label.read(cx).source(), "Tool call");
-            assert_eq!(thread.entries().len(), 2);
         });
     }
 
     #[gpui::test]
-    async fn test_native_tool_content_retains_payloads_and_client_terminal_ownership(
+    async fn test_native_tool_terminal_references_require_client_processes(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -13589,84 +13494,42 @@ mod tests {
             assert!(terminal.is_process_backed());
             terminal.wait_for_exit().expect("client process exit")
         });
+        process_exit.await;
         thread.update(cx, |thread, cx| {
             assert!(terminal.read(cx).is_process_backed());
             let inner_meta = acp_v2::Meta::from_iter([("inner".into(), json!({"all": [1, 2]}))]);
             let item_meta = acp_v2::Meta::from_iter([("item".into(), json!({"keep": true}))]);
-            let blocks = vec![
-                acp_v2::ContentBlock::Text(
-                    acp_v2::TextContent::new("text").meta(inner_meta.clone()),
-                ),
-                acp_v2::ContentBlock::Image(
-                    acp_v2::ImageContent::new("image-data", "image/png").meta(inner_meta.clone()),
-                ),
-                acp_v2::ContentBlock::Audio(
-                    acp_v2::AudioContent::new("audio-data", "audio/wav").meta(inner_meta.clone()),
-                ),
-                acp_v2::ContentBlock::ResourceLink(
-                    acp_v2::ResourceLink::new("file", "tool://file").meta(inner_meta.clone()),
-                ),
-                acp_v2::ContentBlock::Resource(
-                    acp_v2::EmbeddedResource::new(
-                        acp_v2::EmbeddedResourceResource::TextResourceContents(
-                            acp_v2::TextResourceContents::new("resource text", "tool://text")
-                                .meta(inner_meta.clone()),
-                        ),
-                    )
-                    .meta(inner_meta.clone()),
-                ),
-                acp_v2::ContentBlock::Resource(
-                    acp_v2::EmbeddedResource::new(
-                        acp_v2::EmbeddedResourceResource::BlobResourceContents(
-                            acp_v2::BlobResourceContents::new("blob-data", "tool://blob")
-                                .meta(inner_meta),
-                        ),
-                    )
-                    .meta(item_meta.clone()),
+            let source =
+                acp_v2::ContentBlock::Text(acp_v2::TextContent::new("text").meta(inner_meta));
+            let content = vec![
+                acp_v2::ToolCallContent::Content(Box::new(
+                    acp_v2::Content::new(source.clone()).meta(item_meta.clone()),
+                )),
+                acp_v2::ToolCallContent::Terminal(
+                    acp_v2::Terminal::new(terminal_id.clone()).meta(item_meta.clone()),
                 ),
             ];
-            let mut content: Vec<_> = blocks
-                .iter()
-                .cloned()
-                .map(|block| {
-                    acp_v2::ToolCallContent::Content(Box::new(
-                        acp_v2::Content::new(block).meta(item_meta.clone()),
-                    ))
-                })
-                .collect();
-            let diff = acp_v2::Diff::patch("native patch", Vec::new()).meta(item_meta.clone());
-            content.push(acp_v2::ToolCallContent::Diff(diff.clone()));
-            content.push(acp_v2::ToolCallContent::Terminal(
-                acp_v2::Terminal::new(acp_v2::TerminalId::new(terminal_id.0.clone()))
-                    .meta(item_meta.clone()),
-            ));
             let id = acp_v2::ToolCallId::new("native-content");
             thread
-                .upsert_tool_call_update(
+                .upsert_local_tool_call(
                     acp_v2::ToolCallUpdate::new(id.clone())
                         .title("Native tool")
                         .content(content.clone()),
                     cx,
                 )
-                .expect("all native payloads prepare through v2 conversion");
+                .expect("native content can reference a completed client process");
             thread
                 .update_tool_call(acp_v2::ToolCallUpdate::new(id.clone()).content(content), cx)
                 .expect("native content update uses the same conversion");
             let (_, call) = thread.tool_call(&id).expect("tool");
-            assert_eq!(call.structured_content.len(), blocks.len() + 2);
-            for (item, source) in call.structured_content.iter().zip(&blocks) {
-                let ToolCallContent::ContentBlock { block, meta } = item else {
-                    panic!("expected retained content block");
-                };
-                assert_eq!(block.source.as_ref(), Some(source));
-                assert_eq!(meta.as_ref(), Some(&item_meta));
-            }
-            let ToolCallContent::DiffPatch { source, .. } =
-                call.structured_content.get(blocks.len()).expect("diff")
+            assert_eq!(call.structured_content.len(), 2);
+            let ToolCallContent::ContentBlock { block, meta } =
+                call.structured_content.first().expect("content")
             else {
-                panic!("expected retained diff");
+                panic!("expected retained content block");
             };
-            assert_eq!(source, &diff);
+            assert_eq!(block.source.as_ref(), Some(&source));
+            assert_eq!(meta.as_ref(), Some(&item_meta));
             let ToolCallContent::Terminal {
                 terminal: retained,
                 meta,
@@ -13683,7 +13546,7 @@ mod tests {
             let missing = acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("missing"));
             assert!(
                 thread
-                    .upsert_tool_call_update(
+                    .upsert_local_tool_call(
                         acp_v2::ToolCallUpdate::new("missing-content")
                             .title("Missing")
                             .content(vec![missing.clone()]),
@@ -13702,7 +13565,7 @@ mod tests {
                     )
                     .is_err()
             );
-            assert!(thread.terminal(acp_v1::TerminalId::new("missing")).is_err());
+            assert!(thread.terminal(acp_v2::TerminalId::new("missing")).is_err());
             assert_eq!(thread.terminals.len(), 1);
             let (_, call) = thread.tool_call(&id).expect("unchanged tool");
             assert_eq!(call.title.as_deref(), Some("Native tool"));
@@ -13718,7 +13581,7 @@ mod tests {
             let display = acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("agent-display"));
             assert!(
                 thread
-                    .upsert_tool_call_update(
+                    .upsert_local_tool_call(
                         acp_v2::ToolCallUpdate::new("display-create")
                             .title("Must not create")
                             .content(vec![display.clone()]),
@@ -13760,7 +13623,6 @@ mod tests {
             assert!(thread.pending_permission_requests().next().is_none());
             assert_eq!(thread.terminals.len(), 2);
         });
-        process_exit.await;
         terminal.read_with(cx, |terminal, _| {
             let output = terminal.output().expect("completed client process");
             assert!(output.content.contains("native-output"));
@@ -13777,7 +13639,7 @@ mod tests {
         let id = acp_v2::ToolCallId::new("native-permission");
         thread.update(cx, |thread, cx| {
             thread
-                .upsert_tool_call_update(
+                .upsert_local_tool_call(
                     acp_v2::ToolCallUpdate::new(id.clone())
                         .title("Native tool")
                         .status(acp_v2::ToolCallStatus::InProgress),
@@ -13828,19 +13690,6 @@ mod tests {
             assert_eq!(
                 call.permission_status(),
                 Some(acp_v2::ToolCallStatus::InProgress)
-            );
-            thread.cancel_permission_request(old_owner, cx);
-            thread.authorize_permission_request(
-                old_owner,
-                SelectedPermissionOutcome::new(
-                    "allow".into(),
-                    acp_v2::PermissionOptionKind::AllowOnce,
-                ),
-                cx,
-            );
-            assert_eq!(
-                thread.tool_call(&id).expect("tool").1.authorization_id(),
-                Some(new_owner)
             );
             thread.authorize_permission_request(
                 new_owner,
@@ -14005,7 +13854,7 @@ mod tests {
                 assert!(Arc::ptr_eq(&call.id.0, &backing));
 
                 thread
-                    .upsert_tool_call_patch(
+                    .upsert_wire_tool_call(
                         acp_v2::ToolCallUpdate::new(acp_v2::ToolCallId::new(value))
                             .title("V2 patch"),
                         cx,
@@ -14103,7 +13952,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             let id = acp_v2::ToolCallId::new("kept");
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("kept")
                         .kind(acp_v2::ToolKind::Execute)
                         .status(acp_v2::ToolCallStatus::Completed),
@@ -14171,7 +14020,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             let id = acp_v2::ToolCallId::new("patch");
             thread
-                .upsert_tool_call_patch(acp_v2::ToolCallUpdate::new("patch"), cx)
+                .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("patch"), cx)
                 .expect("ID-only upsert");
             let (_, call) = thread.tool_call(&id).expect("new tool");
             assert_eq!(call.reported_kind, None);
@@ -14181,7 +14030,7 @@ mod tests {
             assert!(call.content().is_empty());
 
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     serde_json::from_value(json!({
                         "toolCallId": "patch",
                         "title": "**Title**",
@@ -14236,7 +14085,7 @@ mod tests {
                 json!({"toolCallId": "patch", "_meta": {}}),
             ] {
                 thread
-                    .upsert_tool_call_patch(serde_json::from_value(patch).expect("patch"), cx)
+                    .upsert_wire_tool_call(serde_json::from_value(patch).expect("patch"), cx)
                     .expect("metadata-only update");
                 let (_, call) = thread.tool_call(&id).expect("tool");
                 assert_eq!(call.label, label);
@@ -14249,14 +14098,14 @@ mod tests {
                 Some(acp_v2::Meta::new())
             );
             thread
-                .upsert_tool_call_patch(acp_v2::ToolCallUpdate::new("patch").title("  "), cx)
+                .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("patch").title("  "), cx)
                 .expect("whitespace title");
             let (_, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.title.as_deref(), Some("  "));
             assert_eq!(call.label.read(cx).source(), "named");
 
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     serde_json::from_value(json!({
                         "toolCallId": "patch",
                         "title": null, "name": null, "kind": null, "status": null,
@@ -14283,7 +14132,7 @@ mod tests {
             assert!(block.source.is_none());
             assert_eq!(thread.entries().len(), 1);
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     serde_json::from_value(json!({"toolCallId": "patch", "rawOutput": null}))
                         .expect("raw clear"),
                     cx,
@@ -14291,7 +14140,7 @@ mod tests {
                 .expect("clear retained raw output");
             assert!(thread.tool_call(&id).expect("tool").1.content().is_empty());
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("patch")
                         .content(vec!["refilled".into()])
                         .status(acp_v2::ToolCallStatus::Completed),
@@ -14365,7 +14214,7 @@ mod tests {
             assert_eq!(second.content().len(), 1);
             assert_eq!(second.content()[0].to_markdown(cx), "second");
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("first")
                         .content(vec!["replacement".into()])
                         .raw_output(json!("raw fallback")),
@@ -14390,10 +14239,7 @@ mod tests {
                 ["replacement", "after replacement"]
             );
             thread
-                .upsert_tool_call_patch(
-                    acp_v2::ToolCallUpdate::new("first").content(Vec::new()),
-                    cx,
-                )
+                .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("first").content(Vec::new()), cx)
                 .expect("clear structured content");
             assert_eq!(
                 thread.tool_call(&first_id).expect("tool").1.content()[0].to_markdown(cx),
@@ -14540,7 +14386,7 @@ mod tests {
             assert_eq!(call.tool_name.as_deref(), Some("legacy_name"));
             assert!(call.subagent_session_info.is_some());
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("metadata").meta(acp_v2::Meta::new()),
                     cx,
                 )
@@ -14551,7 +14397,7 @@ mod tests {
             assert!(call.subagent_session_info.is_none());
             assert_eq!(call.label.read(cx).source(), "Tool call");
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("metadata")
                         .name("first_class")
                         .meta(meta),
@@ -14563,7 +14409,7 @@ mod tests {
                 Some("first_class")
             );
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("metadata").meta(None::<acp_v2::Meta>),
                     cx,
                 )
@@ -14601,7 +14447,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             for status in [json!("_future_status"), serde_json::Value::Null] {
                 thread
-                    .upsert_tool_call_patch(
+                    .upsert_wire_tool_call(
                         serde_json::from_value(
                             json!({"toolCallId": "permission", "status": status}),
                         )
@@ -14629,7 +14475,7 @@ mod tests {
             assert_eq!(call.reported_status, None);
             assert_eq!(call.status(), ToolCallStatus::Canceled);
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("permission")
                         .status(None::<acp_v2::ToolCallStatus>),
                     cx,
@@ -14640,7 +14486,7 @@ mod tests {
                 ToolCallStatus::Canceled
             );
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("permission")
                         .status(acp_v2::ToolCallStatus::InProgress),
                     cx,
@@ -14675,7 +14521,7 @@ mod tests {
             .expect("second request");
         thread.update(cx, |thread, cx| {
             let original_label = thread.tool_call(&id).expect("tool").1.label.clone();
-            let result = thread.upsert_tool_call_patch(
+            let result = thread.upsert_wire_tool_call(
                 serde_json::from_value(json!({
                     "toolCallId": "permission",
                     "status": "cancelled",
@@ -14803,7 +14649,7 @@ mod tests {
             );
             thread.update(cx, |thread, cx| {
                 thread
-                    .upsert_tool_call_patch(
+                    .upsert_wire_tool_call(
                         acp_v2::ToolCallUpdate::new("continuation")
                             .status(None::<acp_v2::ToolCallStatus>),
                         cx,
@@ -14813,7 +14659,7 @@ mod tests {
                 assert_eq!(call.reported_status, None);
                 assert_eq!(call.status(), expected);
                 thread
-                    .upsert_tool_call_patch(
+                    .upsert_wire_tool_call(
                         acp_v2::ToolCallUpdate::new("continuation").status(reported),
                         cx,
                     )
@@ -14933,7 +14779,7 @@ mod tests {
             let (_, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.locations, vec![relative.clone()]);
             thread
-                .upsert_tool_call_patch(acp_v2::ToolCallUpdate::new("location-migration"), cx)
+                .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("location-migration"), cx)
                 .expect("omitted locations");
             assert_eq!(
                 thread.tool_call(&id).expect("tool").1.locations,
@@ -14948,7 +14794,7 @@ mod tests {
         };
         thread.update(cx, |thread, cx| {
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("location-migration").locations(vec![
                         acp_v2::ToolCallLocation::new(acp_v2::AbsolutePath::new(
                             absolute.path.clone(),
@@ -14979,14 +14825,14 @@ mod tests {
             assert_eq!(location, absolute);
             let resolved_locations = call.resolved_locations.clone();
             thread
-                .upsert_tool_call_patch(acp_v2::ToolCallUpdate::new("location-migration"), cx)
+                .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("location-migration"), cx)
                 .expect("omission preserves resolved projections");
             assert_eq!(
                 thread.tool_call(&id).expect("tool").1.resolved_locations,
                 resolved_locations
             );
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("location-migration").locations(vec![
                         acp_v2::ToolCallLocation::new(acp_v2::AbsolutePath::new(
                             respelled.path.clone(),
@@ -15030,7 +14876,7 @@ mod tests {
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("location-migration")
                         .locations(None::<Vec<acp_v2::ToolCallLocation>>),
                     cx,
@@ -15065,7 +14911,7 @@ mod tests {
             .expect("session");
         let id = acp_v2::ToolCallId::new("locations");
         thread.update(cx, |thread, cx| {
-            thread.upsert_tool_call_patch(
+            thread.upsert_wire_tool_call(
                 serde_json::from_value(json!({
                     "toolCallId": "locations",
                     "locations": [{"path": path!("/project/file.rs"), "line": 2, "_meta": {"location": true}}]
@@ -15076,7 +14922,7 @@ mod tests {
             assert_eq!(call.locations[0].path, PathBuf::from(path!("/project/file.rs")));
             assert_eq!(call.locations[0].line, Some(2));
             assert_eq!(call.locations[0].meta, Some(acp_v1::Meta::from_iter([("location".into(), json!(true))])));
-            thread.upsert_tool_call_patch(
+            thread.upsert_wire_tool_call(
                 serde_json::from_value(json!({"toolCallId": "locations", "locations": null})).expect("clear locations"),
                 cx,
             ).expect("clear before the previous lookup finishes");
@@ -15781,7 +15627,9 @@ mod tests {
             thread
                 .upsert_tool_call(initial, cx)
                 .expect("retry after terminal arrives");
-            let terminal = thread.terminal(terminal_id.clone()).expect("terminal");
+            let terminal = thread
+                .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
+                .expect("terminal");
             let command = terminal.read(cx).command().clone();
             let (_, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.terminals().next(), Some(&terminal));
@@ -19091,6 +18939,9 @@ mod tests {
                 .unwrap();
         });
 
+        let terminal_id = acp_v2::TerminalId::new(terminal_id.0);
+        let terminal_id_1 = acp_v2::TerminalId::new(terminal_id_1.0);
+        let terminal_id_2 = acp_v2::TerminalId::new(terminal_id_2.0);
         // Verify terminal exists and is in the thread
         let terminal_exists_before =
             thread.read_with(cx, |thread, _| thread.terminals.contains_key(&terminal_id));
@@ -21567,7 +21418,7 @@ mod tests {
                 let (index, first) = thread.tool_call(&first_id).expect("first tool");
                 let original_label = first.label.clone();
                 thread
-                    .upsert_tool_call_patch(
+                    .upsert_wire_tool_call(
                         acp_v2::ToolCallUpdate::new("first")
                             .status(status.clone())
                             .title("Terminal result")
@@ -21584,7 +21435,7 @@ mod tests {
                 assert_eq!(first.label, original_label);
                 assert_eq!(first.label.read(cx).source(), "Terminal result");
                 let terminal = first.terminals().next().expect("terminal placeholder");
-                assert_eq!(terminal.read(cx).id(), &acp_v1::TerminalId::new("unseen"));
+                assert_eq!(terminal.read(cx).id(), &acp_v2::TerminalId::new("unseen"));
                 assert!(!terminal.read(cx).is_process_backed());
                 assert!(
                     thread

@@ -3704,7 +3704,7 @@ pub struct AcpTerminalHandle {
 }
 
 impl TerminalHandle for AcpTerminalHandle {
-    fn id(&self, cx: &AsyncApp) -> Result<acp_v1::TerminalId> {
+    fn id(&self, cx: &AsyncApp) -> Result<acp_v2::TerminalId> {
         Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
     }
 
@@ -4161,9 +4161,7 @@ mod internal_tests {
             .into_iter()
             .flatten()
             .find_map(|content| match content {
-                acp_v2::ToolCallContent::Terminal(terminal) => {
-                    Some(acp_v1::TerminalId::new(terminal.terminal_id.0.clone()))
-                }
+                acp_v2::ToolCallContent::Terminal(terminal) => Some(terminal.terminal_id.clone()),
                 _ => None,
             })
             .expect("terminal tool should announce its real terminal");

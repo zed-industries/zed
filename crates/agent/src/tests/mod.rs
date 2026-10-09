@@ -78,7 +78,7 @@ pub(crate) struct FakeTerminalHandle {
     exit_sender: std::cell::RefCell<Option<futures::channel::oneshot::Sender<()>>>,
     wait_for_exit: Shared<Task<acp::TerminalExitStatus>>,
     output: acp::TerminalOutputResponse,
-    id: acp::TerminalId,
+    id: acp_v2::TerminalId,
 }
 
 impl FakeTerminalHandle {
@@ -102,7 +102,7 @@ impl FakeTerminalHandle {
             exit_sender: std::cell::RefCell::new(Some(exit_sender)),
             wait_for_exit,
             output: acp::TerminalOutputResponse::new("partial output".to_string(), false),
-            id: acp::TerminalId::new("fake_terminal".to_string()),
+            id: acp_v2::TerminalId::new("fake_terminal".to_string()),
         }
     }
 
@@ -121,7 +121,7 @@ impl FakeTerminalHandle {
             exit_sender: std::cell::RefCell::new(Some(exit_sender)),
             wait_for_exit,
             output: acp::TerminalOutputResponse::new("command output".to_string(), false),
-            id: acp::TerminalId::new("fake_terminal".to_string()),
+            id: acp_v2::TerminalId::new("fake_terminal".to_string()),
         }
     }
 
@@ -146,7 +146,7 @@ impl FakeTerminalHandle {
 }
 
 impl crate::TerminalHandle for FakeTerminalHandle {
-    fn id(&self, _cx: &AsyncApp) -> Result<acp::TerminalId> {
+    fn id(&self, _cx: &AsyncApp) -> Result<acp_v2::TerminalId> {
         Ok(self.id.clone())
     }
 
@@ -888,9 +888,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
 
     let mut saw_partial_tool_use = false;
     while let Some(event) = events.next().await {
-        if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(
-            tool_call,
-        ))) = event
+        if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(tool_call))) = event
             && tool_call.status == MaybeUndefined::Value(acp_v2::ToolCallStatus::Pending)
         {
             thread.update(cx, |thread, _cx| {
@@ -1312,7 +1310,7 @@ async fn test_replayed_tool_call_ids_scoped_across_messages(cx: &mut TestAppCont
     let mut replay_events = restored.update(cx, |thread, cx| thread.replay(cx));
     let mut tool_call_ids = Vec::new();
     while let Some(event) = replay_events.next().await {
-        if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(tool_call)) =
+        if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(tool_call)) =
             event.unwrap()
             && tool_call.status == MaybeUndefined::Value(acp_v2::ToolCallStatus::Pending)
         {
@@ -1342,9 +1340,7 @@ async fn expect_tool_call(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(tool_call)) => {
-            tool_call
-        }
+        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(tool_call)) => tool_call,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -1362,8 +1358,7 @@ async fn next_tool_call(
             .await
             .expect("no tool call event received")
             .unwrap();
-        if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(tool_call)) =
-            event
+        if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(tool_call)) = event
             && tool_call.status == MaybeUndefined::Value(acp_v2::ToolCallStatus::Pending)
         {
             return tool_call;
@@ -1380,7 +1375,7 @@ async fn expect_tool_call_update_fields(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(update)) => update,
+        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update)) => update,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -2331,13 +2326,13 @@ async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAp
     while let Some(event) = replay_events.next().await {
         let event = event.unwrap();
         match &event {
-            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(tc))
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(tc))
                 if tc.status == MaybeUndefined::Value(acp_v2::ToolCallStatus::Pending) =>
             {
                 tool_call_id = Some(tc.tool_call_id.clone());
                 found_tool_call = Some(tc.clone());
             }
-            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(update))
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update))
                 if tool_call_id.as_ref() == Some(&update.tool_call_id) =>
             {
                 if update.raw_output.is_value() {
@@ -2581,7 +2576,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     let mut echo_completed = false;
     while let Some(event) = events.next().await {
         match event.unwrap() {
-            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(tool_call))
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(tool_call))
                 if tool_call.status == MaybeUndefined::Value(acp_v2::ToolCallStatus::Pending) =>
             {
                 assert_eq!(
@@ -2592,7 +2587,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
                     echo_id = Some(tool_call.tool_call_id);
                 }
             }
-            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(
                 acp_v2::ToolCallUpdate {
                     tool_call_id,
                     status: MaybeUndefined::Value(acp_v2::ToolCallStatus::Completed),
@@ -2798,9 +2793,8 @@ async fn test_cancellation_aware_tool_responds_to_cancellation(cx: &mut TestAppC
         cx.run_until_parked();
 
         while let Some(Some(event)) = events.next().now_or_never() {
-            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(
-                tool_call,
-            ))) = &event
+            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(tool_call))) =
+                &event
             {
                 if tool_call.title.value().map(String::as_str) == Some("Cancellation Aware Tool") {
                     tool_started = true;
@@ -2896,9 +2890,7 @@ async fn wait_for_terminal_tool_started(
         cx.run_until_parked();
 
         while let Some(Some(event)) = events.next().now_or_never() {
-            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(
-                update,
-            ))) = &event
+            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update))) = &event
             {
                 if update.content.value().is_some_and(|content| {
                     content
@@ -3080,9 +3072,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
         cx.run_until_parked();
 
         while let Some(Some(event)) = events.next().now_or_never() {
-            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(
-                update,
-            ))) = &event
+            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update))) = &event
             {
                 if update.content.value().is_some_and(|content| {
                     content
@@ -8969,7 +8959,7 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     let tool_call_ids: Vec<_> = all_events
         .iter()
         .filter_map(|e| match e {
-            Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(tc)))
+            Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(tc)))
                 if tc.status == MaybeUndefined::Value(acp_v2::ToolCallStatus::Pending) =>
             {
                 Some(tc.tool_call_id.to_string())

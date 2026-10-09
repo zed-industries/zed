@@ -984,7 +984,7 @@ async fn run_terminal_tool(
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
     event_stream.update_fields(|update| {
         let update = update.content(vec![acp_v2::ToolCallContent::Terminal(
-            acp_v2::Terminal::new(acp_v2::TerminalId::new(terminal_id.0)),
+            acp_v2::Terminal::new(terminal_id),
         )]);
         match &sandbox_not_applied {
             Some(reason) => update.meta(acp_thread::meta_with_sandbox_not_applied(reason)),
@@ -2178,7 +2178,7 @@ mod tests {
             !matches!(
                 rx.try_recv(),
                 Ok(Ok(crate::ThreadEvent::ToolCallUpdate(
-                    acp_thread::ToolCallUpdate::ProtocolFields(_)
+                    acp_thread::ToolCallUpdate::V2(_)
                 )))
             ),
             "invalid command should not emit a terminal card update"
