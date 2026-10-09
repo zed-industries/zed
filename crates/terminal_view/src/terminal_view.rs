@@ -50,8 +50,8 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal, Pane,
-    ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
+    CloseActiveItem, DraggedSelection, DraggedTab, ItemNavHistory, NewCenterTerminal, NewTerminal,
+    Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
     item::{
         HighlightedText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
@@ -166,6 +166,7 @@ pub struct TerminalView {
     rename_editor_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
+    nav_history: Option<ItemNavHistory>,
 }
 
 #[derive(Default, Clone)]
@@ -315,6 +316,7 @@ impl TerminalView {
             rename_editor_subscription: None,
             _subscriptions: subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
+            nav_history: None,
         }
     }
 
@@ -1925,6 +1927,20 @@ impl Item for TerminalView {
             }],
             None,
         ))
+    }
+    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(nav_history) = self.nav_history.as_mut() {
+            nav_history.push::<()>(None, None, cx);
+        }
+    }
+
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.nav_history = Some(history);
     }
 
     fn added_to_workspace(
