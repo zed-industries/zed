@@ -337,6 +337,23 @@ impl LspAdapter for JsonLspAdapter {
     fn is_primary_zed_json_schema_adapter(&self) -> bool {
         true
     }
+
+    async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
+        unquote_filter_texts(items);
+    }
+}
+
+/// json-language-server quotes `filterText` (`"status_bar"`), but the completion
+/// query never includes the opening quote, which skews fuzzy match scores.
+fn unquote_filter_texts(items: &mut [lsp::CompletionItem]) {
+    for item in items {
+        if let Some(filter_text) = item.filter_text.as_mut()
+            && filter_text.starts_with('"')
+            && let Ok(unquoted) = serde_json::from_str::<String>(filter_text)
+        {
+            *filter_text = unquoted;
+        }
+    }
 }
 
 fn worktree_root(delegate: &Arc<dyn LspAdapterDelegate>, settings: Option<Value>) -> Option<Value> {
@@ -407,7 +424,43 @@ async fn get_cached_server_binary(
 mod tests {
     use serde_json::json;
 
-    use super::json_schema_proxy_settings;
+    use super::{json_schema_proxy_settings, unquote_filter_texts};
+
+    #[test]
+    fn test_unquote_filter_texts() {
+        let filter_texts = [
+            Some("\"status_bar\""),
+            Some("\"key with \\\"escaped\\\" quotes\""),
+            Some("true"),
+            Some("{}"),
+            Some("\"unterminated"),
+            None,
+        ];
+        let mut items = filter_texts
+            .iter()
+            .map(|filter_text| lsp::CompletionItem {
+                filter_text: filter_text.map(ToString::to_string),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+
+        unquote_filter_texts(&mut items);
+
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.filter_text.as_deref())
+                .collect::<Vec<_>>(),
+            [
+                Some("status_bar"),
+                Some("key with \"escaped\" quotes"),
+                Some("true"),
+                Some("{}"),
+                Some("\"unterminated"),
+                None,
+            ]
+        );
+    }
 
     #[test]
     fn test_json_schema_proxy_settings_includes_proxy() {

@@ -13,6 +13,7 @@ use project::{AgentId, Project, agent_server_store::AgentServerStore};
 
 use acp_thread::AgentConnection;
 use agent_client_protocol::schema::v1 as acp_schema;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use gpui::{App, AppContext, Entity, Task};
 use settings::{AgentConfigOptionValue, SettingsStore};
@@ -87,16 +88,16 @@ pub trait AgentServer: Send {
 
     fn favorite_config_option_value_ids(
         &self,
-        _config_id: &acp_schema::SessionConfigId,
+        _config_id: &acp_v2::SessionConfigId,
         _cx: &mut App,
-    ) -> HashSet<acp_schema::SessionConfigValueId> {
+    ) -> HashSet<acp_v2::SessionConfigValueId> {
         HashSet::default()
     }
 
     fn toggle_favorite_config_option_value(
         &self,
-        _config_id: acp_schema::SessionConfigId,
-        _value_id: acp_schema::SessionConfigValueId,
+        _config_id: acp_v2::SessionConfigId,
+        _value_id: acp_v2::SessionConfigValueId,
         _should_be_favorite: bool,
         _fs: Arc<dyn Fs>,
         _cx: &App,
