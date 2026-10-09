@@ -44,8 +44,8 @@ The features on `gpui_platform` are platform-specific, so the list above is a sa
 
 ### Additional Topics
 
-- [Ownership and data flow](_ownership_and_data_flow)
-- [Accessibility](_accessibility)
+- [Ownership and data flow](./src/_ownership_and_data_flow.rs)
+- [Accessibility](./src/_accessibility.rs)
 
 ### Dependencies
 
