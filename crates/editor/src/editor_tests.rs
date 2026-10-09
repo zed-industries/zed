@@ -7227,6 +7227,87 @@ async fn test_backspace(cx: &mut TestAppContext) {
         seven ˇten
     "});
 
+    // Backspace deletes one code point at a time, except for emoji sequences, which
+    // are deleted as a whole. This follows Chromium and VS Code in deleting a single
+    // code point, per the W3C Input Events spec note on backward deletion.
+    let backspace_cases: &[(&str, &[&str])] = &[
+        // Thai
+        ("ที่", &["ที", "ท"]),
+        ("น้ำ", &["น้", "น"]),
+        ("กำ", &["ก"]),
+        ("ทำ", &["ท"]),
+        ("จำ", &["จ"]),
+        ("วัน", &["วั", "ว"]),
+        ("กิน", &["กิ", "ก"]),
+        ("คืน", &["คื", "ค"]),
+        ("คุณ", &["คุ", "ค"]),
+        ("ดู", &["ด"]),
+        ("ดี", &["ด"]),
+        ("ก็", &["ก"]),
+        ("เป็น", &["เป็", "เป", "เ"]),
+        ("พี่", &["พี", "พ"]),
+        ("ชี้", &["ชี", "ช"]),
+        ("อยู่", &["อยู", "อย", "อ"]),
+        ("การ์ด", &["การ์", "การ"]),
+        ("ก์", &["ก"]),
+        ("ก๎", &["ก"]),
+        ("กํ", &["ก"]),
+        ("น้ํา", &["น้ํ", "น้", "น"]),
+        // Other complex scripts
+        ("ကွ", &["က"]),
+        ("कि", &["क"]),
+        // Combining marks in other scripts are also deleted one code point at a time
+        ("e\u{301}", &["e"]),
+    ];
+    for &(input, expected_states) in backspace_cases {
+        cx.set_state(&format!("{input}ˇ"));
+        for expected_state in expected_states {
+            cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
+            cx.assert_editor_state(&format!("{expected_state}ˇ"));
+        }
+    }
+
+    // A grapheme cluster that consists of a single code point is deleted in one stroke.
+    cx.set_state("éˇ");
+    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
+    cx.assert_editor_state("ˇ");
+
+    // Emoji sequences are deleted in one stroke.
+    for input in [
+        "👩‍👩‍👦‍👦",                                                              // ZWJ sequence
+        "❤️", // emoji presentation sequence
+        "👍🏽", // emoji modifier sequence
+        "1️⃣", // keycap sequence
+        "🇹🇭", // flag sequence
+        "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}", // tag sequence
+    ] {
+        cx.set_state(&format!("{input}ˇ"));
+        cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
+        cx.assert_editor_state("ˇ");
+    }
+
+    cx.set_state("a👍🏽ˇ");
+    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
+    cx.assert_editor_state("aˇ");
+
+    // Forward delete removes the whole grapheme cluster: the W3C resolution is that
+    // backward deletion removes code points while forward deletion removes grapheme
+    // clusters, as in Chromium and VS Code.
+    for input in ["ที่", "น้ำ", "🇹🇭", "e\u{301}"] {
+        cx.set_state(&format!("ˇ{input}"));
+        cx.update_editor(|e, window, cx| e.delete(&Delete, window, cx));
+        cx.assert_editor_state("ˇ");
+    }
+
+    // The same unit boundary must hold for cursors inside a cluster and at multiple cursors.
+    cx.set_state("น้ˇำ");
+    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
+    cx.assert_editor_state("นˇำ");
+
+    cx.set_state("น้ำˇ ที่ˇ");
+    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
+    cx.assert_editor_state("น้ˇ ทีˇ");
+
     // Test backspace inside and around indents
     cx.set_state(indoc! {"
         zero

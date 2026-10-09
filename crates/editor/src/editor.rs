@@ -267,6 +267,7 @@ use ui::{
     prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
+use unicode_properties::emoji::{UnicodeEmoji, is_regional_indicator};
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
@@ -5234,6 +5235,143 @@ impl Editor {
         });
     }
 
+    /// Returns the point that the cursor should move to when deleting backwards.
+    ///
+    /// Backspace deletes one code point at a time, except for emoji sequences, which
+    /// are deleted as a whole. For example, a grapheme cluster consisting of a base
+    /// character and combining marks (Thai `ที่`, or `e` followed by a combining acute
+    /// accent) is deleted one code point at a time, while emoji sequences such as
+    /// `👩‍👩‍👦‍👦`, `❤️`, or `🇹🇭` are deleted in one stroke.
+    ///
+    /// This follows Chromium's `BackspaceStateMachine` and matches VS Code's
+    /// `getLeftDeleteOffset` in deleting a single code point. It is consistent with
+    /// the note in the W3C Input Events spec that backward deletion may affect a
+    /// single code point rather than an entire grapheme cluster.
+    /// https://w3c.github.io/input-events/#interface-InputEvent-Attributes
+    fn previous_point_for_backspace(
+        display_map: &DisplaySnapshot,
+        old_head: MultiBufferPoint,
+    ) -> MultiBufferPoint {
+        let previous_point = movement::left(display_map, old_head.to_display_point(display_map))
+            .to_point(display_map);
+        if previous_point == old_head {
+            return previous_point;
+        }
+
+        // Backspacing at the start of a line joins it with the previous line.
+        if previous_point.row != old_head.row {
+            return previous_point;
+        }
+
+        // Most text is ASCII; keep that path free of iteration and allocation.
+        if old_head.column.saturating_sub(previous_point.column) == 1 {
+            return previous_point;
+        }
+
+        let buffer_snapshot = display_map.buffer_snapshot();
+        let mut cluster = SmallVec::<[char; 8]>::new();
+        let mut remaining_bytes = old_head.column.saturating_sub(previous_point.column) as usize;
+        for character in buffer_snapshot.reversed_chars_at(old_head) {
+            remaining_bytes = remaining_bytes.saturating_sub(character.len_utf8());
+            cluster.push(character);
+            if remaining_bytes == 0 {
+                break;
+            }
+        }
+        cluster.reverse();
+
+        // A single code point is deleted as is; emoji sequences are deleted as a whole.
+        if cluster.len() == 1 || Self::is_emoji_sequence(&cluster) {
+            return previous_point;
+        }
+
+        // Otherwise, move the cursor to the start of the last code point in the cluster.
+        let trailing_character = *cluster.last().expect("cluster is not empty");
+        let candidate = MultiBufferPoint::new(
+            old_head.row,
+            old_head
+                .column
+                .saturating_sub(trailing_character.len_utf8() as u32),
+        );
+        if candidate
+            .to_display_point(display_map)
+            .to_point(display_map)
+            == candidate
+        {
+            return candidate;
+        }
+
+        previous_point
+    }
+
+    /// Returns whether the given grapheme cluster should be deleted as a whole by
+    /// backspace because it is an emoji sequence: a tag sequence, a keycap sequence,
+    /// an emoji modifier sequence, an emoji presentation sequence, a ZWJ sequence, or
+    /// a flag sequence.
+    fn is_emoji_sequence(cluster: &[char]) -> bool {
+        let Some((&last_character, rest)) = cluster.split_last() else {
+            return false;
+        };
+
+        // Emoji tag sequence: an emoji base, tag characters, and a cancel tag,
+        // e.g. the flag of Scotland.
+        if last_character == '\u{E007F}' {
+            return cluster.iter().any(|character| character.is_emoji_char());
+        }
+
+        // Keycap sequence: a keycap base, an optional variation selector, and a
+        // combining enclosing keycap, e.g. `1️⃣`.
+        if last_character == '\u{20E3}' {
+            return Self::without_trailing_variation_selector(rest)
+                .last()
+                .is_some_and(|character| Self::is_keycap_base(*character));
+        }
+
+        // Emoji modifier sequence: an emoji base, an optional variation selector, and
+        // a skin tone modifier, e.g. `👍🏽`.
+        if Self::is_emoji_modifier(last_character) {
+            return Self::without_trailing_variation_selector(rest)
+                .last()
+                .is_some_and(|character| character.is_emoji_char());
+        }
+
+        // Emoji presentation sequence: an emoji base followed by a variation
+        // selector, e.g. `❤️`.
+        if Self::is_variation_selector(last_character) {
+            return true;
+        }
+
+        // Emoji ZWJ sequence: emoji joined by zero width joiners, e.g. `👩‍👩‍👦‍👦`.
+        if cluster.contains(&'\u{200D}') {
+            return cluster.iter().any(|character| character.is_emoji_char());
+        }
+
+        // Flag sequence: a pair of regional indicators, e.g. `🇹🇭`.
+        cluster.len() == 2
+            && cluster
+                .iter()
+                .all(|character| is_regional_indicator(*character))
+    }
+
+    fn without_trailing_variation_selector(cluster: &[char]) -> &[char] {
+        match cluster.split_last() {
+            Some((last_character, rest)) if Self::is_variation_selector(*last_character) => rest,
+            _ => cluster,
+        }
+    }
+
+    fn is_variation_selector(character: char) -> bool {
+        matches!(character, '\u{FE00}'..='\u{FE0F}')
+    }
+
+    fn is_emoji_modifier(character: char) -> bool {
+        matches!(character, '\u{1F3FB}'..='\u{1F3FF}')
+    }
+
+    fn is_keycap_base(character: char) -> bool {
+        matches!(character, '#' | '*' | '0'..='9')
+    }
+
     pub fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only(cx) {
             return;
@@ -5248,9 +5386,7 @@ impl Editor {
             for selection in &mut selections {
                 if selection.is_empty() {
                     let old_head = selection.head();
-                    let mut new_head =
-                        movement::left(&display_map, old_head.to_display_point(&display_map))
-                            .to_point(&display_map);
+                    let mut new_head = Self::previous_point_for_backspace(&display_map, old_head);
                     if let Some((buffer, line_buffer_range)) = display_map
                         .buffer_snapshot()
                         .buffer_line_for_row(MultiBufferRow(old_head.row))
