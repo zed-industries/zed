@@ -630,6 +630,29 @@ struct TextLayoutInner {
     bounds: Option<Bounds<Pixels>>,
 }
 
+impl TextLayoutInner {
+    fn cached_size(
+        &self,
+        wrap_width: Option<Pixels>,
+        truncate_width: Option<Pixels>,
+    ) -> Option<Size<Pixels>> {
+        let size = self.size?;
+        // A truncated layout must not answer intrinsic sizing with the width
+        // imposed by an earlier measurement pass.
+        if truncate_width.is_none()
+            && self.truncate_width.is_none()
+            && (wrap_width.is_none()
+                || wrap_width == self.wrap_width
+                || (self.wrap_width.is_none()
+                    && wrap_width.is_some_and(|width| size.width <= width)))
+        {
+            Some(size)
+        } else {
+            None
+        }
+    }
+}
+
 impl TextLayout {
     fn layout(
         &self,
@@ -683,28 +706,18 @@ impl TextLayout {
                         (None, "".into(), TruncateFrom::End)
                     };
 
-                // Only use cached layout if:
-                // 1. We have a cached size
-                // 2. wrap_width matches (or both are None)
-                // 3. truncate_width is None (if truncate_width is Some, we need to re-layout
-                //    because the previous layout may have been computed without truncation)
-                // 4. the cached layout was not truncated (a truncated layout answers an
-                //    unconstrained probe with the truncated size, which poisons intrinsic
-                //    sizing with whatever width some earlier measure pass happened to use)
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
-                    && let Some(size) = text_layout.size
-                    && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
-                    && truncate_width.is_none()
-                    && text_layout.truncate_width.is_none()
+                    && let Some(size) = text_layout.cached_size(wrap_width, truncate_width)
                 {
                     return size;
                 }
 
-                let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let (text, runs) = if let Some(truncate_width) = truncate_width {
                     if let Some(max_lines) = text_style.line_clamp
                         && let Some(wrap_width) = wrap_width
                     {
+                        let mut line_wrapper =
+                            cx.text_system().line_wrapper(text_style.font(), font_size);
                         line_wrapper.truncate_wrapped_line(
                             text.clone(),
                             wrap_width,
@@ -729,6 +742,8 @@ impl TextLayout {
                         // already measured untruncated this frame.
                         (text.clone(), Cow::Borrowed(&*runs))
                     } else {
+                        let mut line_wrapper =
+                            cx.text_system().line_wrapper(text_style.font(), font_size);
                         line_wrapper.truncate_line(
                             text.clone(),
                             truncate_width,
@@ -1316,6 +1331,226 @@ impl IntoElement for InteractiveText {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AppContext as _;
+
+    #[test]
+    fn text_measurement_cache_guard() {
+        let size = crate::size(crate::px(100.), crate::px(40.));
+        let mut layout = TextLayoutInner {
+            len: 0,
+            lines: Default::default(),
+            line_height: crate::px(20.),
+            wrap_width: None,
+            truncate_width: None,
+            size: Some(size),
+            bounds: None,
+        };
+        for width in [None, Some(crate::px(100.)), Some(crate::px(101.))] {
+            assert_eq!(layout.cached_size(width, None), Some(size));
+            assert_eq!(layout.cached_size(width, Some(crate::px(200.))), None);
+        }
+        assert_eq!(layout.cached_size(Some(crate::px(99.)), None), None);
+
+        layout.wrap_width = Some(crate::px(100.));
+        assert_eq!(layout.cached_size(None, None), Some(size));
+        assert_eq!(layout.cached_size(Some(crate::px(100.)), None), Some(size));
+        assert_eq!(layout.cached_size(Some(crate::px(99.)), None), None);
+        assert_eq!(layout.cached_size(Some(crate::px(101.)), None), None);
+
+        for cached_wrap_width in [None, Some(crate::px(100.))] {
+            layout.wrap_width = cached_wrap_width;
+            layout.truncate_width = Some(crate::px(100.));
+            for width in [None, Some(crate::px(100.)), Some(crate::px(101.))] {
+                assert_eq!(layout.cached_size(width, None), None);
+            }
+        }
+        layout.truncate_width = None;
+        layout.size = None;
+        assert_eq!(layout.cached_size(None, None), None);
+        assert_eq!(layout.cached_size(Some(crate::px(100.)), None), None);
+    }
+
+    #[gpui::test]
+    fn text_measurement_reuses_fitting_unwrapped_lines(cx: &mut crate::TestAppContext) {
+        let window = cx.add_window(|_, _| crate::EmptyView);
+        cx.update_window(window.into(), |_, window, cx| {
+            window
+                .invalidator
+                .set_phase(crate::window::DrawPhase::Prepaint);
+            for text in ["one two three four five six", "one two three\nfour five"] {
+                for (white_space, line_clamp) in [
+                    (WhiteSpace::Normal, None),
+                    (WhiteSpace::Nowrap, None),
+                    (WhiteSpace::Normal, Some(1)),
+                ] {
+                    window.with_text_style(
+                        Some(crate::TextStyleRefinement {
+                            white_space: Some(white_space),
+                            line_clamp,
+                            ..Default::default()
+                        }),
+                        |window| {
+                            let layout = TextLayout::default();
+                            let layout_id = layout.layout(text.into(), None, window, cx);
+                            window.compute_layout(
+                                layout_id,
+                                crate::size(
+                                    crate::AvailableSpace::MaxContent,
+                                    crate::AvailableSpace::MaxContent,
+                                ),
+                                cx,
+                            );
+                            let size = layout
+                                .0
+                                .borrow()
+                                .as_ref()
+                                .expect("measured")
+                                .size
+                                .expect("measured size");
+                            assert!(size.width > crate::px(0.));
+                            let bounds = Bounds::new(Point::default(), size);
+                            layout.prepaint(bounds, text);
+                            let lines: Vec<_> = layout
+                                .0
+                                .borrow()
+                                .as_ref()
+                                .expect("measured")
+                                .lines
+                                .iter()
+                                .map(|line| line.layout.clone())
+                                .collect();
+                            for width in [size.width + crate::px(10.), size.width] {
+                                let available = crate::size(
+                                    crate::AvailableSpace::Definite(width),
+                                    crate::AvailableSpace::MinContent,
+                                );
+                                window.compute_layout(layout_id, available, cx);
+                                let cached = layout.0.borrow();
+                                let cached = cached.as_ref().expect("measured");
+                                assert_eq!(cached.size, Some(size));
+                                assert_eq!(cached.wrap_width, None);
+                                assert_eq!(cached.bounds, Some(bounds));
+                                assert_eq!(cached.lines.len(), lines.len());
+                                for (cached, original) in cached.lines.iter().zip(&lines) {
+                                    assert!(Arc::ptr_eq(&cached.layout, original));
+                                }
+                                let fresh = TextLayout::default();
+                                let fresh_id = fresh.layout(text.into(), None, window, cx);
+                                window.compute_layout(fresh_id, available, cx);
+                                assert_eq!(layout.wrapped_text(), fresh.wrapped_text());
+                                assert_eq!(
+                                    cached.size,
+                                    fresh.0.borrow().as_ref().expect("measured").size
+                                );
+                            }
+
+                            let narrow_width = size.width / 2.;
+                            let available = crate::size(
+                                crate::AvailableSpace::Definite(narrow_width),
+                                crate::AvailableSpace::MinContent,
+                            );
+                            window.compute_layout(layout_id, available, cx);
+                            let cached = layout.0.borrow();
+                            let cached = cached.as_ref().expect("measured");
+                            if white_space == WhiteSpace::Normal {
+                                assert_eq!(cached.wrap_width, Some(narrow_width));
+                                assert_eq!(cached.bounds, None);
+                            } else {
+                                assert_eq!(cached.wrap_width, None);
+                                assert_eq!(cached.bounds, Some(bounds));
+                            }
+                            let fresh = TextLayout::default();
+                            let fresh_id = fresh.layout(text.into(), None, window, cx);
+                            window.compute_layout(fresh_id, available, cx);
+                            assert_eq!(layout.wrapped_text(), fresh.wrapped_text());
+                            assert_eq!(
+                                cached.size,
+                                fresh.0.borrow().as_ref().expect("measured").size
+                            );
+                        },
+                    );
+                }
+            }
+            window.invalidator.set_phase(crate::window::DrawPhase::None);
+        })
+        .expect("update window");
+    }
+
+    #[gpui::test]
+    fn text_measurement_truncation_does_not_answer_intrinsic_sizing(
+        cx: &mut crate::TestAppContext,
+    ) {
+        let window = cx.add_window(|_, _| crate::EmptyView);
+        cx.update_window(window.into(), |_, window, cx| {
+            window
+                .invalidator
+                .set_phase(crate::window::DrawPhase::Prepaint);
+            let text = "one two three four five six";
+            for overflow in [
+                TextOverflow::Truncate("…".into()),
+                TextOverflow::TruncateStart("…".into()),
+                TextOverflow::TruncateMiddle("…".into()),
+            ] {
+                for (white_space, line_clamp) in [
+                    (WhiteSpace::Normal, None),
+                    (WhiteSpace::Nowrap, None),
+                    (WhiteSpace::Normal, Some(2)),
+                ] {
+                    window.with_text_style(
+                        Some(crate::TextStyleRefinement {
+                            text_overflow: Some(overflow.clone()),
+                            white_space: Some(white_space),
+                            line_clamp,
+                            ..Default::default()
+                        }),
+                        |window| {
+                            for intrinsic in [
+                                crate::AvailableSpace::MinContent,
+                                crate::AvailableSpace::MaxContent,
+                            ] {
+                                let layout = TextLayout::default();
+                                let layout_id = layout.layout(text.into(), None, window, cx);
+                                window.compute_layout(
+                                    layout_id,
+                                    crate::size(
+                                        crate::AvailableSpace::Definite(crate::px(20.)),
+                                        crate::AvailableSpace::MinContent,
+                                    ),
+                                    cx,
+                                );
+                                assert!(
+                                    layout
+                                        .0
+                                        .borrow()
+                                        .as_ref()
+                                        .expect("measured")
+                                        .truncate_width
+                                        .is_some()
+                                );
+                                let available =
+                                    crate::size(intrinsic, crate::AvailableSpace::MinContent);
+                                window.compute_layout(layout_id, available, cx);
+                                let cached = layout.0.borrow();
+                                let cached = cached.as_ref().expect("measured");
+                                assert_eq!(cached.truncate_width, None);
+                                assert_eq!(cached.len, text.len());
+                                let fresh = TextLayout::default();
+                                let fresh_id = fresh.layout(text.into(), None, window, cx);
+                                window.compute_layout(fresh_id, available, cx);
+                                assert_eq!(layout.wrapped_text(), fresh.wrapped_text());
+                                assert_eq!(
+                                    cached.size,
+                                    fresh.0.borrow().as_ref().expect("measured").size
+                                );
+                            }
+                        },
+                    );
+                }
+            }
+            window.invalidator.set_phase(crate::window::DrawPhase::None);
+        })
+        .expect("update window");
+    }
 
     #[test]
     fn test_into_element_for() {
