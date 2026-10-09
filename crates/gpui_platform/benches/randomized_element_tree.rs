@@ -19,13 +19,15 @@
 //! stopped rendering the changed element is not an improvement.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     fmt,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
+use gpui::prelude::*;
 use gpui::{
-    BenchAppContext, Context, Window,
+    BenchAppContext, Context, Entity, Window,
     private::rand::{Rng as _, SeedableRng as _, rngs::StdRng},
     randomized_element_tree::{
         ChangeLocality, RandomizedElementTree, RandomizedElementTreeBounds,
@@ -578,6 +580,209 @@ fn changing_share(input: &ChangingShareInput, mut rng: StdRng, cx: &mut BenchApp
     }
 }
 
+struct TextPanel {
+    index: usize,
+    value: u32,
+    renders: Rc<Cell<usize>>,
+}
+
+impl Render for TextPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
+        let value = self.value;
+        gpui::div()
+            .id(gpui::ElementId::NamedInteger(
+                "text-panel".into(),
+                self.index as u64,
+            ))
+            .flex()
+            .flex_col()
+            .w(gpui::px(220.))
+            .h(gpui::px(192.))
+            .bg(gpui::rgb(0x181818))
+            .overflow_hidden()
+            .children((0..64).map(|label| {
+                gpui::div()
+                    .flex_shrink_0()
+                    .h(gpui::px(16.))
+                    .child(format!("Metric {label:02}: {value:06}"))
+            }))
+    }
+}
+
+struct TextPanelRoot {
+    panels: Vec<Entity<TextPanel>>,
+    renders: Rc<Cell<usize>>,
+    font_family: gpui::SharedString,
+}
+
+impl Render for TextPanelRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
+        gpui::div()
+            .id("text-panels")
+            .flex()
+            .flex_wrap()
+            .font_family(self.font_family.clone())
+            .text_size(gpui::px(12.))
+            .text_color(gpui::rgb(0xffffff))
+            .child("0123456789")
+            .children(self.panels.iter().cloned())
+    }
+}
+
+fn text_panel_counts() -> Vec<usize> {
+    assert!(
+        !std::env::var("GPUI_RETAINED_DISPATCH").is_ok_and(|value| value == "1"),
+        "this mainline text benchmark supports fresh rendering only; unset GPUI_RETAINED_DISPATCH"
+    );
+    if cfg!(all(
+        target_os = "linux",
+        not(any(feature = "x11", feature = "wayland"))
+    )) {
+        eprintln!("TextPanels requires x11 or wayland on Linux for production text shaping");
+        Vec::new()
+    } else {
+        vec![8, 32, 96]
+    }
+}
+
+#[gpui::bench(inputs = text_panel_counts(), input_name = "panels", group = "TextPanels/two updates", fps = 120)]
+fn text_panel_updates(panel_count: &usize, cx: &mut BenchAppContext) {
+    measure_text_panel_updates(*panel_count, "monospace", cx);
+}
+
+fn installed_font_panel_counts() -> Vec<usize> {
+    if cfg!(target_os = "linux") {
+        text_panel_counts()
+    } else {
+        Vec::new()
+    }
+}
+
+#[gpui::bench(inputs = installed_font_panel_counts(), input_name = "panels", group = "TextPanels/installed font two updates", fps = 120)]
+fn installed_font_panel_updates(panel_count: &usize, cx: &mut BenchAppContext) {
+    let font = gpui::font("Noto Sans Mono");
+    let text_system = cx.text_system();
+    assert!(
+        text_system
+            .all_font_names()
+            .iter()
+            .any(|family| family == font.family.as_ref()),
+        "the installed-font comparison requires Noto Sans Mono"
+    );
+    let font_id = text_system.resolve_font(&font);
+    assert_eq!(
+        text_system.get_font_for_id(font_id).map(|font| font.family),
+        Some(font.family),
+        "the comparison font must resolve without falling back"
+    );
+    measure_text_panel_updates(*panel_count, "Noto Sans Mono", cx);
+}
+
+thread_local! {
+    static LAST_TEXT_PANELS: Cell<Option<(usize, &'static str)>> = const { Cell::new(None) };
+}
+
+fn measure_text_panel_updates(
+    panel_count: usize,
+    font_family: &'static str,
+    cx: &mut BenchAppContext,
+) {
+    let mut window = cx.add_empty_window();
+    let root_renders = Rc::new(Cell::new(0));
+    let panel_renders = Rc::new(Cell::new(0));
+    let root = window.update(|window, cx| {
+        window.replace_root(cx, |_, cx| TextPanelRoot {
+            panels: (0..panel_count)
+                .map(|index| {
+                    cx.new(|_| TextPanel {
+                        index,
+                        value: 0,
+                        renders: panel_renders.clone(),
+                    })
+                })
+                .collect(),
+            renders: root_renders.clone(),
+            font_family: font_family.into(),
+        })
+    });
+    cx.run_until_idle();
+    window.update(|window, _| {
+        let scene = window.rendered_scene();
+        let glyph_count = scene.monochrome_sprites.len()
+            + scene.subpixel_sprites.len()
+            + scene.polychrome_sprites.len();
+        assert!(
+            glyph_count > 0,
+            "the text workload must produce glyph sprites: viewport {:?}, quads {}, root renders {}, panel renders {}",
+            window.viewport_size(),
+            scene.quads.len(),
+            root_renders.get(),
+            panel_renders.get()
+        );
+        if LAST_TEXT_PANELS.with(|last| last.replace(Some((panel_count, font_family))))
+            != Some((panel_count, font_family))
+        {
+            eprintln!(
+                "text panels: {panel_count}, requested family {font_family}, viewport {:?}, quads {}, glyphs {glyph_count}, initial root renders {}, panel renders {}",
+                window.viewport_size(),
+                scene.quads.len(),
+                root_renders.get(),
+                panel_renders.get()
+            );
+        }
+    });
+    let initial_panel_renders = panel_renders.get();
+    let mut updates = 0usize;
+    cx.bench_renderer(root, |root, _, cx| {
+        for index in [0, panel_count / 2] {
+            root.panels
+                .get(index)
+                .expect("configured panel")
+                .update(cx, |panel, cx| {
+                    panel.value = (panel.value + 1) % 1_000_000;
+                    cx.notify();
+                });
+        }
+        updates += 1;
+    });
+    assert!(updates > 0);
+    assert!(
+        panel_renders.get() > initial_panel_renders,
+        "updated panels must render"
+    );
+    let incremental = window.update(|window, _| snapshot_glyphs(window));
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
+    assert_eq!(
+        incremental,
+        window.update(|window, _| snapshot_glyphs(window)),
+        "updated glyph output must match a full redraw of the final model"
+    );
+}
+
+fn snapshot_glyphs(window: &Window) -> Vec<String> {
+    let scene = window.rendered_scene();
+    scene
+        .monochrome_sprites
+        .iter()
+        .map(|sprite| format!("monochrome:{sprite:?}"))
+        .chain(
+            scene
+                .subpixel_sprites
+                .iter()
+                .map(|sprite| format!("subpixel:{sprite:?}")),
+        )
+        .chain(
+            scene
+                .polychrome_sprites
+                .iter()
+                .map(|sprite| format!("polychrome:{sprite:?}")),
+        )
+        .collect()
+}
+
 // Frames take 0.4 to 2.5 ms, so a 1 s measurement is already hundreds to thousands of
 // frames; Criterion's 3 s warm-up and 5 s measurement per id would make the suite take
 // most of an hour. Pass `ITERATIONS=6`, `--warm-up-time` or `--measurement-time` for a
@@ -596,6 +801,8 @@ gpui::bench_group!(
     insert_remove,
     reorder,
     changing_share,
+    text_panel_updates,
+    installed_font_panel_updates,
     family_summary
 );
 gpui::bench_main!(benches);

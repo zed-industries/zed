@@ -2867,6 +2867,12 @@ impl Window {
             .render_to_image(&self.rendered_frame.scene)
     }
 
+    /// Borrows the last rendered scene for benchmark correctness checks outside timing.
+    #[cfg(feature = "bench-support")]
+    pub fn rendered_scene(&self) -> &Scene {
+        &self.rendered_frame.scene
+    }
+
     /// Returns the quads in the most recently rendered frame's scene, so tests can assert on
     /// painted output without rasterizing the frame. Quad bounds are in scaled pixels and are
     /// not clipped; each quad carries the content mask it will be clipped to when drawn. Quads
