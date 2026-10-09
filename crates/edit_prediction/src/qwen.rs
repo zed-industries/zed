@@ -149,37 +149,51 @@ mod tests {
     }
 
     #[test]
-    fn chat_request_uses_partial_assistant_and_preserves_code_context() {
-        let request: Value = serde_json::from_str(
-            &Api::Chat
-                .request_body("qwen3-coder-flash", PREFIX, SUFFIX, 1000)
-                .unwrap(),
-        )
-        .unwrap();
+    fn chat_request_uses_partial_assistant_and_preserves_code_context() -> Result<()> {
+        let request: Value = serde_json::from_str(&Api::Chat.request_body(
+            "qwen3-coder-flash",
+            PREFIX,
+            SUFFIX,
+            1000,
+        )?)?;
         assert_eq!(request["model"], "qwen3-coder-flash");
         assert_eq!(request["max_tokens"], 1000);
         assert_eq!(request["stream"], false);
         assert!(request.get("prompt").is_none());
         assert!(request.get("input").is_none());
-        let messages = request["messages"].as_array().unwrap();
+        let messages = request["messages"]
+            .as_array()
+            .context("Expected a messages array")?;
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "user");
-        assert!(messages[0]["content"].as_str().unwrap().contains(SUFFIX));
+        assert!(
+            messages[0]["content"]
+                .as_str()
+                .context("Expected text in the user message")?
+                .contains(SUFFIX)
+        );
         assert_eq!(
             messages[1],
             json!({"role": "assistant", "content": PREFIX, "partial": true})
         );
-        assert!(request["stop"].as_array().unwrap().len() <= 4);
+        assert!(
+            request["stop"]
+                .as_array()
+                .context("Expected a stop-sequence array")?
+                .len()
+                <= 4
+        );
+        Ok(())
     }
 
     #[test]
-    fn native_request_matches_dashscope_envelope() {
-        let request: Value = serde_json::from_str(
-            &Api::Native
-                .request_body("qwen3-coder-plus", PREFIX, "", 256)
-                .unwrap(),
-        )
-        .unwrap();
+    fn native_request_matches_dashscope_envelope() -> Result<()> {
+        let request: Value = serde_json::from_str(&Api::Native.request_body(
+            "qwen3-coder-plus",
+            PREFIX,
+            "",
+            256,
+        )?)?;
         assert_eq!(request["model"], "qwen3-coder-plus");
         assert!(request.get("messages").is_none());
         assert!(request.get("prompt").is_none());
@@ -191,16 +205,17 @@ mod tests {
             request["input"]["messages"][1],
             json!({"role": "assistant", "content": PREFIX, "partial": true})
         );
+        Ok(())
     }
 
     #[test]
-    fn empty_prefix_is_still_a_partial_assistant_message() {
-        let request: Value = serde_json::from_str(
-            &Api::Chat
-                .request_body("qwen3-coder-flash", "", "剩余代码\n", 64)
-                .unwrap(),
-        )
-        .unwrap();
+    fn empty_prefix_is_still_a_partial_assistant_message() -> Result<()> {
+        let request: Value = serde_json::from_str(&Api::Chat.request_body(
+            "qwen3-coder-flash",
+            "",
+            "剩余代码\n",
+            64,
+        )?)?;
         assert_eq!(
             request["messages"][1],
             json!({"role": "assistant", "content": "", "partial": true})
@@ -208,13 +223,14 @@ mod tests {
         assert!(
             request["messages"][0]["content"]
                 .as_str()
-                .unwrap()
+                .context("Expected text in the user message")?
                 .contains("剩余代码\n")
         );
+        Ok(())
     }
 
     #[test]
-    fn chat_response_returns_only_generated_code_and_request_id() {
+    fn chat_response_returns_only_generated_code_and_request_id() -> Result<()> {
         let response = json!({
             "id": "chatcmpl-test", "object": "chat.completion", "created": 0,
             "model": "qwen3-coder-flash",
@@ -222,31 +238,34 @@ mod tests {
             "usage": {"prompt_tokens": 48, "completion_tokens": 19, "total_tokens": 67}
         });
         assert_eq!(
-            Api::Chat.parse_response(&response.to_string()).unwrap(),
+            Api::Chat.parse_response(&response.to_string())?,
             (COMPLETION.into(), "chatcmpl-test".into())
         );
+        Ok(())
     }
 
     #[test]
-    fn native_response_returns_only_generated_code_and_request_id() {
+    fn native_response_returns_only_generated_code_and_request_id() -> Result<()> {
         let response = json!({
             "request_id": "dashscope-test",
             "output": {"choices": [{"message": {"role": "assistant", "content": COMPLETION}, "finish_reason": "stop"}]},
             "usage": {"input_tokens": 48, "output_tokens": 19, "total_tokens": 67}
         });
         assert_eq!(
-            Api::Native.parse_response(&response.to_string()).unwrap(),
+            Api::Native.parse_response(&response.to_string())?,
             (COMPLETION.into(), "dashscope-test".into())
         );
+        Ok(())
     }
 
     #[test]
-    fn empty_completion_is_not_an_error() {
+    fn empty_completion_is_not_an_error() -> Result<()> {
         let response = r#"{"id":"empty","choices":[{"message":{"content":""}}]}"#;
         assert_eq!(
-            Api::Chat.parse_response(response).unwrap(),
+            Api::Chat.parse_response(response)?,
             (String::new(), "empty".into())
         );
+        Ok(())
     }
 
     #[test]

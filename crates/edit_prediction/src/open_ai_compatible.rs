@@ -161,7 +161,7 @@ mod tests {
     use serde_json::{Value, json};
 
     #[test]
-    fn qwen_message_endpoints_send_authenticated_partial_requests() {
+    fn qwen_message_endpoints_send_authenticated_partial_requests() -> Result<()> {
         futures::executor::block_on(async {
             for (api, url, response_body) in [
                 (
@@ -203,7 +203,7 @@ mod tests {
                             assert!(
                                 messages[0]["content"]
                                     .as_str()
-                                    .unwrap()
+                                    .context("Expected text in the user message")?
                                     .contains("\nprint(f(1))")
                             );
                             Ok(http_client::Response::builder()
@@ -220,8 +220,7 @@ mod tests {
                     Some("test-key".into()),
                     &http_client,
                 )
-                .await
-                .unwrap();
+                .await?;
                 assert_eq!(result.0, "    return n\n");
                 assert_eq!(
                     result.1,
@@ -232,11 +231,12 @@ mod tests {
                     }
                 );
             }
-        });
+            Ok(())
+        })
     }
 
     #[test]
-    fn qwen_http_errors_preserve_status_and_server_message() {
+    fn qwen_http_errors_preserve_status_and_server_message() -> Result<()> {
         futures::executor::block_on(async {
             let http_client: Arc<dyn http_client::HttpClient> =
                 FakeHttpClient::create(|request| async move {
@@ -251,15 +251,17 @@ mod tests {
             };
             let error = send_qwen_server_request(Api::Chat, &settings, "", "", None, &http_client)
                 .await
-                .unwrap_err()
+                .err()
+                .context("Expected the Qwen request to fail with HTTP 400")?
                 .to_string();
             assert!(error.contains("400 Bad Request"), "{error}");
             assert!(error.contains("invalid partial request"), "{error}");
-        });
+            Ok(())
+        })
     }
 
     #[test]
-    fn raw_completion_requests_keep_the_existing_protocol() {
+    fn raw_completion_requests_keep_the_existing_protocol() -> Result<()> {
         futures::executor::block_on(async {
             let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::create(
                 |mut request| async move {
@@ -291,9 +293,9 @@ mod tests {
                 None,
                 &http_client,
             )
-            .await
-            .unwrap();
+            .await?;
             assert_eq!(result, ("missing".into(), "raw-test".into()));
-        });
+            Ok(())
+        })
     }
 }
