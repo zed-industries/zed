@@ -1,4 +1,6 @@
+use acp_thread::NativeToolCallUpdateFields;
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -296,8 +298,8 @@ impl AgentTool for TerminalTool {
 
     const NAME: &'static str = "terminal";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Execute
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Execute
     }
 
     fn allow_in_restricted_mode() -> bool {
@@ -338,8 +340,8 @@ impl AgentTool for SandboxedTerminalTool {
 
     const NAME: &'static str = "sandboxed_terminal";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Execute
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Execute
     }
 
     fn allow_in_restricted_mode() -> bool {
@@ -981,9 +983,10 @@ async fn run_terminal_tool(
     });
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
-    let fields = acp::ToolCallUpdateFields::new().content(vec![acp::ToolCallContent::Terminal(
-        acp::Terminal::new(terminal_id),
-    )]);
+    let fields =
+        NativeToolCallUpdateFields::new().content(vec![acp_v2::ToolCallContent::Terminal(
+            acp_v2::Terminal::new(acp_v2::TerminalId::new(terminal_id.0)),
+        )]);
     if let Some(reason) = &sandbox_not_applied {
         event_stream.update_fields_with_meta(
             fields,
@@ -2179,7 +2182,7 @@ mod tests {
             !matches!(
                 rx.try_recv(),
                 Ok(Ok(crate::ThreadEvent::ToolCallUpdate(
-                    acp_thread::ToolCallUpdate::UpdateFields(_)
+                    acp_thread::ToolCallUpdate::NativeFields(_)
                 )))
             ),
             "invalid command should not emit a terminal card update"
@@ -2196,11 +2199,17 @@ mod tests {
         fs.insert_tree("/root", serde_json::json!({})).await;
         let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let environment = std::rc::Rc::new(cx.update(|cx| {
-            crate::tests::FakeThreadEnvironment::default().with_terminal(
-                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+        let (environment, process_terminal_id) = cx.update(|cx| {
+            let terminal = crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0);
+            let terminal_id = crate::TerminalHandle::id(&terminal, &cx.to_async())
+                .expect("expected process terminal ID");
+            (
+                std::rc::Rc::new(
+                    crate::tests::FakeThreadEnvironment::default().with_terminal(terminal),
+                ),
+                terminal_id,
             )
-        }));
+        });
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -2227,13 +2236,19 @@ mod tests {
         });
 
         let update = rx.expect_update_fields().await;
+        let terminal_reference = update
+            .content
+            .as_ref()
+            .and_then(|content| {
+                content.iter().find_map(|content| match content {
+                    acp_v2::ToolCallContent::Terminal(terminal) => Some(terminal),
+                    _ => None,
+                })
+            })
+            .expect("expected terminal content update in unconditional allow-all mode");
         assert!(
-            update.content.iter().any(|blocks| {
-                blocks
-                    .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
-            }),
-            "expected terminal content update in unconditional allow-all mode"
+            Arc::ptr_eq(&terminal_reference.terminal_id.0, &process_terminal_id.0),
+            "native terminal references must reuse the process terminal ID"
         );
 
         let result = task
@@ -2363,7 +2378,7 @@ mod tests {
             update.content.iter().any(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "expected terminal content update for matching env-prefixed allow rule"
         );
@@ -2431,7 +2446,7 @@ mod tests {
             update.content.iter().any(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "expected terminal content update"
         );
@@ -2845,7 +2860,7 @@ mod tests {
             update.content.iter().any(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "terminal-specific allow-all should bypass substitution rejection"
         );
@@ -2985,7 +3000,7 @@ mod tests {
             update.content.iter().any(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "multi-assignment pattern should match and produce terminal content"
         );
@@ -3063,7 +3078,7 @@ mod tests {
             update.content.iter().any(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "quoted whitespace value should match pattern with quoted form"
         );

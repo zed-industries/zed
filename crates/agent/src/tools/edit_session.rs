@@ -4,9 +4,9 @@ mod streaming_parser;
 
 use super::tool_permissions::resolve_creatable_global_skill_path;
 use crate::{Thread, ToolCallEventStream};
-use acp_thread::Diff;
+use acp_thread::{Diff, NativeToolCallUpdateFields, ToolCallLocation};
 use action_log::ActionLog;
-use agent_client_protocol::schema::v1::{self as acp, ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
@@ -301,9 +301,9 @@ pub(crate) async fn run_session(
                 .await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
             if diff.is_empty() {
-                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                    acp::ToolCallContent::Content(acp::Content::new(error.clone())),
-                ]));
+                event_stream.update_fields(
+                    NativeToolCallUpdateFields::new().content(vec![error.clone().into()]),
+                );
             }
             Err(EditSessionOutput::Error {
                 error,
@@ -315,9 +315,9 @@ pub(crate) async fn run_session(
             error,
             session: None,
         } => {
-            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                acp::ToolCallContent::Content(acp::Content::new(error.clone())),
-            ]));
+            event_stream.update_fields(
+                NativeToolCallUpdateFields::new().content(vec![error.clone().into()]),
+            );
             Err(EditSessionOutput::Error {
                 error,
                 input_path: None,
@@ -533,7 +533,7 @@ impl EditPipeline {
 
                 let line = snapshot.offset_to_point(range.start).row;
                 event_stream.update_fields(
-                    ToolCallUpdateFields::new()
+                    NativeToolCallUpdateFields::new()
                         .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
                 );
 
@@ -722,7 +722,8 @@ impl EditSession {
         } = target;
 
         event_stream.update_fields(
-            ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
+            NativeToolCallUpdateFields::new()
+                .locations(vec![ToolCallLocation::new(abs_path.clone())]),
         );
 
         cx.update(|cx| context.authorize(tool_name, &path, event_stream, cx))
@@ -1155,7 +1156,7 @@ async fn resolve_dirty_buffer(
              retrying."
                 .to_string();
             event_stream.update_fields(
-                acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
+                NativeToolCallUpdateFields::new().content(vec![error.clone().into()]),
             );
             return Err(error);
         }

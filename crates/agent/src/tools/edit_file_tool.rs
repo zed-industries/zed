@@ -7,7 +7,9 @@ use super::edit_session::{
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
+#[cfg(test)]
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
@@ -231,8 +233,8 @@ impl AgentTool for EditFileTool {
         true
     }
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Edit
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Edit
     }
 
     fn initial_title(
@@ -738,7 +740,7 @@ mod tests {
             use futures::StreamExt as _;
             while let Some(event) = receiver.next().await {
                 let Ok(crate::ThreadEvent::ToolCallUpdate(
-                    acp_thread::ToolCallUpdate::UpdateFields(update),
+                    acp_thread::ToolCallUpdate::NativeFields(update),
                 )) = event
                 else {
                     continue;
@@ -747,8 +749,8 @@ mod tests {
                     continue;
                 };
                 for item in content {
-                    if let acp::ToolCallContent::Content(c) = item
-                        && let acp::ContentBlock::Text(text) = c.content
+                    if let acp_v2::ToolCallContent::Content(content) = item
+                        && let acp_v2::ContentBlock::Text(text) = content.content
                     {
                         return Some(text.text);
                     }
@@ -2548,11 +2550,12 @@ mod tests {
         let _update = stream_rx.expect_update_fields().await;
         let auth = stream_rx.expect_authorization().await;
         let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
-        let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
+        let acp_v2::ToolCallContent::Content(text) =
+            content.first().expect("expected message body")
         else {
             panic!("expected text body, got: {:?}", content.first());
         };
-        let acp::ContentBlock::Text(text) = &text.content else {
+        let acp_v2::ContentBlock::Text(text) = &text.content else {
             panic!("expected text body, got: {:?}", text.content);
         };
         assert!(

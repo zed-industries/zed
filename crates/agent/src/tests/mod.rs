@@ -1,7 +1,8 @@
 use super::*;
 use acp_thread::{
     AgentConnection, AgentModelGroupName, AgentModelId, AgentModelList, AgentThreadEntry,
-    ClientUserMessageId, PermissionOptions, ThreadStatus,
+    ClientUserMessageId, NativeToolCall, NativeToolCallUpdate, NativeToolCallUpdateFields,
+    PermissionOptions, ThreadStatus,
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::schema::v2 as acp_v2;
@@ -364,7 +365,7 @@ async fn test_echo(cx: &mut TestAppContext) {
             "Hello\n"
         )
     });
-    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events), vec![acp_v2::StopReason::EndTurn]);
 }
 
 #[gpui::test]
@@ -402,7 +403,7 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
         update.content.iter().any(|blocks| {
             blocks
                 .iter()
-                .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+                .any(|c| matches!(c, acp_v2::ToolCallContent::Terminal(_)))
         }),
         "expected tool call update to include terminal content"
     );
@@ -470,7 +471,7 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
         update.content.iter().any(|blocks| {
             blocks
                 .iter()
-                .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+                .any(|c| matches!(c, acp_v2::ToolCallContent::Terminal(_)))
         }),
         "expected tool call update to include terminal content"
     );
@@ -540,7 +541,7 @@ async fn test_thinking(cx: &mut TestAppContext) {
             "}
         )
     });
-    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events), vec![acp_v2::StopReason::EndTurn]);
 }
 
 #[gpui::test]
@@ -830,7 +831,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         .unwrap()
         .collect()
         .await;
-    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events), vec![acp_v2::StopReason::EndTurn]);
 
     // Test a tool calls that's likely to complete *after* streaming stops.
     let events = thread
@@ -849,7 +850,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         .unwrap()
         .collect()
         .await;
-    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events), vec![acp_v2::StopReason::EndTurn]);
     thread.update(cx, |thread, _cx| {
         assert!(
             thread
@@ -895,7 +896,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
                 let last_content = agent_message.content.last().unwrap();
                 if let AgentMessageContent::ToolUse(last_tool_use) = last_content {
                     assert_eq!(last_tool_use.name.as_ref(), "word_list");
-                    if tool_call.status == acp::ToolCallStatus::Pending {
+                    if tool_call.status == acp_v2::ToolCallStatus::Pending {
                         if !last_tool_use.is_input_complete
                             && last_tool_use
                                 .input
@@ -1142,9 +1143,9 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
 
     let tool_call = expect_tool_call(&mut events).await;
     assert_eq!(tool_call.title, "nonexistent_tool");
-    assert_eq!(tool_call.status, acp::ToolCallStatus::Pending);
+    assert_eq!(tool_call.status, acp_v2::ToolCallStatus::Pending);
     let update = expect_tool_call_update_fields(&mut events).await;
-    assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
+    assert_eq!(update.fields.status, Some(acp_v2::ToolCallStatus::Failed));
 }
 
 /// Regression test: some providers (confirmed on Bedrock Mantle/GPT-5.x)
@@ -1331,7 +1332,7 @@ async fn test_replayed_tool_call_ids_scoped_across_messages(cx: &mut TestAppCont
     );
 }
 
-async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::ToolCall {
+async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> NativeToolCall {
     let event = events
         .next()
         .await
@@ -1347,7 +1348,7 @@ async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -
 
 /// Like [`expect_tool_call`], but skips other events until a `ToolCall`
 /// appears -- useful across multiple request/response cycles in one turn.
-async fn next_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::ToolCall {
+async fn next_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> NativeToolCall {
     loop {
         let event = events
             .next()
@@ -1362,14 +1363,14 @@ async fn next_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> 
 
 async fn expect_tool_call_update_fields(
     events: &mut UnboundedReceiver<Result<ThreadEvent>>,
-) -> acp::ToolCallUpdate {
+) -> NativeToolCallUpdate {
     let event = events
         .next()
         .await
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => update,
+        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(update)) => update,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -1666,7 +1667,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
         .await;
 
     let stop_reasons = stop_events(events);
-    assert_eq!(stop_reasons, vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_reasons, vec![acp_v2::StopReason::EndTurn]);
 
     thread.update(cx, |thread, _cx| {
         let last_message = thread.last_received_or_pending_message().unwrap();
@@ -2324,7 +2325,7 @@ async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAp
                 tool_call_id = Some(tc.tool_call_id.clone());
                 found_tool_call = Some(tc.clone());
             }
-            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(update))
                 if tool_call_id.as_ref() == Some(&update.tool_call_id) =>
             {
                 if update.fields.raw_output.is_some() {
@@ -2356,7 +2357,7 @@ async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAp
     // Also verify the status is correct (completed, not failed)
     assert_eq!(
         update.fields.status,
-        Some(acp::ToolCallStatus::Completed),
+        Some(acp_v2::ToolCallStatus::Completed),
         "Tool call status should reflect the original completion status"
     );
 }
@@ -2574,12 +2575,12 @@ async fn test_cancellation(cx: &mut TestAppContext) {
                     echo_id = Some(tool_call.tool_call_id);
                 }
             }
-            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
-                acp::ToolCallUpdate {
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(
+                NativeToolCallUpdate {
                     tool_call_id,
                     fields:
-                        acp::ToolCallUpdateFields {
-                            status: Some(acp::ToolCallStatus::Completed),
+                        NativeToolCallUpdateFields {
+                            status: Some(acp_v2::ToolCallStatus::Completed),
                             ..
                         },
                     ..
@@ -2603,7 +2604,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     assert!(
         matches!(
             last_event,
-            Some(Ok(ThreadEvent::Stop(acp::StopReason::Cancelled)))
+            Some(Ok(ThreadEvent::Stop(acp_v2::StopReason::Cancelled)))
         ),
         "unexpected event {last_event:?}"
     );
@@ -2628,7 +2629,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
             vec![AgentMessageContent::Text("Hello".to_string())]
         );
     });
-    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events), vec![acp_v2::StopReason::EndTurn]);
 }
 
 #[gpui::test]
@@ -2693,7 +2694,7 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     // Verify we got a cancellation stop event
     assert_eq!(
         stop_events(remaining_events),
-        vec![acp::StopReason::Cancelled],
+        vec![acp_v2::StopReason::Cancelled],
     );
 
     // Verify the tool result contains the terminal output, not just "Tool canceled by user"
@@ -2826,7 +2827,7 @@ async fn test_cancellation_aware_tool_responds_to_cancellation(cx: &mut TestAppC
     // Verify we got a cancellation stop event
     assert_eq!(
         stop_events(remaining_events),
-        vec![acp::StopReason::Cancelled],
+        vec![acp_v2::StopReason::Cancelled],
     );
 
     // Verify we can send a new message after cancellation
@@ -2866,7 +2867,7 @@ async fn verify_thread_recovery(
             vec![AgentMessageContent::Text("Hello".to_string())]
         );
     });
-    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events), vec![acp_v2::StopReason::EndTurn]);
 }
 
 /// Waits for a terminal tool to start by watching for a ToolCallUpdate with terminal content.
@@ -2879,14 +2880,14 @@ async fn wait_for_terminal_tool_started(
         cx.run_until_parked();
 
         while let Some(Some(event)) = events.next().now_or_never() {
-            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(
                 update,
             ))) = &event
             {
                 if update.fields.content.as_ref().is_some_and(|content| {
                     content
                         .iter()
-                        .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+                        .any(|c| matches!(c, acp_v2::ToolCallContent::Terminal(_)))
                 }) {
                     return;
                 }
@@ -3063,14 +3064,14 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
         cx.run_until_parked();
 
         while let Some(Some(event)) = events.next().now_or_never() {
-            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+            if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(
                 update,
             ))) = &event
             {
                 if update.fields.content.as_ref().is_some_and(|content| {
                     content
                         .iter()
-                        .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+                        .any(|c| matches!(c, acp_v2::ToolCallContent::Terminal(_)))
                 }) {
                     terminals_started += 1;
                     if terminals_started >= 2 {
@@ -3117,7 +3118,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
     // Verify we got a cancellation stop event
     assert_eq!(
         stop_events(remaining_events),
-        vec![acp::StopReason::Cancelled],
+        vec![acp_v2::StopReason::Cancelled],
     );
 }
 
@@ -3192,7 +3193,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
     // Verify we got an EndTurn (not Cancelled, since we didn't cancel the thread)
     assert_eq!(
         stop_events(remaining_events),
-        vec![acp::StopReason::EndTurn],
+        vec![acp_v2::StopReason::EndTurn],
     );
 
     // Verify the tool result indicates user stopped
@@ -3298,7 +3299,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
     // Verify we got an EndTurn (the tool completed, just with timeout)
     assert_eq!(
         stop_events(remaining_events),
-        vec![acp::StopReason::EndTurn],
+        vec![acp_v2::StopReason::EndTurn],
     );
 
     // Verify the tool result indicates timeout, not user stopped
@@ -3365,9 +3366,9 @@ async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
     fake.end_last(&model);
 
     let events_1 = events_1.collect::<Vec<_>>().await;
-    assert_eq!(stop_events(events_1), vec![acp::StopReason::Cancelled]);
+    assert_eq!(stop_events(events_1), vec![acp_v2::StopReason::Cancelled]);
     let events_2 = events_2.collect::<Vec<_>>().await;
-    assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events_2), vec![acp_v2::StopReason::EndTurn]);
 }
 
 #[gpui::test]
@@ -3449,10 +3450,10 @@ async fn test_retry_cancelled_promptly_on_new_send(cx: &mut TestAppContext) {
     fake.end_stream(&model_b, &model_b_request);
 
     let events_1 = events_1.collect::<Vec<_>>().await;
-    assert_eq!(stop_events(events_1), vec![acp::StopReason::Cancelled]);
+    assert_eq!(stop_events(events_1), vec![acp_v2::StopReason::Cancelled]);
 
     let events_2 = events_2.collect::<Vec<_>>().await;
-    assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events_2), vec![acp_v2::StopReason::EndTurn]);
 }
 
 #[gpui::test]
@@ -3492,8 +3493,8 @@ async fn test_subsequent_successful_sends_dont_cancel(cx: &mut TestAppContext) {
     fake.end_last(&model);
     let events_2 = events_2.collect::<Vec<_>>().await;
 
-    assert_eq!(stop_events(events_1), vec![acp::StopReason::EndTurn]);
-    assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events_1), vec![acp_v2::StopReason::EndTurn]);
+    assert_eq!(stop_events(events_2), vec![acp_v2::StopReason::EndTurn]);
 }
 
 #[gpui::test]
@@ -3545,7 +3546,7 @@ async fn test_refusal(cx: &mut TestAppContext) {
         LanguageModelCompletionEvent::Stop(StopReason::Refusal),
     );
     let events = events.collect::<Vec<_>>().await;
-    assert_eq!(stop_events(events), vec![acp::StopReason::Refusal]);
+    assert_eq!(stop_events(events), vec![acp_v2::StopReason::Refusal]);
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.to_markdown(), "");
     });
@@ -4568,36 +4569,36 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let tool_call = expect_tool_call(&mut events).await;
     assert_eq!(
         tool_call,
-        acp::ToolCall::new(acp::ToolCallId::new(tool_call_id.0.clone()), "Echo")
+        NativeToolCall::new(tool_call_id.clone(), "Echo")
             .name("echo")
             .raw_input(json!({}))
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
-        acp::ToolCallUpdate::new(
-            acp::ToolCallId::new(tool_call_id.0.clone()),
-            acp::ToolCallUpdateFields::new()
+        NativeToolCallUpdate::new(
+            tool_call_id.clone(),
+            NativeToolCallUpdateFields::new()
                 .title("Echo")
-                .kind(acp::ToolKind::Other)
+                .kind(acp_v2::ToolKind::Other)
                 .raw_input(json!({ "text": "Hello!"}))
         )
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
-        acp::ToolCallUpdate::new(
-            acp::ToolCallId::new(tool_call_id.0.clone()),
-            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress)
+        NativeToolCallUpdate::new(
+            tool_call_id.clone(),
+            NativeToolCallUpdateFields::new().status(acp_v2::ToolCallStatus::InProgress)
         )
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
-        acp::ToolCallUpdate::new(
-            acp::ToolCallId::new(tool_call_id.0),
-            acp::ToolCallUpdateFields::new()
-                .status(acp::ToolCallStatus::Completed)
+        NativeToolCallUpdate::new(
+            tool_call_id,
+            NativeToolCallUpdateFields::new()
+                .status(acp_v2::ToolCallStatus::Completed)
                 .raw_output("Hello!")
         )
     );
@@ -5114,7 +5115,7 @@ async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
 }
 
 /// Filters out the stop events for asserting against in tests
-fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp::StopReason> {
+fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp_v2::StopReason> {
     result_events
         .into_iter()
         .filter_map(|event| match event.unwrap() {
@@ -5678,7 +5679,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             update.content.iter().any(|blocks| {
                 blocks
                     .iter()
-                    .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)))
+                    .any(|c| matches!(c, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "expected terminal content (allow rule should skip confirmation and override default deny)"
         );
@@ -8969,7 +8970,7 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     let stop_reasons = stop_events(all_events);
     assert_eq!(
         stop_reasons,
-        vec![acp::StopReason::EndTurn],
+        vec![acp_v2::StopReason::EndTurn],
         "Turn should have ended after tool completion due to queued message"
     );
 
@@ -9056,7 +9057,7 @@ async fn test_queued_message_does_not_end_turn_without_boundary_flag(cx: &mut Te
     let stop_reasons = stop_events(all_events);
     assert_eq!(
         stop_reasons,
-        vec![acp::StopReason::EndTurn],
+        vec![acp_v2::StopReason::EndTurn],
         "Turn should end only after the agent finishes, not at the tool boundary"
     );
 }

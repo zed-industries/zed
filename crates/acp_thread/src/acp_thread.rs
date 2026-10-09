@@ -7,13 +7,14 @@ pub mod content;
 mod diff;
 pub mod elicitation;
 mod mention;
+mod native_tool_call;
 pub mod notices;
 pub mod prompt_capabilities;
 mod submission;
 mod terminal;
 pub use ::terminal::HeadlessTerminal;
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::schema::{IntoOption, MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
@@ -34,6 +35,7 @@ use language::{
 };
 use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
+pub use native_tool_call::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{
     AgentLocation, Project,
@@ -1024,6 +1026,26 @@ pub struct ToolCallLocation {
     pub meta: Option<acp_v2::Meta>,
 }
 
+impl ToolCallLocation {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            line: None,
+            meta: None,
+        }
+    }
+
+    pub fn line(mut self, line: impl IntoOption<u32>) -> Self {
+        self.line = line.into_option();
+        self
+    }
+
+    pub fn meta(mut self, meta: impl IntoOption<acp_v2::Meta>) -> Self {
+        self.meta = meta.into_option();
+        self
+    }
+}
+
 impl PartialEq for ToolCallLocation {
     fn eq(&self, other: &Self) -> bool {
         // Path equality compares components, hiding changes to the raw spelling.
@@ -1149,6 +1171,7 @@ struct ToolCallPatch {
 
 enum ToolContentPatch {
     Legacy(Vec<acp_v1::ToolCallContent>),
+    Native(Vec<acp_v2::ToolCallContent>),
     Protocol(Vec<acp_v2::ToolCallContent>),
 }
 
@@ -1156,9 +1179,13 @@ impl ToolContentPatch {
     fn prepare(
         self,
         terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        cx: &App,
     ) -> Result<Vec<PreparedToolCallContent>> {
         match self {
             Self::Legacy(content) => PreparedToolCallContent::prepare(content, terminals),
+            Self::Native(content) => {
+                PreparedToolCallContent::prepare_native(content, terminals, cx)
+            }
             Self::Protocol(content) => PreparedToolCallContent::prepare_v2(content, terminals),
         }
     }
@@ -1200,6 +1227,21 @@ fn tool_status_from_v1(status: acp_v1::ToolCallStatus) -> Option<acp_v2::ToolCal
 }
 
 impl ToolCallPatch {
+    fn native(update: NativeToolCallUpdate) -> Self {
+        let fields = update.fields;
+        Self {
+            title: legacy_tool_field(fields.title),
+            name: legacy_tool_field(fields.name),
+            kind: legacy_tool_field(fields.kind),
+            status: legacy_tool_field(fields.status),
+            content: legacy_tool_field(fields.content.map(ToolContentPatch::Native)),
+            locations: legacy_tool_field(fields.locations),
+            raw_input: legacy_tool_field(fields.raw_input),
+            raw_output: legacy_tool_field(fields.raw_output),
+            meta: ToolMetadataPatch::Legacy(update.meta),
+        }
+    }
+
     fn legacy(fields: acp_v1::ToolCallUpdateFields, meta: Option<acp_v1::Meta>) -> Self {
         Self {
             title: legacy_tool_field(fields.title),
@@ -1267,7 +1309,7 @@ impl ToolCall {
         let content = patch
             .content
             .take()
-            .map(|content| content.prepare(terminals))
+            .map(|content| content.prepare(terminals, cx))
             .transpose()?
             .unwrap_or_default()
             .into_iter()
@@ -1411,6 +1453,7 @@ impl ToolCall {
         })
     }
 
+    #[cfg(test)]
     fn update_fields(
         &mut self,
         fields: acp_v1::ToolCallUpdateFields,
@@ -1455,7 +1498,7 @@ impl ToolCall {
         let content = match content {
             MaybeUndefined::Undefined => None,
             MaybeUndefined::Null => Some(Vec::new()),
-            MaybeUndefined::Value(content) => Some(content.prepare(terminals)?),
+            MaybeUndefined::Value(content) => Some(content.prepare(terminals, cx)?),
         };
         let was_plain_text =
             self.effective_title().is_none() || self.kind() == &acp_v2::ToolKind::Execute;
@@ -3009,6 +3052,25 @@ impl PreparedToolCallContent {
             .collect()
     }
 
+    fn prepare_native(
+        content: Vec<acp_v2::ToolCallContent>,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        cx: &App,
+    ) -> Result<Vec<Self>> {
+        let content = Self::prepare_v2(content, terminals)?;
+        for content in &content {
+            if let Self::Terminal { terminal, .. } = content {
+                // Process ownership survives completion and does not depend on
+                // whether the renderer still has an active PTY.
+                anyhow::ensure!(
+                    terminal.read(cx).is_process_backed(),
+                    "Native tool content cannot reference an agent-owned display terminal"
+                );
+            }
+        }
+        Ok(content)
+    }
+
     fn from_v2(
         content: acp_v2::ToolCallContent,
         terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
@@ -3173,6 +3235,7 @@ impl ToolCallContent {
 
 #[derive(Debug, PartialEq)]
 pub enum ToolCallUpdate {
+    NativeFields(NativeToolCallUpdate),
     UpdateFields(acp_v1::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
@@ -3181,10 +3244,17 @@ pub enum ToolCallUpdate {
 impl ToolCallUpdate {
     fn id(&self) -> acp_v2::ToolCallId {
         match self {
+            Self::NativeFields(update) => update.tool_call_id.clone(),
             Self::UpdateFields(update) => acp_v2::ToolCallId::new(update.tool_call_id.0.clone()),
             Self::UpdateDiff(diff) => diff.id.clone(),
             Self::UpdateTerminal(terminal) => terminal.id.clone(),
         }
+    }
+}
+
+impl From<NativeToolCallUpdate> for ToolCallUpdate {
+    fn from(update: NativeToolCallUpdate) -> Self {
+        Self::NativeFields(update)
     }
 }
 
@@ -5305,30 +5375,17 @@ impl AcpThread {
             unreachable!()
         };
 
-        match update {
+        let patch = match update {
+            ToolCallUpdate::NativeFields(update) => Some(ToolCallPatch::native(update)),
             ToolCallUpdate::UpdateFields(update) => {
-                let location_updated = update.fields.locations.is_some();
-                let authorization_id = call.authorization_id();
-                let result =
-                    call.update_fields(update.fields, update.meta, languages, &self.terminals, cx);
-                let detached_id =
-                    authorization_id.filter(|id| call.authorization_id() != Some(*id));
-                if let Some(id) = detached_id {
-                    self.resolve_permission_request(id, RequestPermissionOutcome::Cancelled, cx);
-                }
-                if let Err(error) = result {
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                    return Err(error);
-                }
-                if location_updated {
-                    self.resolve_locations(id, cx);
-                }
+                Some(ToolCallPatch::legacy(update.fields, update.meta))
             }
             ToolCallUpdate::UpdateDiff(update) => {
                 call.structured_content.clear();
                 call.structured_content
                     .push(ToolCallContent::Diff(update.diff));
                 call.update_raw_output_content(&languages, cx);
+                None
             }
             ToolCallUpdate::UpdateTerminal(update) => {
                 call.structured_content.clear();
@@ -5337,6 +5394,23 @@ impl AcpThread {
                     meta: None,
                 });
                 call.update_raw_output_content(&languages, cx);
+                None
+            }
+        };
+        if let Some(patch) = patch {
+            let location_updated = !patch.locations.is_undefined();
+            let authorization_id = call.authorization_id();
+            let result = call.apply_patch(patch, languages, &self.terminals, cx);
+            let detached_id = authorization_id.filter(|id| call.authorization_id() != Some(*id));
+            if let Some(id) = detached_id {
+                self.resolve_permission_request(id, RequestPermissionOutcome::Cancelled, cx);
+            }
+            if let Err(error) = result {
+                cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                return Err(error);
+            }
+            if location_updated {
+                self.resolve_locations(id, cx);
             }
         }
 
@@ -5356,6 +5430,24 @@ impl AcpThread {
             self.report_tool_call_completed(status);
         }
         self.upsert_tool_call_inner(tool_call.into(), status, cx)
+    }
+
+    pub fn upsert_native_tool_call(
+        &mut self,
+        tool_call: NativeToolCall,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let status = ToolCallStatus::from_reported(Some(&tool_call.status));
+        if let Some(status) = status {
+            self.report_tool_call_completed(status);
+        }
+        let id = tool_call.tool_call_id.clone();
+        self.upsert_legacy_behavior_tool_call(
+            id,
+            ToolCallPatch::native(tool_call.into()),
+            status,
+            cx,
+        )
     }
 
     fn report_tool_call_completed(&self, status: ToolCallStatus) {
@@ -5384,21 +5476,36 @@ impl AcpThread {
         status: Option<ToolCallStatus>,
         cx: &mut Context<Self>,
     ) -> Result<(), acp_v1::Error> {
-        let language_registry = self.project.read(cx).languages().clone();
         let id = acp_v2::ToolCallId::new(update.tool_call_id.0.clone());
+        let update = if self.index_for_tool_call(&id).is_none() {
+            acp_v1::ToolCallUpdate::from(acp_v1::ToolCall::try_from(update)?)
+        } else {
+            update
+        };
+        self.upsert_legacy_behavior_tool_call(
+            id,
+            ToolCallPatch::legacy(update.fields, update.meta),
+            status,
+            cx,
+        )
+        .map_err(Into::into)
+    }
+
+    fn upsert_legacy_behavior_tool_call(
+        &mut self,
+        id: acp_v2::ToolCallId,
+        patch: ToolCallPatch,
+        status: Option<ToolCallStatus>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let language_registry = self.project.read(cx).languages().clone();
         if let Some(ix) = self.index_for_tool_call(&id) {
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
                 unreachable!()
             };
 
             let authorization_id = call.authorization_id();
-            let result = call.update_fields(
-                update.fields,
-                update.meta,
-                language_registry,
-                &self.terminals,
-                cx,
-            );
+            let result = call.apply_patch(patch, language_registry, &self.terminals, cx);
             let detached_id = authorization_id.filter(|id| call.authorization_id() != Some(*id));
             if result.is_ok()
                 && let Some(status) = status
@@ -5410,18 +5517,20 @@ impl AcpThread {
             }
             if let Err(error) = result {
                 cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                return Err(acp_v1::Error::from(error));
+                return Err(error);
             }
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
-            let call = ToolCall::from_acp(
-                update.try_into()?,
-                status,
-                language_registry,
-                &self.terminals,
-                cx,
-            )?;
+            anyhow::ensure!(
+                patch.title.value().is_some(),
+                "title is required for a tool call"
+            );
+            let mut call =
+                ToolCall::from_patch(id.clone(), patch, language_registry, &self.terminals, cx)?;
+            if let Some(status) = status {
+                call.set_legacy_status(status);
+            }
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         };
 
@@ -5761,8 +5870,6 @@ impl AcpThread {
         kind: AuthorizationKind,
         cx: &mut Context<Self>,
     ) -> Result<(PermissionRequestId, Task<RequestPermissionOutcome>)> {
-        let (tx, rx) = oneshot::channel();
-
         let tool_call_id = acp_v2::ToolCallId::new(tool_call.tool_call_id.0.clone());
         let current_status = self
             .tool_call(&tool_call_id)
@@ -5773,6 +5880,59 @@ impl AcpThread {
             .unwrap_or(ToolCallStatus::Pending);
 
         self.upsert_tool_call_inner(tool_call, Some(current_status), cx)?;
+        self.install_tool_call_authorization(tool_call_id, options, kind, cx)
+    }
+
+    pub fn request_native_tool_call_authorization(
+        &mut self,
+        tool_call: NativeToolCallUpdate,
+        options: PermissionOptions,
+        kind: AuthorizationKind,
+        cx: &mut Context<Self>,
+    ) -> Result<Task<RequestPermissionOutcome>> {
+        self.request_native_tool_call_authorization_with_id(tool_call, options, kind, cx)
+            .map(|(_, task)| task)
+    }
+
+    pub fn request_native_tool_call_authorization_with_id(
+        &mut self,
+        mut tool_call: NativeToolCallUpdate,
+        options: PermissionOptions,
+        kind: AuthorizationKind,
+        cx: &mut Context<Self>,
+    ) -> Result<(PermissionRequestId, Task<RequestPermissionOutcome>)> {
+        let tool_call_id = tool_call.tool_call_id.clone();
+        if self.index_for_tool_call(&tool_call_id).is_none() {
+            tool_call.fields.kind.get_or_insert(acp_v2::ToolKind::Other);
+            tool_call
+                .fields
+                .status
+                .get_or_insert(acp_v2::ToolCallStatus::Pending);
+        }
+        let current_status = self
+            .tool_call(&tool_call_id)
+            .and_then(|(_, call)| call.permission_status())
+            .and_then(tool_status_from_v1)
+            .or_else(|| tool_call.fields.status.clone());
+        let current_status = ToolCallStatus::from_reported(current_status.as_ref())
+            .unwrap_or(ToolCallStatus::Pending);
+        self.upsert_legacy_behavior_tool_call(
+            tool_call_id.clone(),
+            ToolCallPatch::native(tool_call),
+            Some(current_status),
+            cx,
+        )?;
+        self.install_tool_call_authorization(tool_call_id, options, kind, cx)
+    }
+
+    fn install_tool_call_authorization(
+        &mut self,
+        tool_call_id: acp_v2::ToolCallId,
+        options: PermissionOptions,
+        kind: AuthorizationKind,
+        cx: &mut Context<Self>,
+    ) -> Result<(PermissionRequestId, Task<RequestPermissionOutcome>)> {
+        let (tx, rx) = oneshot::channel();
         if let Some(id) = self
             .tool_call(&tool_call_id)
             .and_then(|(_, call)| call.authorization_id())
@@ -10349,6 +10509,20 @@ mod tests {
                 cx,
             );
             assert!(terminal.read(cx).is_process_backed());
+            let tool_id = acp_v2::ToolCallId::new("native-process-tool");
+            thread
+                .upsert_native_tool_call(
+                    NativeToolCall::new(tool_id.clone(), "Native process")
+                        .kind(acp_v2::ToolKind::Execute)
+                        .content(vec![acp_v2::ToolCallContent::Terminal(
+                            acp_v2::Terminal::new(acp_v2::TerminalId::new(terminal_id.0.clone())),
+                        )]),
+                    cx,
+                )
+                .expect("native reference uses the registered process terminal");
+            let (_, call) = thread.tool_call(&tool_id).expect("native tool");
+            assert_eq!(call.terminals().next(), Some(&terminal));
+            assert_eq!(thread.terminals.len(), 1);
         });
 
         // Poll until the printf command produces output, rather than using a
@@ -13238,6 +13412,542 @@ mod tests {
                 assert_eq!(serde_json::to_value(info).expect("session metadata"), wire);
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_native_tool_fields_preserve_omissions_and_creation_defaults(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::ToolCallId::new("native");
+            let meta = acp_v2::Meta::from_iter([
+                (TOOL_NAME_META_KEY.into(), json!("native_name")),
+                (
+                    SUBAGENT_SESSION_INFO_META_KEY.into(),
+                    json!({"session_id": "child", "message_start_index": 0}),
+                ),
+            ]);
+            let location =
+                ToolCallLocation::new("src//./../file.rs")
+                    .line(7)
+                    .meta(acp_v2::Meta::from_iter([(
+                        "item".into(),
+                        json!({"keep": true}),
+                    )]));
+            thread
+                .upsert_native_tool_call(
+                    NativeToolCall::new(id.clone(), "Native tool")
+                        .name("native_name")
+                        .kind(acp_v2::ToolKind::Read)
+                        .status(acp_v2::ToolCallStatus::InProgress)
+                        .content(vec!["content".into()])
+                        .locations(vec![location.clone()])
+                        .raw_input(json!({"input": true}))
+                        .raw_output(json!({"output": true}))
+                        .meta(meta.clone()),
+                    cx,
+                )
+                .expect("native creation");
+            thread
+                .update_tool_call(
+                    NativeToolCallUpdate::new(
+                        id.clone(),
+                        NativeToolCallUpdateFields::new()
+                            .title(None::<String>)
+                            .name(None::<String>)
+                            .content(None)
+                            .locations(None)
+                            .raw_input(None)
+                            .raw_output(None),
+                    )
+                    .meta(None),
+                    cx,
+                )
+                .expect("omitted fields preserve native state");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.title.as_deref(), Some("Native tool"));
+            assert_eq!(call.name.as_deref(), Some("native_name"));
+            assert_eq!(call.reported_kind, Some(acp_v2::ToolKind::Read));
+            assert_eq!(
+                call.reported_status,
+                Some(acp_v2::ToolCallStatus::InProgress)
+            );
+            assert_eq!(call.structured_content.len(), 1);
+            assert_eq!(call.locations, vec![location]);
+            assert_eq!(
+                call.locations.first().expect("location").path.as_os_str(),
+                "src//./../file.rs"
+            );
+            assert_eq!(call.raw_input, Some(json!({"input": true})));
+            assert_eq!(call.raw_output, Some(json!({"output": true})));
+            assert_eq!(call.meta, Some(meta));
+            assert!(call.subagent_session_info.is_some());
+
+            thread
+                .update_tool_call(
+                    NativeToolCallUpdate::new(
+                        id.clone(),
+                        NativeToolCallUpdateFields::new()
+                            .content(Vec::new())
+                            .locations(Vec::new())
+                            .raw_input(serde_json::Value::Null)
+                            .raw_output(serde_json::Value::Null),
+                    )
+                    .meta(acp_v2::Meta::new()),
+                    cx,
+                )
+                .expect("empty collections clear, JSON null remains data");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert!(call.structured_content.is_empty());
+            assert!(call.locations.is_empty());
+            assert_eq!(call.raw_input, Some(serde_json::Value::Null));
+            assert_eq!(call.raw_output, Some(serde_json::Value::Null));
+            assert!(call.subagent_session_info.is_some());
+            assert_eq!(call.tool_name.as_deref(), Some("native_name"));
+            thread
+                .upsert_native_tool_call(NativeToolCall::new(id.clone(), "Defaults"), cx)
+                .expect("creation defaults are explicit on an existing tool");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.reported_kind, Some(acp_v2::ToolKind::Other));
+            assert_eq!(call.reported_status, Some(acp_v2::ToolCallStatus::Pending));
+            assert_eq!(call.status(), ToolCallStatus::Pending);
+            assert!(call.structured_content.is_empty());
+            assert!(call.locations.is_empty());
+            assert_eq!(call.raw_input, Some(serde_json::Value::Null));
+            assert_eq!(call.raw_output, Some(serde_json::Value::Null));
+            assert_eq!(call.name.as_deref(), Some("native_name"));
+
+            let missing_id = acp_v2::ToolCallId::new("missing-native");
+            thread
+                .update_tool_call(
+                    NativeToolCallUpdate::new(
+                        missing_id.clone(),
+                        NativeToolCallUpdateFields::new().title("Not an upsert"),
+                    ),
+                    cx,
+                )
+                .expect("unknown update creates the existing failed placeholder");
+            let (_, missing) = thread.tool_call(&missing_id).expect("placeholder");
+            assert_eq!(missing.status(), ToolCallStatus::Failed);
+            assert_eq!(missing.title.as_deref(), Some("Tool call not found"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_native_tool_content_retains_payloads_and_client_terminal_ownership(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let lower = cx.new(|cx| {
+            ::terminal::TerminalBuilder::new_display_only(
+                ::terminal::terminal_settings::CursorShape::default(),
+                ::terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        thread.update(cx, |thread, cx| {
+            let terminal_id = acp_v1::TerminalId::new("native-process");
+            let terminal = thread.register_terminal_created(
+                terminal_id,
+                "native command".into(),
+                None,
+                None,
+                lower.clone(),
+                cx,
+            );
+            assert!(terminal.read(cx).is_process_backed());
+            let inner_meta = acp_v2::Meta::from_iter([("inner".into(), json!({"all": [1, 2]}))]);
+            let item_meta = acp_v2::Meta::from_iter([("item".into(), json!({"keep": true}))]);
+            let blocks = vec![
+                acp_v2::ContentBlock::Text(
+                    acp_v2::TextContent::new("text").meta(inner_meta.clone()),
+                ),
+                acp_v2::ContentBlock::Image(
+                    acp_v2::ImageContent::new("image-data", "image/png").meta(inner_meta.clone()),
+                ),
+                acp_v2::ContentBlock::Audio(
+                    acp_v2::AudioContent::new("audio-data", "audio/wav").meta(inner_meta.clone()),
+                ),
+                acp_v2::ContentBlock::ResourceLink(
+                    acp_v2::ResourceLink::new("file", "tool://file").meta(inner_meta.clone()),
+                ),
+                acp_v2::ContentBlock::Resource(
+                    acp_v2::EmbeddedResource::new(
+                        acp_v2::EmbeddedResourceResource::TextResourceContents(
+                            acp_v2::TextResourceContents::new("resource text", "tool://text")
+                                .meta(inner_meta.clone()),
+                        ),
+                    )
+                    .meta(inner_meta.clone()),
+                ),
+                acp_v2::ContentBlock::Resource(
+                    acp_v2::EmbeddedResource::new(
+                        acp_v2::EmbeddedResourceResource::BlobResourceContents(
+                            acp_v2::BlobResourceContents::new("blob-data", "tool://blob")
+                                .meta(inner_meta),
+                        ),
+                    )
+                    .meta(item_meta.clone()),
+                ),
+            ];
+            let mut content: Vec<_> = blocks
+                .iter()
+                .cloned()
+                .map(|block| {
+                    acp_v2::ToolCallContent::Content(Box::new(
+                        acp_v2::Content::new(block).meta(item_meta.clone()),
+                    ))
+                })
+                .collect();
+            let diff = acp_v2::Diff::patch("native patch", Vec::new()).meta(item_meta.clone());
+            content.push(acp_v2::ToolCallContent::Diff(diff.clone()));
+            content.push(acp_v2::ToolCallContent::Terminal(
+                acp_v2::Terminal::new("native-process").meta(item_meta.clone()),
+            ));
+            let id = acp_v2::ToolCallId::new("native-content");
+            thread
+                .upsert_native_tool_call(
+                    NativeToolCall::new(id.clone(), "Native tool").content(content.clone()),
+                    cx,
+                )
+                .expect("all native payloads prepare through v2 conversion");
+            thread
+                .update_tool_call(
+                    NativeToolCallUpdate::new(
+                        id.clone(),
+                        NativeToolCallUpdateFields::new().content(content),
+                    ),
+                    cx,
+                )
+                .expect("native content update uses the same conversion");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.structured_content.len(), blocks.len() + 2);
+            for (item, source) in call.structured_content.iter().zip(&blocks) {
+                let ToolCallContent::ContentBlock { block, meta } = item else {
+                    panic!("expected retained content block");
+                };
+                assert_eq!(block.source.as_ref(), Some(source));
+                assert_eq!(meta.as_ref(), Some(&item_meta));
+            }
+            let ToolCallContent::DiffPatch { source, .. } =
+                call.structured_content.get(blocks.len()).expect("diff")
+            else {
+                panic!("expected retained diff");
+            };
+            assert_eq!(source, &diff);
+            let ToolCallContent::Terminal {
+                terminal: retained,
+                meta,
+            } = call.structured_content.last().expect("terminal")
+            else {
+                panic!("expected retained terminal");
+            };
+            assert_eq!(retained, &terminal);
+            assert_eq!(meta.as_ref(), Some(&item_meta));
+            assert!(retained.read(cx).is_process_backed());
+            assert_eq!(retained.read(cx).inner(), &lower);
+            assert_eq!(thread.terminals.len(), 1);
+
+            let missing = acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("missing"));
+            assert!(
+                thread
+                    .upsert_native_tool_call(
+                        NativeToolCall::new("missing-content", "Missing")
+                            .content(vec![missing.clone()]),
+                        cx,
+                    )
+                    .is_err()
+            );
+            assert!(thread.tool_call(&"missing-content".into()).is_none());
+            assert!(
+                thread
+                    .update_tool_call(
+                        NativeToolCallUpdate::new(
+                            id.clone(),
+                            NativeToolCallUpdateFields::new()
+                                .title("Must not mutate")
+                                .content(vec![missing]),
+                        ),
+                        cx,
+                    )
+                    .is_err()
+            );
+            assert!(thread.terminal(acp_v1::TerminalId::new("missing")).is_err());
+            assert_eq!(thread.terminals.len(), 1);
+            let (_, call) = thread.tool_call(&id).expect("unchanged tool");
+            assert_eq!(call.title.as_deref(), Some("Native tool"));
+            assert_eq!(call.terminals().next(), Some(&terminal));
+
+            thread
+                .upsert_display_terminal(
+                    "agent-display".into(),
+                    DisplayTerminalPatch::default(),
+                    cx,
+                )
+                .expect("existing agent-owned display");
+            let display = acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("agent-display"));
+            assert!(
+                thread
+                    .upsert_native_tool_call(
+                        NativeToolCall::new("display-create", "Must not create")
+                            .content(vec![display.clone()]),
+                        cx,
+                    )
+                    .is_err()
+            );
+            assert!(thread.tool_call(&"display-create".into()).is_none());
+            assert!(
+                thread
+                    .update_tool_call(
+                        NativeToolCallUpdate::new(
+                            id.clone(),
+                            NativeToolCallUpdateFields::new()
+                                .title("Must not mutate")
+                                .content(vec![display.clone()]),
+                        ),
+                        cx,
+                    )
+                    .is_err()
+            );
+            assert!(
+                thread
+                    .request_native_tool_call_authorization(
+                        NativeToolCallUpdate::new(
+                            id.clone(),
+                            NativeToolCallUpdateFields::new()
+                                .title("Must not authorize")
+                                .content(vec![display]),
+                        ),
+                        PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                            "allow",
+                            "Allow",
+                            acp_v1::PermissionOptionKind::AllowOnce,
+                        )]),
+                        AuthorizationKind::PermissionGrant,
+                        cx,
+                    )
+                    .is_err()
+            );
+            let (_, call) = thread.tool_call(&id).expect("unchanged native tool");
+            assert_eq!(call.title.as_deref(), Some("Native tool"));
+            assert_eq!(call.terminals().next(), Some(&terminal));
+            assert!(call.authorization_id().is_none());
+            assert!(thread.pending_permission_requests().next().is_none());
+            assert_eq!(thread.terminals.len(), 2);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_native_permission_replacement_retains_continuation_and_owner(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let id = acp_v2::ToolCallId::new("native-permission");
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_native_tool_call(
+                    NativeToolCall::new(id.clone(), "Native tool")
+                        .status(acp_v2::ToolCallStatus::InProgress),
+                    cx,
+                )
+                .expect("native tool");
+        });
+        let options = PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+            "allow",
+            "Allow",
+            acp_v1::PermissionOptionKind::AllowOnce,
+        )]);
+        let (old_owner, old_response) = thread
+            .update(cx, |thread, cx| {
+                thread.request_native_tool_call_authorization_with_id(
+                    NativeToolCallUpdate::new(id.clone(), NativeToolCallUpdateFields::new()),
+                    options.clone(),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("first request");
+        let (new_owner, response) = thread
+            .update(cx, |thread, cx| {
+                thread.request_native_tool_call_authorization_with_id(
+                    NativeToolCallUpdate::new(
+                        id.clone(),
+                        NativeToolCallUpdateFields::new().status(acp_v2::ToolCallStatus::Completed),
+                    ),
+                    options,
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("replacement captures underlying progress before descriptive completion");
+        assert_ne!(old_owner, new_owner);
+        assert!(matches!(
+            old_response.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        thread.update(cx, |thread, cx| {
+            assert!(thread.permission_request(old_owner).is_none());
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.authorization_id(), Some(new_owner));
+            assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
+            assert_eq!(
+                call.reported_status,
+                Some(acp_v2::ToolCallStatus::Completed)
+            );
+            assert_eq!(
+                call.permission_status(),
+                Some(acp_v1::ToolCallStatus::InProgress)
+            );
+            thread.cancel_permission_request(old_owner, cx);
+            thread.authorize_permission_request(
+                old_owner,
+                SelectedPermissionOutcome::new(
+                    "allow".into(),
+                    acp_v1::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.authorization_id(),
+                Some(new_owner)
+            );
+            thread.authorize_permission_request(
+                new_owner,
+                SelectedPermissionOutcome::new(
+                    "allow".into(),
+                    acp_v1::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.status(), ToolCallStatus::InProgress);
+            assert_eq!(
+                call.reported_status,
+                Some(acp_v2::ToolCallStatus::Completed)
+            );
+            assert!(call.authorization_id().is_none());
+        });
+        assert!(matches!(
+            response.await,
+            RequestPermissionOutcome::Selected(_)
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_native_permission_cancellation_and_reported_completion(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let id = acp_v2::ToolCallId::new("native-permission");
+        let options = PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+            "allow",
+            "Allow",
+            acp_v1::PermissionOptionKind::AllowOnce,
+        )]);
+        let (owner, response) = thread
+            .update(cx, |thread, cx| {
+                thread.request_native_tool_call_authorization_with_id(
+                    NativeToolCallUpdate::new(
+                        id.clone(),
+                        NativeToolCallUpdateFields::new().title("Native tool"),
+                    ),
+                    options.clone(),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("request creates native tool with creation defaults");
+        thread.update(cx, |thread, cx| {
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.reported_kind, Some(acp_v2::ToolKind::Other));
+            assert_eq!(call.reported_status, Some(acp_v2::ToolCallStatus::Pending));
+            thread.cancel_permission_request(owner, cx);
+        });
+        assert!(matches!(
+            response.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        thread.read_with(cx, |thread, _| {
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.status(), ToolCallStatus::Canceled);
+        });
+        let response = thread
+            .update(cx, |thread, cx| {
+                thread.request_native_tool_call_authorization(
+                    NativeToolCallUpdate::new(
+                        id.clone(),
+                        NativeToolCallUpdateFields::new()
+                            .status(acp_v2::ToolCallStatus::InProgress),
+                    ),
+                    options.clone(),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("local canceled state falls back to the incoming continuation");
+        thread.update(cx, |thread, cx| {
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.permission_status(),
+                Some(acp_v1::ToolCallStatus::InProgress)
+            );
+            thread.authorize_tool_call(
+                id.clone(),
+                SelectedPermissionOutcome::new(
+                    "allow".into(),
+                    acp_v1::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.status(),
+                ToolCallStatus::InProgress
+            );
+        });
+        assert!(matches!(
+            response.await,
+            RequestPermissionOutcome::Selected(_)
+        ));
+        let response = thread
+            .update(cx, |thread, cx| {
+                thread.request_native_tool_call_authorization(
+                    NativeToolCallUpdate::new(id.clone(), NativeToolCallUpdateFields::new()),
+                    options,
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("request before completion");
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_tool_call(
+                    NativeToolCallUpdate::new(
+                        id.clone(),
+                        NativeToolCallUpdateFields::new()
+                            .status(acp_v2::ToolCallStatus::Completed)
+                            .content(vec![acp_v2::ToolCallContent::Terminal(
+                                acp_v2::Terminal::new("missing"),
+                            )]),
+                    ),
+                    cx,
+                )
+                .expect_err("missing terminal must not be fabricated");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.status(), ToolCallStatus::Completed);
+            assert!(call.authorization_id().is_none());
+            assert!(thread.permission_request_for_tool(&id).is_none());
+            assert!(thread.terminals.is_empty());
+        });
+        assert!(matches!(
+            response.await,
+            RequestPermissionOutcome::Cancelled
+        ));
     }
 
     #[gpui::test]

@@ -7,7 +7,10 @@ use crate::{
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     WriteFileTool, decide_permission_from_settings,
 };
-use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri};
+use acp_thread::{
+    AgentModelId, ClientUserMessageId, MentionUri, NativeToolCall, NativeToolCallUpdate,
+    NativeToolCallUpdateFields,
+};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
@@ -903,7 +906,7 @@ pub enum ThreadEvent {
     UserMessage(UserMessage),
     AgentText(String),
     AgentThinking(String),
-    ToolCall(acp::ToolCall),
+    ToolCall(NativeToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
     ToolCallAuthorizationResolved {
@@ -915,7 +918,7 @@ pub enum ThreadEvent {
     Retry(acp_thread::RetryStatus),
     ContextCompaction(acp_thread::ContextCompaction),
     ContextCompactionUpdate(acp_thread::ContextCompactionUpdate),
-    Stop(acp::StopReason),
+    Stop(acp_v2::StopReason),
 }
 
 #[derive(Debug)]
@@ -1180,7 +1183,7 @@ impl ToolPermissionContext {
 
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
-    pub tool_call: acp::ToolCallUpdate,
+    pub tool_call: NativeToolCallUpdate,
     pub options: acp_thread::PermissionOptions,
     pub response: oneshot::Sender<acp_thread::SelectedPermissionOutcome>,
     pub context: Option<ToolPermissionContext>,
@@ -1640,11 +1643,11 @@ impl Thread {
         let replay_content = tool_result.and_then(Self::tool_result_content_for_replay);
         let status = tool_result
             .as_ref()
-            .map_or(acp::ToolCallStatus::Failed, |result| {
+            .map_or(acp_v2::ToolCallStatus::Failed, |result| {
                 if result.is_error {
-                    acp::ToolCallStatus::Failed
+                    acp_v2::ToolCallStatus::Failed
                 } else {
-                    acp::ToolCallStatus::Completed
+                    acp_v2::ToolCallStatus::Completed
                 }
             });
 
@@ -1673,16 +1676,13 @@ impl Thread {
             stream
                 .sender
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
-                    acp::ToolCall::new(
-                        acp::ToolCallId::new(tool_call_id.0.clone()),
-                        tool_use.name.to_string(),
-                    )
-                    .name(tool_use.name.to_string())
-                    .status(status)
-                    .raw_input(tool_use.input.to_display_json()),
+                    NativeToolCall::new(tool_call_id.clone(), tool_use.name.to_string())
+                        .name(tool_use.name.to_string())
+                        .status(status.clone())
+                        .raw_input(tool_use.input.to_display_json()),
                 )))
                 .ok();
-            let mut fields = acp::ToolCallUpdateFields::new()
+            let mut fields = NativeToolCallUpdateFields::new()
                 .status(status)
                 .raw_output(output);
             if let Some(content) = replay_content {
@@ -1702,7 +1702,7 @@ impl Thread {
         if let Some(content) = replay_content {
             stream.update_tool_call_fields(
                 &tool_call_id,
-                acp::ToolCallUpdateFields::new().content(content),
+                NativeToolCallUpdateFields::new().content(content),
                 None,
             );
         }
@@ -1724,7 +1724,7 @@ impl Thread {
 
         stream.update_tool_call_fields(
             &tool_call_id,
-            acp::ToolCallUpdateFields::new()
+            NativeToolCallUpdateFields::new()
                 .status(status)
                 .raw_output(output),
             None,
@@ -1745,7 +1745,7 @@ impl Thread {
 
     fn tool_result_content_for_replay(
         tool_result: &LanguageModelToolResult,
-    ) -> Option<Vec<acp::ToolCallContent>> {
+    ) -> Option<Vec<acp_v2::ToolCallContent>> {
         let has_image = tool_result
             .content
             .iter()
@@ -1762,16 +1762,14 @@ impl Thread {
                     if text.is_empty() {
                         None
                     } else {
-                        Some(acp::ToolCallContent::Content(acp::Content::new(
-                            acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
-                        )))
+                        Some(acp_v2::ToolCallContent::from(text.to_string()))
                     }
                 }
-                LanguageModelToolResultContent::Image(image) => Some(
-                    acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
-                        acp::ImageContent::new(image.source.clone(), "image/png"),
-                    ))),
-                ),
+                LanguageModelToolResultContent::Image(image) => {
+                    Some(acp_v2::ToolCallContent::from(acp_v2::ContentBlock::Image(
+                        acp_v2::ImageContent::new(image.source.clone(), "image/png"),
+                    )))
+                }
             })
             .collect::<Vec<_>>();
 
@@ -2704,7 +2702,7 @@ impl Thread {
                     // On success, the telemetry event is deferred until the next
                     // completion reports usage (see `handle_completion_event`),
                     // so we leave `pending_compaction_telemetry` in place here.
-                    Ok(_) => event_stream.send_stop(acp::StopReason::EndTurn),
+                    Ok(_) => event_stream.send_stop(acp_v2::StopReason::EndTurn),
                     Err(error) => {
                         log::error!("Manual compaction failed: {:?}", error);
                         this.update(cx, |this, _| {
@@ -2806,17 +2804,17 @@ impl Thread {
                 match turn_result {
                     Ok(()) => {
                         log::debug!("Turn execution completed");
-                        event_stream.send_stop(acp::StopReason::EndTurn);
+                        event_stream.send_stop(acp_v2::StopReason::EndTurn);
                     }
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
                         match error.downcast::<CompletionError>() {
                             Ok(CompletionError::Refusal) => {
-                                event_stream.send_stop(acp::StopReason::Refusal);
+                                event_stream.send_stop(acp_v2::StopReason::Refusal);
                                 _ = this.update(cx, |this, _| this.messages.truncate(message_ix));
                             }
                             Ok(CompletionError::MaxTokens) => {
-                                event_stream.send_stop(acp::StopReason::MaxTokens);
+                                event_stream.send_stop(acp_v2::StopReason::MaxTokens);
                             }
                             Ok(CompletionError::Other(error)) | Err(error) => {
                                 event_stream.send_error(error);
@@ -3394,11 +3392,11 @@ impl Thread {
 
         event_stream.update_tool_call_fields(
             &scoped_tool_call_id(owning_message_ix, &tool_result.tool_use_id),
-            acp::ToolCallUpdateFields::new()
+            NativeToolCallUpdateFields::new()
                 .status(if tool_result.is_error {
-                    acp::ToolCallStatus::Failed
+                    acp_v2::ToolCallStatus::Failed
                 } else {
-                    acp::ToolCallStatus::Completed
+                    acp_v2::ToolCallStatus::Completed
                 })
                 .raw_output(tool_result.output.clone()),
             None,
@@ -3599,7 +3597,7 @@ impl Thread {
         let owning_message_ix = self.messages.len();
         let tool = self.tool(tool_use.name.as_ref());
         let mut title = SharedString::from(&tool_use.name);
-        let mut kind = acp::ToolKind::Other;
+        let mut kind = acp_v2::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
             if let Ok(input) = tool_use.input.clone().into_json() {
                 title = tool.initial_title(input, cx);
@@ -3744,7 +3742,7 @@ impl Thread {
             Some(cx.weak_entity()),
         );
         tool_event_stream.update_fields(
-            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+            NativeToolCallUpdateFields::new().status(acp_v2::ToolCallStatus::InProgress),
         );
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
@@ -3827,7 +3825,7 @@ impl Thread {
         self.send_or_update_tool_use(
             &tool_use,
             SharedString::from(&tool_use.name),
-            acp::ToolKind::Other,
+            acp_v2::ToolKind::Other,
             owning_message_ix,
             event_stream,
         );
@@ -3879,7 +3877,7 @@ impl Thread {
         &mut self,
         tool_use: &LanguageModelToolUse,
         title: SharedString,
-        kind: acp::ToolKind,
+        kind: acp_v2::ToolKind,
         owning_message_ix: usize,
         event_stream: &ThreadEventStream,
     ) {
@@ -3912,7 +3910,7 @@ impl Thread {
         } else {
             event_stream.update_tool_call_fields(
                 &tool_call_id,
-                acp::ToolCallUpdateFields::new()
+                NativeToolCallUpdateFields::new()
                     .title(title.as_str())
                     .kind(kind)
                     .raw_input(tool_use.input.to_display_json()),
@@ -5241,7 +5239,7 @@ where
         )
     }
 
-    fn kind() -> acp::ToolKind;
+    fn kind() -> acp_v2::ToolKind;
 
     /// The initial tool title to display. Can be updated during the tool run.
     fn initial_title(
@@ -5328,7 +5326,7 @@ impl From<anyhow::Error> for AgentToolOutput {
 pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self) -> SharedString;
-    fn kind(&self) -> acp::ToolKind;
+    fn kind(&self) -> acp_v2::ToolKind;
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
     fn input_schema(&self) -> serde_json::Value;
     fn supports_input_streaming(&self) -> bool {
@@ -5368,7 +5366,7 @@ where
         T::description()
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind(&self) -> acp_v2::ToolKind {
         T::kind()
     }
 
@@ -5494,7 +5492,7 @@ impl ThreadEventStream {
         id: &acp_v2::ToolCallId,
         tool_name: &str,
         title: SharedString,
-        kind: acp::ToolKind,
+        kind: acp_v2::ToolKind,
         input: serde_json::Value,
     ) {
         self.sender
@@ -5512,10 +5510,10 @@ impl ThreadEventStream {
         id: &acp_v2::ToolCallId,
         tool_name: &str,
         title: String,
-        kind: acp::ToolKind,
+        kind: acp_v2::ToolKind,
         input: serde_json::Value,
-    ) -> acp::ToolCall {
-        acp::ToolCall::new(acp::ToolCallId::new(id.0.clone()), title)
+    ) -> NativeToolCall {
+        NativeToolCall::new(id.clone(), title)
             .name(tool_name)
             .kind(kind)
             .raw_input(input)
@@ -5524,12 +5522,12 @@ impl ThreadEventStream {
     fn update_tool_call_fields(
         &self,
         tool_call_id: &acp_v2::ToolCallId,
-        fields: acp::ToolCallUpdateFields,
-        meta: Option<acp::Meta>,
+        fields: NativeToolCallUpdateFields,
+        meta: Option<acp_v2::Meta>,
     ) {
         self.sender
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp::ToolCallUpdate::new(acp::ToolCallId::new(tool_call_id.0.clone()), fields)
+                NativeToolCallUpdate::new(tool_call_id.clone(), fields)
                     .meta(meta)
                     .into(),
             )))
@@ -5613,7 +5611,7 @@ impl ThreadEventStream {
             .ok();
     }
 
-    fn send_stop(&self, reason: acp::StopReason) {
+    fn send_stop(&self, reason: acp_v2::StopReason) {
         self.sender
             .unbounded_send(Ok(ThreadEvent::Stop(reason)))
             .ok();
@@ -5629,7 +5627,7 @@ impl ThreadEventStream {
                 acp_thread::ContextCompactionStatus::Canceled,
             );
         }
-        self.send_stop(acp::StopReason::Cancelled);
+        self.send_stop(acp_v2::StopReason::Cancelled);
     }
 
     fn send_error(&self, error: impl Into<anyhow::Error>) {
@@ -5806,15 +5804,15 @@ impl ToolCallEventStream {
         &self.tool_call_id
     }
 
-    pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
+    pub fn update_fields(&self, fields: NativeToolCallUpdateFields) {
         self.stream
             .update_tool_call_fields(&self.tool_call_id, fields, None);
     }
 
     pub fn update_fields_with_meta(
         &self,
-        fields: acp::ToolCallUpdateFields,
-        meta: Option<acp::Meta>,
+        fields: NativeToolCallUpdateFields,
+        meta: Option<acp_v2::Meta>,
     ) {
         self.stream
             .update_tool_call_fields(&self.tool_call_id, fields, meta);
@@ -6043,11 +6041,11 @@ impl ToolCallEventStream {
                     .sender
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
-                            tool_call: acp::ToolCallUpdate::new(
-                                acp::ToolCallId::new(tool_call_id.0.clone()),
+                            tool_call: NativeToolCallUpdate::new(
+                                tool_call_id.clone(),
                                 // Leave the title untouched so the card keeps
                                 // showing the command (matching the fallback flow).
-                                acp::ToolCallUpdateFields::new(),
+                                NativeToolCallUpdateFields::new(),
                             )
                             .meta(
                                 acp_thread::meta_with_sandbox_authorization(
@@ -6163,12 +6161,12 @@ impl ToolCallEventStream {
                     .sender
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
-                            tool_call: acp::ToolCallUpdate::new(
-                                acp::ToolCallId::new(tool_call_id.0),
+                            tool_call: NativeToolCallUpdate::new(
+                                tool_call_id,
                                 // Leave the title untouched so the card keeps
                                 // showing the command (matching the escalation
                                 // flow).
-                                acp::ToolCallUpdateFields::new(),
+                                NativeToolCallUpdateFields::new(),
                             )
                             .meta(acp_thread::meta_with_sandbox_authorization(details)),
                             options,
@@ -6441,9 +6439,9 @@ impl ToolCallEventStream {
                             // failure reason): it's critical the user can see what
                             // they're approving to run unsandboxed. The reason is
                             // surfaced separately by the fallback details / warning.
-                            tool_call: acp::ToolCallUpdate::new(
-                                acp::ToolCallId::new(tool_call_id.0.clone()),
-                                acp::ToolCallUpdateFields::new(),
+                            tool_call: NativeToolCallUpdate::new(
+                                tool_call_id.clone(),
+                                NativeToolCallUpdateFields::new(),
                             )
                             .meta(
                                 acp_thread::meta_with_sandbox_fallback_authorization(details),
@@ -6536,12 +6534,12 @@ impl ToolCallEventStream {
         let stream = self.stream.clone();
         let tool_call_id = self.tool_call_id.clone();
         cx.spawn(async move |_cx| {
-            let mut fields = acp::ToolCallUpdateFields::new();
+            let mut fields = NativeToolCallUpdateFields::new();
             if let Some(title) = title {
                 fields = fields.title(title);
             }
             if let Some(message) = message {
-                fields = fields.content(vec![acp::ToolCallContent::from(message)]);
+                fields = fields.content(vec![acp_v2::ToolCallContent::from(message)]);
             }
 
             let (response_tx, response_rx) = oneshot::channel();
@@ -6550,10 +6548,7 @@ impl ToolCallEventStream {
                     .sender
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
-                            tool_call: acp::ToolCallUpdate::new(
-                                acp::ToolCallId::new(tool_call_id.0.clone()),
-                                fields,
-                            ),
+                            tool_call: NativeToolCallUpdate::new(tool_call_id.clone(), fields),
                             options,
                             response: response_tx,
                             context: None,
@@ -6662,9 +6657,9 @@ impl ToolCallEventStream {
                     .sender
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
-                            tool_call: acp::ToolCallUpdate::new(
-                                acp::ToolCallId::new(tool_call_id.0.clone()),
-                                acp::ToolCallUpdateFields::new().title(title),
+                            tool_call: NativeToolCallUpdate::new(
+                                tool_call_id.clone(),
+                                NativeToolCallUpdateFields::new().title(title),
                             ),
                             options,
                             response: response_tx,
@@ -6878,9 +6873,9 @@ impl ToolCallEventStreamReceiver {
         }
     }
 
-    pub async fn expect_update_fields(&mut self) -> acp::ToolCallUpdateFields {
+    pub async fn expect_update_fields(&mut self) -> NativeToolCallUpdateFields {
         let event = self.0.next().await;
-        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(
             update,
         )))) = event
         {
@@ -7048,7 +7043,7 @@ mod tests {
     use std::sync::Arc;
 
     #[gpui::test]
-    async fn test_tool_call_events_preserve_opaque_id_storage() {
+    async fn test_tool_call_events_preserve_opaque_id_storage(cx: &mut TestAppContext) {
         let storage: Arc<str> = Arc::from("  call/雪:\"quoted\"\\opaque  ");
         let tool_call_id = acp_v2::ToolCallId::new(storage.clone());
         let (sender, mut receiver) = mpsc::unbounded();
@@ -7058,8 +7053,8 @@ mod tests {
             &tool_call_id,
             "test_tool",
             "Test tool".into(),
-            acp::ToolKind::Other,
-            json!({}),
+            acp_v2::ToolKind::Unknown("_native".into()),
+            json!(null),
         );
         let ThreadEvent::ToolCall(tool_call) = receiver
             .next()
@@ -7067,23 +7062,84 @@ mod tests {
             .expect("tool call event exists")
             .expect("tool call event succeeded")
         else {
-            panic!("expected v1 tool call payload");
+            panic!("expected native tool call payload");
         };
         assert_eq!(tool_call.tool_call_id.0.as_ref(), storage.as_ref());
         assert!(Arc::ptr_eq(&tool_call.tool_call_id.0, &storage));
+        assert_eq!(tool_call.kind, acp_v2::ToolKind::Unknown("_native".into()));
+        assert_eq!(tool_call.status, acp_v2::ToolCallStatus::Pending);
+        assert_eq!(tool_call.raw_input, Some(json!(null)));
+        assert!(tool_call.content.is_empty());
+        assert!(tool_call.locations.is_empty());
 
-        stream.update_tool_call_fields(&tool_call_id, acp::ToolCallUpdateFields::new(), None);
-        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
+        stream.update_tool_call_fields(&tool_call_id, NativeToolCallUpdateFields::new(), None);
+        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(update)) =
             receiver
                 .next()
                 .await
                 .expect("update event exists")
                 .expect("update event succeeded")
         else {
-            panic!("expected v1 tool call update payload");
+            panic!("expected native tool call update payload");
         };
         assert_eq!(update.tool_call_id.0.as_ref(), storage.as_ref());
         assert!(Arc::ptr_eq(&update.tool_call_id.0, &storage));
+        assert!(update.fields.title.is_none());
+        assert!(update.fields.kind.is_none());
+        assert!(update.fields.status.is_none());
+        assert!(update.fields.content.is_none());
+        assert!(update.fields.locations.is_none());
+        assert!(update.fields.raw_input.is_none());
+        assert!(update.fields.raw_output.is_none());
+
+        let (_cancellation_tx, cancellation_rx) = watch::channel(false);
+        let tool_stream = ToolCallEventStream::new(
+            "provider_id".into(),
+            tool_call_id.clone(),
+            stream.clone(),
+            None,
+            cancellation_rx,
+            Rc::default(),
+            None,
+        );
+        let authorize = cx.update(|cx| {
+            tool_stream.authorize_always_prompt(
+                "Confirm tool",
+                ToolPermissionContext::new("test_tool", vec![]),
+                cx,
+            )
+        });
+        let ThreadEvent::ToolCallAuthorization(authorization) = receiver
+            .next()
+            .await
+            .expect("authorization exists")
+            .expect("authorization succeeded")
+        else {
+            panic!("expected native authorization payload");
+        };
+        assert!(Arc::ptr_eq(
+            &authorization.tool_call.tool_call_id.0,
+            &storage
+        ));
+        assert_eq!(
+            authorization.tool_call.fields.title.as_deref(),
+            Some("Confirm tool")
+        );
+        assert!(authorization.tool_call.fields.content.is_none());
+        assert_eq!(
+            authorization.kind,
+            acp_thread::AuthorizationKind::PermissionGrant
+        );
+        assert!(
+            authorization
+                .response
+                .send(acp_thread::SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ))
+                .is_ok()
+        );
+        authorize.await.expect("once-only approval succeeds");
 
         stream.resolve_tool_call_authorization(
             &tool_call_id,
@@ -7102,6 +7158,160 @@ mod tests {
         };
         assert_eq!(tool_call_id.0.as_ref(), storage.as_ref());
         assert!(Arc::ptr_eq(&tool_call_id.0, &storage));
+    }
+
+    #[gpui::test]
+    async fn test_native_tool_updates_preserve_source_fields() {
+        let (stream, mut receiver) = ToolCallEventStream::test();
+        let meta = acp_v2::Meta::from_iter([("extension".into(), json!({"opaque": null}))]);
+        let content = vec![acp_v2::ToolCallContent::Content(Box::new(
+            acp_v2::Content::new(acp_v2::ContentBlock::Image(
+                acp_v2::ImageContent::new("image payload", "image/png").meta(meta.clone()),
+            ))
+            .meta(meta.clone()),
+        ))];
+        let locations = vec![acp_thread::ToolCallLocation {
+            path: PathBuf::from("relative/雪.rs"),
+            line: Some(7),
+            meta: Some(meta.clone()),
+        }];
+        stream.update_fields_with_meta(
+            NativeToolCallUpdateFields::new()
+                .kind(acp_v2::ToolKind::Unknown("_native".into()))
+                .status(acp_v2::ToolCallStatus::Other("_paused".into()))
+                .content(content.clone())
+                .locations(locations.clone())
+                .raw_input(json!(null))
+                .raw_output(json!(null)),
+            Some(meta.clone()),
+        );
+        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(update)) =
+            receiver
+                .next()
+                .await
+                .expect("native update exists")
+                .expect("native update succeeded")
+        else {
+            panic!("expected native tool call update");
+        };
+        assert!(Arc::ptr_eq(
+            &update.tool_call_id.0,
+            &stream.tool_call_id().0
+        ));
+        assert_eq!(
+            update.fields.kind,
+            Some(acp_v2::ToolKind::Unknown("_native".into()))
+        );
+        assert_eq!(
+            update.fields.status,
+            Some(acp_v2::ToolCallStatus::Other("_paused".into()))
+        );
+        assert_eq!(update.fields.content, Some(content));
+        assert_eq!(update.fields.locations, Some(locations));
+        assert_eq!(update.fields.raw_input, Some(json!(null)));
+        assert_eq!(update.fields.raw_output, Some(json!(null)));
+        assert_eq!(update.meta, Some(meta));
+        assert!(update.fields.title.is_none());
+
+        stream.update_fields(
+            NativeToolCallUpdateFields::new()
+                .content(vec![])
+                .locations(vec![]),
+        );
+        let fields = receiver.expect_update_fields().await;
+        assert_eq!(fields.content, Some(vec![]));
+        assert_eq!(fields.locations, Some(vec![]));
+        assert!(fields.raw_input.is_none());
+        assert!(fields.raw_output.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_native_decision_prompt_preserves_action_choice_and_interruption(
+        cx: &mut TestAppContext,
+    ) {
+        let (stream, mut receiver) = ToolCallEventStream::test();
+        for option_id in ["discard", FOLLOW_UP_PERMISSION_DENIED_OPTION_ID] {
+            let decision = cx.update(|cx| {
+                stream.prompt_for_decision(
+                    None,
+                    Some("Choose an action".into()),
+                    vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("discard"),
+                        "Discard",
+                        acp::PermissionOptionKind::RejectOnce,
+                    )],
+                    cx,
+                )
+            });
+            let authorization = receiver.expect_authorization().await;
+            assert!(Arc::ptr_eq(
+                &authorization.tool_call.tool_call_id.0,
+                &stream.tool_call_id().0
+            ));
+            assert!(authorization.tool_call.fields.title.is_none());
+            assert!(authorization.tool_call.fields.status.is_none());
+            assert_eq!(
+                authorization.tool_call.fields.content,
+                Some(vec![acp_v2::ToolCallContent::from("Choose an action")])
+            );
+            assert_eq!(
+                authorization.kind,
+                acp_thread::AuthorizationKind::ActionChoice
+            );
+            assert!(
+                authorization
+                    .response
+                    .send(acp_thread::SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new(option_id),
+                        acp::PermissionOptionKind::RejectOnce,
+                    ))
+                    .is_ok()
+            );
+            let result = decision.await;
+            if option_id == FOLLOW_UP_PERMISSION_DENIED_OPTION_ID {
+                assert_eq!(
+                    result
+                        .expect_err("follow-up interrupts decision")
+                        .to_string(),
+                    TOOL_CALL_INTERRUPTED_BY_FOLLOW_UP_MESSAGE
+                );
+            } else {
+                assert_eq!(
+                    result
+                        .expect("action choice is not a permission denial")
+                        .0
+                        .as_ref(),
+                    "discard"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_native_stop_events() {
+        let (sender, mut receiver) = mpsc::unbounded();
+        let stream = ThreadEventStream::new(sender);
+        for reason in [
+            acp_v2::StopReason::EndTurn,
+            acp_v2::StopReason::Refusal,
+            acp_v2::StopReason::MaxTokens,
+        ] {
+            stream.send_stop(reason.clone());
+            let ThreadEvent::Stop(actual) = receiver
+                .next()
+                .await
+                .expect("stop event exists")
+                .expect("stop event succeeded")
+            else {
+                panic!("expected native stop reason");
+            };
+            assert_eq!(actual, reason);
+        }
+        stream.send_canceled();
+        assert!(matches!(
+            receiver.next().await,
+            Some(Ok(ThreadEvent::Stop(acp_v2::StopReason::Cancelled)))
+        ));
     }
 
     #[test]
@@ -8524,8 +8734,8 @@ mod tests {
 
         const NAME: &'static str = "registered_image_tool";
 
-        fn kind() -> acp::ToolKind {
-            acp::ToolKind::Other
+        fn kind() -> acp_v2::ToolKind {
+            acp_v2::ToolKind::Other
         }
 
         fn initial_title(
@@ -8581,7 +8791,12 @@ mod tests {
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);
+        assert!(authorization.tool_call.fields.title.is_none());
         assert!(authorization.tool_call.fields.content.is_none());
+        assert_eq!(
+            authorization.kind,
+            acp_thread::AuthorizationKind::PermissionGrant
+        );
 
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
             panic!("expected flat sandbox permission options");
@@ -8660,6 +8875,12 @@ mod tests {
         assert_eq!(
             details.docs_section.as_deref(),
             Some("installing-bubblewrap")
+        );
+        assert!(authorization.tool_call.fields.title.is_none());
+        assert!(authorization.tool_call.fields.content.is_none());
+        assert_eq!(
+            authorization.kind,
+            acp_thread::AuthorizationKind::ActionChoice
         );
 
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
@@ -9080,36 +9301,47 @@ mod tests {
         let registered_tool_call_id = scoped_tool_call_id(0, &registered_tool_use_id).to_string();
         let missing_tool_call_id = scoped_tool_call_id(0, &missing_tool_use_id).to_string();
         let mut tool_names_by_id = HashMap::default();
-        let mut tool_use_ids_with_image_content = HashSet::default();
+        let mut content_by_id = HashMap::default();
+        let mut statuses_by_id = HashMap::default();
         while let Some(event) = replay_events.next().await {
             let event = event.unwrap();
             match event {
                 ThreadEvent::ToolCall(tool_call) => {
                     tool_names_by_id.insert(tool_call.tool_call_id.to_string(), tool_call.name);
                 }
-                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
-                    if update.fields.content.as_ref().is_some_and(|content| {
-                        content.iter().any(|content| {
-                            matches!(
-                                content,
-                                acp::ToolCallContent::Content(acp::Content {
-                                    content: acp::ContentBlock::Image(_),
-                                    ..
-                                })
-                            )
-                        })
-                    }) =>
-                {
-                    tool_use_ids_with_image_content.insert(update.tool_call_id.to_string());
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(update)) => {
+                    if let Some(content) = update.fields.content {
+                        content_by_id.insert(update.tool_call_id.to_string(), content);
+                    }
+                    if let Some(status) = update.fields.status {
+                        statuses_by_id.insert(update.tool_call_id.to_string(), status);
+                    }
                 }
                 _ => {}
             }
         }
 
-        // Both tool uses live in the message pushed above, at index 0 (see
-        // `scoped_tool_call_id`).
-        assert!(tool_use_ids_with_image_content.contains(&registered_tool_call_id));
-        assert!(tool_use_ids_with_image_content.contains(&missing_tool_call_id));
+        let image_content = acp_v2::ToolCallContent::from(acp_v2::ContentBlock::Image(
+            acp_v2::ImageContent::new(image_data, "image/png"),
+        ));
+        assert_eq!(
+            content_by_id.get(&registered_tool_call_id),
+            Some(&vec![
+                acp_v2::ToolCallContent::from("before"),
+                image_content.clone(),
+                acp_v2::ToolCallContent::from("after"),
+            ])
+        );
+        assert_eq!(
+            content_by_id.get(&missing_tool_call_id),
+            Some(&vec![image_content])
+        );
+        for tool_call_id in [&registered_tool_call_id, &missing_tool_call_id] {
+            assert_eq!(
+                statuses_by_id.get(tool_call_id),
+                Some(&acp_v2::ToolCallStatus::Completed)
+            );
+        }
         assert_eq!(
             tool_names_by_id
                 .get(&registered_tool_call_id)

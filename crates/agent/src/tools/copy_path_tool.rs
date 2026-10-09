@@ -7,7 +7,9 @@ use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_paths,
 };
+#[cfg(test)]
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
@@ -64,8 +66,8 @@ impl AgentTool for CopyPathTool {
 
     const NAME: &'static str = "copy_path";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Move
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Move
     }
 
     fn initial_title(

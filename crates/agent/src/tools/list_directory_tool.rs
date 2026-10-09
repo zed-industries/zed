@@ -3,7 +3,9 @@ use super::tool_permissions::{
     resolve_global_skill_path, resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
+#[cfg(test)]
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
 use futures::StreamExt as _;
@@ -184,8 +186,8 @@ impl AgentTool for ListDirectoryTool {
 
     const NAME: &'static str = "list_directory";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Read
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Read
     }
 
     fn initial_title(

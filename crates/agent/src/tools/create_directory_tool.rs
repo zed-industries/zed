@@ -2,7 +2,9 @@ use super::tool_permissions::{
     authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
     resolve_creatable_global_skill_path, sensitive_settings_kind,
 };
+#[cfg(test)]
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task};
@@ -86,8 +88,8 @@ impl AgentTool for CreateDirectoryTool {
 
     const NAME: &'static str = "create_directory";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Edit
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Edit
     }
 
     fn initial_title(

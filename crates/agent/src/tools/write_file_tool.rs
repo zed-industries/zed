@@ -4,7 +4,9 @@ use super::edit_session::{
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
+#[cfg(test)]
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
 use language::LanguageRegistry;
@@ -209,8 +211,8 @@ impl AgentTool for WriteFileTool {
         true
     }
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Edit
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Edit
     }
 
     fn initial_title(
@@ -1200,11 +1202,12 @@ mod tests {
 
         // Verify the prompt is the overwrite-mode prompt.
         let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
-        let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
+        let acp_v2::ToolCallContent::Content(text) =
+            content.first().expect("expected message body")
         else {
             panic!("expected text body, got: {:?}", content.first());
         };
-        let acp::ContentBlock::Text(text) = &text.content else {
+        let acp_v2::ContentBlock::Text(text) = &text.content else {
             panic!("expected text body, got: {:?}", text.content);
         };
         assert!(
