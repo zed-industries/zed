@@ -2765,6 +2765,62 @@ mod tests {
     use feature_flags::{AcpBetaFeatureFlag, FeatureFlag as _};
     use settings::Settings as _;
 
+    #[test]
+    fn test_v1_permission_conversion_preserves_options_and_arc_ids() {
+        for (legacy_kind, kind) in [
+            (
+                acp::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
+            ),
+            (
+                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::AllowAlways,
+            ),
+            (
+                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
+            ),
+            (
+                acp::PermissionOptionKind::RejectAlways,
+                acp_v2::PermissionOptionKind::RejectAlways,
+            ),
+        ] {
+            let option_id = acp::PermissionOptionId::new("agent-defined-choice");
+            let meta = acp::Meta::from_iter([("custom".into(), serde_json::json!({"keep": true}))]);
+            let option = permission_option_from_v1(
+                acp::PermissionOption::new(option_id.clone(), "Agent's label", legacy_kind)
+                    .meta(meta.clone()),
+            )
+            .expect("known permission option kind");
+            assert!(Arc::ptr_eq(&option.option_id.0, &option_id.0));
+            assert_eq!(option.name, "Agent's label");
+            assert_eq!(option.kind, kind);
+            assert_eq!(option.meta, Some(meta));
+
+            let outcome = permission_outcome_to_v1(acp_thread::RequestPermissionOutcome::Selected(
+                acp_thread::SelectedPermissionOutcome::new(option.option_id, kind),
+            ));
+            let acp::RequestPermissionOutcome::Selected(outcome) = outcome else {
+                panic!("selected permission outcome");
+            };
+            assert!(Arc::ptr_eq(&outcome.option_id.0, &option_id.0));
+            assert_eq!(outcome.option_id, option_id);
+        }
+    }
+
+    #[test]
+    fn test_v1_permission_conversion_preserves_cancellation() {
+        for outcome in [
+            acp_thread::RequestPermissionOutcome::Cancelled,
+            acp_thread::RequestPermissionOutcome::InterruptedByFollowUp,
+        ] {
+            assert_eq!(
+                permission_outcome_to_v1(outcome),
+                acp::RequestPermissionOutcome::Cancelled,
+            );
+        }
+    }
+
     #[derive(Debug, PartialEq)]
     struct V2TerminalReceive {
         envelope_meta: Option<acp_v2::Meta>,
@@ -2981,7 +3037,7 @@ mod tests {
         fn terminal(&self, id: &str, cx: &gpui::TestAppContext) -> Entity<acp_thread::Terminal> {
             self.thread.read_with(cx, |thread, _| {
                 thread
-                    .terminal(acp::TerminalId::new(id))
+                    .terminal(acp_v2::TerminalId::new(id))
                     .expect("display terminal")
             })
         }
@@ -2993,7 +3049,7 @@ mod tests {
         harness
             .thread
             .update(cx, |thread, cx| {
-                thread.upsert_tool_call_patch(
+                thread.upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("terminal-tool").content(vec![
                         acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("terminal-1")),
                     ]),
@@ -3235,7 +3291,7 @@ mod tests {
         assert_eq!(observe(cx), before);
         assert_eq!(harness.terminal("terminal-1", cx), terminal);
         harness.thread.read_with(cx, |thread, _| {
-            assert!(thread.terminal(acp::TerminalId::new("unseen")).is_err());
+            assert!(thread.terminal(acp_v2::TerminalId::new("unseen")).is_err());
         });
         assert_eq!(
             harness.received.lock().expect("receive mutex").len(),
@@ -6343,8 +6399,8 @@ exit 7
                 thread.authorize_permission_request(
                     successor_id,
                     acp_thread::SelectedPermissionOutcome::new(
-                        acp::PermissionOptionId::new("allow-successor"),
-                        acp::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionId::new("allow-successor"),
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     ),
                     cx,
                 );
@@ -7352,6 +7408,42 @@ fn respond_result<T: JsonRpcResponse>(responder: Responder<T>, result: Result<T,
     }
 }
 
+fn permission_option_from_v1(
+    option: acp::PermissionOption,
+) -> Result<acp_v2::PermissionOption, acp::Error> {
+    let kind = match option.kind {
+        acp::PermissionOptionKind::AllowOnce => acp_v2::PermissionOptionKind::AllowOnce,
+        acp::PermissionOptionKind::AllowAlways => acp_v2::PermissionOptionKind::AllowAlways,
+        acp::PermissionOptionKind::RejectOnce => acp_v2::PermissionOptionKind::RejectOnce,
+        acp::PermissionOptionKind::RejectAlways => acp_v2::PermissionOptionKind::RejectAlways,
+        _ => {
+            return Err(acp::Error::invalid_params().data("unsupported permission option kind"));
+        }
+    };
+    Ok(acp_v2::PermissionOption::new(
+        acp_v2::PermissionOptionId::new(option.option_id.0),
+        option.name,
+        kind,
+    )
+    .meta(option.meta))
+}
+
+fn permission_outcome_to_v1(
+    outcome: acp_thread::RequestPermissionOutcome,
+) -> acp::RequestPermissionOutcome {
+    match outcome {
+        acp_thread::RequestPermissionOutcome::Cancelled
+        | acp_thread::RequestPermissionOutcome::InterruptedByFollowUp => {
+            acp::RequestPermissionOutcome::Cancelled
+        }
+        acp_thread::RequestPermissionOutcome::Selected(outcome) => {
+            acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new(outcome.option_id.0),
+            ))
+        }
+    }
+}
+
 fn handle_request_permission(
     args: acp::RequestPermissionRequest,
     responder: Responder<acp::RequestPermissionResponse>,
@@ -7365,11 +7457,20 @@ fn handle_request_permission(
 
     let cancellation = responder.cancellation();
     cx.spawn(async move |cx| {
+        let options = match args
+            .options
+            .into_iter()
+            .map(permission_option_from_v1)
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(options) => options,
+            Err(error) => return respond_err(responder, error),
+        };
         let (request_id, task) = match thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization_with_id(
                     args.tool_call,
-                    acp_thread::PermissionOptions::Flat(args.options),
+                    acp_thread::PermissionOptions::Flat(options),
                     acp_thread::AuthorizationKind::PermissionGrant,
                     cx,
                 )
@@ -7386,7 +7487,9 @@ fn handle_request_permission(
         match result {
             Ok(outcome) => {
                 responder
-                    .respond(acp::RequestPermissionResponse::new(outcome.into()))
+                    .respond(acp::RequestPermissionResponse::new(
+                        permission_outcome_to_v1(outcome),
+                    ))
                     .log_err();
             }
             Err(e) => {
@@ -7800,7 +7903,7 @@ fn handle_create_terminal(
 
             let terminal_entity = thread.update(cx, |thread, cx| {
                 thread.register_terminal_created(
-                    acp::TerminalId::new(uuid::Uuid::new_v4().to_string()),
+                    acp_v2::TerminalId::new(uuid::Uuid::new_v4().to_string()),
                     format!("{} {}", args.command, args.args.join(" ")),
                     args.cwd.clone(),
                     args.output_byte_limit,
@@ -7816,7 +7919,9 @@ fn handle_create_terminal(
         match result {
             Ok(terminal_id) => {
                 responder
-                    .respond(acp::CreateTerminalResponse::new(terminal_id))
+                    .respond(acp::CreateTerminalResponse::new(acp::TerminalId::new(
+                        terminal_id.0,
+                    )))
                     .log_err();
             }
             Err(e) => respond_err(responder, e),
@@ -7837,7 +7942,9 @@ fn handle_kill_terminal(
     };
 
     match thread
-        .update(cx, |thread, cx| thread.kill_terminal(args.terminal_id, cx))
+        .update(cx, |thread, cx| {
+            thread.kill_terminal(acp_v2::TerminalId::new(args.terminal_id.0), cx)
+        })
         .flatten_acp()
     {
         Ok(()) => {
@@ -7862,7 +7969,7 @@ fn handle_release_terminal(
 
     match thread
         .update(cx, |thread, cx| {
-            thread.release_terminal(args.terminal_id, cx)
+            thread.release_terminal(acp_v2::TerminalId::new(args.terminal_id.0), cx)
         })
         .flatten_acp()
     {
@@ -7889,7 +7996,7 @@ fn handle_terminal_output(
     match thread
         .read_with(cx, |thread, cx| -> anyhow::Result<_> {
             let out = thread
-                .terminal(args.terminal_id)?
+                .terminal(acp_v2::TerminalId::new(args.terminal_id.0))?
                 .read(cx)
                 .current_output(cx);
             Ok(out)
@@ -7920,7 +8027,10 @@ fn handle_wait_for_terminal_exit(
             .run_until_cancelled(async {
                 let exit_status = thread
                     .update(cx, |thread, cx| {
-                        thread.terminal(args.terminal_id)?.read(cx).wait_for_exit()
+                        thread
+                            .terminal(acp_v2::TerminalId::new(args.terminal_id.0))?
+                            .read(cx)
+                            .wait_for_exit()
                     })
                     .flatten_acp()?
                     .await;

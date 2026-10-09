@@ -2348,7 +2348,7 @@ impl NativeAgentConnection {
                                 kind,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(
+                                    thread.request_tool_call_update_authorization(
                                         tool_call, options, kind, cx,
                                     )
                                 })??;
@@ -2357,10 +2357,10 @@ impl NativeAgentConnection {
                                         acp_thread::RequestPermissionOutcome::Selected(outcome) => outcome,
                                         acp_thread::RequestPermissionOutcome::InterruptedByFollowUp => {
                                             acp_thread::SelectedPermissionOutcome::new(
-                                                acp_v1::PermissionOptionId::new(
+                                                acp_v2::PermissionOptionId::new(
                                                     FOLLOW_UP_PERMISSION_DENIED_OPTION_ID,
                                                 ),
-                                                acp_v1::PermissionOptionKind::RejectOnce,
+                                                acp_v2::PermissionOptionKind::RejectOnce,
                                             )
                                         }
                                         acp_thread::RequestPermissionOutcome::Cancelled => return,
@@ -2423,11 +2423,6 @@ impl NativeAgentConnection {
                                     }
                                 }
                             }
-                            ThreadEvent::ToolCall(tool_call) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.upsert_tool_call(tool_call, cx)
-                                })??;
-                            }
                             ThreadEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_tool_call(update, cx)
@@ -2466,7 +2461,7 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp_v1::PromptResponse::new(stop_reason));
+                                return legacy_native_completion(stop_reason);
                             }
                         }
                     }
@@ -2481,6 +2476,20 @@ impl NativeAgentConnection {
             anyhow::Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
         })
     }
+}
+
+fn legacy_native_completion(stop_reason: acp_v2::StopReason) -> Result<acp_v1::PromptResponse> {
+    // Native events are version-neutral, but the completion-based connection API
+    // still returns a v1 response. This is not a v2 acceptance receipt.
+    let stop_reason = match stop_reason {
+        acp_v2::StopReason::EndTurn => acp_v1::StopReason::EndTurn,
+        acp_v2::StopReason::MaxTokens => acp_v1::StopReason::MaxTokens,
+        acp_v2::StopReason::MaxTurnRequests => acp_v1::StopReason::MaxTurnRequests,
+        acp_v2::StopReason::Refusal => acp_v1::StopReason::Refusal,
+        acp_v2::StopReason::Cancelled => acp_v1::StopReason::Cancelled,
+        _ => anyhow::bail!("Native agent returned an unsupported stop reason"),
+    };
+    Ok(acp_v1::PromptResponse::new(stop_reason))
 }
 
 struct Command<'a> {
@@ -3695,7 +3704,7 @@ pub struct AcpTerminalHandle {
 }
 
 impl TerminalHandle for AcpTerminalHandle {
-    fn id(&self, cx: &AsyncApp) -> Result<acp_v1::TerminalId> {
+    fn id(&self, cx: &AsyncApp) -> Result<acp_v2::TerminalId> {
         Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
     }
 
@@ -3977,6 +3986,27 @@ mod internal_tests {
     use settings::{LanguageModelProviderSetting, SettingsStore};
     use util::{path, rel_path::rel_path};
 
+    #[test]
+    fn native_stop_reasons_preserve_legacy_completions() -> Result<()> {
+        for (native, legacy) in [
+            (acp_v2::StopReason::EndTurn, acp_v1::StopReason::EndTurn),
+            (acp_v2::StopReason::MaxTokens, acp_v1::StopReason::MaxTokens),
+            (
+                acp_v2::StopReason::MaxTurnRequests,
+                acp_v1::StopReason::MaxTurnRequests,
+            ),
+            (acp_v2::StopReason::Refusal, acp_v1::StopReason::Refusal),
+            (acp_v2::StopReason::Cancelled, acp_v1::StopReason::Cancelled),
+        ] {
+            assert_eq!(legacy_native_completion(native)?.stop_reason, legacy);
+        }
+        assert!(
+            legacy_native_completion(acp_v2::StopReason::Other("_future".into())).is_err(),
+            "an unsupported reason must not masquerade as successful completion"
+        );
+        Ok(())
+    }
+
     #[gpui::test]
     fn test_available_native_agent_hides_hidden_providers(cx: &mut TestAppContext) {
         init_test(cx);
@@ -4119,18 +4149,19 @@ mod internal_tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp_v1::PermissionOptionId::new("allow"),
-                acp_v1::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionId::new("allow"),
+                acp_v2::PermissionOptionKind::AllowOnce,
             ))
             .expect("authorization response should send");
 
         let update = receiver.expect_update_fields().await;
         let terminal_id = update
             .content
-            .iter()
+            .value()
+            .into_iter()
             .flatten()
             .find_map(|content| match content {
-                acp_v1::ToolCallContent::Terminal(terminal) => Some(terminal.terminal_id.clone()),
+                acp_v2::ToolCallContent::Terminal(terminal) => Some(terminal.terminal_id.clone()),
                 _ => None,
             })
             .expect("terminal tool should announce its real terminal");
