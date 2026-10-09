@@ -195,8 +195,8 @@ const MIN_DRAWS_TO_REPORT: u64 = 1_000;
 ///
 /// Each report contains frame pacing (frames on time, late, delayed by the
 /// platform, and work per frame as a percentage of the refresh interval), the
-/// same for frames that responded to input, how long frames waited for a
-/// buffer to draw into, and bucketed draw and dirty-to-present durations.
+/// same for frames that responded to input, and bucketed draw and
+/// dirty-to-present durations.
 /// Buckets rather than percentiles, so reports can be summed.
 ///
 /// Call this periodically from a spawned task.
@@ -319,12 +319,6 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
             "input_work_pct",
             &FRAME_WORK_BUCKETS_PERCENT,
             &frames.input_work,
-        );
-        insert_buckets(
-            &mut properties,
-            "drawable_wait_pct",
-            &FRAME_WORK_BUCKETS_PERCENT,
-            &frames.drawable_wait,
         );
         telemetry::send_event(telemetry::Event {
             event_type: "Frame Duration Report".to_string(),

@@ -981,9 +981,6 @@ pub struct PresentTiming {
     /// The interval since the previous newly drawn frame was submitted, when
     /// both frames belong to an active animation.
     pub animation_interval: Option<Duration>,
-    /// Time the submission spent waiting for the display to free a buffer to
-    /// draw into, or `None` when the platform doesn't measure it.
-    pub drawable_wait: Option<Duration>,
 }
 
 #[cfg(feature = "profiler")]
@@ -993,18 +990,11 @@ impl PresentTiming {
         self.present_end.duration_since(self.present_start)
     }
 
-    /// When the frame's work ended: the end of the submission minus its wait
-    /// for a buffer. Without a measured wait, the start of the submission,
-    /// since the submission may consist mostly of waiting.
+    /// When the frame's work ended: the start of the submission, since the
+    /// submission may consist mostly of waiting for the display to free a
+    /// buffer to draw into.
     pub fn submitted_at(&self) -> Instant {
-        match self.drawable_wait {
-            Some(wait) => self
-                .present_end
-                .checked_sub(wait)
-                .unwrap_or(self.present_start)
-                .max(self.present_start),
-            None => self.present_start,
-        }
+        self.present_start
     }
 }
 
@@ -1098,10 +1088,6 @@ pub struct RefreshIntervalFrames {
     /// Work of on-time and late frames that responded to input, bucketed by
     /// [`FRAME_WORK_BUCKETS_PERCENT`].
     pub input_work: FrameWorkBuckets,
-    /// How long presented frames waited for a buffer to draw into, as a
-    /// percentage of the refresh interval, bucketed by
-    /// [`FRAME_WORK_BUCKETS_PERCENT`]. Only where the platform measures it.
-    pub drawable_wait: FrameWorkBuckets,
 }
 
 #[cfg(feature = "profiler")]
@@ -1141,7 +1127,6 @@ impl RefreshIntervalFrames {
                 .input_frames_late
                 .saturating_sub(earlier.input_frames_late),
             input_work: subtract(&self.input_work, &earlier.input_work),
-            drawable_wait: subtract(&self.drawable_wait, &earlier.drawable_wait),
         }
     }
 
@@ -1159,9 +1144,6 @@ impl RefreshIntervalFrames {
             self.frames_unmeasured += 1;
             return;
         };
-        if let Some(wait) = presentation.drawable_wait {
-            self.drawable_wait[percent_bucket(wait, refresh_interval)] += 1;
-        }
         let submitted_at = presentation.submitted_at();
         match (
             frame.work(submitted_at),
@@ -1502,22 +1484,18 @@ impl WindowProfiler {
 
     /// Records that a frame was presented.
     ///
-    /// `drawable_wait` is how long the platform waited for a buffer to draw
-    /// into, when it measures that. `next_frame_scheduled` marks the animation
-    /// state for the interval ending at the next newly drawn frame's
-    /// presentation.
+    /// `next_frame_scheduled` marks the animation state for the interval
+    /// ending at the next newly drawn frame's presentation.
     pub fn record_present(
         &mut self,
         present_start: Instant,
         present_end: Instant,
-        drawable_wait: Option<Duration>,
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
-        self.record_presentation(
+        self.record_present_at(
             present_start,
             present_end,
-            drawable_wait,
             window_active,
             next_frame_scheduled,
         );
@@ -1558,28 +1536,10 @@ impl WindowProfiler {
         &mut self.by_refresh_interval[index]
     }
 
-    #[cfg(test)]
     fn record_present_at(
         &mut self,
         present_start: Instant,
         present_end: Instant,
-        window_active: bool,
-        next_frame_scheduled: bool,
-    ) {
-        self.record_presentation(
-            present_start,
-            present_end,
-            None,
-            window_active,
-            next_frame_scheduled,
-        );
-    }
-
-    fn record_presentation(
-        &mut self,
-        present_start: Instant,
-        present_end: Instant,
-        drawable_wait: Option<Duration>,
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
@@ -1621,7 +1581,6 @@ impl WindowProfiler {
             present_start,
             present_end,
             animation_interval,
-            drawable_wait,
         };
         journal::record_present(present_timing, frame);
 
@@ -1870,7 +1829,6 @@ mod tests {
             refresh_interval: Option<Duration>,
             signal_ms: Option<u64>,
             present_start_ms: u64,
-            drawable_wait_ms: Option<u64>,
             responded_to_input: bool,
         }
         let frames = [
@@ -1879,36 +1837,30 @@ mod tests {
                 refresh_interval: Some(sixty_hertz),
                 signal_ms: Some(1),
                 present_start_ms: 5,
-                drawable_wait_ms: None,
                 responded_to_input: true,
             },
-            // 40 ms of work once the 10 ms wait for a drawable is excluded.
             Frame {
                 refresh_interval: Some(sixty_hertz),
                 signal_ms: Some(0),
-                present_start_ms: 39,
-                drawable_wait_ms: Some(10),
+                present_start_ms: 40,
                 responded_to_input: true,
             },
             Frame {
                 refresh_interval: Some(sixty_hertz),
                 signal_ms: None,
                 present_start_ms: 5,
-                drawable_wait_ms: None,
                 responded_to_input: false,
             },
             Frame {
                 refresh_interval: Some(sixty_hertz),
                 signal_ms: Some(40),
                 present_start_ms: 42,
-                drawable_wait_ms: None,
                 responded_to_input: false,
             },
             Frame {
                 refresh_interval: Some(one_hundred_twenty_hertz),
                 signal_ms: Some(0),
                 present_start_ms: 12,
-                drawable_wait_ms: None,
                 responded_to_input: false,
             },
             // Misses refreshes but fits the budget floor.
@@ -1916,21 +1868,18 @@ mod tests {
                 refresh_interval: Some(three_hundred_sixty_hertz),
                 signal_ms: Some(0),
                 present_start_ms: 6,
-                drawable_wait_ms: None,
                 responded_to_input: false,
             },
             Frame {
                 refresh_interval: Some(three_hundred_sixty_hertz),
                 signal_ms: Some(0),
                 present_start_ms: 9,
-                drawable_wait_ms: None,
                 responded_to_input: false,
             },
             Frame {
                 refresh_interval: None,
                 signal_ms: Some(0),
                 present_start_ms: 2,
-                drawable_wait_ms: None,
                 responded_to_input: false,
             },
         ];
@@ -1954,14 +1903,9 @@ mod tests {
             if frame.responded_to_input {
                 profiler.first_input_at = Some(at(0));
             }
-            let drawable_wait = frame.drawable_wait_ms.map(Duration::from_millis);
-            let present_end = at(frame.present_start_ms)
-                + drawable_wait.unwrap_or_default()
-                + Duration::from_millis(1);
-            profiler.record_presentation(
+            profiler.record_present_at(
                 at(frame.present_start_ms),
-                present_end,
-                drawable_wait,
+                at(frame.present_start_ms + 1),
                 true,
                 false,
             );
@@ -1988,7 +1932,6 @@ mod tests {
         assert_eq!(sixty.input_frames_on_time, 1);
         assert_eq!(sixty.input_frames_late, 1);
         assert_eq!(sixty.input_work, sixty.work);
-        assert_eq!(sixty.drawable_wait, [0, 0, 1, 0, 0, 0, 0, 0]);
 
         let one_hundred_twenty = frames_for(Some(one_hundred_twenty_hertz));
         assert_eq!(one_hundred_twenty.frames_late, 1);

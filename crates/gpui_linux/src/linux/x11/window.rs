@@ -1748,12 +1748,6 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
-    // Not measured: the renderer's wait for a surface texture isn't
-    // separated from its work.
-    fn last_drawable_wait(&self) -> Option<std::time::Duration> {
-        None
-    }
-
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
         let inner = &mut *inner;

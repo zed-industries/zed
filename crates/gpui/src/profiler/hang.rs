@@ -775,7 +775,6 @@ mod tests {
                 IntervalBoundary::Presented(PresentedFrame {
                     frame: frame(window_id, presented_at),
                     presentation: PresentTiming {
-                        drawable_wait: None,
                         window_id,
                         present_start: presented_at - Duration::from_millis(1),
                         present_end: presented_at,
@@ -805,7 +804,6 @@ mod tests {
         let window_id = WindowId::from(0xF1E1D);
 
         let presentation = PresentTiming {
-            drawable_wait: None,
             window_id,
             present_start: at(380),
             present_end: at(400),
@@ -1137,7 +1135,6 @@ mod tests {
                     phases: Default::default(),
                 },
                 presentation: PresentTiming {
-                    drawable_wait: None,
                     window_id,
                     present_start: at(145),
                     present_end: at(150),
@@ -1227,7 +1224,6 @@ mod tests {
                     phases: Default::default(),
                 },
                 presentation: PresentTiming {
-                    drawable_wait: None,
                     window_id,
                     present_start: at(149),
                     present_end: at(150),
@@ -1336,10 +1332,10 @@ mod tests {
                         presentation: PresentTiming {
                             window_id,
                             present_start: at(submitted_ms),
-                            // Waiting for a drawable doesn't make the frame late.
+                            // Time spent inside the submission doesn't make
+                            // the frame late.
                             present_end: at(submitted_ms + 50),
                             animation_interval: None,
-                            drawable_wait: Some(Duration::from_millis(50)),
                         },
                     }),
                     events: vec![
@@ -1444,7 +1440,6 @@ mod tests {
                     phases: Default::default(),
                 },
                 presentation: PresentTiming {
-                    drawable_wait: None,
                     window_id,
                     present_start: at(149),
                     present_end: at(150),
@@ -1527,7 +1522,6 @@ mod tests {
                         present_start: interval_end,
                         present_end: interval_end,
                         animation_interval: None,
-                        drawable_wait: None,
                     },
                 }),
                 events,
@@ -1873,7 +1867,6 @@ mod tests {
 
     fn presentation(window_id: WindowId, present_end: scheduler::Instant) -> PresentTiming {
         PresentTiming {
-            drawable_wait: None,
             window_id,
             present_start: present_end - Duration::from_millis(1),
             present_end,

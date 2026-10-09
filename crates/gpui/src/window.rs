@@ -3609,7 +3609,6 @@ impl Window {
         self.window_profiler.record_present(
             present_start,
             Instant::now(),
-            self.platform_window.last_drawable_wait(),
             self.active.get(),
             !self.next_frame_callbacks.borrow().is_empty(),
         );
