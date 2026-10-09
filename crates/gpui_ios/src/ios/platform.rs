@@ -30,12 +30,13 @@ use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained, runtime::ProtocolObj
 use objc2_foundation::{
     NSBundle, NSDictionary, NSNotification, NSNotificationCenter, NSObjectProtocol, NSString, NSURL,
 };
-#[allow(deprecated)] // Match UIScreen enumeration, including displays without a connected scene.
-use objc2_ui_kit::{UIScreenDidConnectNotification, UIScreenDidDisconnectNotification};
 use objc2_ui_kit::{
     UIApplication, UIPasteboard, UIScreenModeDidChangeNotification, UITraitEnvironment,
     UIUserInterfaceStyle, UIViewController,
 };
+#[allow(deprecated)]
+// Match UIScreen enumeration, including displays without a connected scene.
+use objc2_ui_kit::{UIScreenDidConnectNotification, UIScreenDidDisconnectNotification};
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
