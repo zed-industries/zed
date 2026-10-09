@@ -4571,7 +4571,7 @@ async fn test_background_thread_completion_triggers_notification(cx: &mut TestAp
     );
 
     // Complete thread A's turn (transition Running → Completed).
-    connection_a.end_turn(session_id_a.clone(), acp_v2::StopReason::EndTurn);
+    connection_a.end_turn(session_id_a.clone(), acp_v1::StopReason::EndTurn);
     cx.run_until_parked();
 
     // The completed background thread shows a notification indicator.
@@ -7767,7 +7767,7 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
         vec!["v [project]", "  Hello {wt-feature-a} * (running)",]
     );
 
-    connection.end_turn(session_id, acp_v2::StopReason::EndTurn);
+    connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
     cx.run_until_parked();
 
     assert_eq!(

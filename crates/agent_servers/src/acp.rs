@@ -1990,7 +1990,7 @@ impl AgentConnection for AcpConnection {
         &self,
         params: acp_v2::PromptRequest,
         cx: &mut App,
-    ) -> Task<Result<acp_thread::TurnCompletion>> {
+    ) -> Task<Result<acp::PromptResponse>> {
         let session_id = params.session_id.clone();
         let params = match acp_thread::content::prompt_to_v1(params) {
             Ok(params) => params,
@@ -2009,7 +2009,7 @@ impl AgentConnection for AcpConnection {
             }
 
             match result {
-                Ok(response) => acp_thread::TurnCompletion::from_v1(response),
+                Ok(response) => Ok(response),
                 Err(err) => {
                     if err.code == acp::ErrorCode::AuthRequired {
                         return Err(anyhow!(acp::Error::auth_required()));
@@ -2038,9 +2038,7 @@ impl AgentConnection for AcpConnection {
                                 && (details.contains("This operation was aborted")
                                     || details.contains("The user aborted a request"))
                             {
-                                Ok(acp_thread::TurnCompletion::new(
-                                    acp_v2::StopReason::Cancelled,
-                                ))
+                                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
                             } else {
                                 Err(anyhow!(details))
                             }
@@ -2377,7 +2375,7 @@ pub mod test_support {
             &self,
             params: acp_v2::PromptRequest,
             cx: &mut App,
-        ) -> Task<Result<acp_thread::TurnCompletion>> {
+        ) -> Task<Result<acp::PromptResponse>> {
             self.inner.prompt(params, cx)
         }
 
@@ -5183,7 +5181,7 @@ exit 7
                 .await
                 .expect("the final prompt response should arrive before closure")
                 .expect("prompt should finish");
-            assert_eq!(response.stop_reason, acp_v2::StopReason::EndTurn);
+            assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
 
             let (transcript_at_exit, error, incoming_closed_at_exit, stderr_captured_at_exit) =
                 exit_receiver.recv().await.expect("receive process exit");

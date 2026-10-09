@@ -819,9 +819,8 @@ async fn run_agent(
         instruction.to_string(),
     ))];
 
-    let send_future = acp_thread.update(cx, |acp_thread: &mut acp_thread::AcpThread, cx| {
-        acp_thread.send(message, cx)
-    });
+    let send_future =
+        cx.update(|cx| connection.send_and_wait_for_completion(acp_thread.clone(), message, cx));
 
     let timeout_future = if let Some(timeout_secs) = timeout {
         futures::future::Either::Left(
@@ -843,22 +842,18 @@ async fn run_agent(
 
     let outcome = select_biased! {
         result = send_future.fuse() => match result {
-            Ok(Some(acp_thread::SubmissionResponse::Completed(response))) => {
-                eprintln!("[eval-cli] stopped: {:?}", response.stop_reason);
-                if let Some(error) = response.error() {
-                    Err(error).context("agent run failed")
-                } else if response.stop_reason == acp_v2::StopReason::MaxTokens {
+            Ok(stop_reason) => {
+                eprintln!("[eval-cli] stopped: {:?}", stop_reason);
+                if let acp_v2::StopReason::Error(details) = stop_reason {
+                    Err(details
+                        .error
+                        .map(|error| anyhow::Error::new(*error))
+                        .unwrap_or_else(|| anyhow::anyhow!("Agent stopped because of an error")))
+                } else if stop_reason == acp_v2::StopReason::MaxTokens {
                     Err(anyhow::anyhow!("Model hit maximum token limit"))
                 } else {
                     Ok(AgentOutcome::Completed)
                 }
-            }
-            Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
-                Err(anyhow::anyhow!("Native agent returned acceptance instead of turn completion"))
-            }
-            Ok(None) => {
-                eprintln!("[eval-cli] completed (no response)");
-                Ok(AgentOutcome::Completed)
             }
             Err(e) => Err(e).context("agent run failed"),
         },

@@ -2607,11 +2607,41 @@ impl Thread {
         let content = content.into_iter().map(Into::into).collect::<Arc<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
-        self.messages
-            .push(Arc::new(Message::User(UserMessage { id, content })));
-        cx.notify();
+        self.upsert_user_message(id, content, cx);
 
         self.send_existing(cx)
+    }
+
+    pub(crate) fn upsert_user_message(
+        &mut self,
+        id: ClientUserMessageId,
+        content: Arc<[UserMessageContent]>,
+        cx: &mut Context<Self>,
+    ) {
+        let message = Arc::new(Message::User(UserMessage {
+            id: id.clone(),
+            content,
+        }));
+        if let Some(existing) = self
+            .messages
+            .iter_mut()
+            .find(|message| matches!(message.as_ref(), Message::User(user) if user.id == id))
+        {
+            *existing = message;
+        } else {
+            self.messages.push(message);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn last_user_message_id(&self) -> Option<ClientUserMessageId> {
+        self.last_user_message().map(|message| message.id.clone())
+    }
+
+    pub(crate) fn has_user_message(&self, id: &ClientUserMessageId) -> bool {
+        self.messages
+            .iter()
+            .any(|message| matches!(message.as_ref(), Message::User(user) if &user.id == id))
     }
 
     pub fn send_existing(
@@ -2646,7 +2676,23 @@ impl Thread {
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
-        let compaction = self.forced_compaction_target_ix().map(|request_end_ix| {
+        let accepted_marker_index = self.messages.iter().position(
+            |message| matches!(message.as_ref(), Message::User(user) if user.id == id && user.content.is_empty()),
+        );
+        let request_end_index = accepted_marker_index.unwrap_or(self.messages.len());
+        let target = if accepted_marker_index.is_some_and(|index| {
+            matches!(
+                self.messages.get(index + 1).map(|message| message.as_ref()),
+                Some(Message::Compaction(_))
+            )
+        }) {
+            None
+        } else if accepted_marker_index.is_some() {
+            self.forced_compaction_target_ix_before(request_end_index)
+        } else {
+            self.forced_compaction_target_ix()
+        };
+        let compaction = target.map(|request_end_ix| {
             self.advance_prompt_id();
             let request = self.build_compaction_request(request_end_ix, &model, cx);
             self.current_request_token_usage = TokenUsage::default();
@@ -2734,9 +2780,7 @@ impl Thread {
             .into_iter()
             .map(|block| UserMessageContent::from_content_block(block, path_style))
             .collect::<Result<Arc<_>>>()?;
-        self.messages
-            .push(Arc::new(Message::User(UserMessage { id, content })));
-        cx.notify();
+        self.upsert_user_message(id, content, cx);
         Ok(())
     }
 
@@ -3358,10 +3402,7 @@ impl Thread {
                         }
                     }
                     CompactionInsertion::Manual { marker_id } => {
-                        this.messages.push(Arc::new(Message::User(UserMessage {
-                            id: marker_id,
-                            content: Arc::from([]),
-                        })));
+                        this.upsert_user_message(marker_id, Arc::from([]), cx);
                         this.messages.push(compaction);
                     }
                 }
@@ -4586,13 +4627,28 @@ impl Thread {
     /// Insertion point for a manually-triggered compaction.
     /// Returns `None` only when there is nothing to summarize (no messages, or the thread already ends in a compaction).
     fn forced_compaction_target_ix(&self) -> Option<usize> {
+        self.forced_compaction_target_ix_before(self.messages.len())
+    }
+
+    fn forced_compaction_target_ix_before(&self, mut end_index: usize) -> Option<usize> {
+        while end_index > 0
+            && matches!(
+                self.messages.get(end_index - 1).map(|message| message.as_ref()),
+                Some(Message::User(user)) if user.content.is_empty()
+            )
+        {
+            end_index -= 1;
+        }
         if matches!(
-            self.messages.last().map(|message| &**message),
+            end_index
+                .checked_sub(1)
+                .and_then(|index| self.messages.get(index))
+                .map(|message| &**message),
             None | Some(Message::Compaction(_))
         ) {
             return None;
         }
-        Some(self.messages.len())
+        Some(end_index)
     }
 
     fn compaction_model(&self, cx: &App) -> Option<LanguageModel> {

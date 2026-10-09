@@ -7226,15 +7226,13 @@ mod tests {
             &self,
             params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<Result<acp_thread::TurnCompletion>> {
+        ) -> Task<Result<acp::PromptResponse>> {
             let session_id = params.session_id;
             if !self.sessions.lock().contains(&session_id) {
                 return Task::ready(Err(anyhow!("Session not found")));
             }
 
-            Task::ready(Ok(acp_thread::TurnCompletion::new(
-                acp_v2::StopReason::EndTurn,
-            )))
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
@@ -11819,7 +11817,7 @@ mod tests {
         let base_time = Instant::now();
 
         for session_id in session_ids.iter().take(6) {
-            connection.end_turn(session_id.clone(), acp_v2::StopReason::EndTurn);
+            connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
         }
         cx.run_until_parked();
 
@@ -11885,7 +11883,7 @@ mod tests {
         }
 
         for session_id in session_ids.iter() {
-            connection.end_turn(session_id.clone(), acp_v2::StopReason::EndTurn);
+            connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
         }
         cx.run_until_parked();
 
@@ -11938,7 +11936,7 @@ mod tests {
             );
         });
 
-        connection.end_turn(session_id, acp_v2::StopReason::EndTurn);
+        connection.end_turn(session_id, acp::StopReason::EndTurn);
         cx.run_until_parked();
 
         panel.read_with(&cx, |panel, _cx| {
@@ -11993,7 +11991,7 @@ mod tests {
         let base_time = Instant::now();
 
         for session_id in loadable_session_ids.iter().take(6) {
-            loadable_connection.end_turn(session_id.clone(), acp_v2::StopReason::EndTurn);
+            loadable_connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
         }
         cx.run_until_parked();
 
@@ -14092,16 +14090,14 @@ mod tests {
             &self,
             params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<Result<acp_thread::TurnCompletion>> {
+        ) -> Task<Result<acp::PromptResponse>> {
             let session_id = params.session_id;
             if !self.sessions.lock().contains(&session_id) {
                 self.missing_prompt_sessions.lock().push(session_id);
                 return Task::ready(Err(anyhow!("Session not found")));
             }
 
-            Task::ready(Ok(acp_thread::TurnCompletion::new(
-                acp_v2::StopReason::EndTurn,
-            )))
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
