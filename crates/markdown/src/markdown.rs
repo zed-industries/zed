@@ -1724,6 +1724,79 @@ pub enum AutoscrollBehavior {
     Controlled(ScrollHandle),
 }
 
+/// Where a Mermaid diagram is aligned horizontally.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MermaidAlignment {
+    /// Align the diagram to the left.
+    #[default]
+    Left,
+    /// Center the diagram.
+    Center,
+    /// Align the diagram to the right.
+    Right,
+}
+
+/// Layout overrides for top-level Mermaid diagrams.
+///
+/// These defaults describe Zed's native renderer, independently of the
+/// Markdown Preview preference defaults. Nested diagrams use this baseline
+/// to retain their parent layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MermaidLayout {
+    /// Optional Mermaid-specific maximum width for the block.
+    ///
+    /// `None` means no Mermaid-specific width override; Zed's native Markdown
+    /// and Mermaid layout remains responsible for the block width.
+    ///
+    /// Ignored when `width_follows_diagram` is enabled.
+    pub max_width: Option<Pixels>,
+    /// Horizontal alignment for the Mermaid diagram or, when
+    /// `width_follows_diagram` is enabled, for the Mermaid block itself.
+    pub alignment: MermaidAlignment,
+    /// When true, the top-level Mermaid block follows the rendered diagram's
+    /// 100% natural width instead of using Zed's native full-width block layout,
+    /// with enough space for its controls.
+    ///
+    /// This takes precedence over `max_width`. Interactive zoom changes the
+    /// diagram inside the block without changing the block's baseline width.
+    pub width_follows_diagram: bool,
+}
+
+impl MermaidLayout {
+    pub fn has_width_override(&self) -> bool {
+        self.max_width.is_some() || self.width_follows_diagram
+    }
+
+    /// Whether any Mermaid layout override is active. When this
+    /// is `false`, the Mermaid preview uses Zed's native layout unchanged.
+    pub fn has_overrides(&self) -> bool {
+        self.has_width_override() || self.alignment != MermaidAlignment::Left
+    }
+}
+
+/// How a top-level block participates in the content width limit.
+#[derive(Clone, Copy, Debug, Default)]
+enum RootBlockWidth {
+    /// Constrain to `content_max_width`, like normal content.
+    #[default]
+    Default,
+    /// Render at the full width of the container.
+    Full,
+    /// Constrain to this width, ignoring `content_max_width`.
+    Fixed(Pixels),
+}
+
+/// Constrains a top-level block to `max_width`, centering it within the
+/// container.
+fn constrain_width(child: AnyElement, max_width: Pixels) -> AnyElement {
+    div()
+        .w_full()
+        .max_w(max_width)
+        .mx_auto()
+        .child(child)
+        .into_any_element()
+}
+
 pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
@@ -1737,6 +1810,12 @@ pub struct MarkdownElement {
     on_mermaid_zoom: Option<MermaidZoomCallback>,
     image_resolver: Option<Box<dyn Fn(&str, &App) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
+    /// When set, top-level blocks are constrained to this width and centered.
+    /// Blocks may opt out via the internal root block width, e.g. Mermaid
+    /// diagrams that are configured to be wider than the content.
+    content_max_width: Option<Pixels>,
+    /// How Mermaid diagrams are laid out.
+    mermaid_layout: MermaidLayout,
     autoscroll: AutoscrollBehavior,
     /// Test-only hook to observe the laid-out text when this element is
     /// rendered beneath a view, where the layout state isn't otherwise
@@ -1764,6 +1843,8 @@ impl MarkdownElement {
             on_mermaid_zoom: None,
             image_resolver: None,
             show_root_block_markers: false,
+            content_max_width: None,
+            mermaid_layout: MermaidLayout::default(),
             autoscroll: AutoscrollBehavior::Propagate,
             #[cfg(test)]
             on_render: None,
@@ -1867,6 +1948,20 @@ impl MarkdownElement {
 
     pub fn show_root_block_markers(mut self) -> Self {
         self.show_root_block_markers = true;
+        self
+    }
+
+    /// Constrains top-level Markdown blocks to `max_width` and centers them,
+    /// while wide blocks (e.g. Mermaid diagrams) are allowed to use the full
+    /// width of the container. Passing `None` renders all blocks edge to edge.
+    pub fn content_max_width(mut self, max_width: Option<Pixels>) -> Self {
+        self.content_max_width = max_width;
+        self
+    }
+
+    /// Configures how Mermaid diagrams are laid out.
+    pub fn mermaid_layout(mut self, mermaid_layout: MermaidLayout) -> Self {
+        self.mermaid_layout = mermaid_layout;
         self
     }
 
@@ -2627,6 +2722,8 @@ impl Element for MarkdownElement {
             self.style.syntax.clone(),
             highlights,
             parsed_markdown.code_block_highlights.clone(),
+            self.content_max_width,
+            self.mermaid_layout,
         );
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
@@ -2672,6 +2769,7 @@ impl Element for MarkdownElement {
 
             match event {
                 MarkdownEvent::RootStart => {
+                    builder.root_block_width = RootBlockWidth::Default;
                     if self.show_root_block_markers {
                         builder.push_root_block(range, markdown_end);
                     }
@@ -2772,6 +2870,31 @@ impl Element for MarkdownElement {
                                     } => *copy_button_visibility,
                                     _ => CopyButtonVisibility::VisibleOnHover,
                                 };
+                                // Top-level Mermaid blocks only override their
+                                // width when a Mermaid layout option is active:
+                                // width-following releases the block, the width
+                                // limit pins it to `mermaid_max_width`, and
+                                // otherwise the block keeps Zed's native layout.
+                                // Nested diagrams stay within their parent block.
+                                let is_top_level =
+                                    builder.div_stack.len() == builder.root_block_content_depth;
+                                let mermaid_layout = if is_top_level {
+                                    builder.mermaid_layout
+                                } else {
+                                    MermaidLayout::default()
+                                };
+                                if is_top_level {
+                                    builder.root_block_width = match (
+                                        mermaid_layout.width_follows_diagram,
+                                        mermaid_layout.max_width,
+                                    ) {
+                                        (true, _) => RootBlockWidth::Full,
+                                        (false, Some(max_width)) => {
+                                            RootBlockWidth::Fixed(max_width)
+                                        }
+                                        (false, None) => RootBlockWidth::Default,
+                                    };
+                                }
                                 builder.push_sourced_element(
                                     mermaid_diagram.content_range.clone(),
                                     render_mermaid_diagram(
@@ -2783,6 +2906,7 @@ impl Element for MarkdownElement {
                                         showing_code,
                                         zoom,
                                         copy_button_visibility,
+                                        mermaid_layout,
                                         self.on_mermaid_zoom.clone(),
                                         window,
                                         cx,
@@ -3770,6 +3894,16 @@ struct MarkdownElementBuilder {
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
     highlights: MarkdownHighlights,
+    /// See `MarkdownElement::content_max_width`.
+    content_max_width: Option<Pixels>,
+    /// How the current root block should be constrained. Reset at each root
+    /// block boundary.
+    root_block_width: RootBlockWidth,
+    /// Depth of the div holding a root block's contents, used to tell whether a
+    /// block is top-level and therefore eligible to be a wide block.
+    root_block_content_depth: usize,
+    /// How Mermaid diagrams are laid out.
+    mermaid_layout: MermaidLayout,
 }
 
 struct MarkdownHighlights {
@@ -3867,6 +4001,8 @@ impl MarkdownElementBuilder {
         syntax_theme: Arc<SyntaxTheme>,
         highlights: MarkdownHighlights,
         code_block_highlights: Arc<CodeBlockHighlights>,
+        content_max_width: Option<Pixels>,
+        mermaid_layout: MermaidLayout,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3891,6 +4027,10 @@ impl MarkdownElementBuilder {
             table: TableState::default(),
             syntax_theme,
             highlights,
+            content_max_width,
+            root_block_width: RootBlockWidth::Default,
+            root_block_content_depth: 1,
+            mermaid_layout,
         }
     }
 
@@ -3967,6 +4107,7 @@ impl MarkdownElementBuilder {
             markdown_end,
         );
         self.push_div(div().pl_4(), range, markdown_end);
+        self.root_block_content_depth = self.div_stack.len();
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
@@ -4021,6 +4162,20 @@ impl MarkdownElementBuilder {
     }
 
     fn append_child(&mut self, child: AnyElement) {
+        // Only direct children of the root container are top-level blocks, and
+        // they are the ones subject to the content width limit.
+        let child = if self.div_stack.len() == 1 {
+            match self.root_block_width {
+                RootBlockWidth::Full => child,
+                RootBlockWidth::Fixed(max_width) => constrain_width(child, max_width),
+                RootBlockWidth::Default => match self.content_max_width {
+                    Some(max_width) => constrain_width(child, max_width),
+                    None => child,
+                },
+            }
+        } else {
+            child
+        };
         self.div_stack.last_mut().unwrap().div.extend([child]);
     }
 
@@ -4065,6 +4220,7 @@ impl MarkdownElementBuilder {
             )
         });
         self.pop_div();
+        self.root_block_content_depth = self.div_stack.len();
     }
 
     fn pop_div(&mut self) {

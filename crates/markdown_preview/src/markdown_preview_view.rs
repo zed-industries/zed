@@ -1154,6 +1154,16 @@ impl MarkdownPreviewView {
                 }
             });
 
+        // Alignment alone does not need to replace the document's native
+        // width constraint with per-block constraints.
+        let preview_settings = MarkdownPreviewSettings::get_global(cx);
+        if preview_settings.mermaid_layout.has_overrides() {
+            markdown_element = markdown_element.mermaid_layout(preview_settings.mermaid_layout);
+        }
+        if preview_settings.mermaid_layout.has_width_override() {
+            markdown_element = markdown_element.content_max_width(preview_settings.max_width);
+        }
+
         if let Some(active_editor) = active_editor {
             let editor_for_checkbox = active_editor.clone();
             let view_handle = cx.entity().downgrade();
@@ -1876,7 +1886,6 @@ impl Render for MarkdownPreviewView {
                             let markdown_element =
                                 self.render_markdown_element(&preview_theme, window, cx);
                             let markdown = self.markdown.clone();
-                            let max_width = MarkdownPreviewSettings::get_global(cx).max_width;
                             let content = right_click_menu("markdown-preview-context-menu")
                                 .trigger(move |_, _, _| markdown_element)
                                 .maybe_menu(move |window, cx| {
@@ -1930,12 +1939,20 @@ impl Render for MarkdownPreviewView {
                                             })
                                     }))
                                 });
-                            div()
-                                .w_full()
-                                .when_some(max_width, |this, max_width| {
-                                    this.max_w(max_width).mx_auto()
-                                })
-                                .child(content)
+                            let preview_settings = MarkdownPreviewSettings::get_global(cx);
+                            if preview_settings.mermaid_layout.has_width_override() {
+                                // The element handles width per block.
+                                div().w_full().child(content)
+                            } else {
+                                // Zed's native layout: one centered, width-limited
+                                // column wrapping the whole document.
+                                div()
+                                    .w_full()
+                                    .when_some(preview_settings.max_width, |this, max_width| {
+                                        this.max_w(max_width).mx_auto()
+                                    })
+                                    .child(content)
+                            }
                         }),
                 ),
             )

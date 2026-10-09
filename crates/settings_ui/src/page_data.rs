@@ -10,8 +10,9 @@ use theme::SystemAppearance;
 use ui::IntoElement;
 
 use crate::{
-    ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
-    SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
+    ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsDisabledCondition,
+    SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink, USER, active_language,
+    all_language_names,
     pages::{
         open_audio_test_window, render_edit_prediction_setup_page, render_external_agents_page,
         render_llm_providers_page, render_mcp_servers_page, render_sandbox_settings_page,
@@ -28,6 +29,35 @@ const DEFAULT_AUDIO_OUTPUT: AudioOutputDeviceName = AudioOutputDeviceName(None);
 const DEFAULT_EMPTY_AUDIO_OUTPUT: Option<&AudioOutputDeviceName> = Some(&DEFAULT_AUDIO_OUTPUT);
 const DEFAULT_AUDIO_INPUT: AudioInputDeviceName = AudioInputDeviceName(None);
 const DEFAULT_EMPTY_AUDIO_INPUT: Option<&AudioInputDeviceName> = Some(&DEFAULT_AUDIO_INPUT);
+
+fn mermaid_width_follows_diagram(settings: &SettingsContent) -> Option<bool> {
+    settings
+        .markdown_preview
+        .as_ref()?
+        .mermaid_width_follows_diagram
+}
+
+fn custom_mermaid_width_metadata() -> Option<Box<SettingsFieldMetadata>> {
+    Some(Box::new(SettingsFieldMetadata {
+        disabled_when: Some(SettingsDisabledCondition {
+            pick: mermaid_width_follows_diagram,
+            reason: "Mermaid Width Follows Diagram is enabled. Custom width settings are preserved but currently inactive.",
+        }),
+        ..Default::default()
+    }))
+}
+
+fn custom_mermaid_width_is_disabled(settings: &SettingsContent, app: &App) -> bool {
+    // Recheck when an edit is applied: a queued blur, step, or reset may have
+    // originated before the diagram-following setting changed.
+    mermaid_width_follows_diagram(settings)
+        .or_else(|| {
+            app.try_global::<settings::SettingsStore>()?
+                .get_value_from_file(settings::SettingsFile::User, mermaid_width_follows_diagram)
+                .1
+        })
+        .unwrap_or(false)
+}
 
 macro_rules! concat_sections {
     (@vec, $($arr:expr),+ $(,)?) => {{
@@ -10712,7 +10742,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 4] {
+    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Image Viewer",
@@ -10814,6 +10844,117 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                         metadata: None,
                     }],
                 ],
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Use Custom Mermaid Width",
+                    description: "Use a maximum width for top-level Mermaid blocks independently of the Markdown content width. Mermaid Width Follows Diagram takes precedence.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("markdown_preview.limit_mermaid_width"),
+                        pick: |settings_content| {
+                            settings_content
+                                .markdown_preview
+                                .as_ref()?
+                                .limit_mermaid_width
+                                .as_ref()
+                        },
+                        write: |settings_content, value, app| {
+                            if custom_mermaid_width_is_disabled(settings_content, app) {
+                                return;
+                            }
+                            settings_content
+                                .markdown_preview
+                                .get_or_insert_default()
+                                .limit_mermaid_width = value;
+                        },
+                    }),
+                    metadata: custom_mermaid_width_metadata(),
+                },
+                pick_discriminant: |settings_content| {
+                    let enabled = settings_content
+                        .markdown_preview
+                        .as_ref()?
+                        .limit_mermaid_width
+                        .unwrap_or(false);
+                    Some(usize::from(enabled))
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        files: USER,
+                        title: "Maximum Width",
+                        description: "Maximum width of top-level Mermaid blocks, in pixels. Used when Use Custom Mermaid Width is enabled and Mermaid Width Follows Diagram is disabled.",
+                        field: Box::new(SettingField {
+                            organization_override: None,
+                            json_path: Some("markdown_preview.mermaid_max_width"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .markdown_preview
+                                    .as_ref()?
+                                    .mermaid_max_width
+                                    .as_ref()
+                            },
+                            write: |settings_content, value, app| {
+                                if custom_mermaid_width_is_disabled(settings_content, app) {
+                                    return;
+                                }
+                                settings_content
+                                    .markdown_preview
+                                    .get_or_insert_default()
+                                    .mermaid_max_width = value;
+                            },
+                        }),
+                        metadata: custom_mermaid_width_metadata(),
+                    }],
+                ],
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Mermaid Width Follows Diagram",
+                description: "Whether top-level Mermaid blocks follow the diagram's 100% natural width, with enough space for controls, instead of using Zed's default full-width Mermaid block. This takes precedence over Use Custom Mermaid Width. Interactive zoom remains within the block.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.mermaid_width_follows_diagram"),
+                    pick: |settings_content| {
+                        settings_content
+                            .markdown_preview
+                            .as_ref()?
+                            .mermaid_width_follows_diagram
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .markdown_preview
+                            .get_or_insert_default()
+                            .mermaid_width_follows_diagram = value;
+                    },
+                }),
+                metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Mermaid Alignment",
+                description: "Where to align top-level Mermaid diagrams horizontally. In the default or limited-width layout, this aligns the diagram within the Mermaid block; when `mermaid_width_follows_diagram` is enabled, it aligns the block itself.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.mermaid_alignment"),
+                    pick: |settings_content| {
+                        settings_content
+                            .markdown_preview
+                            .as_ref()?
+                            .mermaid_alignment
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .markdown_preview
+                            .get_or_insert_default()
+                            .mermaid_alignment = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Drop Size Target",
