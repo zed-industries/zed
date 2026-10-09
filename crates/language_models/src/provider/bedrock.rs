@@ -2446,11 +2446,12 @@ pub fn into_bedrock(
     }
 
     let selected_effort = |default_effort| {
-        // Astra and Fable 5.1 keep reasoning enabled, so suppressed requests use low effort.
+        // Astra and Fable 5.1 keep reasoning enabled, so suppressed requests use the default
+        // effort, matching the Anthropic and OpenAI providers.
         // <https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra>
         // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html>
         if !request.thinking_allowed {
-            return bedrock::BedrockAdaptiveThinkingEffort::Low;
+            return default_effort;
         }
         request
             .thinking_effort
@@ -3499,22 +3500,29 @@ mod tests {
                 }}),
             ),
         ] {
-            let request = into_bedrock(
-                LanguageModelRequest {
-                    thinking_allowed: true,
-                    ..Default::default()
-                },
-                model.cross_region_inference_id("us-east-1", false)?,
-                model.default_temperature(),
-                model.max_output_tokens(),
-                model.thinking_mode(),
-                model.supports_caching(),
-                model.supports_tool_use(),
-                None,
-                None,
-            )?;
-            assert_eq!(serde_json::to_value(request.thinking)?, expected_thinking);
-            assert_eq!(request.temperature, None);
+            for thinking_allowed in [true, false] {
+                let request = into_bedrock(
+                    LanguageModelRequest {
+                        thinking_allowed,
+                        ..Default::default()
+                    },
+                    model.cross_region_inference_id("us-east-1", false)?,
+                    model.default_temperature(),
+                    model.max_output_tokens(),
+                    model.thinking_mode(),
+                    model.supports_caching(),
+                    model.supports_tool_use(),
+                    None,
+                    None,
+                )?;
+                assert_eq!(
+                    serde_json::to_value(request.thinking)?,
+                    expected_thinking,
+                    "{} with thinking_allowed: {thinking_allowed}",
+                    model.id()
+                );
+                assert_eq!(request.temperature, None);
+            }
             assert!(!converse_language_model(&model).supports_disabling_thinking);
         }
         assert!(converse_language_model(&ConverseModel::ClaudeOpus4_8).supports_disabling_thinking);
