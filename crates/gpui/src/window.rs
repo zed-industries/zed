@@ -5246,11 +5246,9 @@ impl Window {
         measure: crate::elements::TextMeasure,
     ) -> LayoutId {
         self.invalidator.debug_assert_prepaint();
-        let rem_size = self.rem_size();
-        let scale_factor = self.scale_factor();
         let engine = self.layout_engine.as_mut().unwrap();
         engine.set_request_scope(&self.element_id_stack);
-        engine.request_text_layout(rem_size, scale_factor, measure)
+        engine.request_text_layout(measure)
     }
 
     /// Compute the layout for the given id within the given available space.

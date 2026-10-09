@@ -56,6 +56,13 @@ pub struct TaffyLayoutEngine {
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
 
+fn text_layout_style() -> taffy::Style {
+    taffy::Style {
+        display: taffy::Display::Block,
+        ..Default::default()
+    }
+}
+
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
         let mut taffy = TaffyTree::new();
@@ -280,11 +287,9 @@ impl TaffyLayoutEngine {
 
     pub(crate) fn request_text_layout(
         &mut self,
-        rem_size: Pixels,
-        scale_factor: f32,
         measure: crate::elements::TextMeasure,
     ) -> LayoutId {
-        let style = Style::default().to_taffy(rem_size, scale_factor);
+        let style = text_layout_style();
         let context = NodeContext::Text(Box::new(measure));
         if self.cache.is_some() {
             self.request_node(style, &[], Some(context))
@@ -983,6 +988,19 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_layout_style_matches_default_conversion() {
+        for rem_size in [Pixels(12.0), Pixels(16.0), Pixels(24.0)] {
+            for scale_factor in [1.0, 1.25, 1.5, 2.0] {
+                assert_eq!(
+                    text_layout_style(),
+                    Style::default().to_taffy(rem_size, scale_factor),
+                    "rem size {rem_size:?}, scale {scale_factor}"
+                );
+            }
+        }
+    }
 
     fn scoped_request(
         engine: &mut TaffyLayoutEngine,

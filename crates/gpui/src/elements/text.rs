@@ -1567,8 +1567,7 @@ mod tests {
             engine.enable_cache();
             let scope = crate::window::ElementIdStack::default();
             engine.set_request_scope(&scope);
-            let id =
-                engine.request_text_layout(window.rem_size(), window.scale_factor(), moved_measure);
+            let id = engine.request_text_layout(moved_measure);
             engine.compute_layout(id, available, window, cx);
             {
                 let mut state = moved.0.borrow_mut();
@@ -1581,11 +1580,8 @@ mod tests {
             engine.clear();
             let recovered = TextLayout::default();
             engine.set_request_scope(&scope);
-            let recovered_id = engine.request_text_layout(
-                window.rem_size(),
-                window.scale_factor(),
-                recovered.measurement(text, None, window),
-            );
+            let recovered_id =
+                engine.request_text_layout(recovered.measurement(text, None, window));
             assert_eq!(recovered_id, id);
             assert!(
                 recovered.0.borrow().is_none(),
@@ -1871,11 +1867,11 @@ mod tests {
                             {
                                 let layout = TextLayout::default();
                                 engine.set_request_scope(&scope);
-                                let id = engine.request_text_layout(
-                                    window.rem_size(),
-                                    scale,
-                                    layout.measurement(text.clone(), None, window),
-                                );
+                                let id = engine.request_text_layout(layout.measurement(
+                                    text.clone(),
+                                    None,
+                                    window,
+                                ));
                                 if index == 1 {
                                     if let Some(previous_id) = previous_id {
                                         assert_eq!(id, previous_id);
