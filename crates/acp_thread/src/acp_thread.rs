@@ -14092,7 +14092,7 @@ mod tests {
             );
             assert_eq!(location.path.as_os_str(), path.as_os_str());
             assert_eq!(location.line, Some(7));
-            assert_eq!(location.meta, Some(meta.clone()));
+            assert_eq!(location.meta.as_ref(), Some(&meta));
         }
 
         let path = PathBuf::from(path!("/project//./../file.rs"));
@@ -14103,7 +14103,7 @@ mod tests {
         );
         assert_eq!(location.path.as_os_str(), path.as_os_str());
         assert_eq!(location.line, Some(7));
-        assert_eq!(location.meta, Some(meta.clone()));
+        assert_eq!(location.meta.as_ref(), Some(&meta));
 
         #[cfg(unix)]
         {
@@ -14117,7 +14117,7 @@ mod tests {
             );
             assert_eq!(location.path.as_os_str(), path.as_os_str());
             assert_eq!(location.line, Some(7));
-            assert_eq!(location.meta, Some(meta));
+            assert_eq!(location.meta.as_ref(), Some(&meta));
         }
     }
 
