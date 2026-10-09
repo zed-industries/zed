@@ -283,7 +283,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             "anyOf": [
                 { "required": ["request"] },
                 { "required": ["build"] }
-            ]
+            ],
             "allOf": [
                 {
                     "if": {
