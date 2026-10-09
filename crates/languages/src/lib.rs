@@ -152,6 +152,11 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             ..Default::default()
         },
         LanguageInfo {
+            name: "jupyter_notebook",
+            adapters: vec![],
+            ..Default::default()
+        },
+        LanguageInfo {
             name: "markdown",
             adapters: vec![],
             ..Default::default()

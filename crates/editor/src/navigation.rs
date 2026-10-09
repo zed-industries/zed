@@ -1937,6 +1937,13 @@ impl Editor {
                         if let Some(mut nav_history) = editor.nav_history.clone() {
                             nav_history.push_tag(origin, target);
                         }
+                    } else if let Some(navigator) = editor.definition_navigator.clone() {
+                        return Navigated::from_bool(navigator(
+                            target_buffer,
+                            target_ranges,
+                            window,
+                            cx,
+                        ));
                     } else {
                         let Some(workspace) = workspace else {
                             return Navigated::No;

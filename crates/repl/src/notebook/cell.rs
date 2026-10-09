@@ -8,7 +8,7 @@ use gpui::{
     StatefulInteractiveElement, Task, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
-use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownOptions, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
@@ -133,12 +133,13 @@ fn convert_outputs(
             nbformat::v4::Output::ExecuteResult(execute_result) => {
                 Output::new(&execute_result.data, None, window, cx)
             }
-            nbformat::v4::Output::Error(error) => Output::ErrorOutput(ErrorView {
-                ename: error.ename.clone(),
-                evalue: error.evalue.clone(),
-                traceback: cx
-                    .new(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
-            }),
+            nbformat::v4::Output::Error(error) => Output::ErrorOutput(ErrorView::new(
+                error.ename.clone(),
+                error.evalue.clone(),
+                &error.traceback.join("\n"),
+                window,
+                cx,
+            )),
         })
         .collect()
 }
@@ -439,7 +440,18 @@ impl MarkdownCell {
             editor
         });
 
-        let markdown = cx.new(|cx| Markdown::new(source.clone().into(), None, None, cx));
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                source.clone().into(),
+                None,
+                None,
+                MarkdownOptions {
+                    parse_html: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
 
         let editor_subscription =
             cx.subscribe(&editor, move |this, _editor, event, cx| match event {
@@ -487,7 +499,7 @@ impl MarkdownCell {
 
     pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
         let source = self.current_source(cx);
-        let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
+        let source_lines: Vec<String> = source.split_inclusive('\n').map(str::to_string).collect();
 
         nbformat::v4::Cell::Markdown {
             id: self.id.clone(),
@@ -774,7 +786,7 @@ impl CodeCell {
 
     pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
         let source = self.current_source(cx);
-        let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
+        let source_lines: Vec<String> = source.split_inclusive('\n').map(str::to_string).collect();
 
         let outputs = self.outputs_to_nbformat(cx);
 
@@ -829,11 +841,13 @@ impl CodeCell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.outputs.push(Output::ErrorOutput(ErrorView {
-            ename: "Kernel Error".to_string(),
-            evalue: "cell could not be executed".to_string(),
-            traceback: cx.new(|cx| TerminalOutput::from(error_message, window, cx)),
-        }));
+        self.outputs.push(Output::ErrorOutput(ErrorView::new(
+            "Kernel Error".to_string(),
+            "cell could not be executed".to_string(),
+            error_message,
+            window,
+            cx,
+        )));
         self.execution_start_time = None;
         self.is_executing = false;
         cx.notify();
@@ -886,12 +900,13 @@ impl CodeCell {
                 self.finish_execution();
             }
             JupyterMessageContent::ErrorOutput(error) => {
-                self.outputs.push(Output::ErrorOutput(ErrorView {
-                    ename: error.ename.clone(),
-                    evalue: error.evalue.clone(),
-                    traceback: cx
-                        .new(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
-                }));
+                self.outputs.push(Output::ErrorOutput(ErrorView::new(
+                    error.ename.clone(),
+                    error.evalue.clone(),
+                    &error.traceback.join("\n"),
+                    window,
+                    cx,
+                )));
             }
             _ => {}
         }
@@ -1243,7 +1258,11 @@ pub struct RawCell {
 
 impl RawCell {
     pub fn to_nbformat_cell(&self) -> nbformat::v4::Cell {
-        let source_lines: Vec<String> = self.source.lines().map(|l| format!("{}\n", l)).collect();
+        let source_lines: Vec<String> = self
+            .source
+            .split_inclusive('\n')
+            .map(str::to_string)
+            .collect();
 
         nbformat::v4::Cell::Raw {
             id: self.id.clone(),

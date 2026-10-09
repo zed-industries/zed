@@ -15,8 +15,8 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task, TaskExt,
     WeakEntity, Window,
 };
-use language::Capability;
 pub use language::HighlightedText;
+use language::{Buffer, Capability};
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -350,6 +350,19 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         None
     }
 
+    /// The buffer an item presents, for items that aren't editors, such as notebooks, so
+    /// the status bar can show and change its language like it does for files.
+    fn content_buffer(&self, _cx: &App) -> Option<Entity<Buffer>> {
+        None
+    }
+
+    /// The editor that has the cursor, for items that host editors without being one, such
+    /// as notebooks, so the status bar can show the cursor position. Emit an event mapped
+    /// to `ItemEvent::UpdateTab` when it changes.
+    fn focused_editor(&self, _cx: &App) -> Option<AnyEntity> {
+        None
+    }
+
     /// Returns optional elements to render to the left of the breadcrumb.
     fn breadcrumb_prefix(
         &self,
@@ -565,6 +578,8 @@ pub trait ItemHandle: 'static + Send {
     fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)>;
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement>;
     fn show_toolbar(&self, cx: &App) -> bool;
+    fn content_buffer(&self, cx: &App) -> Option<Entity<Buffer>>;
+    fn focused_editor(&self, cx: &App) -> Option<AnyEntity>;
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a App) -> &'a WorkspaceSettings;
@@ -1128,6 +1143,14 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn show_toolbar(&self, cx: &App) -> bool {
         self.read(cx).show_toolbar()
+    }
+
+    fn content_buffer(&self, cx: &App) -> Option<Entity<Buffer>> {
+        self.read(cx).content_buffer(cx)
+    }
+
+    fn focused_editor(&self, cx: &App) -> Option<AnyEntity> {
+        self.read(cx).focused_editor(cx)
     }
 
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>> {

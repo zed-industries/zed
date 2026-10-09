@@ -3,7 +3,7 @@ use gpui::{
     App, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity,
     Window, div,
 };
-use language::LanguageName;
+use language::{Buffer, LanguageName};
 use settings::Settings as _;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
@@ -26,15 +26,29 @@ impl ActiveBufferLanguage {
     }
 
     fn update_language(&mut self, editor: Entity<Editor>, _: &mut Window, cx: &mut Context<Self>) {
-        self.active_language = Some(None);
+        let buffer = editor.read(cx).active_buffer(cx);
+        self.set_language_from_buffer(buffer.as_ref(), cx);
+    }
 
-        let editor = editor.read(cx);
-        if let Some(buffer) = editor.active_buffer(cx)
-            && let Some(language) = buffer.read(cx).language()
-        {
-            self.active_language = Some(Some(language.name()));
-        }
+    fn update_content_buffer_language(
+        &mut self,
+        buffer: Entity<Buffer>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_language_from_buffer(Some(&buffer), cx);
+    }
 
+    fn set_language_from_buffer(
+        &mut self,
+        buffer: Option<&Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_language = Some(
+            buffer
+                .and_then(|buffer| buffer.read(cx).language())
+                .map(|language| language.name()),
+        );
         cx.notify();
     }
 }
@@ -81,6 +95,10 @@ impl StatusItemView for ActiveBufferLanguage {
             self._observe_active_editor =
                 Some(cx.observe_in(&editor, window, Self::update_language));
             self.update_language(editor, window, cx);
+        } else if let Some(buffer) = active_pane_item.and_then(|item| item.content_buffer(cx)) {
+            self._observe_active_editor =
+                Some(cx.observe_in(&buffer, window, Self::update_content_buffer_language));
+            self.update_content_buffer_language(buffer, window, cx);
         } else {
             self.active_language = None;
             self._observe_active_editor = None;

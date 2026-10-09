@@ -74,7 +74,11 @@ pub fn text_style(window: &mut Window, cx: &App) -> TextStyle {
 }
 
 /// Returns the default terminal size for the terminal output.
-pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBounds {
+pub fn terminal_size(
+    columns: usize,
+    window: &mut Window,
+    cx: &mut App,
+) -> terminal::TerminalBounds {
     let text_style = text_style(window, cx);
     let text_system = window.text_system();
 
@@ -89,7 +93,6 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBou
         .unwrap_or(Pixels::ZERO);
 
     let num_lines = ReplSettings::get_global(cx).max_lines;
-    let columns = ReplSettings::get_global(cx).max_columns;
 
     // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
     let width = columns as f32 * cell_width;
@@ -133,7 +136,14 @@ impl TerminalOutput {
     /// and sets up the necessary components for handling terminal events and rendering.
     ///
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let terminal_bounds = terminal_size(window, cx);
+        let columns = ReplSettings::get_global(cx).max_columns;
+        Self::new_with_columns(columns, window, cx)
+    }
+
+    /// Creates a new `TerminalOutput` that wraps text at `columns` instead of the
+    /// configured `max_columns`.
+    pub fn new_with_columns(columns: usize, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let terminal_bounds = terminal_size(columns, window, cx);
         let background_executor = cx.background_executor().clone();
         let terminal_builder = TerminalBuilder::new_display_only_with_bounds(
             TerminalSettings::get_global(cx).cursor_shape,
@@ -165,6 +175,18 @@ impl TerminalOutput {
     /// A new instance of `TerminalOutput` containing the provided text.
     pub fn from(text: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut output = Self::new(window, cx);
+        output.append_text(text, cx);
+        output
+    }
+
+    /// Creates a new `TerminalOutput` with initial content that wraps at `columns`.
+    pub fn from_with_columns(
+        text: &str,
+        columns: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut output = Self::new_with_columns(columns, window, cx);
         output.append_text(text, cx);
         output
     }

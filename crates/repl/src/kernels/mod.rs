@@ -1,5 +1,9 @@
 mod native_kernel;
-use std::{fmt::Debug, future::Future, path::PathBuf};
+use std::{
+    fmt::Debug,
+    future::Future,
+    path::{Path, PathBuf},
+};
 
 use futures::{channel::mpsc, future::Shared};
 use gpui::{App, Entity, Task, Window};
@@ -20,7 +24,7 @@ pub use wsl_kernel::*;
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures::{FutureExt, StreamExt};
 use gpui::{AppContext, AsyncWindowContext, Context};
 use jupyter_protocol::{JupyterKernelspec, JupyterMessageContent};
@@ -405,6 +409,177 @@ fn extract_environment_kind(toolchain_json: &serde_json::Value) -> Option<String
     Some(label.to_string())
 }
 
+/// Environment variables that make the environment owning `python_path` the active one,
+/// the same way activating a virtual environment would.
+pub fn python_environment_variables(python_path: &Path) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    if let Some(python_bin_dir) = python_path.parent() {
+        if let Some(path_var) = std::env::var_os("PATH") {
+            let mut paths = std::env::split_paths(&path_var).collect::<Vec<_>>();
+            paths.insert(0, python_bin_dir.to_path_buf());
+            if let Ok(new_path) = std::env::join_paths(paths) {
+                env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
+            }
+        }
+
+        if let Some(venv_root) = python_bin_dir.parent() {
+            env.insert(
+                "VIRTUAL_ENV".to_string(),
+                venv_root.to_string_lossy().to_string(),
+            );
+        }
+    }
+    env
+}
+
+pub fn python_env_kernel_specification(
+    name: String,
+    python_path: PathBuf,
+    has_ipykernel: bool,
+    environment_kind: Option<String>,
+) -> PythonEnvKernelSpecification {
+    let kernelspec = JupyterKernelspec {
+        argv: vec![
+            python_path.to_string_lossy().to_string(),
+            "-m".to_string(),
+            "ipykernel_launcher".to_string(),
+            "-f".to_string(),
+            "{connection_file}".to_string(),
+        ],
+        display_name: name.clone(),
+        language: "python".to_string(),
+        interrupt_mode: None,
+        metadata: None,
+        env: Some(python_environment_variables(&python_path)),
+    };
+    PythonEnvKernelSpecification {
+        name,
+        path: python_path,
+        kernelspec,
+        has_ipykernel,
+        environment_kind,
+    }
+}
+
+pub fn venv_python_path(environment_root: &Path) -> PathBuf {
+    if cfg!(target_os = "windows") {
+        environment_root.join("Scripts").join("python.exe")
+    } else {
+        environment_root.join("bin").join("python")
+    }
+}
+
+/// Looks for a virtual environment directly inside `directory` (e.g. `.venv`), for when
+/// toolchain discovery doesn't cover it, such as a notebook opened on its own.
+pub fn find_venv_python(directory: &Path) -> Option<PathBuf> {
+    VENV_DIR_NAMES
+        .iter()
+        .map(|name| venv_python_path(&directory.join(name)))
+        .find(|python_path| python_path.is_file())
+}
+
+pub async fn python_has_ipykernel(python_path: &Path) -> bool {
+    util::command::new_command(python_path)
+        .args(&["-c", "import ipykernel"])
+        .output()
+        .await
+        .is_ok_and(|output| output.status.success())
+}
+
+async fn python_has_pip(python_path: &Path) -> bool {
+    util::command::new_command(python_path)
+        .args(&["-m", "pip", "--version"])
+        .output()
+        .await
+        .is_ok_and(|output| output.status.success())
+}
+
+/// Installs `ipykernel` into the environment owning `python_path`. Environments created by
+/// uv don't ship pip, so uv is used for those and whenever pip is unavailable.
+pub async fn install_ipykernel(python_path: &Path, prefer_uv: bool) -> Result<()> {
+    let output = if prefer_uv || !python_has_pip(python_path).await {
+        util::command::new_command("uv")
+            .args(&["pip", "install", "ipykernel", "--python"])
+            .arg(python_path)
+            .output()
+            .await
+            .context("failed to run uv pip install ipykernel")?
+    } else {
+        util::command::new_command(python_path)
+            .args(&["-m", "pip", "install", "ipykernel"])
+            .output()
+            .await
+            .context("failed to run pip install ipykernel")?
+    };
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("{}", stderr.lines().last().unwrap_or("unknown error"))
+    }
+}
+
+pub const GENERIC_PYTHON_KERNEL_NAME: &str = "Python 3 (Zed)";
+
+pub fn generic_python_environment_dir() -> PathBuf {
+    paths::data_dir().join("repl").join("python")
+}
+
+/// Creates, if needed, the environment Zed falls back to when the project has no Python
+/// environment of its own, and returns its interpreter. It is a regular virtual environment
+/// so users can install packages into it from a terminal.
+pub async fn ensure_generic_python_environment() -> Result<PathBuf> {
+    let environment_root = generic_python_environment_dir();
+    let python_path = venv_python_path(&environment_root);
+
+    if !python_path.is_file() {
+        if let Some(parent) = environment_root.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+
+        let created_with_uv = util::command::new_command("uv")
+            .arg("venv")
+            .arg(&environment_root)
+            .output()
+            .await
+            .is_ok_and(|output| output.status.success());
+
+        if !created_with_uv {
+            let system_python = if cfg!(target_os = "windows") {
+                "python"
+            } else {
+                "python3"
+            };
+            let output = util::command::new_command(system_python)
+                .args(&["-m", "venv"])
+                .arg(&environment_root)
+                .output()
+                .await
+                .with_context(|| {
+                    format!("failed to run {system_python}; install Python or uv to run notebooks")
+                })?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!(
+                    "failed to create a Python environment in {}: {}",
+                    environment_root.display(),
+                    stderr.lines().last().unwrap_or("unknown error")
+                );
+            }
+        }
+    }
+
+    if !python_has_ipykernel(&python_path).await {
+        install_ipykernel(&python_path, false)
+            .await
+            .context("failed to install ipykernel in Zed's Python environment")?;
+    }
+
+    Ok(python_path)
+}
+
 pub fn python_env_kernel_specifications(
     project: &Entity<Project>,
     worktree_id: WorktreeId,
@@ -514,20 +689,7 @@ pub fn python_env_kernel_specifications(
                         .map(|output| output.status.success())
                         .unwrap_or(false);
 
-                    let mut env = HashMap::new();
-                    if let Some(python_bin_dir) = PathBuf::from(&python_path).parent() {
-                        if let Some(path_var) = std::env::var_os("PATH") {
-                            let mut paths = std::env::split_paths(&path_var).collect::<Vec<_>>();
-                            paths.insert(0, python_bin_dir.to_path_buf());
-                            if let Ok(new_path) = std::env::join_paths(paths) {
-                                env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
-                            }
-                        }
-
-                        if let Some(venv_root) = python_bin_dir.parent() {
-                            env.insert("VIRTUAL_ENV".to_string(), venv_root.to_string_lossy().to_string());
-                        }
-                    }
+                    let env = python_environment_variables(Path::new(&python_path));
 
                     log::info!("Preparing Python kernel for toolchain: {}", toolchain.name);
                     log::info!("Python path: {}", python_path);

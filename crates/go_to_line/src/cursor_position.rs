@@ -272,7 +272,13 @@ impl StatusItemView for CursorPosition {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+        let editor = active_pane_item.and_then(|item| {
+            item.act_as::<Editor>(cx).or_else(|| {
+                item.focused_editor(cx)
+                    .and_then(|editor| editor.downcast::<Editor>().ok())
+            })
+        });
+        if let Some(editor) = editor {
             self._observe_active_editor = Some(cx.subscribe_in(
                 &editor,
                 window,

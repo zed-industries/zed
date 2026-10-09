@@ -579,16 +579,13 @@ impl ExecutionView {
                     return;
                 }
             }
-            JupyterMessageContent::ErrorOutput(result) => {
-                let terminal =
-                    cx.new(|cx| TerminalOutput::from(&result.traceback.join("\n"), window, cx));
-
-                Output::ErrorOutput(ErrorView {
-                    ename: result.ename.clone(),
-                    evalue: result.evalue.clone(),
-                    traceback: terminal,
-                })
-            }
+            JupyterMessageContent::ErrorOutput(result) => Output::ErrorOutput(ErrorView::new(
+                result.ename.clone(),
+                result.evalue.clone(),
+                &result.traceback.join("\n"),
+                window,
+                cx,
+            )),
             JupyterMessageContent::ExecuteReply(reply) => {
                 for payload in reply.payload.iter() {
                     if let runtimelib::Payload::Page { data, .. } = payload {

@@ -51,11 +51,11 @@ impl LanguageSelector {
         cx: &mut Context<Workspace>,
     ) -> Option<()> {
         let registry = workspace.app_state().languages.clone();
-        let buffer = workspace
-            .active_item(cx)?
-            .act_as::<Editor>(cx)?
-            .read(cx)
-            .active_buffer(cx)?;
+        let active_item = workspace.active_item(cx)?;
+        let buffer = match active_item.act_as::<Editor>(cx) {
+            Some(editor) => editor.read(cx).active_buffer(cx)?,
+            None => active_item.content_buffer(cx)?,
+        };
         let project = workspace.project().clone();
 
         workspace.toggle_modal(window, cx, move |window, cx| {

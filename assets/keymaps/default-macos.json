@@ -1709,6 +1709,7 @@
       "cmd-shift-m": "notebook::AddMarkdownBlock",
       "cmd-shift-r": "notebook::RestartKernel",
       "cmd-c": "notebook::InterruptKernel",
+      "cmd-f": "buffer_search::Deploy",
     },
   },
   {

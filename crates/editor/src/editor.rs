@@ -1004,6 +1004,7 @@ pub struct Editor {
     hard_wrap: Option<usize>,
     project: Option<Entity<Project>>,
     semantics_provider: Option<Rc<dyn SemanticsProvider>>,
+    definition_navigator: Option<DefinitionNavigator>,
     completion_provider: Option<Rc<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Entity<BlinkManager>,
@@ -2379,6 +2380,7 @@ impl Editor {
             semantics_provider: project
                 .as_ref()
                 .map(|project| Rc::new(project.downgrade()) as _),
+            definition_navigator: None,
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
@@ -3288,6 +3290,12 @@ impl Editor {
 
     pub fn set_semantics_provider(&mut self, provider: Option<Rc<dyn SemanticsProvider>>) {
         self.semantics_provider = provider;
+    }
+
+    /// Lets an editor hosted outside a workspace pane, such as a notebook cell, decide how to
+    /// show a definition that lives in another buffer.
+    pub fn set_definition_navigator(&mut self, navigator: Option<DefinitionNavigator>) {
+        self.definition_navigator = navigator;
     }
 
     pub fn placeholder_text(&self, cx: &mut App) -> Option<String> {
@@ -11813,6 +11821,10 @@ impl CollaborationHub for Entity<Project> {
         this.user_store().read(cx).participant_names(user_ids, cx)
     }
 }
+
+/// Navigates to ranges of a buffer other than the editor's own, returning whether it did.
+pub type DefinitionNavigator =
+    Rc<dyn Fn(Entity<Buffer>, Vec<Range<Point>>, &mut Window, &mut App) -> bool>;
 
 pub trait SemanticsProvider {
     fn hover(

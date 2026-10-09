@@ -10,7 +10,7 @@ use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
 use workspace::{Workspace, notifications::NotificationId};
 
-use crate::kernels::PythonEnvKernelSpecification;
+use crate::kernels::{PythonEnvKernelSpecification, install_ipykernel};
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{
@@ -109,34 +109,8 @@ pub fn install_ipykernel_and_assign(
     let weak_workspace = workspace.map(|w| w.downgrade());
     let window_handle = window.window_handle();
 
-    let install_task = cx.background_spawn(async move {
-        let output = if is_uv {
-            util::command::new_command("uv")
-                .args(&[
-                    "pip",
-                    "install",
-                    "ipykernel",
-                    "--python",
-                    &python_path.to_string_lossy(),
-                ])
-                .output()
-                .await
-                .context("failed to run uv pip install ipykernel")?
-        } else {
-            util::command::new_command(python_path.to_string_lossy().as_ref())
-                .args(&["-m", "pip", "install", "ipykernel"])
-                .output()
-                .await
-                .context("failed to run pip install ipykernel")?
-        };
-
-        if output.status.success() {
-            anyhow::Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("{}", stderr.lines().last().unwrap_or("unknown error"))
-        }
-    });
+    let install_task =
+        cx.background_spawn(async move { install_ipykernel(&python_path, is_uv).await });
 
     cx.spawn(async move |cx| {
         let result = install_task.await;

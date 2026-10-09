@@ -232,6 +232,144 @@ fn is_br_tag(html: &str) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("br"))
 }
 
+const FONT_AWESOME_STYLE_CLASSES: &[&str] = &[
+    "fa",
+    "fas",
+    "far",
+    "fab",
+    "fal",
+    "fad",
+    "fa-solid",
+    "fa-regular",
+    "fa-brands",
+    "fa-light",
+    "fa-thin",
+    "fa-duotone",
+];
+
+/// Jupyter notebooks often decorate markdown with Font Awesome icons such as
+/// `<i class="fa fa-gear"></i>`, which Jupyter renders with its bundled icon font.
+/// We don't ship that font, so common icons are mapped to Unicode symbols and the
+/// rest are dropped rather than shown as raw HTML.
+fn font_awesome_icon(html: &str) -> Option<&'static str> {
+    let inner = html.trim().strip_prefix('<')?.strip_suffix('>')?;
+    let inner = inner.strip_suffix('/').unwrap_or(inner);
+    let (tag_name, attributes) =
+        inner.split_once(|character: char| character.is_ascii_whitespace())?;
+    if !tag_name.eq_ignore_ascii_case("i") && !tag_name.eq_ignore_ascii_case("span") {
+        return None;
+    }
+    let classes = html_attribute_value(attributes, "class")?;
+    if !classes
+        .split_ascii_whitespace()
+        .any(|class| FONT_AWESOME_STYLE_CLASSES.contains(&class))
+    {
+        return None;
+    }
+    Some(
+        classes
+            .split_ascii_whitespace()
+            .filter_map(|class| class.strip_prefix("fa-"))
+            .find_map(font_awesome_symbol)
+            .unwrap_or(""),
+    )
+}
+
+fn font_awesome_symbol(name: &str) -> Option<&'static str> {
+    let symbol = match name {
+        "gear" | "cog" | "gears" | "cogs" => "⚙️",
+        "book" | "book-open" => "📖",
+        "info" | "info-circle" | "circle-info" => "ℹ️",
+        "exclamation-triangle" | "triangle-exclamation" | "warning" => "⚠️",
+        "exclamation" | "exclamation-circle" | "circle-exclamation" => "❗",
+        "question" | "question-circle" | "circle-question" => "❓",
+        "check" | "check-circle" | "circle-check" | "check-square" | "square-check" => "✅",
+        "times" | "xmark" | "times-circle" | "circle-xmark" | "close" => "❌",
+        "lightbulb" | "lightbulb-o" => "💡",
+        "pencil" | "pen" | "edit" | "pen-to-square" | "pencil-square-o" => "✏️",
+        "star" => "⭐",
+        "heart" => "❤️",
+        "flag" => "🚩",
+        "bell" => "🔔",
+        "bookmark" => "🔖",
+        "file" | "file-o" | "file-text" | "file-lines" => "📄",
+        "folder" | "folder-open" => "📁",
+        "search" | "magnifying-glass" => "🔍",
+        "link" => "🔗",
+        "lock" => "🔒",
+        "key" => "🔑",
+        "home" | "house" => "🏠",
+        "user" => "👤",
+        "users" => "👥",
+        "clock" | "clock-o" => "🕒",
+        "calendar" | "calendar-days" => "📅",
+        "download" => "⬇️",
+        "upload" => "⬆️",
+        "arrow-right" => "➡️",
+        "arrow-left" => "⬅️",
+        "arrow-up" => "⬆️",
+        "arrow-down" => "⬇️",
+        "trophy" => "🏆",
+        "rocket" => "🚀",
+        "bug" => "🐛",
+        "flask" => "⚗️",
+        "graduation-cap" => "🎓",
+        "chart-bar" | "bar-chart" | "chart-line" | "line-chart" => "📊",
+        "calculator" => "🧮",
+        "database" => "🗄️",
+        "terminal" | "code" => "💻",
+        "envelope" => "✉️",
+        "comment" | "comments" => "💬",
+        "thumbs-up" => "👍",
+        "thumbs-down" => "👎",
+        "hand-point-right" | "hand-o-right" => "👉",
+        _ => return None,
+    };
+    Some(symbol)
+}
+
+fn html_attribute_value<'a>(mut attributes: &'a str, name: &str) -> Option<&'a str> {
+    loop {
+        attributes = attributes.trim_start();
+        let name_end = attributes
+            .find(|character: char| character == '=' || character.is_ascii_whitespace())
+            .unwrap_or(attributes.len());
+        if name_end == 0 {
+            return None;
+        }
+        let (attribute_name, rest) = attributes.split_at(name_end);
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            if rest.is_empty() {
+                return None;
+            }
+            attributes = rest;
+            continue;
+        };
+        let rest = rest.trim_start();
+        let (value, rest) = match rest.chars().next()? {
+            quote @ ('"' | '\'') => {
+                let quoted = &rest[quote.len_utf8()..];
+                let end = quoted.find(quote)?;
+                (&quoted[..end], &quoted[end + quote.len_utf8()..])
+            }
+            _ => rest.split_at(
+                rest.find(|character: char| character.is_ascii_whitespace())
+                    .unwrap_or(rest.len()),
+            ),
+        };
+        if attribute_name.eq_ignore_ascii_case(name) {
+            return Some(value);
+        }
+        attributes = rest;
+    }
+}
+
+fn is_closing_icon_tag(html: &str) -> bool {
+    let html = html.trim();
+    html.eq_ignore_ascii_case("</i>") || html.eq_ignore_ascii_case("</span>")
+}
+
 fn yaml_frontmatter_candidate(text: &str) -> Option<&str> {
     let after_fence = text.strip_prefix("---")?;
     let opening_whitespace_length = after_fence
@@ -592,7 +730,9 @@ pub(crate) fn parse_markdown_with_options(
                     };
                     let next_text = match next_event {
                         pulldown_cmark::Event::Text(next_event) => next_event,
-                        pulldown_cmark::Event::InlineHtml(_) => CowStr::Borrowed(""),
+                        pulldown_cmark::Event::InlineHtml(html) => {
+                            CowStr::Borrowed(font_awesome_icon(&html).unwrap_or(""))
+                        }
                         _ => unreachable!(),
                     };
                     let next_len = last_len + next_text.len();
@@ -717,6 +857,16 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::InlineHtml(html) => {
                 if parse_html && is_br_tag(&html) {
                     state.push_event(range, MarkdownEvent::HardBreak)
+                } else if parse_html && let Some(icon) = font_awesome_icon(&html) {
+                    let mut icon_range = range;
+                    if let Some((pulldown_cmark::Event::InlineHtml(next_html), next_range)) =
+                        parser.peek()
+                        && is_closing_icon_tag(next_html)
+                    {
+                        icon_range.end = next_range.end;
+                        parser.next();
+                    }
+                    state.push_event(icon_range, MarkdownEvent::SubstitutedText(icon.to_string()))
                 } else {
                     state.push_event(range, MarkdownEvent::InlineHtml)
                 }
@@ -2083,5 +2233,62 @@ mod tests {
                 "unrecognized inline HTML \"{input}\" should not emit HardBreak"
             );
         }
+    }
+
+    fn rendered_text(input: &str, parsed: &ParsedMarkdownData) -> String {
+        parsed
+            .events
+            .iter()
+            .filter_map(|(range, event)| match event {
+                MarkdownEvent::Text => Some(input[range.clone()].to_string()),
+                MarkdownEvent::SubstitutedText(text) => Some(text.clone()),
+                MarkdownEvent::InlineHtml => Some(input[range.clone()].to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_font_awesome_icons_render_as_symbols() {
+        for (input, expected) in [
+            (
+                "**<i class=\"fa fa-gear fa-spin fa-1x\"></i> EXERCICE.** Generate",
+                "⚙️ EXERCICE. Generate",
+            ),
+            (
+                "> **<i class=\"fa fa-solid fa-book\"></i>**  The frequency",
+                "📖  The frequency",
+            ),
+            ("Read <i class='fas fa-book-open'></i> this", "Read 📖 this"),
+            (
+                "Unknown <i class=\"fa fa-not-an-icon\"></i>icon",
+                "Unknown icon",
+            ),
+        ] {
+            let parsed = parse_markdown_with_options(input, true, false, false);
+            assert_eq!(rendered_text(input, &parsed), expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn test_font_awesome_icons_untouched_without_parse_html() {
+        let input = "<i class=\"fa fa-gear\"></i> text";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        assert_eq!(rendered_text(input, &parsed), input);
+    }
+
+    #[test]
+    fn test_non_font_awesome_italic_is_not_an_icon() {
+        assert_eq!(font_awesome_icon("<i>"), None);
+        assert_eq!(font_awesome_icon("<i class=\"fancy\">"), None);
+        assert_eq!(font_awesome_icon("<div class=\"fa fa-gear\">"), None);
+        assert_eq!(
+            font_awesome_icon("<i class=fa-solid data-x fa-gear>"),
+            Some("")
+        );
+        assert_eq!(
+            font_awesome_icon("<i aria-hidden class=\"fa fa-gear\">"),
+            Some("⚙️")
+        );
     }
 }
