@@ -5252,6 +5252,8 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    // Thread::new snapshots the default profile, so load the watched settings first.
+    cx.run_until_parked();
     let thread = cx.new(|cx| {
         Thread::new(
             project,
