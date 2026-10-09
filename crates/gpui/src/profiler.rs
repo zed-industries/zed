@@ -990,10 +990,12 @@ pub struct FrameDurationSnapshot {
 #[cfg(feature = "profiler")]
 pub const FRAME_DURATION_BUCKETS_MS: [u64; 9] = [4, 8, 16, 33, 50, 100, 250, 500, 1000];
 
-/// Upper bounds, in percent of the refresh interval, of the work-per-frame
-/// buckets in [`RefreshIntervalFrames`]. Each bucket counts values up to and
-/// including its bound, so frames in buckets up to 100 were on time; a final
-/// bucket counts everything more.
+/// Upper bounds, in percent of the display's real refresh interval, of the
+/// work-per-frame buckets in [`RefreshIntervalFrames`]. Each bucket counts
+/// values up to and including its bound; a final bucket counts everything
+/// more. Whether a frame was on time is judged by [`FrameTiming::budget`]
+/// instead, which never drops below [`FRAME_BUDGET_FLOOR`], so on displays
+/// faster than 120 Hz frames above 100% can still be on time.
 #[cfg(feature = "profiler")]
 pub const FRAME_WORK_BUCKETS_PERCENT: [u64; 7] = [25, 50, 75, 100, 150, 200, 400];
 
