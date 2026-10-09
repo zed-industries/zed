@@ -9259,6 +9259,25 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Usage Status",
+                description: "Whether to show plan usage limits (5-hour window and weekly cap) next to the context usage indicator. Currently reported by Claude Agent when signed in with a Claude subscription.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.show_usage_status"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.show_usage_status.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .show_usage_status = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Merge Conflict Indicator",
                 description: "Whether to show the merge conflict indicator in the status bar that offers to resolve conflicts using the agent.",
                 field: Box::new(SettingField {

@@ -11,6 +11,7 @@ use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity,
     SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
     SubmissionId, SubmissionResponse, SubmissionState, decode_path_escapes,
+    rate_limits::{RateLimitStatus, RateLimitWindowKind},
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
@@ -5057,6 +5058,7 @@ impl ThreadView {
                                     .flex_wrap()
                                     .gap_1()
                                     .children(discard_draft_button)
+                                    .children(self.render_usage_status(cx))
                                     .children(self.render_token_usage(cx))
                                     .children(self.profile_selector.clone())
                                     .map(|this| match self.config_options_view.clone() {
@@ -5293,6 +5295,84 @@ impl ThreadView {
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
             .is_some_and(|model| model.supports_split_token_display())
+    }
+
+    fn render_usage_status(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        if !AgentSettings::get_global(cx).show_usage_status {
+            return None;
+        }
+        let rate_limits = self.thread.read(cx).rate_limits();
+        if rate_limits.is_empty() {
+            return None;
+        }
+
+        let now = chrono::Utc::now();
+        let windows = [
+            (RateLimitWindowKind::FiveHour, "5h", "5 Hours"),
+            (RateLimitWindowKind::SevenDay, "7d", "7 Days"),
+        ]
+        .into_iter()
+        .filter_map(|(kind, short_name, title)| {
+            rate_limits
+                .window(kind)
+                .map(|window| (window, short_name, title))
+        })
+        .collect::<Vec<_>>();
+
+        let is_warning = windows.iter().any(|(window, _, _)| window.is_warning());
+        let label = windows
+            .iter()
+            .map(|(window, short_name, _)| match window.utilization {
+                Some(utilization) => format!("{short_name} {}", format_utilization(utilization)),
+                None => short_name.to_string(),
+            })
+            .join(" · ");
+        let tooltip_windows = windows
+            .iter()
+            .map(|(window, _, title)| {
+                let reset = window.resets_at.map(|resets_at| {
+                    format!("resets in {}", format_duration_until(resets_at, now))
+                });
+                UsageStatusTooltipWindow {
+                    title,
+                    percentage: window.utilization.map(format_utilization),
+                    detail: if window.status == RateLimitStatus::Rejected {
+                        Some(match reset {
+                            Some(reset) => format!("limit reached, {reset}"),
+                            None => "limit reached".to_string(),
+                        })
+                    } else {
+                        reset
+                    },
+                    is_warning: window.is_warning(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
+
+        Some(
+            div()
+                .id("agent-usage-status")
+                .flex_shrink_0()
+                .mr_1()
+                .child(
+                    Label::new(label)
+                        .size(LabelSize::Small)
+                        .color(if is_warning {
+                            Color::Warning
+                        } else {
+                            Color::Muted
+                        }),
+                )
+                .tooltip(move |_window, cx| {
+                    let windows = tooltip_windows.clone();
+                    cx.new(move |_cx| UsageStatusTooltip {
+                        windows,
+                        separator_color,
+                    })
+                    .into()
+                }),
+        )
     }
 
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -6326,6 +6406,67 @@ impl ThreadView {
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.toggle_following(window, cx);
             }))
+    }
+}
+
+#[derive(Clone)]
+struct UsageStatusTooltipWindow {
+    title: &'static str,
+    percentage: Option<String>,
+    detail: Option<String>,
+    is_warning: bool,
+}
+
+struct UsageStatusTooltip {
+    windows: Vec<UsageStatusTooltipWindow>,
+    separator_color: Color,
+}
+
+impl Render for UsageStatusTooltip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let windows = self.windows.clone();
+        let separator_color = self.separator_color;
+
+        ui::tooltip_container(cx, move |container, cx| {
+            let border_color = cx.theme().colors().border_variant;
+            container
+                .min_w_40()
+                .children(windows.into_iter().enumerate().map(|(index, window)| {
+                    let has_both = window.percentage.is_some() && window.detail.is_some();
+                    v_flex()
+                        .gap_0p5()
+                        .when(index > 0, |this| {
+                            this.mt_1p5()
+                                .pt_1p5()
+                                .border_t_1()
+                                .border_color(border_color)
+                        })
+                        .child(
+                            Label::new(window.title)
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .children(window.percentage.map(|percentage| {
+                                    Label::new(percentage).color(if window.is_warning {
+                                        Color::Warning
+                                    } else {
+                                        Color::Default
+                                    })
+                                }))
+                                .when(has_both, |this| {
+                                    this.child(Label::new("\u{2022}").color(separator_color).mx_1())
+                                })
+                                .children(
+                                    window
+                                        .detail
+                                        .map(|detail| Label::new(detail).color(Color::Muted)),
+                                ),
+                        )
+                }))
+        })
     }
 }
 
@@ -13723,6 +13864,31 @@ fn strip_leading_command(text: &str, command_name: &str) -> String {
         .unwrap_or_else(|| trimmed.to_string())
 }
 
+fn format_utilization(utilization: f32) -> String {
+    format!("{}%", (utilization * 100.0).round() as u32)
+}
+
+fn format_duration_until(
+    target: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let total_minutes = (target - now).num_minutes().max(0);
+    let days = total_minutes / (24 * 60);
+    let hours = total_minutes / 60 % 24;
+    let minutes = total_minutes % 60;
+    if days > 0 && hours > 0 {
+        format!("{days}d {hours}h")
+    } else if days > 0 {
+        format!("{days}d")
+    } else if hours > 0 && minutes > 0 {
+        format!("{hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h")
+    } else {
+        format!("{minutes}m")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -13733,6 +13899,25 @@ mod tests {
     use std::sync::Once;
     use util::path;
     use workspace::MultiWorkspace;
+
+    #[test]
+    fn test_format_duration_until() {
+        let now = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let after = |seconds: i64| now + chrono::Duration::seconds(seconds);
+
+        assert_eq!(format_duration_until(after(-60), now), "0m");
+        assert_eq!(format_duration_until(after(59 * 60), now), "59m");
+        assert_eq!(
+            format_duration_until(after(2 * 3600 + 14 * 60), now),
+            "2h 14m"
+        );
+        assert_eq!(
+            format_duration_until(after(3 * 86400 + 5 * 3600), now),
+            "3d 5h"
+        );
+        assert_eq!(format_duration_until(after(4 * 86400 + 30 * 60), now), "4d");
+        assert_eq!(format_duration_until(after(3 * 3600 + 20), now), "3h");
+    }
 
     #[test]
     fn test_reported_activity_completion_status() {
