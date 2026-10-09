@@ -987,6 +987,7 @@ async fn build_converse_client(
 
 fn converse_language_model(model: &ConverseModel) -> LanguageModel {
     let is_gpt_6_astra = matches!(model, ConverseModel::Gpt6Astra);
+    let reasoning_model = converse_reasoning_model(model.request_id());
     LanguageModel {
         supports_tools: model.supports_tool_use(),
         supports_images: model.supports_images(),
@@ -1036,7 +1037,10 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
         // Add support for None - we'll filter tool calls at response
         tool_choice_support: LanguageModelToolChoiceSupport {
             auto: model.supports_tool_use(),
-            any: model.supports_tool_use() && anthropic::supports_forced_tool_use(model.id()),
+            any: model.supports_tool_use()
+                && anthropic::supports_forced_tool_use(
+                    reasoning_model.as_ref().unwrap_or(model).id(),
+                ),
             none: model.supports_tool_use(),
         },
         supports_streaming_tools: true,
@@ -2049,6 +2053,14 @@ fn deny_tool_use_events(
     })
 }
 
+/// Matches by Bedrock model ID, so custom entries such as
+/// `us.anthropic.claude-fable-5-1` get the same handling as the built-in model.
+fn converse_reasoning_model(model_id: &str) -> Option<ConverseModel> {
+    [ConverseModel::Gpt6Astra, ConverseModel::ClaudeFable5_1]
+        .into_iter()
+        .find(|model| model_id.ends_with(model.request_id()))
+}
+
 fn prepare_bedrock_content(
     content: Vec<BedrockInnerContent>,
     tool_result_images_as_siblings: bool,
@@ -2105,15 +2117,9 @@ pub fn into_bedrock(
         anyhow::bail!("Bedrock does not support custom tools");
     }
 
-    let is_fable_5_1 = model.ends_with(ConverseModel::ClaudeFable5_1.request_id());
-    let is_gpt_6_astra = model.ends_with(ConverseModel::Gpt6Astra.request_id());
-    let reasoning_model = if is_gpt_6_astra {
-        Some(ConverseModel::Gpt6Astra)
-    } else if is_fable_5_1 {
-        Some(ConverseModel::ClaudeFable5_1)
-    } else {
-        None
-    };
+    let reasoning_model = converse_reasoning_model(&model);
+    let is_fable_5_1 = reasoning_model == Some(ConverseModel::ClaudeFable5_1);
+    let is_gpt_6_astra = reasoning_model == Some(ConverseModel::Gpt6Astra);
     if is_fable_5_1 && request.tool_choice == Some(LanguageModelToolChoice::Any) {
         anyhow::bail!("Claude Fable 5.1 does not support forced tool use");
     }
@@ -2525,6 +2531,7 @@ pub fn map_to_language_model_completion_events(
         emitted_tool_use: bool,
     }
 
+    let model = converse_reasoning_model(model.request_id()).unwrap_or(model);
     let report_refusals = matches!(
         model,
         ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeFable5 | ConverseModel::Gpt6Astra
@@ -3729,6 +3736,75 @@ mod tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_custom_fable_5_1_entry_matches_the_built_in_model() -> Result<()> {
+        use bedrock::bedrock_client::types::MessageStartEvent;
+
+        let custom = ConverseModel::Custom {
+            name: "us.anthropic.claude-fable-5-1".into(),
+            max_tokens: 1_000_000,
+            display_name: None,
+            max_output_tokens: Some(128_000),
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: Some(true),
+            supports_images: Some(true),
+            thinking: Some(bedrock::BedrockThinkingConfig {
+                adaptive: true,
+                has_xhigh: true,
+                budget_tokens: None,
+            }),
+        };
+        assert!(!converse_language_model(&custom).tool_choice_support.any);
+
+        let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::MessageStart(
+            MessageStartEvent::builder()
+                .role(bedrock::BedrockRole::Assistant)
+                .build()?,
+        ))]);
+        let events = futures::executor::block_on(
+            map_to_language_model_completion_events(Box::pin(response), custom.clone())
+                .collect::<Vec<_>>(),
+        )
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+        let details = events.iter().find_map(|event| match event {
+            LanguageModelCompletionEvent::ReasoningDetails(value) => Some(Arc::new(value.clone())),
+            _ => None,
+        });
+
+        let request = into_bedrock(
+            LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Thinking {
+                            text: "thinking".into(),
+                            signature: Some("signature".into()),
+                        },
+                        MessageContent::Text("answer".into()),
+                    ],
+                    cache: false,
+                    reasoning_details: details,
+                }],
+                ..Default::default()
+            },
+            custom.cross_region_inference_id("us-east-1", false)?,
+            custom.default_temperature(),
+            custom.max_output_tokens(),
+            custom.thinking_mode(),
+            custom.supports_caching(),
+            custom.supports_tool_use(),
+            None,
+            None,
+        )?;
+        assert!(matches!(
+            request.messages[0].content().first(),
+            Some(BedrockInnerContent::ReasoningContent(_))
+        ));
         Ok(())
     }
 
