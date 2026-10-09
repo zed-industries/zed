@@ -1,7 +1,6 @@
 # Fresh text baseline
 
-The warm text groups have been validated and measured. The separate
-first-populated-frame group below is still awaiting runtime validation.
+The warm and first-populated-frame text groups have been validated and measured.
 Run validation and measurement serially; do not overlap builds or tests with
 measured runs.
 
@@ -84,7 +83,7 @@ macOS headless rendering uses Metal; Linux presentation may discard the scene
 without GPU submission. Confirm the selected platform rather than claiming GPU
 coverage from CPU scene correctness.
 
-## First populated frame and setup live heap (static preparation)
+## First populated frame and setup live heap
 
 This addition targets `gpui-fresh-taffy-experiment` at
 `4223238c9eb2ac01fc47090fc3bcfc4d21f7b800`. The preparation fork inherited an
@@ -156,20 +155,21 @@ does not relax the timed iterations' exactly-one-frame assertion.
   48-quads/8138-glyph scene is a comparison checkpoint for the corresponding
   input/platform, not a portable expected count. The new probe logs actual
   viewport, quads, glyphs, root and panel counts.
-- Current fresh stack has no actual-mode query for `GPUI_LAYOUT_CACHE`.
-  The probe logs the requested value explicitly as **actual mode unverified**;
-  setting it to `1` is not evidence that a cache exists or is active. Parent must
-  verify the future prototype's real phase-1 mode seam before making on/off
-  claims. Both `GPUI_RETAINED_DISPATCH` and `GPUI_VIEW_RETENTION` must remain
-  unset in all comparison runs; the new input registration asserts this.
+- The original static preparation logged the requested `GPUI_LAYOUT_CACHE`
+  value as unverified. The measured harness now checks the window's actual
+  read-only mode against the requested value during untimed validation.
+  The reference comparison branch supplies a benchmark-only getter returning
+  false; the candidate getter reads its actual engine. Both
+  `GPUI_RETAINED_DISPATCH` and `GPUI_VIEW_RETENTION` must remain unset in all
+  comparison runs; the new input registration asserts this.
 - The prior supplied warm Noto/96 comparison (25.84 ms original to 17.73 ms
   TT14 stack) is not first-frame or initial-heap evidence. No new measurements
   have been run or results inferred here.
 
 ### Parent-owned serial validation plan
 
-No Cargo, build, test, benchmark, or profile was run for this preparation.
-After obtaining the serial slot, run feature isolation and the optimized build
+Static preparation ran no Cargo commands. Subsequent serial smoke, quick,
+and measured runs passed. For reproduction, run feature isolation and the optimized build
 above on the clean base, recording toolchain, lockfile, flags, platform/renderer,
 font identity and both retention variable values (`None`). Set `$BENCH` to the
 exact resulting executable. Each command below is separately bounded to 300 s;
@@ -197,6 +197,77 @@ Report first-populated wall-time confidence intervals, frame/foreground
 reports, secondary metrics, all correctness counts and setup heap deltas side
 by side. Linux present may discard the scene rather than submit GPU work;
 these runs cannot establish end-to-end display latency.
+
+## Layout-cache prototype comparison
+
+The opt-in prototype reuses authoritative Taffy nodes by identified scope plus
+local request ordinal. Fresh `Render`, dispatch construction, and scene
+construction still run each frame. All opaque measurement callbacks invalidate
+layout. Built-in text carries canonical final-layout lines only when the full
+descriptor matches; preliminary size probes cannot overwrite them. Text,
+runs, style, font generation, rem size and scale changes reject reuse.
+
+Baseline: `gpui-fresh-first-frame-baseline` at `b9fe84440c`, Taffy-only stack
+plus benchmark instrumentation and a reference-mode getter. Candidate:
+`gpui-fresh-layout-comparison` at `783d5b59fd`, including the validated
+`d7ee748cce` / `826a2e58cc` / `dbd983cf52` prototype. Both used benchmark SHA-256
+`a95362d2222f3cfa63714b55988dd231ab75001a8963e60aadcb8006224a28aa`
+and identical lockfile SHA-256
+`a25b0e36e2cafe3d9b38ec79819f7ebc168fbd6f285b6f98dc05bad9e4e3dc41`.
+The earlier unverified-mode first-frame captures are not used below.
+
+| Installed Noto, 96 panels | Taffy-only baseline | Candidate cache off | Candidate cache on |
+| --- | --- | --- | --- |
+| Warm foreground instructions | 236.02 M | 238.10 M | 154.73 M |
+| Warm wall median | 18.189 ms | 18.184 ms | 11.205 ms |
+| Warm foreground allocations/frame | 77,556 | 77,556 | 46,941 |
+| First populated foreground instructions | 252.36 M | 254.31 M | 286.83 M |
+| First populated wall median | 18.517 ms | 18.850 ms | 21.236 ms |
+| First populated foreground allocations/frame | 78,400 | 78,406 | 91,881 |
+| Population setup live-heap delta | 59,576,733 B | 59,675,149 B | 60,499,005 B |
+
+On the same candidate binary, cache-on saves 35.0% of warm instructions,
+38.4% of warm wall time and 39.5% of warm foreground allocations. It adds
+12.8% first-populated instructions, 12.7% first-populated wall time and
+17.2% first-populated allocations. The prototype's disabled path itself adds
+about 0.9% warm instructions versus the Taffy-only implementation. This is an
+experiment, not a startup-parity or universal speedup claim.
+
+Warm instruction confidence intervals were 237.95–238.23 M off and
+154.69–154.78 M on; first populated intervals were 254.20–254.42 M off and
+286.63–287.06 M on. Warm wall sample ranges were 17.805–19.103 ms off and
+11.041–12.717 ms on; first populated ranges were 18.499–25.905 ms off and
+20.855–22.462 ms on. Wall-time ranges are not confidence intervals.
+Heap deltas are once-per-input process-wide estimates, not exclusive window
+ownership or original-mainline startup measurements.
+
+All nine text smoke inputs and the complete seed-3 randomized smoke suite
+passed in both modes. The resolved benchmark feature tree had zero
+`test-support` occurrences. Prototype validation before parent integration
+passed 397 GPUI tests in each mode, project Clippy, and `cargo check`.
+Independent static review found no concrete measurement-boundary issue.
+Mac/Metal and glyph-changing font installation remain untested.
+
+The matched seed-3 randomized tree captures also retained correctness:
+
+| Workload wall median | Wide off / on | Dense entities off / on |
+| --- | --- | --- |
+| Full refresh | 278.555 / 257.833 µs | 936.512 / 805.561 µs |
+| Unchanged | 283.763 / 267.838 µs | 938.969 / 808.819 µs |
+| Leaf style | 291.366 / 275.341 µs | 949.855 / 837.494 µs |
+| Leaf bounds | 301.940 / 299.541 µs | 953.967 / 846.973 µs |
+| Root layout | 287.587 / 286.792 µs | 947.542 / 850.157 µs |
+| Insert/remove | 354.140 / 331.347 µs | 1006.000 / 905.380 µs |
+| Reorder | 320.180 / 316.018 µs | 996.590 / 886.469 µs |
+
+These are modest box-tree improvements, not view-render skipping. The quick
+dense-reorder capture was much worse than its measured run; do not generalize
+the measured median to every structural transition. Further seed/transition
+coverage is required. Logs:
+`target/fresh-performance/first-frame-confirmed-baseline-measured.log`,
+`layout-cache-mode-{0,1}-measured.log`, and
+`layout-cache-mode-{0,1}-tree-measured.log`. All measured runs were serial on
+CPU 0, with the same 20 samples / 1 s warmup / 2 s measurement configuration.
 
 ## Measured fresh-only checkpoints
 

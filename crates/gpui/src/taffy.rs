@@ -1280,4 +1280,242 @@ mod tests {
             taffy::style::LengthPercentage::length(2.0)
         );
     }
+
+    #[gpui::test]
+    fn fractional_scale_root_dimensions(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            for (scale_factor, explicit_size, percentage_size) in [
+                (1.25, size(26.0, 16.0), size(63.0, 42.0)),
+                (1.5, size(31.0, 19.0), size(76.0, 50.0)),
+            ] {
+                window.set_scale_factor(scale_factor);
+                for percentage in [false, true] {
+                    let mut engine = TaffyLayoutEngine::new();
+                    let mut style = Style::default();
+                    style.size = if percentage {
+                        size(
+                            DefiniteLength::Fraction(0.5).into(),
+                            DefiniteLength::Fraction(0.5).into(),
+                        )
+                    } else {
+                        size(Pixels(21.0).into(), Pixels(13.0).into())
+                    };
+                    let root = engine.request_layout(style, Pixels(16.0), scale_factor, &[]);
+                    let available_size = size(Pixels(101.0), Pixels(67.0));
+                    engine.stretch_auto_size_to_fill(root, available_size, scale_factor);
+                    engine.compute_layout(root, available_size.into(), window, cx);
+
+                    // Author absolute sizes in already-snapped device pixels, independently
+                    // of Style::to_taffy; percentages resolve against unsnapped available space.
+                    let mut direct = TaffyTree::<()>::new();
+                    direct.disable_rounding();
+                    let direct_root = direct
+                        .new_leaf(taffy::Style {
+                            display: taffy::Display::Block,
+                            size: if percentage {
+                                TaffySize {
+                                    width: taffy::Dimension::percent(0.5),
+                                    height: taffy::Dimension::percent(0.5),
+                                }
+                            } else {
+                                TaffySize {
+                                    width: taffy::Dimension::length(explicit_size.width),
+                                    height: taffy::Dimension::length(explicit_size.height),
+                                }
+                            },
+                            ..Default::default()
+                        })
+                        .expect(EXPECT_MESSAGE);
+                    direct
+                        .compute_layout(
+                            direct_root,
+                            TaffySize {
+                                width: TaffyAvailableSpace::Definite(101.0 * scale_factor),
+                                height: TaffyAvailableSpace::Definite(67.0 * scale_factor),
+                            },
+                        )
+                        .expect(EXPECT_MESSAGE);
+                    let direct_layout = direct.layout(direct_root).expect(EXPECT_MESSAGE);
+                    let adapter_layout = engine.taffy.layout(root.into()).expect(EXPECT_MESSAGE);
+                    assert_eq!(adapter_layout.location, direct_layout.location);
+                    assert_eq!(adapter_layout.size, direct_layout.size);
+
+                    let expected_size = if percentage {
+                        percentage_size
+                    } else {
+                        explicit_size
+                    };
+                    assert_eq!(
+                        engine.layout_bounds(root, scale_factor),
+                        Bounds::new(
+                            Point::default(),
+                            expected_size.map(|value| Pixels(value / scale_factor)),
+                        ),
+                        "scale={scale_factor}, percentage={percentage}",
+                    );
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn fractional_scale_nested_flex_edges_close(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            // 101 logical pixels snap to 126 or 151 device pixels before flex
+            // distribution. Snap the resulting absolute quarter edges, not local widths.
+            for (scale_factor, width, height, edges) in [
+                (1.25, 126.0, 11.0, [0.0, 31.0, 63.0, 94.0, 126.0]),
+                (1.5, 151.0, 13.0, [0.0, 38.0, 75.0, 113.0, 151.0]),
+            ] {
+                window.set_scale_factor(scale_factor);
+                let mut engine = TaffyLayoutEngine::new();
+                let flex_item = Style {
+                    display: crate::Display::Flex,
+                    flex_grow: 1.0,
+                    flex_basis: Pixels(0.0).into(),
+                    min_size: size(Pixels(0.0).into(), Pixels(0.0).into()),
+                    ..Default::default()
+                };
+                let leaves: Vec<_> = (0..4)
+                    .map(|_| {
+                        engine.request_layout(flex_item.clone(), Pixels(16.0), scale_factor, &[])
+                    })
+                    .collect();
+                let parents: Vec<_> = leaves
+                    .chunks_exact(2)
+                    .map(|children| {
+                        engine.request_layout(
+                            flex_item.clone(),
+                            Pixels(16.0),
+                            scale_factor,
+                            children,
+                        )
+                    })
+                    .collect();
+                let root = engine.request_layout(
+                    Style {
+                        display: crate::Display::Flex,
+                        size: size(Pixels(101.0).into(), Pixels(9.0).into()),
+                        ..Default::default()
+                    },
+                    Pixels(16.0),
+                    scale_factor,
+                    &parents,
+                );
+                engine.compute_layout(
+                    root,
+                    size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+                    window,
+                    cx,
+                );
+
+                for (&leaf, edge_pair) in leaves.iter().zip(edges.windows(2)) {
+                    let raw = engine.taffy.layout(leaf.into()).expect(EXPECT_MESSAGE);
+                    assert_eq!(raw.size.width, width / 4.0);
+                    assert_eq!(
+                        engine.layout_bounds(leaf, scale_factor),
+                        Bounds::new(
+                            Point::new(Pixels(edge_pair[0] / scale_factor), Pixels(0.0)),
+                            size(
+                                Pixels((edge_pair[1] - edge_pair[0]) / scale_factor),
+                                Pixels(height / scale_factor),
+                            ),
+                        ),
+                        "scale={scale_factor}, edges={edge_pair:?}",
+                    );
+                }
+                for (&parent, edge_pair) in parents.iter().zip(edges.windows(3).step_by(2)) {
+                    assert_eq!(
+                        engine.layout_bounds(parent, scale_factor),
+                        Bounds::new(
+                            Point::new(Pixels(edge_pair[0] / scale_factor), Pixels(0.0)),
+                            size(
+                                Pixels((edge_pair[2] - edge_pair[0]) / scale_factor),
+                                Pixels(height / scale_factor),
+                            ),
+                        ),
+                    );
+                }
+                assert_eq!(
+                    engine.layout_bounds(root, scale_factor).size,
+                    size(Pixels(width / scale_factor), Pixels(height / scale_factor)),
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn fractional_scale_padding_and_overflow_origins(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            for (scale_factor, root_size, child_size, leaf_size) in [
+                (1.25, size(26.0, 16.0), size(39.0, 21.0), 2.0),
+                (1.5, size(31.0, 19.0), size(46.0, 25.0), 3.0),
+            ] {
+                window.set_scale_factor(scale_factor);
+                for overflow in [crate::Overflow::Visible, crate::Overflow::Hidden] {
+                    let mut engine = TaffyLayoutEngine::new();
+                    let leaf = engine.request_layout(
+                        Style {
+                            size: size(Pixels(2.0).into(), Pixels(2.0).into()),
+                            ..Default::default()
+                        },
+                        Pixels(16.0),
+                        scale_factor,
+                        &[],
+                    );
+                    let child = engine.request_layout(
+                        Style {
+                            size: size(Pixels(31.0).into(), Pixels(17.0).into()),
+                            flex_shrink: 0.0,
+                            padding: Edges::all(Pixels(1.0).into()),
+                            ..Default::default()
+                        },
+                        Pixels(16.0),
+                        scale_factor,
+                        &[leaf],
+                    );
+                    let root = engine.request_layout(
+                        Style {
+                            display: crate::Display::Flex,
+                            size: size(Pixels(21.0).into(), Pixels(13.0).into()),
+                            padding: Edges {
+                                top: Pixels(3.0).into(),
+                                ..Edges::all(Pixels(1.0).into())
+                            },
+                            border_widths: Edges::all(Pixels(1.0).into()),
+                            overflow: Point::new(overflow, overflow),
+                            ..Default::default()
+                        },
+                        Pixels(16.0),
+                        scale_factor,
+                        &[child],
+                    );
+                    engine.compute_layout(
+                        root,
+                        size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+                        window,
+                        cx,
+                    );
+
+                    // At both scales, 1 logical pixel snaps to 1 device pixel,
+                    // and the top padding of 3 snaps to 4. Overflow must not
+                    // clip layout bounds or add padding again at each ancestor.
+                    for (id, origin, expected_size) in [
+                        (root, Point::new(0.0, 0.0), root_size),
+                        (child, Point::new(2.0, 5.0), child_size),
+                        (leaf, Point::new(3.0, 6.0), size(leaf_size, leaf_size)),
+                    ] {
+                        assert_eq!(
+                            engine.layout_bounds(id, scale_factor),
+                            Bounds::new(
+                                origin.map(|value| Pixels(value / scale_factor)),
+                                expected_size.map(|value| Pixels(value / scale_factor)),
+                            ),
+                            "scale={scale_factor}, overflow={overflow:?}, node={id:?}",
+                        );
+                    }
+                }
+            }
+        });
+    }
 }
