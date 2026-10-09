@@ -2491,12 +2491,11 @@ pub fn into_bedrock(
         BedrockModelMode::Thinking { budget_tokens } if request.thinking_allowed => {
             Some(bedrock::Thinking::Enabled { budget_tokens })
         }
-        // Opus 5.5 rejects `disabled`, so omit the field. This must precede the Opus 5 check
-        // below, because `claude-opus-5-5` also contains the Opus 5 request id.
+        // Opus 5.5 rejects `disabled`, so omit the field.
         // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
         _ if requires_adaptive_thinking => None,
         _ if !request.thinking_allowed
-            && model.contains(ConverseModel::ClaudeOpus5.request_id()) =>
+            && model.ends_with(ConverseModel::ClaudeOpus5.request_id()) =>
         {
             // Opus 5 defaults to adaptive thinking, so turning it off requires `disabled`.
             // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
