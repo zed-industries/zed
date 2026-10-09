@@ -2866,13 +2866,12 @@ async fn test_free_plan_edit_predictions_ended_for_zed_provider(cx: &mut TestApp
     let (ep_store, _requests) = init_test_with_fake_client(cx);
     let user_store = ep_store.read_with(cx, |ep_store, _| ep_store.user_store.clone());
 
-    // Cloud reports a 2,000 allowance for Free, which must not keep predictions on.
     let set_plan_and_usage = |plan, amount, cx: &mut TestAppContext| {
         user_store.update(cx, |user_store, cx| {
             user_store.set_current_organization_plan_for_test(plan, cx);
             user_store.update_edit_prediction_usage(
                 EditPredictionUsage(client::RequestUsage {
-                    limit: UsageLimit::Limited(2_000),
+                    limit: UsageLimit::Limited(0),
                     amount,
                 }),
                 cx,

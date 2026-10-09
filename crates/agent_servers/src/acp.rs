@@ -113,7 +113,7 @@ impl<T> FlattenAcpResult<T> for Result<Result<T, acp::Error>, anyhow::Error> {
 
 /// Holds state needed by foreground work dispatched from background handler closures.
 struct ClientContext {
-    sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
     request_elicitations: Entity<ElicitationStore>,
 }
@@ -193,13 +193,15 @@ async fn cancel_elicitations_after_disconnect(
 
 async fn close_session_and_drain(
     connection: &ConnectionTo<Agent>,
-    session_id: acp::SessionId,
+    session_id: acp_v2::SessionId,
     supports_close: bool,
     dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>,
 ) -> Result<()> {
     if supports_close {
         connection
-            .send_request(acp::CloseSessionRequest::new(session_id))
+            .send_request(acp::CloseSessionRequest::new(acp::SessionId::new(
+                session_id.0,
+            )))
             .block_task()
             .await
             .log_err();
@@ -318,8 +320,8 @@ pub struct AcpConnection {
     telemetry_id: SharedString,
     agent_version: Option<SharedString>,
     connection: ConnectionTo<Agent>,
-    sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
-    pending_sessions: RefCell<HashMap<acp::SessionId, PendingAcpSession>>,
+    sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
+    pending_sessions: RefCell<HashMap<acp_v2::SessionId, PendingAcpSession>>,
     auth_methods: Vec<acp_v2::AuthMethod>,
     agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
@@ -440,14 +442,14 @@ impl ConfigOptions {
     async fn set_config_option(
         &self,
         connection: &ConnectionTo<Agent>,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         config_id: acp_v2::SessionConfigId,
         value: acp_v2::SessionConfigOptionValue,
     ) -> Result<Vec<acp_v2::SessionConfigOption>> {
         let value = acp_thread::config_options::value_to_v1(value)?;
         let response = connection
             .send_request(acp::SetSessionConfigOptionRequest::new(
-                session_id,
+                acp::SessionId::new(session_id.0),
                 acp::SessionConfigId::new(config_id.0),
                 value,
             ))
@@ -493,7 +495,7 @@ impl AcpSessionList {
             .log_err();
     }
 
-    fn send_info_update(&self, session_id: acp::SessionId, update: acp::SessionInfoUpdate) {
+    fn send_info_update(&self, session_id: acp_v2::SessionId, update: acp::SessionInfoUpdate) {
         self.updates_tx
             .try_send(acp_thread::SessionListUpdate::SessionInfo {
                 session_id,
@@ -524,7 +526,7 @@ impl AgentSessionList for AcpSessionList {
                     .sessions
                     .into_iter()
                     .map(|s| AgentSessionInfo {
-                        session_id: s.session_id,
+                        session_id: acp_v2::SessionId::new(s.session_id.0),
                         work_dirs: Some(work_dirs_from_session_info(
                             s.cwd,
                             s.additional_directories,
@@ -549,14 +551,14 @@ impl AgentSessionList for AcpSessionList {
         self.supports_delete
     }
 
-    fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+    fn delete_session(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Task<Result<()>> {
         if !self.supports_delete() {
             return Task::ready(Err(anyhow::anyhow!("delete_session not supported")));
         }
 
         let conn = self.connection.clone();
         let updates_tx = self.updates_tx.clone();
-        let session_id = session_id.clone();
+        let session_id = acp::SessionId::new(session_id.0.clone());
         cx.foreground_executor().spawn(async move {
             conn.send_request(acp::DeleteSessionRequest::new(session_id))
                 .block_task()
@@ -1071,7 +1073,7 @@ impl AcpConnection {
     #[cfg(any(test, feature = "test-support"))]
     fn new_for_test(
         connection: ConnectionTo<Agent>,
-        sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+        sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
         agent_capabilities: acp::AgentCapabilities,
         request_elicitations: Entity<ElicitationStore>,
         agent_server_store: WeakEntity<AgentServerStore>,
@@ -1118,7 +1120,7 @@ impl AcpConnection {
 
     fn register_session(
         self: &Rc<Self>,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         thread: &Entity<AcpThread>,
         session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
         config_options: Option<ConfigOptions>,
@@ -1148,7 +1150,7 @@ impl AcpConnection {
         );
     }
 
-    fn remove_session(&self, session_id: &acp::SessionId, thread_id: gpui::EntityId) {
+    fn remove_session(&self, session_id: &acp_v2::SessionId, thread_id: gpui::EntityId) {
         let mut sessions = self.sessions.borrow_mut();
         if sessions
             .get(session_id)
@@ -1158,7 +1160,7 @@ impl AcpConnection {
         }
     }
 
-    fn remove_pending_session(&self, session_id: &acp::SessionId, thread_id: gpui::EntityId) {
+    fn remove_pending_session(&self, session_id: &acp_v2::SessionId, thread_id: gpui::EntityId) {
         let mut sessions = self.pending_sessions.borrow_mut();
         if sessions
             .get(session_id)
@@ -1170,7 +1172,7 @@ impl AcpConnection {
 
     fn release_session(
         self: &Rc<Self>,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         thread: WeakEntity<AcpThread>,
         cx: &mut App,
     ) {
@@ -1223,13 +1225,13 @@ impl AcpConnection {
 
     fn open_or_create_session(
         self: Rc<Self>,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         project: Entity<Project>,
         work_dirs: PathList,
         title: Option<SharedString>,
         rpc_call: impl FnOnce(
             ConnectionTo<Agent>,
-            acp::SessionId,
+            acp_v2::SessionId,
             SessionDirectories,
         )
             -> futures::future::LocalBoxFuture<'static, Result<SessionConfigResponse>>
@@ -1395,7 +1397,7 @@ impl AcpConnection {
 
     fn apply_default_config_options(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         config_options: &ConfigOptions,
         cx: &mut AsyncApp,
     ) -> Task<()> {
@@ -1500,20 +1502,20 @@ impl SessionDirectories {
 
     fn into_load_session_request(
         self,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         mcp_servers: Vec<acp::McpServer>,
     ) -> acp::LoadSessionRequest {
-        acp::LoadSessionRequest::new(session_id, self.cwd)
+        acp::LoadSessionRequest::new(acp::SessionId::new(session_id.0), self.cwd)
             .additional_directories(self.additional_directories)
             .mcp_servers(mcp_servers)
     }
 
     fn into_resume_session_request(
         self,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         mcp_servers: Vec<acp::McpServer>,
     ) -> acp::ResumeSessionRequest {
-        acp::ResumeSessionRequest::new(session_id, self.cwd)
+        acp::ResumeSessionRequest::new(acp::SessionId::new(session_id.0), self.cwd)
             .additional_directories(self.additional_directories)
             .mcp_servers(mcp_servers)
     }
@@ -1557,7 +1559,7 @@ fn work_dirs_from_session_info(cwd: PathBuf, additional_directories: Vec<PathBuf
 }
 
 fn emit_load_error_to_all_sessions(
-    sessions: &Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    sessions: &Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     error: LoadError,
     cx: &mut AsyncApp,
 ) {
@@ -1656,12 +1658,61 @@ impl AgentConnection for AcpConnection {
         let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
-            let response = self
+            let (response_sender, response_received) = futures::channel::oneshot::channel();
+            let (registered, registration_finished) = futures::channel::oneshot::channel();
+            let request = self
                 .connection
-                .send_request(directories.into_new_session_request(mcp_servers))
-                .block_task()
-            .await
-            .map_err(map_acp_error)?;
+                .prepare_request(directories.into_new_session_request(mcp_servers));
+            let cancellation = request.cancellation_handle();
+            request
+                .on_receiving_result({
+                    let connection = self.connection.clone();
+                    let supports_close = self
+                        .agent_capabilities
+                        .session_capabilities
+                        .close
+                        .is_some();
+                    async move |result: Result<acp::NewSessionResponse, acp::Error>| {
+                        let session_id = result
+                            .as_ref()
+                            .ok()
+                            .map(|response| response.session_id.clone());
+                        let registered = response_sender.send(result).is_ok()
+                            && registration_finished.await.is_ok();
+                        if !registered && supports_close {
+                            if let Some(session_id) = session_id {
+                                connection
+                                    .prepare_request(acp::CloseSessionRequest::new(session_id))
+                                    .on_receiving_result(
+                                        async move |result: Result<
+                                            acp::CloseSessionResponse,
+                                            acp::Error,
+                                        >| {
+                                            if let Err(error) = result {
+                                                log::warn!(
+                                                    "ACP abandoned-session close failed with code {}",
+                                                    error.code
+                                                );
+                                            }
+                                            Ok(())
+                                        },
+                                    )
+                                    .log_err();
+                            }
+                        }
+                        Ok(())
+                    }
+                })
+                .map_err(map_acp_error)?;
+            // Early SDK cancellation is not latched, so arm caller-drop cleanup
+            // only after the prepared request's publishing call returns.
+            let _request_guard = util::defer(move || {
+                cancellation.cancel().log_err();
+            });
+            let response = response_received
+                .await
+                .context("ACP new-session response callback was cancelled")?
+                .map_err(map_acp_error)?;
 
             let (modes, config_options) = config_state(response.modes, response.config_options)?;
 
@@ -1715,8 +1766,9 @@ impl AgentConnection for AcpConnection {
                 }
             }
 
+            let session_id = acp_v2::SessionId::new(response.session_id.0);
             let default_config_task = config_options.as_ref().map(|options| {
-                self.apply_default_config_options(&response.session_id, options, cx)
+                self.apply_default_config_options(&session_id, options, cx)
             });
 
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -1728,7 +1780,7 @@ impl AgentConnection for AcpConnection {
                     self.clone(),
                     project,
                     action_log,
-                    response.session_id.clone(),
+                    session_id.clone(),
                     // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
                     watch::Receiver::constant(self.prompt_capabilities()),
                     cx,
@@ -1737,7 +1789,7 @@ impl AgentConnection for AcpConnection {
 
             cx.update(|cx| {
                 self.register_session(
-                    response.session_id,
+                    session_id,
                     &thread,
                     modes,
                     config_options,
@@ -1746,6 +1798,9 @@ impl AgentConnection for AcpConnection {
                 )
             });
 
+            registered
+                .send(())
+                .map_err(|_| anyhow!("ACP new-session ordering callback ended before registration"))?;
             Ok(thread)
         })
     }
@@ -1770,7 +1825,7 @@ impl AgentConnection for AcpConnection {
 
     fn load_session(
         self: Rc<Self>,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         project: Entity<Project>,
         work_dirs: PathList,
         title: Option<SharedString>,
@@ -1809,7 +1864,7 @@ impl AgentConnection for AcpConnection {
 
     fn resume_session(
         self: Rc<Self>,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         project: Entity<Project>,
         work_dirs: PathList,
         title: Option<SharedString>,
@@ -1946,13 +2001,13 @@ impl AgentConnection for AcpConnection {
         params: acp_v2::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
+        let session_id = params.session_id.clone();
         let params = match acp_thread::content::prompt_to_v1(params) {
             Ok(params) => params,
             Err(error) => return Task::ready(Err(error)),
         };
         let conn = self.connection.clone();
         let sessions = self.sessions.clone();
-        let session_id = params.session_id.clone();
         cx.foreground_executor().spawn(async move {
             let result = conn.send_request(params).block_task().await;
 
@@ -2005,11 +2060,11 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
+    fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
         if let Some(session) = self.sessions.borrow_mut().get_mut(session_id) {
             session.suppress_abort_err = true;
         }
-        let params = acp::CancelNotification::new(session_id.clone());
+        let params = acp::CancelNotification::new(acp::SessionId::new(session_id.0.clone()));
         self.connection.send_notification(params).log_err();
     }
 
@@ -2019,7 +2074,7 @@ impl AgentConnection for AcpConnection {
 
     fn session_modes(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionModes>> {
         let sessions = self.sessions.clone();
@@ -2041,7 +2096,7 @@ impl AgentConnection for AcpConnection {
 
     fn session_config_options(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionConfigOptions>> {
         let sessions = self.sessions.borrow();
@@ -2259,7 +2314,7 @@ pub mod test_support {
 
         fn load_session(
             self: Rc<Self>,
-            session_id: acp::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             work_dirs: PathList,
             title: Option<SharedString>,
@@ -2280,7 +2335,7 @@ pub mod test_support {
 
         fn resume_session(
             self: Rc<Self>,
-            session_id: acp::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             work_dirs: PathList,
             title: Option<SharedString>,
@@ -2336,13 +2391,13 @@ pub mod test_support {
 
         fn retry(
             &self,
-            session_id: &acp::SessionId,
+            session_id: &acp_v2::SessionId,
             cx: &App,
         ) -> Option<Rc<dyn AgentSessionRetry>> {
             self.inner.retry(session_id, cx)
         }
 
-        fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
+        fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) {
             self.inner.cancel(session_id, cx)
         }
 
@@ -2352,7 +2407,7 @@ pub mod test_support {
 
         fn truncate(
             &self,
-            session_id: &acp::SessionId,
+            session_id: &acp_v2::SessionId,
             cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             self.inner.truncate(session_id, cx)
@@ -2360,7 +2415,7 @@ pub mod test_support {
 
         fn set_title(
             &self,
-            session_id: &acp::SessionId,
+            session_id: &acp_v2::SessionId,
             cx: &App,
         ) -> Option<Rc<dyn AgentSessionSetTitle>> {
             self.inner.set_title(session_id, cx)
@@ -2372,7 +2427,7 @@ pub mod test_support {
 
         fn session_modes(
             &self,
-            session_id: &acp::SessionId,
+            session_id: &acp_v2::SessionId,
             cx: &App,
         ) -> Option<Rc<dyn AgentSessionModes>> {
             self.inner.session_modes(session_id, cx)
@@ -2380,7 +2435,7 @@ pub mod test_support {
 
         fn session_config_options(
             &self,
-            session_id: &acp::SessionId,
+            session_id: &acp_v2::SessionId,
             cx: &App,
         ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
             self.inner.session_config_options(session_id, cx)
@@ -2411,7 +2466,7 @@ pub mod test_support {
 
         let authenticate_count = Arc::new(AtomicUsize::new(0));
         let logout_count = Arc::new(AtomicUsize::new(0));
-        let sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>> =
+        let sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
         let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
             Rc::new(RefCell::new(None));
@@ -2734,8 +2789,7 @@ mod tests {
         cx: &mut AsyncApp,
         context: &ClientContext,
     ) {
-        let session_id = acp::SessionId::new(notification.session_id.to_string());
-        session_thread(context, &session_id)
+        session_thread(context, &notification.session_id)
             .expect("registered terminal session")
             .update(cx, |thread, cx| notification.apply(thread, cx))
             .expect("live terminal session")
@@ -2753,7 +2807,7 @@ mod tests {
             let thread = cx
                 .update(|cx| {
                     connection.clone().load_session(
-                        acp::SessionId::new("v2-terminal-session"),
+                        acp_v2::SessionId::new("v2-terminal-session"),
                         project,
                         PathList::new(&[std::path::Path::new("/a")]),
                         None,
@@ -3094,7 +3148,7 @@ mod tests {
         assert_eq!(harness.terminal("terminal-1", cx), terminal);
         harness.thread.read_with(cx, |thread, _| {
             let (_, tool) = thread
-                .tool_call(&acp::ToolCallId::new("terminal-tool"))
+                .tool_call(&acp_v2::ToolCallId::new("terminal-tool"))
                 .expect("tool");
             assert_eq!(tool.terminals().next(), Some(&terminal));
         });
@@ -3531,7 +3585,7 @@ mod tests {
         let first_thread = cx
             .update(|cx| {
                 connection.clone().load_session(
-                    acp::SessionId::new("session-1"),
+                    acp_v2::SessionId::new("session-1"),
                     project.clone(),
                     work_dirs.clone(),
                     None,
@@ -3543,7 +3597,7 @@ mod tests {
         let second_thread = cx
             .update(|cx| {
                 connection.clone().load_session(
-                    acp::SessionId::new("session-2"),
+                    acp_v2::SessionId::new("session-2"),
                     project,
                     work_dirs,
                     None,
@@ -3964,7 +4018,7 @@ mod tests {
             }
         );
 
-        let session_id = acp::SessionId::new("session-1");
+        let session_id = acp_v2::SessionId::new("session-1");
         let new_session_request = directories.clone().into_new_session_request(Vec::new());
         let load_session_request = directories
             .clone()
@@ -3991,6 +4045,31 @@ mod tests {
             resume_session_request.additional_directories,
             new_session_request.additional_directories
         );
+    }
+
+    #[test]
+    fn legacy_session_requests_preserve_opaque_ids_and_backing_storage() {
+        for value in ["", "001", " opaque/会話:007?x=%2F \n", "e\u{301}", "é"] {
+            let backing: Arc<str> = value.into();
+            let session_id = acp_v2::SessionId::new(backing.clone());
+            let directories = SessionDirectories {
+                cwd: PathBuf::from("/workspace"),
+                additional_directories: Vec::new(),
+            };
+            let load = directories
+                .clone()
+                .into_load_session_request(session_id.clone(), Vec::new());
+            let resume = directories.into_resume_session_request(session_id, Vec::new());
+
+            for wire_id in [&load.session_id, &resume.session_id] {
+                assert_eq!(wire_id.0.as_ref(), value);
+                assert!(Arc::ptr_eq(&backing, &wire_id.0));
+                assert_eq!(
+                    serde_json::to_value(wire_id).expect("serialize legacy ID"),
+                    serde_json::json!(value)
+                );
+            }
+        }
     }
 
     #[test]
@@ -4305,7 +4384,7 @@ mod tests {
 
         let mut async_cx = cx.to_async();
         let _default_config_task = connection.apply_default_config_options(
-            &acp::SessionId::new("session-config-defaults"),
+            &acp_v2::SessionId::new("session-config-defaults"),
             &config_options,
             &mut async_cx,
         );
@@ -4423,7 +4502,7 @@ mod tests {
             let config_options = config_options.expect("config options");
             let mut receiver = config_options.rx.clone();
             let _default_config_task = connection.apply_default_config_options(
-                &acp::SessionId::new("session"),
+                &acp_v2::SessionId::new("session"),
                 &config_options,
                 &mut cx.to_async(),
             );
@@ -4501,7 +4580,7 @@ mod tests {
         let config_options = ConfigOptions::new(Rc::new(RefCell::new(original_options.clone())));
         let mut receiver = config_options.rx.clone();
         let _default_config_task = connection.apply_default_config_options(
-            &acp::SessionId::new("session"),
+            &acp_v2::SessionId::new("session"),
             &config_options,
             &mut cx.to_async(),
         );
@@ -4544,7 +4623,7 @@ mod tests {
             acp_v2::SessionConfigOption::boolean("second", "Second", false),
         ])));
         let _default_config_task = connection.apply_default_config_options(
-            &acp::SessionId::new("session"),
+            &acp_v2::SessionId::new("session"),
             &config_options,
             &mut cx.to_async(),
         );
@@ -4593,7 +4672,7 @@ mod tests {
                 ),
             ]),
         );
-        let session_id = acp::SessionId::new("session");
+        let session_id = acp_v2::SessionId::new("session");
         let initial_options = model_config_options("initial-model", "medium", &["medium"]);
         let thread = cx
             .update(|cx| {
@@ -4675,7 +4754,7 @@ mod tests {
             acp_v2::SessionConfigOption::boolean("config", "Config", false),
         ])));
         let options = AcpSessionConfigOptions {
-            session_id: acp::SessionId::new("session"),
+            session_id: acp_v2::SessionId::new("session"),
             connection: connection.connection.clone(),
             config_options: config,
         };
@@ -4842,7 +4921,7 @@ mod tests {
         let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
         let connection = connect_session_delete_test_agent(deleted_sessions.clone(), cx).await;
         let session_list = AcpSessionList::new(connection, true);
-        let session_id = acp::SessionId::new("session-to-delete");
+        let session_id = acp_v2::SessionId::new(" opaque/会話:007?x=%2F \n");
 
         cx.update(|cx| session_list.delete_session(&session_id, cx))
             .await
@@ -4852,7 +4931,7 @@ mod tests {
             *deleted_sessions
                 .lock()
                 .expect("deleted sessions lock should not be poisoned"),
-            vec![session_id]
+            vec![acp::SessionId::new(session_id.0)]
         );
     }
 
@@ -4861,7 +4940,7 @@ mod tests {
         let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
         let connection = connect_session_delete_test_agent(deleted_sessions.clone(), cx).await;
         let session_list = AcpSessionList::new(connection, false);
-        let session_id = acp::SessionId::new("session-to-delete");
+        let session_id = acp_v2::SessionId::new("session-to-delete");
 
         let error = cx
             .update(|cx| session_list.delete_session(&session_id, cx))
@@ -5163,6 +5242,30 @@ exit 7
         Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
         Task<anyhow::Result<()>>,
     ) {
+        connect_fake_agent_with_new_session_behavior(close_session_gate, agent_sender, None, cx)
+            .await
+    }
+
+    struct NewSessionTestBehavior {
+        received: async_channel::Sender<agent_client_protocol::RequestCancellation>,
+        respond: async_channel::Receiver<Result<acp::NewSessionResponse, acp::Error>>,
+        updates: Vec<acp::SessionUpdate>,
+    }
+
+    async fn connect_fake_agent_with_new_session_behavior(
+        close_session_gate: Option<async_channel::Receiver<()>>,
+        agent_sender: Option<futures::channel::oneshot::Sender<ConnectionTo<Client>>>,
+        new_session_behavior: Option<NewSessionTestBehavior>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Rc<AcpConnection>,
+        Entity<project::Project>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>>,
+        Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
+        Task<anyhow::Result<()>>,
+    ) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
@@ -5179,10 +5282,11 @@ exit 7
         let load_session_gate: Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>> =
             Arc::new(std::sync::Mutex::new(None));
         let close_session_gate = Arc::new(std::sync::Mutex::new(close_session_gate));
+        let new_session_behavior = Arc::new(Mutex::new(new_session_behavior));
 
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
 
-        let sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>> =
+        let sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
         let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
             Rc::new(RefCell::new(None));
@@ -5214,8 +5318,40 @@ exit 7
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_request(
-                async move |_req: acp::NewSessionRequest, responder, _cx| {
-                    responder.respond(acp::NewSessionResponse::new(acp::SessionId::new("unused")))
+                async move |_req: acp::NewSessionRequest, responder, cx| {
+                    let behavior = new_session_behavior
+                        .lock()
+                        .expect("new session behavior")
+                        .take();
+                    if let Some(behavior) = behavior {
+                        let connection = cx.clone();
+                        cx.spawn(async move {
+                            behavior
+                                .received
+                                .send(responder.cancellation())
+                                .await
+                                .expect("notify new request");
+                            let response =
+                                behavior.respond.recv().await.expect("release new response");
+                            let session_id = response
+                                .as_ref()
+                                .ok()
+                                .map(|response| response.session_id.clone());
+                            responder.respond_with_result(response)?;
+                            if let Some(session_id) = session_id {
+                                for update in behavior.updates {
+                                    connection.send_notification(acp::SessionNotification::new(
+                                        session_id.clone(),
+                                        update,
+                                    ))?;
+                                }
+                            }
+                            Ok(())
+                        })
+                    } else {
+                        responder
+                            .respond(acp::NewSessionResponse::new(acp::SessionId::new("unused")))
+                    }
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -5400,7 +5536,7 @@ exit 7
         let (connection, project, _, _, _, _, keep_agent_alive) =
             connect_fake_agent_with_handle(None, Some(agent_sender), cx).await;
         let agent = agent_receiver.await.expect("fake agent handle");
-        let session_id = acp::SessionId::new("retained-idle-session");
+        let session_id = acp_v2::SessionId::new("retained-idle-session");
         let thread = cx
             .update(|cx| {
                 connection.clone().load_session(
@@ -5418,7 +5554,7 @@ exit 7
             .expect("connection elicitation store");
         let session_request = acp::CreateElicitationRequest::new(
             acp::ElicitationFormMode::new(
-                acp::ElicitationSessionScope::new(session_id),
+                acp::ElicitationSessionScope::new(acp::SessionId::new(session_id.0)),
                 acp::ElicitationSchema::new().string("name", true),
             ),
             "Session question",
@@ -5585,7 +5721,7 @@ exit 7
         let (connection, project, _, _, _, _, keep_agent_alive) =
             connect_fake_agent_with_handle(None, Some(agent_sender), cx).await;
         let agent = agent_receiver.await.expect("fake agent handle");
-        let session_id = acp::SessionId::new("completion-session");
+        let session_id = acp_v2::SessionId::new("completion-session");
         let thread = cx
             .update(|cx| {
                 connection.clone().load_session(
@@ -5601,9 +5737,8 @@ exit 7
         let store = connection
             .request_elicitations()
             .expect("connection elicitation store");
-        let session_scope = acp_v2::ElicitationScope::Session(
-            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(session_id.0)),
-        );
+        let session_scope =
+            acp_v2::ElicitationScope::Session(acp_v2::ElicitationSessionScope::new(session_id));
         let request_scope = acp_v2::ElicitationScope::Request(
             acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
         );
@@ -5811,6 +5946,273 @@ exit 7
     }
 
     #[gpui::test]
+    async fn new_session_registers_before_immediate_update(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, _, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: vec![acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new("First update immediately after creation".into()),
+                    )],
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project,
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        request_received.recv().await.expect("new-session request");
+
+        let (acknowledgment, mut barrier_received) = futures::channel::oneshot::channel();
+        let barrier: ForegroundWork = Box::new(ForegroundBarrier { acknowledgment });
+        assert!(connection.dispatch_tx.unbounded_send(barrier).is_ok());
+        respond
+            .try_send(Ok(acp::NewSessionResponse::new(acp::SessionId::new(
+                "unused",
+            ))))
+            .expect("release response and first update");
+        let executor = cx.executor();
+        let dispatcher = executor
+            .dispatcher()
+            .as_test()
+            .expect("deterministic test dispatcher");
+        let mut background_drained = false;
+        for _ in 0..1000 {
+            if !dispatcher.tick(true) {
+                background_drained = true;
+                break;
+            }
+        }
+        assert!(background_drained, "SDK dispatch must quiesce");
+        assert!(connection.sessions.borrow().is_empty());
+        assert!(
+            barrier_received
+                .try_recv()
+                .expect("queued barrier")
+                .is_none()
+        );
+
+        cx.run_until_parked();
+        let thread = creation.await.expect("new session");
+        assert!(
+            thread
+                .read_with(cx, |thread, cx| thread.to_markdown(cx))
+                .contains("First update immediately after creation"),
+            "the first update must not be dropped before session registration"
+        );
+    }
+
+    #[gpui::test]
+    async fn abandoned_new_session_closes_late_response(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, close_count, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: Vec::new(),
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project.clone(),
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        let cancellation = request_received.recv().await.expect("new-session request");
+        drop(creation);
+        cx.run_until_parked();
+        assert!(
+            cancellation.is_cancelled(),
+            "caller drop must cancel the RPC"
+        );
+        assert!(connection.sessions.borrow().is_empty());
+        assert_eq!(close_count.load(Ordering::SeqCst), 0);
+
+        respond
+            .try_send(Ok(acp::NewSessionResponse::new(acp::SessionId::new(
+                "unused",
+            ))))
+            .expect("release late response");
+        cx.run_until_parked();
+        assert!(connection.sessions.borrow().is_empty());
+        assert_eq!(close_count.load(Ordering::SeqCst), 1);
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    acp_v2::SessionId::new("after-abandonment"),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("abandonment must not end the connection");
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.session_id().clone()),
+            acp_v2::SessionId::new("after-abandonment")
+        );
+    }
+
+    #[gpui::test]
+    async fn abandoned_new_session_releases_registration_barrier(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, close_count, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: Vec::new(),
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project,
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        request_received.recv().await.expect("new-session request");
+        respond
+            .try_send(Ok(acp::NewSessionResponse::new(acp::SessionId::new(
+                "unused",
+            ))))
+            .expect("release response");
+        let executor = cx.executor();
+        let dispatcher = executor
+            .dispatcher()
+            .as_test()
+            .expect("deterministic test dispatcher");
+        let mut background_drained = false;
+        for _ in 0..1000 {
+            if !dispatcher.tick(true) {
+                background_drained = true;
+                break;
+            }
+        }
+        assert!(
+            background_drained,
+            "ordered response must await foreground setup"
+        );
+        assert!(connection.sessions.borrow().is_empty());
+        drop(creation);
+        cx.run_until_parked();
+        assert_eq!(close_count.load(Ordering::SeqCst), 1);
+        assert!(connection.sessions.borrow().is_empty());
+    }
+
+    #[gpui::test]
+    async fn new_session_rejection_releases_ordered_dispatch(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, close_count, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: Vec::new(),
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project.clone(),
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        request_received.recv().await.expect("new-session request");
+        let rejection = acp::Error::invalid_params();
+        respond
+            .try_send(Err(rejection.clone()))
+            .expect("reject session creation");
+        let error = creation.await.expect_err("creation must reject");
+        assert_eq!(error.downcast_ref::<acp::Error>(), Some(&rejection));
+        cx.run_until_parked();
+        assert!(connection.sessions.borrow().is_empty());
+        assert_eq!(close_count.load(Ordering::SeqCst), 0);
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    acp_v2::SessionId::new("after-rejection"),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("rejection must not end or block the connection");
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.session_id().clone()),
+            acp_v2::SessionId::new("after-rejection")
+        );
+    }
+
+    #[gpui::test]
+    async fn new_session_eof_releases_ordered_dispatch(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (_respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, close_count, _, _, keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: Vec::new(),
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project,
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        request_received.recv().await.expect("new-session request");
+        drop(keep_agent_alive);
+        cx.run_until_parked();
+        assert!(creation.await.is_err(), "EOF must fail session creation");
+        cx.run_until_parked();
+        assert!(connection.connection.is_incoming_closed());
+        assert!(connection.sessions.borrow().is_empty());
+        assert_eq!(close_count.load(Ordering::SeqCst), 0);
+        let (acknowledgment, barrier_received) = futures::channel::oneshot::channel();
+        let barrier: ForegroundWork = Box::new(ForegroundBarrier { acknowledgment });
+        assert!(connection.dispatch_tx.unbounded_send(barrier).is_ok());
+        barrier_received
+            .await
+            .expect("foreground dispatch after EOF");
+    }
+
+    #[gpui::test]
     async fn test_permission_rpc_cancellation_does_not_cancel_successor(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -5818,7 +6220,7 @@ exit 7
         let (connection, project, _, _, _, _, _keep_agent_alive) =
             connect_fake_agent_with_handle(None, Some(agent_sender), cx).await;
         let agent = agent_receiver.await.expect("fake agent handle");
-        let session_id = acp::SessionId::new("permission-session");
+        let session_id = acp_v2::SessionId::new("permission-session");
         let thread = cx
             .update(|cx| {
                 connection.clone().load_session(
@@ -5837,12 +6239,12 @@ exit 7
             .background_executor
             .timer(std::time::Duration::from_secs(5));
         let exchange = async {
-            let tool_id = acp::ToolCallId::new("reused-tool");
+            let tool_id = acp_v2::ToolCallId::new("reused-tool");
             let permission = |option_id: &str| {
                 acp::RequestPermissionRequest::new(
-                    session_id.clone(),
+                    acp::SessionId::new(session_id.0.clone()),
                     acp::ToolCallUpdate::new(
-                        tool_id.clone(),
+                        acp::ToolCallId::new(tool_id.0.clone()),
                         acp::ToolCallUpdateFields::default()
                             .title("Run a command")
                             .status(acp::ToolCallStatus::Pending),
@@ -5990,7 +6392,7 @@ exit 7
             _keep_agent_alive,
         ) = connect_fake_agent(None, cx).await;
 
-        let session_id = acp::SessionId::new("session-1");
+        let session_id = acp_v2::SessionId::new("session-1");
         let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
 
         // Load the same session twice concurrently — the second call should join
@@ -6083,7 +6485,7 @@ exit 7
             .lock()
             .expect("load_session_updates mutex poisoned") = vec![notice_update];
 
-        let session_id = acp::SessionId::new("session-with-notice");
+        let session_id = acp_v2::SessionId::new("session-with-notice");
         let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
         let thread = cx
             .update(|cx| {
@@ -6119,7 +6521,7 @@ exit 7
         let other_thread = cx
             .update(|cx| {
                 connection.clone().load_session(
-                    acp::SessionId::new("other-session"),
+                    acp_v2::SessionId::new("other-session"),
                     project.clone(),
                     work_dirs.clone(),
                     None,
@@ -6176,7 +6578,7 @@ exit 7
             ))),
         ];
 
-        let session_id = acp::SessionId::new("session-replay");
+        let session_id = acp_v2::SessionId::new("session-replay");
         let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
 
         let thread = cx
@@ -6220,7 +6622,7 @@ exit 7
     ) {
         let (connection, project, _, _, _, _, _keep_agent_alive) =
             connect_fake_agent(None, cx).await;
-        let session_id = acp::SessionId::new("session-config-update");
+        let session_id = acp_v2::SessionId::new("session-config-update");
         let updated_options = vec![acp::SessionConfigOption::boolean(
             "web_search",
             "Web Search",
@@ -6242,7 +6644,7 @@ exit 7
                                 enqueue_notification(
                                     &dispatch_tx,
                                     acp::SessionNotification::new(
-                                        session_id,
+                                        acp::SessionId::new(session_id.0),
                                         acp::SessionUpdate::ConfigOptionUpdate(
                                             acp::ConfigOptionUpdate::new(updated_options),
                                         ),
@@ -6300,7 +6702,7 @@ exit 7
             .lock()
             .expect("load_session_gate mutex poisoned") = Some(gate_rx);
 
-        let session_id = acp::SessionId::new("session-close-during-load");
+        let session_id = acp_v2::SessionId::new("session-close-during-load");
         let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
 
         let load_task = cx.update(|cx| {
@@ -6384,7 +6786,7 @@ exit 7
                 .lock()
                 .expect("load_session_gate mutex poisoned") = Some(gate_rx);
 
-            let session_id = acp::SessionId::new("session-abandoned-during-load");
+            let session_id = acp_v2::SessionId::new("session-abandoned-during-load");
             let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
             let load_task = cx.update(|cx| {
                 connection.clone().load_session(
@@ -6462,7 +6864,7 @@ exit 7
                     ))),
                 )];
 
-            let session_id = acp::SessionId::new("session-reopen-abandoned-load");
+            let session_id = acp_v2::SessionId::new("session-reopen-abandoned-load");
             let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
             let first_load = cx.update(|cx| {
                 connection.clone().load_session(
@@ -6592,7 +6994,7 @@ exit 7
     async fn test_reopening_after_failed_load_discards_old_replay(cx: &mut gpui::TestAppContext) {
         let (connection, project, load_count, close_count, _, _, _keep_agent_alive) =
             connect_fake_agent(None, cx).await;
-        let session_id = acp::SessionId::new("session-failed-load");
+        let session_id = acp_v2::SessionId::new("session-failed-load");
         let work_dirs = PathList::new(&[std::path::Path::new("/a")]);
         let (response_tx, response_rx) = futures::channel::oneshot::channel::<()>();
         let first_load = cx.update(|cx| {
@@ -6609,7 +7011,7 @@ exit 7
                             enqueue_notification(
                                 &dispatch_tx,
                                 acp::SessionNotification::new(
-                                    session_id,
+                                    acp::SessionId::new(session_id.0),
                                     acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
                                         "old replay".into(),
                                     )),
@@ -6690,7 +7092,7 @@ exit 7
             .lock()
             .expect("load_session_gate mutex poisoned") = Some(gate_rx);
 
-        let session_id = acp::SessionId::new("session-concurrent-close");
+        let session_id = acp_v2::SessionId::new("session-concurrent-close");
         let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
 
         // Kick off two concurrent loads; the second must join the first's pending
@@ -6840,7 +7242,7 @@ fn config_state(
 }
 
 struct AcpSessionModes {
-    session_id: acp::SessionId,
+    session_id: acp_v2::SessionId,
     connection: ConnectionTo<Agent>,
     state: Rc<RefCell<acp::SessionModeState>>,
 }
@@ -6856,7 +7258,7 @@ impl acp_thread::AgentSessionModes for AcpSessionModes {
 
     fn set_mode(&self, mode_id: acp::SessionModeId, cx: &mut App) -> Task<Result<()>> {
         let connection = self.connection.clone();
-        let session_id = self.session_id.clone();
+        let session_id = acp::SessionId::new(self.session_id.0.clone());
         let old_mode_id;
         {
             let mut state = self.state.borrow_mut();
@@ -6882,7 +7284,7 @@ impl acp_thread::AgentSessionModes for AcpSessionModes {
 }
 
 struct AcpSessionConfigOptions {
-    session_id: acp::SessionId,
+    session_id: acp_v2::SessionId,
     connection: ConnectionTo<Agent>,
     config_options: ConfigOptions,
 }
@@ -6921,7 +7323,7 @@ impl acp_thread::AgentSessionConfigOptions for AcpSessionConfigOptions {
 
 fn session_thread(
     ctx: &ClientContext,
-    session_id: &acp::SessionId,
+    session_id: &acp_v2::SessionId,
 ) -> Result<WeakEntity<AcpThread>, acp::Error> {
     let sessions = ctx.sessions.borrow();
     sessions
@@ -6956,7 +7358,7 @@ fn handle_request_permission(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    let thread = match session_thread(ctx, &args.session_id) {
+    let thread = match session_thread(ctx, &acp_v2::SessionId::new(args.session_id.0)) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
@@ -7014,8 +7416,7 @@ fn handle_create_elicitation(
     };
     match args.scope() {
         acp_v2::ElicitationScope::Session(scope) => {
-            let thread = match session_thread(ctx, &acp::SessionId::new(scope.session_id.0.clone()))
-            {
+            let thread = match session_thread(ctx, &scope.session_id) {
                 Ok(t) => t,
                 Err(e) => return respond_err(responder, e),
             };
@@ -7139,7 +7540,7 @@ fn handle_write_text_file(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    let thread = match session_thread(ctx, &args.session_id) {
+    let thread = match session_thread(ctx, &acp_v2::SessionId::new(args.session_id.0)) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
@@ -7174,7 +7575,7 @@ fn handle_read_text_file(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    let thread = match session_thread(ctx, &args.session_id) {
+    let thread = match session_thread(ctx, &acp_v2::SessionId::new(args.session_id.0)) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
@@ -7202,13 +7603,14 @@ fn handle_session_notification(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    let session_id = acp_v2::SessionId::new(notification.session_id.0);
     // Extract everything we need from the session while briefly borrowing.
     let (thread, session_modes, config_opts_data) = {
         let sessions = ctx.sessions.borrow();
-        let Some(session) = sessions.get(&notification.session_id) else {
+        let Some(session) = sessions.get(&session_id) else {
             log::warn!(
                 "Received session notification for unknown session: {:?}",
-                notification.session_id
+                session_id
             );
             return;
         };
@@ -7251,7 +7653,7 @@ fn handle_session_notification(
     if let acp::SessionUpdate::SessionInfoUpdate(info_update) = &notification.update
         && let Some(session_list) = ctx.session_list.borrow().as_ref()
     {
-        session_list.send_info_update(notification.session_id.clone(), info_update.clone());
+        session_list.send_info_update(session_id.clone(), info_update.clone());
     }
 
     // Abandoned loads can keep replaying until their wire operation settles.
@@ -7306,7 +7708,7 @@ fn handle_session_notification(
     {
         log::error!(
             "Failed to handle session update for {:?}: {err:?}",
-            notification.session_id
+            session_id
         );
     }
 
@@ -7369,7 +7771,7 @@ fn handle_create_terminal(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    let thread = match session_thread(ctx, &args.session_id) {
+    let thread = match session_thread(ctx, &acp_v2::SessionId::new(args.session_id.0)) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
@@ -7429,7 +7831,7 @@ fn handle_kill_terminal(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    let thread = match session_thread(ctx, &args.session_id) {
+    let thread = match session_thread(ctx, &acp_v2::SessionId::new(args.session_id.0)) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
@@ -7453,7 +7855,7 @@ fn handle_release_terminal(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    let thread = match session_thread(ctx, &args.session_id) {
+    let thread = match session_thread(ctx, &acp_v2::SessionId::new(args.session_id.0)) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
@@ -7479,7 +7881,7 @@ fn handle_terminal_output(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    let thread = match session_thread(ctx, &args.session_id) {
+    let thread = match session_thread(ctx, &acp_v2::SessionId::new(args.session_id.0)) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
@@ -7507,7 +7909,7 @@ fn handle_wait_for_terminal_exit(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    let thread = match session_thread(ctx, &args.session_id) {
+    let thread = match session_thread(ctx, &acp_v2::SessionId::new(args.session_id.0)) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };

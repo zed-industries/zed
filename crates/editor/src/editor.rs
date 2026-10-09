@@ -7421,13 +7421,9 @@ impl Editor {
         }
         let buffer = self.buffer.read(cx).snapshot(cx);
 
-        let mut new_selections = Vec::new();
-        let mut edits = Vec::new();
-
+        let mut selections = Vec::new();
         for selection in self.selections.all_adjusted(&self.display_snapshot(cx)) {
-            let selection_is_empty = selection.is_empty();
-
-            let (start, end) = if selection_is_empty {
+            let (start, end) = if selection.is_empty() {
                 let (word_range, _) = buffer.surrounding_word(selection.start, None);
                 (word_range.start, word_range.end)
             } else {
@@ -7436,20 +7432,48 @@ impl Editor {
                     buffer.point_to_offset(selection.end),
                 )
             };
+            selections.push(Selection {
+                id: selection.id,
+                start,
+                end,
+                reversed: selection.reversed,
+                goal: SelectionGoal::None,
+            });
+        }
 
-            let old_text = buffer.text_for_range(start..end).collect::<String>();
+        // Expanding cursors to words can make selections overlap, e.g. several
+        // cursors in one word. Overlapping edits would be applied once per
+        // selection and duplicate the text, so transform each merged range once.
+        selections.sort_by_key(|selection| selection.start);
+        let mut merged_selections: Vec<Selection<MultiBufferOffset>> = Vec::new();
+        for selection in selections {
+            if let Some(previous) = merged_selections.last_mut()
+                && selection.start < previous.end
+            {
+                previous.end = cmp::max(previous.end, selection.end);
+            } else {
+                merged_selections.push(selection);
+            }
+        }
+
+        let mut new_selections = Vec::new();
+        let mut edits = Vec::new();
+        for selection in merged_selections {
+            let old_text = buffer
+                .text_for_range(selection.start..selection.end)
+                .collect::<String>();
             let new_text = callback(&old_text);
 
             new_selections.push(Selection {
-                start: buffer.anchor_before(start),
-                end: buffer.anchor_after(end),
+                start: buffer.anchor_before(selection.start),
+                end: buffer.anchor_after(selection.end),
                 goal: SelectionGoal::None,
                 id: selection.id,
                 reversed: selection.reversed,
             });
 
             if new_text != old_text {
-                edits.push((start..end, new_text));
+                edits.push((selection.start..selection.end, new_text));
             }
         }
 

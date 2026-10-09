@@ -568,8 +568,8 @@ impl PermissionSelection {
 
 pub struct ThreadView {
     pub(crate) root_thread_id: ThreadId,
-    pub session_id: acp_v1::SessionId,
-    pub parent_session_id: Option<acp_v1::SessionId>,
+    pub session_id: acp_v2::SessionId,
+    pub parent_session_id: Option<acp_v2::SessionId>,
     pub thread: Entity<AcpThread>,
     pub(crate) conversation: Entity<super::Conversation>,
     pub server_view: WeakEntity<ConversationView>,
@@ -595,14 +595,14 @@ pub struct ThreadView {
     thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
     pub session_capabilities: SharedSessionCapabilities,
-    pub expanded_tool_call_raw_inputs: HashSet<acp_v1::ToolCallId>,
-    collapsed_sandbox_authorization_details: HashSet<acp_v1::ToolCallId>,
-    collapsed_sandbox_network_details: HashSet<acp_v1::ToolCallId>,
+    pub expanded_tool_call_raw_inputs: HashSet<acp_v2::ToolCallId>,
+    collapsed_sandbox_authorization_details: HashSet<acp_v2::ToolCallId>,
+    collapsed_sandbox_network_details: HashSet<acp_v2::ToolCallId>,
     /// Sandbox escalation prompts whose "surprising Unicode" warning the user
     /// has explicitly acknowledged. Until a prompt's tool call is in this set,
     /// its allow buttons stay disabled. See [`Self::sandbox_confusable_findings`].
-    acknowledged_confusable_warnings: HashSet<acp_v1::ToolCallId>,
-    pub subagent_scroll_handles: RefCell<HashMap<acp_v1::SessionId, ScrollHandle>>,
+    acknowledged_confusable_warnings: HashSet<acp_v2::ToolCallId>,
+    pub subagent_scroll_handles: RefCell<HashMap<acp_v2::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
     pub queue_expanded: bool,
@@ -611,7 +611,7 @@ pub struct ThreadView {
     pub editing_message: Option<usize>,
     pub message_queue: MessageQueue,
     pub turn_fields: TurnFields,
-    pub discarded_partial_edits: HashSet<acp_v1::ToolCallId>,
+    pub discarded_partial_edits: HashSet<acp_v2::ToolCallId>,
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
     pub resumed_without_history: bool,
@@ -2942,7 +2942,7 @@ impl ThreadView {
 
     pub fn authorize_permission_request(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
         outcome: SelectedPermissionOutcome,
         window: &mut Window,
@@ -3262,9 +3262,9 @@ impl ThreadView {
         request_id: Option<PermissionRequestId>,
         tool_call_id: &str,
         cx: &App,
-    ) -> Option<(acp_v1::SessionId, PermissionRequestId)> {
+    ) -> Option<(acp_v2::SessionId, PermissionRequestId)> {
         let session_id = session_id
-            .map(acp_v1::SessionId::new)
+            .map(acp_v2::SessionId::new)
             .unwrap_or_else(|| self.thread.read(cx).session_id().clone());
         let conversation = self.conversation.read(cx);
         let request = if let Some(id) = request_id {
@@ -3274,7 +3274,7 @@ impl ThreadView {
                 .threads
                 .get(&session_id)?
                 .read(cx)
-                .permission_request_for_tool(&acp_v1::ToolCallId::new(tool_call_id))?
+                .permission_request_for_tool(&acp_v2::ToolCallId::new(tool_call_id))?
         };
         request.legacy_options()?;
         Some((session_id, request.id))
@@ -3339,7 +3339,7 @@ impl ThreadView {
 
     fn authorize_with_granularity(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
         is_allow: bool,
         window: &mut Window,
@@ -3428,6 +3428,11 @@ impl ThreadView {
     pub fn restore_checkpoint(&mut self, client_id: &ClientUserMessageId, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| {
+                telemetry::event!(
+                    "Agent Checkpoint Restored",
+                    agent = thread.connection().telemetry_id(),
+                    session = thread.session_id().clone(),
+                );
                 thread.restore_checkpoint(client_id.clone(), cx)
             })
             .detach_and_log_err(cx);
@@ -3897,7 +3902,7 @@ impl ThreadView {
 
     fn collect_subagent_items_for_sessions(
         entries: &[AgentThreadEntry],
-        awaiting_session_ids: &[acp_v1::SessionId],
+        awaiting_session_ids: &[acp_v2::SessionId],
         cx: &App,
     ) -> Vec<(SharedString, usize)> {
         let tool_calls_by_session: HashMap<_, _> = entries
@@ -3974,7 +3979,7 @@ impl ThreadView {
 
     pub(super) fn render_generic_permission_card(
         &self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
         request: &acp_v2::RequestPermissionRequest,
         source: Option<String>,
@@ -8472,7 +8477,7 @@ impl ThreadView {
 
     fn render_terminal_tool_call(
         &self,
-        active_session_id: &acp_v1::SessionId,
+        active_session_id: &acp_v2::SessionId,
         entry_ix: usize,
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
@@ -8729,8 +8734,8 @@ impl ThreadView {
 
     fn is_first_tool_call(
         &self,
-        active_session_id: &acp_v1::SessionId,
-        tool_call_id: &acp_v1::ToolCallId,
+        active_session_id: &acp_v2::SessionId,
+        tool_call_id: &acp_v2::ToolCallId,
         cx: &App,
     ) -> bool {
         self.conversation
@@ -8744,7 +8749,7 @@ impl ThreadView {
 
     fn render_any_tool_call(
         &self,
-        active_session_id: &acp_v1::SessionId,
+        active_session_id: &acp_v2::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
@@ -8811,7 +8816,7 @@ impl ThreadView {
 
     fn render_tool_call(
         &self,
-        active_session_id: &acp_v1::SessionId,
+        active_session_id: &acp_v2::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
@@ -9354,7 +9359,7 @@ impl ThreadView {
     fn render_sandbox_authorization_details(
         &self,
         entry_ix: usize,
-        tool_call_id: &acp_v1::ToolCallId,
+        tool_call_id: &acp_v2::ToolCallId,
         details: &SandboxAuthorizationDetails,
         window: &Window,
         cx: &Context<Self>,
@@ -9704,7 +9709,7 @@ impl ThreadView {
     /// allow buttons. See [`Self::sandbox_confusables_block_allow`].
     fn render_sandbox_confusable_warning(
         &self,
-        tool_call_id: &acp_v1::ToolCallId,
+        tool_call_id: &acp_v2::ToolCallId,
         findings: &[(String, Vec<unicode_confusables::SuspiciousChar>)],
         window: &Window,
         cx: &Context<Self>,
@@ -10010,7 +10015,7 @@ impl ThreadView {
 
     fn render_permission_buttons(
         &self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         is_first: bool,
         request: &PermissionRequest,
         entry_ix: usize,
@@ -10073,9 +10078,9 @@ impl ThreadView {
         choices: &[PermissionOptionChoice],
         patterns: Option<(&[PermissionPattern], &str)>,
         entry_ix: usize,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
-        tool_call_id: acp_v1::ToolCallId,
+        tool_call_id: acp_v2::ToolCallId,
         focus_handle: &FocusHandle,
         allow_disabled: bool,
         cx: &Context<Self>,
@@ -10214,9 +10219,9 @@ impl ThreadView {
         choices: &[PermissionOptionChoice],
         current_label: SharedString,
         entry_ix: usize,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
-        tool_call_id: acp_v1::ToolCallId,
+        tool_call_id: acp_v2::ToolCallId,
         selected_index: usize,
         is_first: bool,
         cx: &Context<Self>,
@@ -10295,7 +10300,7 @@ impl ThreadView {
         _tool_name: &str,
         current_label: SharedString,
         entry_ix: usize,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
         is_first: bool,
         cx: &Context<Self>,
@@ -10464,7 +10469,7 @@ impl ThreadView {
 
     fn render_permission_buttons_flat(
         &self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         is_first: bool,
         options: &[acp_v1::PermissionOption],
         entry_ix: usize,
@@ -10863,7 +10868,7 @@ impl ThreadView {
 
     fn render_tool_call_content(
         &self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         entry_ix: usize,
         content: &ToolCallContent,
         context_ix: usize,
@@ -11292,10 +11297,10 @@ impl ThreadView {
 
     fn render_subagent_tool_call(
         &self,
-        active_session_id: &acp_v1::SessionId,
+        active_session_id: &acp_v2::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
-        subagent_session_id: Option<acp_v1::SessionId>,
+        subagent_session_id: Option<acp_v2::SessionId>,
         focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
@@ -11322,7 +11327,7 @@ impl ThreadView {
 
     fn render_subagent_card(
         &self,
-        active_session_id: &acp_v1::SessionId,
+        active_session_id: &acp_v2::SessionId,
         entry_ix: usize,
         thread_view: Option<&Entity<ThreadView>>,
         tool_call: &ToolCall,
