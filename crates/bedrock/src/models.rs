@@ -918,7 +918,9 @@ impl ConverseModel {
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // US Government region inference profiles
-            (Self::ClaudeSonnet4_5, "us-gov") => Ok(format!("{}.{}", region_group, model_id)),
+            (Self::ClaudeOpus5_5 | Self::ClaudeSonnet4_5, "us-gov") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
 
             // US region inference profiles
             (
@@ -1019,7 +1021,9 @@ impl ConverseModel {
                 "apac",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            (Self::ClaudeFable5 | Self::ClaudeSonnet5, _) => Ok(format!("global.{}", model_id)),
+            (Self::ClaudeFable5 | Self::ClaudeOpus5_5 | Self::ClaudeSonnet5, _) => {
+                Ok(format!("global.{}", model_id))
+            }
 
             // Default: use model ID directly
             _ => Ok(model_id.into()),
@@ -1464,6 +1468,15 @@ mod tests {
             ConverseModel::ClaudeSonnet5.cross_region_inference_id("ap-northeast-1", false)?,
             "global.anthropic.claude-sonnet-5"
         );
+        // Opus 5.5 has no APAC geo profile outside AU and JP.
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-south-1", false)?,
+            "global.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-northeast-2", false)?,
+            "global.anthropic.claude-opus-5-5"
+        );
         Ok(())
     }
 
@@ -1586,6 +1599,10 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("us-gov-west-1", false)?,
             "us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("us-gov-west-1", true)?,
+            "us-gov.anthropic.claude-opus-5-5"
         );
         Ok(())
     }
