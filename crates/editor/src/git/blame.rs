@@ -248,6 +248,11 @@ impl GitBlame {
                 }
                 multi_buffer::Event::BufferRangesUpdated { .. }
                 | multi_buffer::Event::BuffersEdited { .. } => git_blame.regenerate_on_edit(cx),
+                multi_buffer::Event::BuffersRemoved { removed_buffer_ids } => {
+                    for buffer_id in removed_buffer_ids {
+                        git_blame.buffers.remove(buffer_id);
+                    }
+                }
                 _ => {}
             },
         );
@@ -724,12 +729,19 @@ impl GitBlame {
 
             this.update(cx, |this, cx| {
                 this.buffers.clear();
+                let multi_buffer = this.multi_buffer.upgrade();
                 for (id, snapshot, buffer_edits, entries, commit_details, commit_tag_names) in
                     all_results
                 {
                     let Some(entries) = entries else {
                         continue;
                     };
+                    if multi_buffer
+                        .as_ref()
+                        .is_none_or(|multi_buffer| multi_buffer.read(cx).buffer(id).is_none())
+                    {
+                        continue;
+                    }
                     this.buffers.insert(
                         id,
                         GitBlameBuffer {
@@ -1169,6 +1181,86 @@ mod tests {
                 vec![Some((buffer_id, blame_entry("0d0d0d", 1..2))), None, None]
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_blame_releases_removed_buffers(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/my-repo"),
+            json!({
+                ".git": {},
+                "project": { "file.txt": "AAA\n" },
+                "external.txt": "BBB\n",
+            }),
+        )
+        .await;
+        fs.set_blame_for_repo(
+            Path::new(path!("/my-repo/.git")),
+            vec![(
+                repo_path("external.txt"),
+                Blame {
+                    entries: vec![blame_entry("0d0d0d", 0..1)],
+                    ..Default::default()
+                },
+            )],
+        );
+        let project = Project::test(fs, [path!("/my-repo/project").as_ref()], cx).await;
+
+        for removed_while_blaming in [false, true] {
+            let external = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(path!("/my-repo/external.txt"), cx)
+                })
+                .await
+                .unwrap();
+            let external_id = external.read_with(cx, |buffer, _| buffer.remote_id());
+            let worktree = project.read_with(cx, |project, cx| {
+                let (worktree, _) = project
+                    .find_worktree(Path::new(path!("/my-repo/external.txt")), cx)
+                    .unwrap();
+                assert!(worktree.read(cx).is_single_file());
+                worktree.downgrade()
+            });
+            let multi_buffer = cx.new(|cx| {
+                let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+                multi_buffer.set_excerpts_for_buffer(
+                    external.clone(),
+                    [Point::zero()..Point::new(1, 0)],
+                    0,
+                    cx,
+                );
+                multi_buffer
+            });
+            cx.executor().run_until_parked();
+            let git_blame =
+                cx.new(|cx| GitBlame::new(multi_buffer.clone(), project.clone(), false, true, cx));
+            if !removed_while_blaming {
+                cx.executor().run_until_parked();
+                git_blame.update(cx, |blame, cx| {
+                    assert_blame_rows(
+                        blame,
+                        external_id,
+                        0..1,
+                        vec![Some(blame_entry("0d0d0d", 0..1))],
+                        cx,
+                    );
+                });
+            }
+            git_blame.update(cx, |blame, cx| blame.blur(cx));
+
+            multi_buffer.update(cx, |multi_buffer, cx| {
+                multi_buffer.remove_excerpts_for_buffer(external_id, cx);
+            });
+            cx.executor().run_until_parked();
+            cx.update(|_| drop(external));
+            cx.executor()
+                .advance_clock(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL);
+            cx.executor().run_until_parked();
+            worktree.assert_released();
+        }
     }
 
     #[gpui::test]
