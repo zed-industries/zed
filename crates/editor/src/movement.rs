@@ -4,15 +4,16 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{
     DisplayRow, EditorStyle, ToOffset, ToPoint,
+    display_map::{GridCell, HighlightedChunk, HorizontalViewport, RulerShaper},
     scroll::{ScrollOffset, SharedScrollAnchor},
 };
-use gpui::{Pixels, WindowTextSystem};
-use language::{CharClassifier, Point};
+use gpui::{LineLayout, Pixels, TextAlign, WindowTextSystem};
+use language::{CharClassifier, LanguageAwareStyling, Point};
 use multi_buffer::{MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 use workspace::searchable::Direction;
 
-use std::{ops::Range, sync::Arc};
+use std::{borrow::Cow, cell::OnceCell, ops::Range, sync::Arc};
 
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
@@ -31,7 +32,110 @@ pub struct TextLayoutDetails {
     pub(crate) rem_size: Pixels,
     pub scroll_anchor: SharedScrollAnchor,
     pub visible_rows: Option<f64>,
+    pub visible_columns: Option<f64>,
     pub vertical_scroll_margin: ScrollOffset,
+    pub(crate) grid_cell: OnceCell<GridCell>,
+    pub(crate) semantic_tokens_enabled: bool,
+}
+
+impl TextLayoutDetails {
+    pub(crate) fn font_size(&self) -> Pixels {
+        self.editor_style.text.font_size.to_pixels(self.rem_size)
+    }
+
+    pub(crate) fn em_layout_width(&self) -> Pixels {
+        let font_id = self
+            .text_system
+            .resolve_font(&self.editor_style.text.font());
+        self.text_system.em_layout_width(font_id, self.font_size())
+    }
+
+    pub(crate) fn grid_cell(&self, snapshot: &DisplaySnapshot) -> GridCell {
+        *self.grid_cell.get_or_init(|| {
+            GridCell::measure(
+                &self.text_system,
+                &self.editor_style,
+                snapshot.highlight_styles(),
+                self.font_size(),
+            )
+        })
+    }
+
+    pub(crate) fn language_aware(
+        &self,
+        snapshot: &DisplaySnapshot,
+        row: DisplayRow,
+    ) -> LanguageAwareStyling {
+        language_aware_styling(snapshot, row, self.semantic_tokens_enabled)
+    }
+
+    pub(crate) fn ruler_shaper(&self, snapshot: &DisplaySnapshot, row: DisplayRow) -> RulerShaper {
+        RulerShaper {
+            text_system: self.text_system.clone(),
+            style: self.editor_style.clone(),
+            font_size: self.font_size(),
+            language_aware: self.language_aware(snapshot, row),
+        }
+    }
+
+    pub(crate) fn horizontal_viewport(&self, snapshot: &DisplaySnapshot) -> HorizontalViewport {
+        HorizontalViewport {
+            scroll_columns: self.scroll_anchor.scroll_position(snapshot).x,
+            visible_columns: self.visible_columns.unwrap_or(0.),
+            text_align: TextAlign::Left,
+            content_width: Pixels::ZERO,
+        }
+    }
+
+    pub(crate) fn shape_row_text<'a>(
+        &self,
+        chunks: impl Iterator<Item = HighlightedChunk<'a>>,
+    ) -> Arc<LineLayout> {
+        let text_style = &self.editor_style.text;
+        let mut runs = Vec::new();
+        let mut line = String::new();
+        for chunk in chunks {
+            line.push_str(chunk.text);
+            let chunk_style = if let Some(style) = chunk.style {
+                Cow::Owned(text_style.clone().highlight(style))
+            } else {
+                Cow::Borrowed(text_style)
+            };
+            runs.push(chunk_style.to_run(chunk.text.len()))
+        }
+
+        if line.ends_with('\n') {
+            line.pop();
+            if let Some(last_run) = runs.last_mut() {
+                last_run.len -= 1;
+                if last_run.len == 0 {
+                    runs.pop();
+                }
+            }
+        }
+
+        self.text_system
+            .layout_line(&line, self.font_size(), &runs, None)
+    }
+}
+
+pub(crate) fn language_aware_styling(
+    snapshot: &DisplaySnapshot,
+    row: DisplayRow,
+    semantic_tokens_enabled: bool,
+) -> LanguageAwareStyling {
+    let tree_sitter = !semantic_tokens_enabled
+        || snapshot
+            .point_to_buffer_point(DisplayPoint::new(row, 0).to_point(snapshot))
+            .is_some_and(|(buffer, ..)| {
+                buffer
+                    .resolved_settings()
+                    .is_none_or(|settings| settings.semantic_tokens.use_tree_sitter())
+            });
+    LanguageAwareStyling {
+        tree_sitter,
+        diagnostics: true,
+    }
 }
 
 /// Returns a column to the left of the current point, wrapping

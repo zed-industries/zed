@@ -258,6 +258,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_08_30::nest_markdown_preview_settings),
         MigrationType::Json(migrations::m_2026_09_16::nest_agent_threads_sidebar_settings),
         MigrationType::Json(migrations::m_2026_09_29::move_copilot_enterprise_uri),
+        MigrationType::Json(migrations::m_2026_10_09::replace_prefer_line_soft_wrap),
     ];
     run_migrations(text, migrations)
 }
@@ -5440,6 +5441,52 @@ mod tests {
                     }
                 }
             "#}),
+        );
+    }
+
+    #[test]
+    fn test_replace_prefer_line_soft_wrap() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "soft_wrap": "prefer_line",
+                    "languages": {
+                        "Markdown": {
+                            "soft_wrap": "prefer_line"
+                        },
+                        "Rust": {
+                            "soft_wrap": "editor_width"
+                        }
+                    },
+                    "preview": {
+                        "soft_wrap": "prefer_line"
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "soft_wrap": "none",
+                    "languages": {
+                        "Markdown": {
+                            "soft_wrap": "none"
+                        },
+                        "Rust": {
+                            "soft_wrap": "editor_width"
+                        }
+                    },
+                    "preview": {
+                        "soft_wrap": "none"
+                    }
+                }
+            "#}),
+        );
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "soft_wrap": "none"
+                }
+            "#},
+            None,
         );
     }
 }

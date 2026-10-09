@@ -640,7 +640,7 @@ impl VsCodeSettings {
             show_wrap_guides: None,
             soft_wrap: self.read_enum("editor.wordWrap", |s| match s {
                 "on" => Some(SoftWrap::EditorWidth),
-                "wordWrapColumn" => Some(SoftWrap::PreferLine),
+                "wordWrapColumn" => Some(SoftWrap::Bounded),
                 "bounded" => Some(SoftWrap::Bounded),
                 "off" => Some(SoftWrap::None),
                 _ => None,

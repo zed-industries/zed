@@ -4074,6 +4074,44 @@ async fn test_autoscroll_horizontally_long_selection_tracks_cursor(cx: &mut Test
 }
 
 #[gpui::test]
+async fn test_autoscroll_horizontally_survives_first_inlay_measurement(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(300.), px(300.)));
+
+    let long_line = "x".repeat(250);
+    cx.set_state(&format!("ˇ{long_line}"));
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let position = editor
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .anchor_after(MultiBufferOffset(1));
+        editor.display_map.update(cx, |map, cx| {
+            map.splice_inlays(&[], vec![Inlay::repl_result(1, position, "result")], cx);
+        });
+        editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 250)..Point::new(0, 250)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        assert!(
+            scroll_x + visible_columns > 249.,
+            "cursor column must be visible, but the viewport shows {scroll_x}..{}",
+            scroll_x + visible_columns
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_autoscroll_horizontally_padded_span_boundary_still_scrolls(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -14032,9 +14070,9 @@ async fn test_add_selection_unwrapped_mode_switch_resets_groups(cx: &mut TestApp
             let width = editor
                 .display_snapshot(cx)
                 .layout_row(DisplayRow(0), &details)
-                .width
+                .width()
                 / 2.0;
-            editor.set_wrap_width(Some(width), cx);
+            editor.set_wrap_width(Some(Pixels::from(width)), cx);
             assert_eq!(
                 editor.display_text(cx),
                 "abcdefgh\nijklmnop\nqrstuvwx\nyzABCDEF\n01234567\n89abcdef",
@@ -14067,9 +14105,9 @@ async fn test_add_selection_unwrapped_eof_and_skipped_range_terminate(cx: &mut T
             let width = editor
                 .display_snapshot(cx)
                 .layout_row(DisplayRow(0), &details)
-                .width
+                .width()
                 / 4.0;
-            editor.set_wrap_width(Some(width), cx);
+            editor.set_wrap_width(Some(Pixels::from(width)), cx);
             assert!(editor.display_snapshot(cx).max_point().row().0 >= 3);
             for _ in 0..2 {
                 add_selection_in_direction(editor, false, true, window, cx);

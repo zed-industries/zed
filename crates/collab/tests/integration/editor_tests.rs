@@ -6548,8 +6548,7 @@ fn extract_semantic_token_ranges(editor: &Editor, cx: &App) -> Vec<Range<MultiBu
     editor
         .display_map
         .read(cx)
-        .semantic_token_highlights
-        .iter()
+        .all_semantic_token_highlights()
         .flat_map(|(_, (v, _))| v.iter())
         .map(|highlights| highlights.range.to_offset(&multi_buffer_snapshot))
         .collect()

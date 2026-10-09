@@ -374,14 +374,14 @@ impl Editor {
         start_row: DisplayRow,
         viewport_width: Pixels,
         scroll_width: ScrollOffset,
-        em_advance: Pixels,
+        em_layout_width: Pixels,
         layouts: &[LineWithInvisibles],
         autoscroll_request: Option<(Autoscroll, bool)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Point<ScrollOffset>> {
         let (_, local) = autoscroll_request?;
-        let em_advance = ScrollOffset::from(em_advance);
+        let em_layout_width = ScrollOffset::from(em_layout_width);
         let viewport_width = ScrollOffset::from(viewport_width);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -435,7 +435,8 @@ impl Editor {
 
                     let mut candidate_left = layout.x_for_index(start_column as usize)
                         + ScrollOffset::from(self.gutter_dimensions.margin);
-                    let mut candidate_right = layout.x_for_index(end_column as usize) + em_advance;
+                    let mut candidate_right =
+                        layout.x_for_index(end_column as usize) + em_layout_width;
 
                     // If the full selection span (with the same padding used below) doesn't
                     // fit in the viewport, fall back to just tracking the cursor (head)
@@ -446,7 +447,7 @@ impl Editor {
                         candidate_left = layout.x_for_index(head_column as usize)
                             + ScrollOffset::from(self.gutter_dimensions.margin);
                         candidate_right =
-                            layout.x_for_index(head_column_clamped as usize) + em_advance;
+                            layout.x_for_index(head_column_clamped as usize) + em_layout_width;
                     }
 
                     target_left = target_left.min(candidate_left);
@@ -464,14 +465,14 @@ impl Editor {
             return None;
         }
 
-        let scroll_left = self.scroll_manager.offset(cx).x * em_advance;
+        let scroll_left = self.scroll_manager.offset(cx).x * em_layout_width;
         let scroll_right = scroll_left + viewport_width;
 
         let was_scrolled = if target_left < scroll_left {
-            scroll_position.x = target_left / em_advance;
+            scroll_position.x = target_left / em_layout_width;
             self.set_scroll_position_internal(scroll_position, local, true, window, cx)
         } else if target_right > scroll_right {
-            scroll_position.x = (target_right - viewport_width) / em_advance;
+            scroll_position.x = (target_right - viewport_width) / em_layout_width;
             self.set_scroll_position_internal(scroll_position, local, true, window, cx)
         } else {
             WasScrolled(false)

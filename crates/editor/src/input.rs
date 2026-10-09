@@ -3094,13 +3094,13 @@ impl EntityInputHandler for Editor {
         let text_layout_details = self.text_layout_details(window, cx);
         let CharacterDimensions {
             em_width,
-            em_advance,
             line_height,
         } = self.character_dimensions(window, cx);
 
         let snapshot = self.snapshot(window, cx);
         let scroll_position = snapshot.scroll_position();
-        let scroll_left = scroll_position.x * ScrollOffset::from(em_advance);
+        let scroll_left =
+            scroll_position.x * ScrollOffset::from(text_layout_details.em_layout_width());
 
         let start =
             MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start)).to_display_point(&snapshot);

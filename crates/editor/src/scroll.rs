@@ -470,6 +470,12 @@ impl ScrollManager {
         self.autoscroll_request.take()
     }
 
+    pub fn restore_autoscroll_request(&mut self, request: Option<(Autoscroll, bool)>) {
+        if self.autoscroll_request.is_none() {
+            self.autoscroll_request = request;
+        }
+    }
+
     pub fn active_scrollbar_state(&self) -> Option<&ActiveScrollbarState> {
         self.active_scrollbar.as_ref()
     }

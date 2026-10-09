@@ -4377,7 +4377,7 @@ impl BufferSnapshot {
         self.modeline.as_ref()
     }
 
-    pub(crate) fn resolved_settings(&self) -> Option<&Arc<LanguageSettings>> {
+    pub fn resolved_settings(&self) -> Option<&Arc<LanguageSettings>> {
         self.resolved_settings.as_ref()
     }
 

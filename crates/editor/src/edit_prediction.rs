@@ -1138,7 +1138,6 @@ impl Editor {
                         scroll_top,
                         scroll_bottom,
                         line_height,
-                        scroll_pixel_position,
                         target_display_point,
                         editor_width,
                         window,
@@ -1164,7 +1163,6 @@ impl Editor {
                     visible_row_range,
                     target_display_point,
                     line_height,
-                    scroll_pixel_position,
                     content_origin,
                     editor_width,
                     window,
@@ -1836,7 +1834,6 @@ impl Editor {
         scroll_top: ScrollOffset,
         scroll_bottom: ScrollOffset,
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         target_display_point: DisplayPoint,
         editor_width: Pixels,
         window: &mut Window,
@@ -1887,7 +1884,6 @@ impl Editor {
                 visible_row_range,
                 target_display_point,
                 line_height,
-                scroll_pixel_position,
                 content_origin,
                 editor_width,
                 window,
@@ -1903,7 +1899,6 @@ impl Editor {
         visible_row_range: Range<DisplayRow>,
         target_display_point: DisplayPoint,
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
         editor_width: Pixels,
         window: &mut Window,
@@ -1923,8 +1918,7 @@ impl Editor {
         let line_origin =
             self.display_to_pixel_point(target_line_end, editor_snapshot, window, cx)?;
 
-        let start_point = content_origin - point(scroll_pixel_position.x.into(), Pixels::ZERO);
-        let mut origin = start_point
+        let mut origin = content_origin
             + line_origin
             + point(Self::EDIT_PREDICTION_POPOVER_PADDING_X, Pixels::ZERO);
         origin.x = origin.x.max(content_origin.x);
@@ -2068,7 +2062,9 @@ impl Editor {
                 editor_snapshot,
                 style,
                 editor_width,
+                None,
                 |_| false,
+                &[],
                 window,
                 cx,
             )

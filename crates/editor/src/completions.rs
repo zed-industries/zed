@@ -16,7 +16,10 @@ impl Editor {
             rem_size: window.rem_size(),
             scroll_anchor: self.scroll_manager.shared_scroll_anchor(cx),
             visible_rows: self.visible_line_count(),
+            visible_columns: self.visible_column_count(),
             vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
+            grid_cell: OnceCell::new(),
+            semantic_tokens_enabled: self.semantic_token_state.enabled(),
         }
     }
 

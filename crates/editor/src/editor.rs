@@ -525,14 +525,9 @@ impl EditorMode {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SoftWrap {
-    /// Prefer not to wrap at all.
-    ///
-    /// Note: this is currently internal, as actually limited by [`crate::MAX_LINE_LEN`] until it wraps.
-    /// The mode is used inside git diff hunks, where it's seems currently more useful to not wrap as much as possible.
-    GitDiff,
-    /// Prefer a single line generally, unless an overly long line is encountered.
+    /// Do not soft-wrap.
     None,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
@@ -1319,7 +1314,6 @@ impl GutterDimensions {
 
 struct CharacterDimensions {
     em_width: Pixels,
-    em_advance: Pixels,
     line_height: Pixels,
 }
 
@@ -11151,10 +11145,10 @@ impl Editor {
     ) -> Option<gpui::Point<Pixels>> {
         let line_height = self.style(cx).text.line_height_in_pixels(window.rem_size());
         let text_layout_details = self.text_layout_details(window, cx);
-        let mut scroll_top = text_layout_details
+        let scroll_position = text_layout_details
             .scroll_anchor
-            .scroll_position(editor_snapshot)
-            .y;
+            .scroll_position(editor_snapshot);
+        let mut scroll_top = scroll_position.y;
         if !line_height.is_zero() {
             scroll_top =
                 window.pixel_snap_f64(scroll_top * f64::from(line_height)) / f64::from(line_height);
@@ -11163,9 +11157,14 @@ impl Editor {
         if source.row().as_f64() < scroll_top.floor() {
             return None;
         }
+        let em_width = ScrollPixelOffset::from(text_layout_details.em_layout_width());
+        let scroll_left = window.pixel_snap_f64(scroll_position.x * em_width);
         let source_x = editor_snapshot.x_for_display_point(source, &text_layout_details);
-        let source_y = line_height * (source.row().as_f64() - scroll_top) as f32;
-        Some(gpui::Point::new(Pixels::from(source_x), source_y))
+        let source_y = (source.row().as_f64() - scroll_top) * f64::from(line_height);
+        Some(gpui::Point::new(
+            Pixels::from(source_x - scroll_left),
+            Pixels::from(source_y),
+        ))
     }
 
     pub fn register_addon<T: Addon>(&mut self, instance: T) {
@@ -11201,11 +11200,9 @@ impl Editor {
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let line_height = style.text.line_height_in_pixels(window.rem_size());
         let em_width = window.text_system().em_width(font_id, font_size).unwrap();
-        let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
         CharacterDimensions {
             em_width,
-            em_advance,
             line_height,
         }
     }

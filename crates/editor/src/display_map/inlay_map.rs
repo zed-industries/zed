@@ -1206,6 +1206,35 @@ impl InlaySnapshot {
         summary
     }
 
+    pub fn has_inlays_matching(
+        &self,
+        range: Range<InlayPoint>,
+        mut predicate: impl FnMut(&Inlay, Range<usize>) -> bool,
+    ) -> bool {
+        let mut cursor = self.transforms.cursor::<InlayPoint>(());
+        cursor.seek(&range.start, Bias::Right);
+        while let Some(transform) = cursor.item() {
+            let transform_start = *cursor.start();
+            if transform_start >= range.end {
+                break;
+            }
+            if let Transform::Inlay(inlay) = transform {
+                let transform_end = cursor.end();
+                let start = range.start.max(transform_start).0 - transform_start.0;
+                let end = range.end.min(transform_end).0 - transform_start.0;
+                let text = inlay.text();
+                if predicate(
+                    inlay,
+                    text.point_to_offset(start)..text.point_to_offset(end),
+                ) {
+                    return true;
+                }
+            }
+            cursor.next();
+        }
+        false
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn row_infos(&self, row: u32) -> InlayBufferRows<'_> {
         let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
@@ -1464,6 +1493,14 @@ impl BufferOffsetToInlayPointCursor<'_> {
             }
         }
         result
+    }
+}
+
+pub(super) fn has_chunk_renderer(inlay: &Inlay) -> bool {
+    match inlay.id {
+        InlayId::ReplResult(_) => true,
+        InlayId::Color(_) => matches!(inlay.content, InlayContent::Color(_)),
+        InlayId::EditPrediction(_) | InlayId::Hint(_) | InlayId::DebuggerValue(_) => false,
     }
 }
 

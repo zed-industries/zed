@@ -2897,7 +2897,7 @@ fn find_forward(
             Some(map.clip_point(to, Bias::Left))
         } else if before && to.row().0 > 0 {
             *to.row_mut() -= 1;
-            *to.column_mut() = map.line(to.row()).len() as u32;
+            *to.column_mut() = map.line_len(to.row());
             Some(map.clip_point(to, Bias::Left))
         } else {
             Some(to)

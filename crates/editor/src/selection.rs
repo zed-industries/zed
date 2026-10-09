@@ -1877,13 +1877,13 @@ impl Editor {
 
                 let layout = display_map.layout_row(row, &text_layout_details);
                 if matches!(columnar_state, ColumnarSelectionState::FromSelection { .. })
-                    && start_x > f64::from(layout.width)
+                    && start_x > layout.width()
                 {
                     return None;
                 }
 
-                let start_column = layout.closest_index_for_x(Pixels::from(start_x)) as u32;
-                let end_column = layout.closest_index_for_x(Pixels::from(end_x)) as u32;
+                let start_column = layout.closest_index_for_x(start_x) as u32;
+                let end_column = layout.closest_index_for_x(end_x) as u32;
 
                 let start = display_map
                     .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
