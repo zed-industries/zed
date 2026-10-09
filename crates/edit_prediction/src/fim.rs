@@ -202,7 +202,9 @@ pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
         "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
         "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
         "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
-        "qwen2.5-coder" | "qwen-coder" | "qwen" | "qwen3-coder" => EditPredictionPromptFormat::Qwen,
+        "qwen2.5-coder" | "qwen-coder" | "qwen" | "qwen3-coder" | "qwen3.8-flash" => {
+            EditPredictionPromptFormat::Qwen
+        }
         model_base if model_base.starts_with("qwen3-coder-") => EditPredictionPromptFormat::Qwen,
         "codegemma" => EditPredictionPromptFormat::CodeGemma,
         "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
@@ -360,6 +362,14 @@ mod tests {
             );
         }
         assert_eq!(infer_prompt_format("qwen3:8b"), None);
+    }
+
+    #[test]
+    fn infer_prompt_format_matches_qwen3_8_flash() {
+        assert_eq!(
+            infer_prompt_format("qwen3.8-flash"),
+            Some(EditPredictionPromptFormat::Qwen)
+        );
     }
 
     #[test]
