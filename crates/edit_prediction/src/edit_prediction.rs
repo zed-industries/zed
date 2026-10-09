@@ -76,6 +76,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use util::{ResultExt as _, rel_path::RelPath};
 
+pub mod amazon_bedrock;
 pub mod cursor_excerpt;
 pub mod data_collection;
 pub mod example_spec;
@@ -2516,7 +2517,8 @@ fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
         EditPredictionProvider::Zed
         | EditPredictionProvider::Mercury
         | EditPredictionProvider::Ollama
-        | EditPredictionProvider::OpenAiCompatibleApi => true,
+        | EditPredictionProvider::OpenAiCompatibleApi
+        | EditPredictionProvider::AmazonBedrock => true,
         EditPredictionProvider::None
         | EditPredictionProvider::Copilot
         | EditPredictionProvider::Codestral => false,
@@ -2540,7 +2542,8 @@ impl EditPredictionStore {
             match all_language_settings(None, cx).edit_predictions.provider {
                 EditPredictionProvider::Zed | EditPredictionProvider::Mercury => (true, 2),
                 EditPredictionProvider::Ollama => (false, 1),
-                EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
+                EditPredictionProvider::OpenAiCompatibleApi
+                | EditPredictionProvider::AmazonBedrock => (false, 2),
                 EditPredictionProvider::None
                 | EditPredictionProvider::Copilot
                 | EditPredictionProvider::Codestral => {
