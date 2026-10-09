@@ -2,12 +2,14 @@ use crate::{
     EditPredictionId, EditPredictionInputs, EditPredictionModelInput, cursor_excerpt,
     open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
     prediction::EditPredictionResult,
+    qwen,
 };
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, AppContext as _, Entity, Task};
+use gpui::{App, AppContext as _, Entity, Task, http_client};
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, ToOffset, ToPoint as _,
-    ZetaVersion, language_settings::all_language_settings,
+    ZetaVersion,
+    language_settings::{OpenAiCompatibleEditPredictionSettings, all_language_settings},
 };
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{Zeta2PromptInput, compute_editable_and_context_ranges};
@@ -97,30 +99,16 @@ pub fn request_prediction(
         let cursor_in_editable = cursor_offset_in_excerpt.saturating_sub(editable_range.start);
         let prefix = editable_text[..cursor_in_editable].to_string();
         let suffix = editable_text[cursor_in_editable..].to_string();
-        let (response_text, request_id) =
-            if let Some(api) = qwen_api(provider, prompt_format, &settings.api_url) {
-                open_ai_compatible::send_qwen_server_request(
-                    api,
-                    &settings,
-                    &prefix,
-                    &suffix,
-                    api_key,
-                    &http_client,
-                )
-                .await?
-            } else {
-                let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
-                open_ai_compatible::send_custom_server_request(
-                    provider,
-                    &settings,
-                    prompt,
-                    settings.max_output_tokens,
-                    get_fim_stop_tokens(),
-                    api_key,
-                    &http_client,
-                )
-                .await?
-            };
+        let (response_text, request_id) = send_fim_request(
+            provider,
+            prompt_format,
+            &settings,
+            &prefix,
+            &suffix,
+            api_key,
+            &http_client,
+        )
+        .await?;
 
         let response_received_at = Instant::now();
 
@@ -174,17 +162,37 @@ pub fn request_prediction(
     })
 }
 
-fn qwen_api(
+async fn send_fim_request(
     provider: settings::EditPredictionProvider,
     prompt_format: EditPredictionPromptFormat,
-    api_url: &str,
-) -> Option<crate::qwen::Api> {
-    if provider == settings::EditPredictionProvider::OpenAiCompatibleApi
-        && prompt_format == EditPredictionPromptFormat::Qwen
-    {
-        crate::qwen::Api::from_url(api_url)
-    } else {
-        None
+    settings: &OpenAiCompatibleEditPredictionSettings,
+    prefix: &str,
+    suffix: &str,
+    api_key: Option<Arc<str>>,
+    http_client: &Arc<dyn http_client::HttpClient>,
+) -> Result<(String, String)> {
+    let response = match (provider, prompt_format) {
+        (
+            settings::EditPredictionProvider::OpenAiCompatibleApi,
+            EditPredictionPromptFormat::Qwen,
+        ) => qwen::try_request(settings, prefix, suffix, api_key.clone(), http_client).await?,
+        _ => None,
+    };
+
+    match response {
+        Some(response) => Ok(response),
+        None => {
+            open_ai_compatible::send_custom_server_request(
+                provider,
+                settings,
+                format_fim_prompt(prompt_format, prefix, suffix),
+                settings.max_output_tokens,
+                get_fim_stop_tokens(),
+                api_key,
+                http_client,
+            )
+            .await
+        }
     }
 }
 
@@ -297,137 +305,252 @@ fn clean_fim_completion(response: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::AsyncReadExt as _;
+    use gpui::http_client::FakeHttpClient;
+    use serde_json::{Value, json};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
-    fn qwen_partial_mode_is_only_used_for_message_endpoints_and_the_qwen_format() {
-        use settings::EditPredictionProvider::{Ollama, OpenAiCompatibleApi};
-        let chat_url = "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions";
-        let native_url =
-            "https://maas.qianwenaiapi.com/api/v1/services/aigc/text-generation/generation";
-        assert_eq!(
-            qwen_api(
-                OpenAiCompatibleApi,
-                EditPredictionPromptFormat::Qwen,
-                chat_url
-            ),
-            Some(crate::qwen::Api::Chat)
-        );
-        assert_eq!(
-            qwen_api(
-                OpenAiCompatibleApi,
-                EditPredictionPromptFormat::Qwen,
-                native_url
-            ),
-            Some(crate::qwen::Api::Native)
-        );
-        assert_eq!(
-            qwen_api(Ollama, EditPredictionPromptFormat::Qwen, chat_url),
-            None
-        );
-        assert_eq!(
-            qwen_api(
-                OpenAiCompatibleApi,
-                EditPredictionPromptFormat::CodeGemma,
-                chat_url
-            ),
-            None
-        );
-        assert_eq!(
-            qwen_api(
-                OpenAiCompatibleApi,
-                EditPredictionPromptFormat::Qwen,
-                "http://localhost:8080/v1/completions"
-            ),
-            None
-        );
-        assert_eq!(
-            format_fim_prompt(EditPredictionPromptFormat::Qwen, "before", "after"),
-            "<|fim_prefix|>before<|fim_suffix|>after<|fim_middle|>"
-        );
+    fn request_dispatch_preserves_raw_fim_formats() -> Result<()> {
+        futures::executor::block_on(async {
+            let chat_url = "https://example.com/v1/chat/completions";
+            for (format, api_url, expected_prompt) in [
+                (
+                    EditPredictionPromptFormat::CodeLlama,
+                    chat_url,
+                    "<PRE> before <SUF>after <MID>",
+                ),
+                (
+                    EditPredictionPromptFormat::StarCoder,
+                    chat_url,
+                    "<fim_prefix>before<fim_suffix>after<fim_middle>",
+                ),
+                (
+                    EditPredictionPromptFormat::DeepseekCoder,
+                    chat_url,
+                    "<｜fim▁begin｜>before<｜fim▁hole｜>after<｜fim▁end｜>",
+                ),
+                (
+                    EditPredictionPromptFormat::CodeGemma,
+                    chat_url,
+                    "<|fim_prefix|>before<|fim_suffix|>after<|fim_middle|>",
+                ),
+                (
+                    EditPredictionPromptFormat::Codestral,
+                    chat_url,
+                    "[SUFFIX]after[PREFIX]before",
+                ),
+                (
+                    EditPredictionPromptFormat::Glm,
+                    chat_url,
+                    "<|code_prefix|>before<|code_suffix|>after<|code_middle|>",
+                ),
+                (
+                    EditPredictionPromptFormat::Qwen,
+                    "https://example.com/v1/completions",
+                    "<|fim_prefix|>before<|fim_suffix|>after<|fim_middle|>",
+                ),
+            ] {
+                let http_client: Arc<dyn http_client::HttpClient> =
+                    FakeHttpClient::create(move |mut request| async move {
+                        assert_eq!(request.uri().to_string(), api_url);
+                        let mut body = String::new();
+                        request.body_mut().read_to_string(&mut body).await?;
+                        let body: Value = serde_json::from_str(&body)?;
+                        assert_eq!(body["prompt"], expected_prompt, "{format:?}");
+                        assert!(body.get("messages").is_none(), "{format:?}");
+                        Ok(http_client::Response::builder().status(200).body(json!({
+                        "id": "raw-request", "object": "text_completion", "created": 0,
+                        "model": "test-completion-model",
+                        "choices": [{"text": "completion", "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                    }).to_string().into())?)
+                    });
+                let settings = OpenAiCompatibleEditPredictionSettings {
+                    model: "test-completion-model".into(),
+                    api_url: api_url.into(),
+                    max_output_tokens: 64,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    send_fim_request(
+                        settings::EditPredictionProvider::OpenAiCompatibleApi,
+                        format,
+                        &settings,
+                        "before",
+                        "after",
+                        None,
+                        &http_client
+                    )
+                    .await?,
+                    ("completion".into(), "raw-request".into()),
+                    "{format:?}"
+                );
+            }
+            Ok(())
+        })
     }
 
     #[test]
-    fn infer_prompt_format_matches_qwen3_coder_models() {
-        for model in [
-            "qwen3-coder",
-            "qwen3-coder:30b",
-            "qwen3-coder-plus",
-            "qwen3-coder-flash",
-            "qwen3-coder-plus-2025-09-23",
-        ] {
+    fn request_dispatch_keeps_the_selected_provider_transport() -> Result<()> {
+        futures::executor::block_on(async {
+            let http_client: Arc<dyn http_client::HttpClient> =
+                FakeHttpClient::create(|mut request| async move {
+                    assert_eq!(request.uri().path(), "/v1/chat/completions/api/generate");
+                    let mut body = String::new();
+                    request.body_mut().read_to_string(&mut body).await?;
+                    let body: Value = serde_json::from_str(&body)?;
+                    assert_eq!(body["raw"], true);
+                    assert!(body.get("messages").is_none());
+                    Ok(http_client::Response::builder().status(200).body(
+                        json!({
+                            "created_at": "provider-request", "response": "completion"
+                        })
+                        .to_string()
+                        .into(),
+                    )?)
+                });
+            let settings = OpenAiCompatibleEditPredictionSettings {
+                api_url: "https://example.com/v1/chat/completions".into(),
+                ..Default::default()
+            };
             assert_eq!(
-                infer_prompt_format(model),
-                Some(EditPredictionPromptFormat::Qwen),
-                "{model}"
+                send_fim_request(
+                    settings::EditPredictionProvider::Ollama,
+                    EditPredictionPromptFormat::Qwen,
+                    &settings,
+                    "before",
+                    "after",
+                    None,
+                    &http_client
+                )
+                .await?,
+                ("completion".into(), "provider-request".into())
             );
-        }
-        assert_eq!(infer_prompt_format("qwen3:8b"), None);
+            Ok(())
+        })
     }
 
     #[test]
-    fn infer_prompt_format_matches_qwen3_8_flash() {
-        assert_eq!(
-            infer_prompt_format("qwen3.8-flash"),
-            Some(EditPredictionPromptFormat::Qwen)
-        );
+    fn request_dispatch_does_not_retry_a_failed_adapter() -> Result<()> {
+        futures::executor::block_on(async {
+            let request_count = Arc::new(AtomicUsize::new(0));
+            let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::create({
+                let request_count = request_count.clone();
+                move |_request| {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        Ok(http_client::Response::builder()
+                            .status(400)
+                            .body("adapter request rejected".into())?)
+                    }
+                }
+            });
+            let settings = OpenAiCompatibleEditPredictionSettings {
+                api_url: "https://example.com/v1/chat/completions".into(),
+                ..Default::default()
+            };
+            let error = send_fim_request(
+                settings::EditPredictionProvider::OpenAiCompatibleApi,
+                EditPredictionPromptFormat::Qwen,
+                &settings,
+                "before",
+                "after",
+                None,
+                &http_client,
+            )
+            .await
+            .err()
+            .context("Expected the adapter error to propagate")?;
+            assert!(error.to_string().contains("400 Bad Request"));
+            assert!(error.to_string().contains("adapter request rejected"));
+            assert_eq!(request_count.load(Ordering::SeqCst), 1);
+            Ok(())
+        })
     }
 
     #[test]
-    fn cleans_qwen_end_tokens_without_trimming_code_whitespace() {
-        assert_eq!(
-            clean_fim_completion("    return n\n<|im_end|>extra"),
-            "    return n\n"
-        );
+    fn request_dispatch_keeps_an_empty_successful_completion() -> Result<()> {
+        futures::executor::block_on(async {
+            let request_count = Arc::new(AtomicUsize::new(0));
+            let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::create({
+                let request_count = request_count.clone();
+                move |_request| {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        Ok(http_client::Response::builder().status(200).body(json!({
+                            "id": "empty-request", "object": "chat.completion", "created": 0,
+                            "model": "test-completion-model",
+                            "choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}],
+                            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                        }).to_string().into())?)
+                    }
+                }
+            });
+            let settings = OpenAiCompatibleEditPredictionSettings {
+                api_url: "https://example.com/v1/chat/completions".into(),
+                ..Default::default()
+            };
+            assert_eq!(
+                send_fim_request(
+                    settings::EditPredictionProvider::OpenAiCompatibleApi,
+                    EditPredictionPromptFormat::Qwen,
+                    &settings,
+                    "before",
+                    "after",
+                    None,
+                    &http_client
+                )
+                .await?,
+                (String::new(), "empty-request".into())
+            );
+            assert_eq!(request_count.load(Ordering::SeqCst), 1);
+            Ok(())
+        })
     }
 
     #[test]
     fn infer_prompt_format_matches_known_model_families() {
-        assert_eq!(
-            infer_prompt_format("qwen2.5-coder:3b"),
-            Some(EditPredictionPromptFormat::Qwen)
-        );
-        assert_eq!(
-            infer_prompt_format("codellama:7b"),
-            Some(EditPredictionPromptFormat::CodeLlama)
-        );
-        assert_eq!(
-            infer_prompt_format("deepseek-coder-v2:16b"),
-            Some(EditPredictionPromptFormat::DeepseekCoder)
-        );
-        assert_eq!(
-            infer_prompt_format("starcoder2:3b"),
-            Some(EditPredictionPromptFormat::StarCoder)
-        );
-        assert_eq!(
-            infer_prompt_format("codestral:latest"),
-            Some(EditPredictionPromptFormat::Codestral)
-        );
-        assert_eq!(
-            infer_prompt_format("glm-4:9b"),
-            Some(EditPredictionPromptFormat::Glm)
-        );
+        use EditPredictionPromptFormat::*;
+        for (model, expected_format) in [
+            ("codellama:7b", CodeLlama),
+            ("starcoder2:3b", StarCoder),
+            ("deepseek-coder:6.7b", DeepseekCoder),
+            ("deepseek-coder-v2:16b", DeepseekCoder),
+            ("qwen2.5-coder:3b", Qwen),
+            ("qwen3-coder", Qwen),
+            ("qwen3-coder:30b", Qwen),
+            ("qwen3-coder-plus", Qwen),
+            ("qwen3-coder-flash", Qwen),
+            ("qwen3-coder-plus-2025-09-23", Qwen),
+            ("qwen3.8-flash", Qwen),
+            ("codegemma:7b", CodeGemma),
+            ("codestral:latest", Codestral),
+            ("glm-4:9b", Glm),
+            ("glm-4.5:latest", Glm),
+            ("zeta2", Zeta(ZetaVersion::Zeta2)),
+            ("zeta2.1", Zeta(ZetaVersion::Zeta2_1)),
+            ("my-sweep-next-edit-v1", Sweep),
+        ] {
+            assert_eq!(infer_prompt_format(model), Some(expected_format), "{model}");
+        }
     }
 
     #[test]
-    fn infer_prompt_format_matches_zeta_and_sweep() {
-        assert_eq!(
-            infer_prompt_format("zeta2"),
-            Some(EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2))
-        );
-        assert_eq!(
-            infer_prompt_format("zeta2.1"),
-            Some(EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2_1))
-        );
-        assert_eq!(
-            infer_prompt_format("my-sweep-next-edit-v1"),
-            Some(EditPredictionPromptFormat::Sweep)
-        );
+    fn completion_cleanup_preserves_whitespace_and_strips_stop_tokens() {
+        for token in ["<|endoftext|>", "<|im_end|>", "<PRE>", "<|fim_suffix|>"] {
+            assert_eq!(
+                clean_fim_completion(&format!("    return n\n{token}extra")),
+                "    return n\n",
+                "{token}"
+            );
+        }
     }
 
     #[test]
     fn infer_prompt_format_returns_none_for_unsupported_models() {
-        assert_eq!(infer_prompt_format("llama3:70b"), None);
-        assert_eq!(infer_prompt_format("phi3:mini"), None);
-        assert_eq!(infer_prompt_format("nomic-embed-text"), None);
+        for model in ["qwen3:8b", "llama3:70b", "phi3:mini", "nomic-embed-text"] {
+            assert_eq!(infer_prompt_format(model), None, "{model}");
+        }
     }
 }

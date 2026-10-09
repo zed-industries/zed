@@ -110,21 +110,7 @@ pub(crate) async fn send_custom_server_request(
     }
 }
 
-pub(crate) async fn send_qwen_server_request(
-    api: crate::qwen::Api,
-    settings: &OpenAiCompatibleEditPredictionSettings,
-    prefix: &str,
-    suffix: &str,
-    api_key: Option<Arc<str>>,
-    http_client: &Arc<dyn http_client::HttpClient>,
-) -> Result<(String, String)> {
-    let request_body =
-        api.request_body(&settings.model, prefix, suffix, settings.max_output_tokens)?;
-    let body = send_request(&settings.api_url, request_body, api_key, http_client).await?;
-    api.parse_response(&body)
-}
-
-async fn send_request(
+pub(crate) async fn send_request(
     api_url: &str,
     request_body: String,
     api_key: Option<Arc<str>>,
@@ -156,109 +142,8 @@ async fn send_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::qwen::Api;
     use gpui::http_client::FakeHttpClient;
     use serde_json::{Value, json};
-
-    #[test]
-    fn qwen_message_endpoints_send_authenticated_partial_requests() -> Result<()> {
-        futures::executor::block_on(async {
-            for (api, url, response_body) in [
-                (
-                    Api::Chat,
-                    "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions",
-                    json!({"id": "chat-test", "choices": [{"message": {"role": "assistant", "content": "    return n\n"}}]}),
-                ),
-                (
-                    Api::Native,
-                    "https://maas.qianwenaiapi.com/api/v1/services/aigc/text-generation/generation",
-                    json!({"request_id": "native-test", "output": {"choices": [{"message": {"role": "assistant", "content": "    return n\n"}}]}}),
-                ),
-            ] {
-                let settings = OpenAiCompatibleEditPredictionSettings {
-                    model: "qwen3-coder-flash".into(),
-                    api_url: url.into(),
-                    max_output_tokens: 1000,
-                    ..Default::default()
-                };
-                let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::create(
-                    move |mut request| {
-                        let response_body = response_body.clone();
-                        async move {
-                            assert_eq!(request.method(), http_client::Method::POST);
-                            assert_eq!(request.uri().to_string(), url);
-                            assert_eq!(request.headers()["Authorization"], "Bearer test-key");
-                            assert_eq!(request.headers()["Content-Type"], "application/json");
-                            let mut body = String::new();
-                            request.body_mut().read_to_string(&mut body).await?;
-                            let body: Value = serde_json::from_str(&body)?;
-                            let messages = match api {
-                                Api::Chat => &body["messages"],
-                                Api::Native => &body["input"]["messages"],
-                            };
-                            assert_eq!(
-                                messages[1],
-                                json!({"role": "assistant", "content": "def f(n):\n", "partial": true})
-                            );
-                            assert!(
-                                messages[0]["content"]
-                                    .as_str()
-                                    .context("Expected text in the user message")?
-                                    .contains("\nprint(f(1))")
-                            );
-                            Ok(http_client::Response::builder()
-                                .status(200)
-                                .body(response_body.to_string().into())?)
-                        }
-                    },
-                );
-                let result = send_qwen_server_request(
-                    api,
-                    &settings,
-                    "def f(n):\n",
-                    "\nprint(f(1))",
-                    Some("test-key".into()),
-                    &http_client,
-                )
-                .await?;
-                assert_eq!(result.0, "    return n\n");
-                assert_eq!(
-                    result.1,
-                    if api == Api::Chat {
-                        "chat-test"
-                    } else {
-                        "native-test"
-                    }
-                );
-            }
-            Ok(())
-        })
-    }
-
-    #[test]
-    fn qwen_http_errors_preserve_status_and_server_message() -> Result<()> {
-        futures::executor::block_on(async {
-            let http_client: Arc<dyn http_client::HttpClient> =
-                FakeHttpClient::create(|request| async move {
-                    assert!(!request.headers().contains_key("Authorization"));
-                    Ok(http_client::Response::builder()
-                        .status(400)
-                        .body(r#"{"error":{"message":"invalid partial request"}}"#.into())?)
-                });
-            let settings = OpenAiCompatibleEditPredictionSettings {
-                api_url: "https://example.com/v1/chat/completions".into(),
-                ..Default::default()
-            };
-            let error = send_qwen_server_request(Api::Chat, &settings, "", "", None, &http_client)
-                .await
-                .err()
-                .context("Expected the Qwen request to fail with HTTP 400")?
-                .to_string();
-            assert!(error.contains("400 Bad Request"), "{error}");
-            assert!(error.contains("invalid partial request"), "{error}");
-            Ok(())
-        })
-    }
 
     #[test]
     fn raw_completion_requests_keep_the_existing_protocol() -> Result<()> {
@@ -270,26 +155,26 @@ mod tests {
                     let body: Value = serde_json::from_str(&body)?;
                     assert_eq!(
                         body,
-                        json!({"model": "qwen2.5-coder", "prompt": "<|fim_prefix|>before<|fim_suffix|>after<|fim_middle|>", "max_tokens": 64, "stop": ["<|endoftext|>"]})
+                        json!({"model": "test-completion-model", "prompt": "raw completion prompt", "max_tokens": 64, "stop": ["completion-stop"]})
                     );
                     Ok(http_client::Response::builder().status(200).body(json!({
-                    "id": "raw-test", "object": "text_completion", "created": 0, "model": "qwen2.5-coder",
+                    "id": "raw-test", "object": "text_completion", "created": 0, "model": "test-completion-model",
                     "choices": [{"text": "missing", "finish_reason": "stop"}],
                     "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
                 }).to_string().into())?)
                 },
             );
             let settings = OpenAiCompatibleEditPredictionSettings {
-                model: "qwen2.5-coder".into(),
+                model: "test-completion-model".into(),
                 api_url: "http://localhost:8080/v1/completions".into(),
                 ..Default::default()
             };
             let result = send_custom_server_request(
                 settings::EditPredictionProvider::OpenAiCompatibleApi,
                 &settings,
-                "<|fim_prefix|>before<|fim_suffix|>after<|fim_middle|>".into(),
+                "raw completion prompt".into(),
                 64,
-                vec!["<|endoftext|>".into()],
+                vec!["completion-stop".into()],
                 None,
                 &http_client,
             )
