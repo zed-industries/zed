@@ -1,4 +1,5 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
+use agent_settings::AgentSettings;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -7,6 +8,7 @@ use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
+use settings::Settings as _;
 use std::sync::Arc;
 use util::{ResultExt, markdown::MarkdownEscaped};
 
@@ -348,6 +350,7 @@ impl AnyAgentTool for ContextServerTool {
         let initial_title = self.initial_title(serde_json::Value::Null, cx);
         let authorize =
             event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
+        let image_max_dimension = AgentSettings::get_global(cx).image_max_dimension();
 
         cx.spawn(async move |cx| {
             let input = input
@@ -419,7 +422,11 @@ impl AnyAgentTool for ContextServerTool {
                             .background_spawn({
                                 let mime_type = mime_type.clone();
                                 async move {
-                                    LanguageModelImage::from_base64_image(&data, &mime_type)
+                                    LanguageModelImage::from_base64_image(
+                                        &data,
+                                        &mime_type,
+                                        image_max_dimension,
+                                    )
                                 }
                             })
                             .await;

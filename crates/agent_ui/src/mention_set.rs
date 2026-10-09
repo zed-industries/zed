@@ -3,6 +3,7 @@ use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
 use agent_client_protocol::schema::v1 as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use editor::{
@@ -23,6 +24,7 @@ use multi_buffer::MultiBufferRow;
 use postage::stream::Stream as _;
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use rope::Point;
+use settings::Settings as _;
 use std::{
     cell::RefCell,
     ffi::OsStr,
@@ -409,7 +411,10 @@ impl MentionSet {
                 let image = task.await?;
                 let image = image.update(cx, |image, _| image.image.clone());
                 let image = cx
-                    .update(|cx| LanguageModelImage::from_image(image, cx))
+                    .update(|cx| {
+                        let max_dimension = AgentSettings::get_global(cx).image_max_dimension();
+                        LanguageModelImage::from_image(image, max_dimension, cx)
+                    })
                     .await;
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
@@ -941,7 +946,10 @@ pub(crate) async fn insert_images_as_context(
         let task = cx
             .spawn(async move |cx| {
                 let image = cx
-                    .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                    .update(|_, cx| {
+                        let max_dimension = AgentSettings::get_global(cx).image_max_dimension();
+                        LanguageModelImage::from_image(image, max_dimension, cx)
+                    })
                     .map_err(|e| e.to_string())?
                     .await;
                 drop(tx);
