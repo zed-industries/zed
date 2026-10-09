@@ -992,7 +992,7 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
         supports_tools: model.supports_tool_use(),
         supports_images: model.supports_images(),
         supports_thinking: model.supports_thinking(),
-        // Astra and Fable 5.1 always reason, so only offer effort levels.
+        // These models always reason, so only offer effort levels.
         supports_disabling_thinking: reasoning_model.is_none(),
         refusal_fallback_model_id: model
             .id()
@@ -2058,9 +2058,13 @@ fn deny_tool_use_events(
 /// Matches by Bedrock model ID, so custom entries such as
 /// `us.anthropic.claude-fable-5-1` get the same handling as the built-in model.
 fn converse_reasoning_model(model_id: &str) -> Option<ConverseModel> {
-    [ConverseModel::Gpt6Astra, ConverseModel::ClaudeFable5_1]
-        .into_iter()
-        .find(|model| model_id.ends_with(model.request_id()))
+    [
+        ConverseModel::Gpt6Astra,
+        ConverseModel::ClaudeFable5_1,
+        ConverseModel::ClaudeOpus5_5,
+    ]
+    .into_iter()
+    .find(|model| model_id.ends_with(model.request_id()))
 }
 
 fn prepare_bedrock_content(
@@ -2120,10 +2124,13 @@ pub fn into_bedrock(
     }
 
     let reasoning_model = converse_reasoning_model(&model);
-    let is_fable_5_1 = reasoning_model == Some(ConverseModel::ClaudeFable5_1);
+    let always_adaptive = matches!(
+        reasoning_model,
+        Some(ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeOpus5_5)
+    );
     let is_gpt_6_astra = reasoning_model == Some(ConverseModel::Gpt6Astra);
-    if is_fable_5_1 && request.tool_choice == Some(LanguageModelToolChoice::Any) {
-        anyhow::bail!("Claude Fable 5.1 does not support forced tool use");
+    if always_adaptive && request.tool_choice == Some(LanguageModelToolChoice::Any) {
+        anyhow::bail!("{model} does not support forced tool use");
     }
 
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
@@ -2446,10 +2453,11 @@ pub fn into_bedrock(
     }
 
     let selected_effort = |default_effort| {
-        // Astra and Fable 5.1 keep reasoning enabled, so suppressed requests use the default
-        // effort, matching the Anthropic and OpenAI providers.
+        // Astra, Fable 5.1, and Opus 5.5 keep reasoning enabled, so suppressed requests use the
+        // default effort, matching the Anthropic and OpenAI providers.
         // <https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra>
         // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html>
+        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
         if !request.thinking_allowed {
             return default_effort;
         }
@@ -2471,7 +2479,7 @@ pub fn into_bedrock(
             effort: selected_effort(effort),
         }),
         BedrockModelMode::AdaptiveThinking { effort }
-            if request.thinking_allowed || is_fable_5_1 =>
+            if request.thinking_allowed || always_adaptive =>
         {
             Some(bedrock::Thinking::Adaptive {
                 effort: selected_effort(effort),
@@ -2485,7 +2493,7 @@ pub fn into_bedrock(
             Some(bedrock::Thinking::Enabled { budget_tokens })
         }
         _ if !request.thinking_allowed
-            && model.contains(ConverseModel::ClaudeOpus5.request_id()) =>
+            && model.ends_with(ConverseModel::ClaudeOpus5.request_id()) =>
         {
             // Opus 5 defaults to adaptive thinking, so turning it off requires `disabled`.
             // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
@@ -2493,7 +2501,7 @@ pub fn into_bedrock(
         }
         _ => None,
     };
-    let temperature = if is_fable_5_1 || is_gpt_6_astra {
+    let temperature = if always_adaptive || is_gpt_6_astra {
         None
     } else {
         request.temperature.or(default_temperature)
@@ -2541,7 +2549,7 @@ pub fn map_to_language_model_completion_events(
     );
     let preserve_redacted_thinking = matches!(
         model,
-        ConverseModel::Gpt6Astra | ConverseModel::ClaudeFable5_1
+        ConverseModel::Gpt6Astra | ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeOpus5_5
     );
     let initial_state = State {
         events,
@@ -3487,7 +3495,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gpt_6_astra_and_fable_5_1_defaults() -> Result<()> {
+    fn test_always_reasoning_model_defaults() -> Result<()> {
         for (model, expected_thinking) in [
             (
                 ConverseModel::Gpt6Astra,
@@ -3495,6 +3503,12 @@ mod tests {
             ),
             (
                 ConverseModel::ClaudeFable5_1,
+                serde_json::json!({"Adaptive": {
+                    "effort": "High", "binding_controls_beta": "thinking-binding-controls-2026-08-01"
+                }}),
+            ),
+            (
+                ConverseModel::ClaudeOpus5_5,
                 serde_json::json!({"Adaptive": {
                     "effort": "High", "binding_controls_beta": "thinking-binding-controls-2026-08-01"
                 }}),
@@ -3641,6 +3655,73 @@ mod tests {
             ],
         )?;
         assert_eq!(malformed.messages[0].content().len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_opus_5_5_replays_only_its_own_reasoning() -> Result<()> {
+        use bedrock::bedrock_client::types::MessageStartEvent;
+
+        let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::MessageStart(
+            MessageStartEvent::builder()
+                .role(bedrock::BedrockRole::Assistant)
+                .build()?,
+        ))]);
+        let events = futures::executor::block_on(
+            map_to_language_model_completion_events(
+                Box::pin(response),
+                ConverseModel::ClaudeOpus5_5,
+            )
+            .collect::<Vec<_>>(),
+        )
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+        let details = events.iter().find_map(|event| match event {
+            LanguageModelCompletionEvent::ReasoningDetails(value) => Some(Arc::new(value.clone())),
+            _ => None,
+        });
+        assert!(details.is_some());
+
+        for (model, replays_reasoning) in [
+            (ConverseModel::ClaudeOpus5_5, true),
+            (ConverseModel::ClaudeFable5_1, false),
+            (ConverseModel::ClaudeOpus4_8, false),
+        ] {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::Assistant,
+                        content: vec![
+                            MessageContent::Thinking {
+                                text: "thinking".into(),
+                                signature: Some("signature".into()),
+                            },
+                            MessageContent::Text("answer".into()),
+                        ],
+                        cache: false,
+                        reasoning_details: details.clone(),
+                    }],
+                    ..Default::default()
+                },
+                model.cross_region_inference_id("us-east-1", false)?,
+                model.default_temperature(),
+                model.max_output_tokens(),
+                model.thinking_mode(),
+                model.supports_caching(),
+                model.supports_tool_use(),
+                None,
+                None,
+            )?;
+            assert_eq!(
+                matches!(
+                    request.messages[0].content().first(),
+                    Some(BedrockInnerContent::ReasoningContent(_))
+                ),
+                replays_reasoning,
+                "{}",
+                model.id()
+            );
+        }
         Ok(())
     }
 
@@ -3919,6 +4000,113 @@ mod tests {
         )
         .unwrap();
         assert_eq!(configured.temperature, Some(0.7));
+    }
+
+    #[test]
+    fn test_opus_5_5_rejects_only_forced_tool_choice() -> Result<()> {
+        let opus_5_5 = ConverseModel::ClaudeOpus5_5;
+        let custom = ConverseModel::Custom {
+            name: "us.anthropic.claude-opus-5-5".into(),
+            max_tokens: 1_000_000,
+            display_name: None,
+            max_output_tokens: Some(128_000),
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: Some(true),
+            supports_images: Some(true),
+            thinking: None,
+        };
+        for model in [&opus_5_5, &custom] {
+            let language_model = converse_language_model(model);
+            assert!(language_model.supports_tools);
+            assert!(language_model.tool_choice_support.auto);
+            assert!(language_model.tool_choice_support.none);
+            assert!(
+                !language_model.tool_choice_support.any,
+                "{} rejects forced tool use",
+                model.id()
+            );
+        }
+
+        let forced = into_bedrock(
+            LanguageModelRequest {
+                tool_choice: Some(LanguageModelToolChoice::Any),
+                ..Default::default()
+            },
+            opus_5_5.cross_region_inference_id("us-east-1", false)?,
+            opus_5_5.default_temperature(),
+            opus_5_5.max_output_tokens(),
+            opus_5_5.thinking_mode(),
+            opus_5_5.supports_caching(),
+            opus_5_5.supports_tool_use(),
+            None,
+            None,
+        );
+        assert!(forced.is_err());
+
+        for model in [
+            ConverseModel::ClaudeOpus5,
+            ConverseModel::ClaudeFable5,
+            ConverseModel::NovaPro,
+        ] {
+            assert!(
+                converse_language_model(&model).tool_choice_support.any,
+                "{} should still support forced tool use",
+                model.id()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_opus_5_5_omits_sampling_controls() {
+        // Opus 5.5's always-on adaptive thinking rejects sampling controls, so
+        // its request must omit temperature (top_k/top_p are always unset).
+        // Other adaptive-thinking Claude models keep their default temperature.
+        for (model, expects_temperature) in [
+            ("global.anthropic.claude-opus-5-5", false),
+            ("us.anthropic.claude-opus-5-5", false),
+            ("us.anthropic.claude-opus-5", true),
+            ("us.anthropic.claude-sonnet-5", true),
+        ] {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![MessageContent::Text("Hi".into())],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    ..Default::default()
+                },
+                model.to_string(),
+                Some(1.0),
+                128_000,
+                BedrockModelMode::AdaptiveThinking {
+                    effort: bedrock::BedrockAdaptiveThinkingEffort::High,
+                },
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap();
+
+            assert_eq!(request.top_k, None, "{model} must not send top_k");
+            assert_eq!(request.top_p, None, "{model} must not send top_p");
+            if expects_temperature {
+                assert_eq!(
+                    request.temperature,
+                    Some(1.0),
+                    "{model} should send its default temperature"
+                );
+            } else {
+                assert_eq!(
+                    request.temperature, None,
+                    "{model} must omit temperature because adaptive thinking is always on"
+                );
+            }
+        }
     }
 
     #[test]
