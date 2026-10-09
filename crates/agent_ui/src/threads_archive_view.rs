@@ -663,6 +663,7 @@ impl ThreadsArchiveView {
                 let archived_color = Color::Custom(cx.theme().colors().icon_muted.opacity(0.6));
 
                 let base = ThreadItem::new(id, thread.display_title())
+                    .base_bg(cx.theme().colors().panel_background)
                     .icon(icon)
                     .when(is_archived, |this| {
                         this.archived(true)

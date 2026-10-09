@@ -708,6 +708,33 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
+async fn test_sidebar_background_with_transparent_panel(cx: &mut TestAppContext) {
+    let (_, project) = init_multi_project_test(&["/my-project"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    for panel_alpha in [0.0, 0.4] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
+        let background = cx.update(|_, cx| {
+            let colors = cx.theme().colors();
+            colors.background.blend(colors.panel_background)
+        });
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(400.), px(240.)),
+            |_, _| sidebar.clone().into_any_element(),
+        );
+
+        cx.update(|window, _| {
+            let quads = window.painted_quads();
+            let sidebar_background = quads.first().expect("Sidebar should paint its background");
+            assert_eq!(sidebar_background.background.as_solid(), Some(background));
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));
@@ -716,8 +743,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
     save_n_test_threads(1, &project, cx).await;
 
-    for (query, surface_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
-        set_sidebar_test_surface_alpha(surface_alpha, cx);
+    for (query, panel_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
         type_in_search(&sidebar, query, cx);
         let row_bounds = sidebar.read_with(cx, |sidebar, _| {
             sidebar
@@ -779,8 +806,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
                 .bounds
                 .map(|value| px(value.as_f32() / window.scale_factor()))
         });
-        for surface_alpha in [1.0, 0.0, 0.2] {
-            set_sidebar_test_surface_alpha(surface_alpha, cx);
+        for panel_alpha in [1.0, 0.0, 0.2] {
+            set_sidebar_test_panel_alpha(panel_alpha, cx);
             assert_sidebar_action_hover(selector, row_bounds, cx);
         }
     }
@@ -15824,11 +15851,12 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
     );
 }
 
-fn set_sidebar_test_surface_alpha(alpha: f32, cx: &mut VisualTestContext) {
+fn set_sidebar_test_panel_alpha(alpha: f32, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         let mut theme = cx.theme().as_ref().clone();
         theme.styles.colors.background = Hsla::from(gpui::rgb(0xdcdcdd));
-        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
+        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xff00ff));
+        theme.styles.colors.panel_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
         theme.styles.colors.element_background = Hsla::from(gpui::rgb(0xebebec));
         theme.styles.colors.ghost_element_hover = Hsla::from(gpui::rgb(0xdfdfe0));
         theme::GlobalTheme::update_theme(cx, Arc::new(theme));

@@ -1572,7 +1572,7 @@ impl ExtensionStore {
         if semantic_token_rules_to_remove.peek().is_some() {
             SettingsStore::update_global(cx, |store, cx| {
                 for language in semantic_token_rules_to_remove {
-                    store.remove_language_semantic_token_rules(language.as_ref(), cx);
+                    store.remove_language_semantic_token_rules(language.as_ref());
                 }
             });
         }
@@ -1648,13 +1648,9 @@ impl ExtensionStore {
             // Register semantic token rules for newly loaded extension languages.
             if !semantic_token_rules_to_add.is_empty() {
                 this.update(cx, |_, cx| {
-                    SettingsStore::update_global(cx, |store, cx| {
+                    SettingsStore::update_global(cx, |store, _| {
                         for (language_name, rules) in semantic_token_rules_to_add {
-                            store.set_language_semantic_token_rules(
-                                language_name.0.clone(),
-                                rules,
-                                cx,
-                            );
+                            store.set_language_semantic_token_rules(language_name.0.clone(), rules);
                         }
                     })
                 })

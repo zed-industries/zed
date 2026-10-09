@@ -20,14 +20,7 @@ use cocoa::{
         NSArray, NSAutoreleasePool, NSBundle, NSInteger, NSProcessInfo, NSString, NSUInteger, NSURL,
     },
 };
-use core_foundation::{
-    base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
-    boolean::CFBoolean,
-    data::CFData,
-    dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
-    runloop::CFRunLoopRun,
-    string::{CFString, CFStringRef},
-};
+use core_foundation::{base::CFRelease, runloop::CFRunLoopRun, string::CFStringRef};
 use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
@@ -38,6 +31,10 @@ use gpui::{
     PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task,
     ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
     popup::PopupNotSupportedError,
+};
+use gpui_apple::{
+    keychain,
+    thermal::{self, ThermalObserver},
 };
 use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
@@ -159,8 +156,8 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
-                sel!(onThermalStateChange:),
-                on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
+                sel!(onScreenParametersChange:),
+                on_screen_parameters_change as extern "C" fn(&mut Object, Sel, id),
             );
 
             decl.add_method(
@@ -192,7 +189,8 @@ pub(crate) struct MacPlatformState {
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
-    on_thermal_state_change: Option<Box<dyn FnMut()>>,
+    thermal_observer: Option<ThermalObserver>,
+    on_displays_changed: Option<Box<dyn FnMut()>>,
     on_system_sleep: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
     system_power_observers_registered: bool,
@@ -233,7 +231,7 @@ impl MacPlatform {
         let dispatcher = Arc::new(AppleDispatcher::new());
 
         #[cfg(feature = "font-kit")]
-        let text_system = Arc::new(crate::MacTextSystem::new());
+        let text_system = Arc::new(gpui_apple::AppleTextSystem::new());
 
         #[cfg(not(feature = "font-kit"))]
         let text_system = {
@@ -268,7 +266,8 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
-            on_thermal_state_change: None,
+            thermal_observer: None,
+            on_displays_changed: None,
             on_system_sleep: None,
             on_system_wake: None,
             system_power_observers_registered: false,
@@ -739,6 +738,10 @@ impl Platform for MacPlatform {
             .collect()
     }
 
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_displays_changed = Some(callback);
+    }
+
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         let min_version = cocoa::foundation::NSOperatingSystemVersion::new(12, 3, 0);
@@ -1082,7 +1085,8 @@ impl Platform for MacPlatform {
     }
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().on_thermal_state_change = Some(callback);
+        let observer = ThermalObserver::new(&self.foreground_executor(), callback);
+        self.0.lock().thermal_observer = Some(observer);
     }
 
     fn on_system_sleep(&self, callback: Box<dyn FnMut()>) {
@@ -1096,17 +1100,7 @@ impl Platform for MacPlatform {
     }
 
     fn thermal_state(&self) -> ThermalState {
-        unsafe {
-            let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
-            let state: NSInteger = msg_send![process_info, thermalState];
-            match state {
-                0 => ThermalState::Nominal,
-                1 => ThermalState::Fair,
-                2 => ThermalState::Serious,
-                3 => ThermalState::Critical,
-                _ => ThermalState::Nominal,
-            }
-        }
+        thermal::thermal_state()
     }
 
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
@@ -1259,105 +1253,20 @@ impl Platform for MacPlatform {
         let url = url.to_string();
         let username = username.to_string();
         let password = password.to_vec();
-        self.background_executor().spawn(async move {
-            unsafe {
-                use security::*;
-
-                let url = CFString::from(url.as_str());
-                let username = CFString::from(username.as_str());
-                let password = CFData::from_buffer(&password);
-
-                // First, check if there are already credentials for the given server. If so, then
-                // update the username and password.
-                let mut verb = "updating";
-                let mut query_attrs = CFMutableDictionary::with_capacity(2);
-                query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-
-                let mut attrs = CFMutableDictionary::with_capacity(4);
-                attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-                attrs.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
-                attrs.set(kSecValueData as *const _, password.as_CFTypeRef());
-
-                let mut status = SecItemUpdate(
-                    query_attrs.as_concrete_TypeRef(),
-                    attrs.as_concrete_TypeRef(),
-                );
-
-                // If there were no existing credentials for the given server, then create them.
-                if status == errSecItemNotFound {
-                    verb = "creating";
-                    status = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
-                }
-                anyhow::ensure!(status == errSecSuccess, "{verb} password failed: {status}");
-            }
-            Ok(())
-        })
+        self.background_executor()
+            .spawn(async move { Ok(keychain::write_credentials(&url, &username, &password)?) })
     }
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
-        self.background_executor().spawn(async move {
-            let url = CFString::from(url.as_str());
-            let cf_true = CFBoolean::true_value().as_CFTypeRef();
-
-            unsafe {
-                use security::*;
-
-                // Find any credentials for the given server URL.
-                let mut attrs = CFMutableDictionary::with_capacity(5);
-                attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-                attrs.set(kSecReturnAttributes as *const _, cf_true);
-                attrs.set(kSecReturnData as *const _, cf_true);
-
-                let mut result = CFTypeRef::from(ptr::null());
-                let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
-                match status {
-                    security::errSecSuccess => {}
-                    security::errSecItemNotFound | security::errSecUserCanceled => return Ok(None),
-                    _ => anyhow::bail!("reading password failed: {status}"),
-                }
-
-                let result = CFType::wrap_under_create_rule(result)
-                    .downcast::<CFDictionary>()
-                    .context("keychain item was not a dictionary")?;
-                let username = result
-                    .find(kSecAttrAccount as *const _)
-                    .context("account was missing from keychain item")?;
-                let username = CFType::wrap_under_get_rule(*username)
-                    .downcast::<CFString>()
-                    .context("account was not a string")?;
-                let password = result
-                    .find(kSecValueData as *const _)
-                    .context("password was missing from keychain item")?;
-                let password = CFType::wrap_under_get_rule(*password)
-                    .downcast::<CFData>()
-                    .context("password was not a string")?;
-
-                Ok(Some((username.to_string(), password.bytes().to_vec())))
-            }
-        })
+        self.background_executor()
+            .spawn(async move { Ok(keychain::read_credentials(&url)?) })
     }
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
-
-        self.background_executor().spawn(async move {
-            unsafe {
-                use security::*;
-
-                let url = CFString::from(url.as_str());
-                let mut query_attrs = CFMutableDictionary::with_capacity(2);
-                query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-
-                let status = SecItemDelete(query_attrs.as_concrete_TypeRef());
-                anyhow::ensure!(status == errSecSuccess, "delete password failed: {status}");
-            }
-            Ok(())
-        })
+        self.background_executor()
+            .spawn(async move { Ok(keychain::delete_credentials(&url)?) })
     }
 }
 
@@ -1408,12 +1317,12 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: nil
         ];
 
-        let thermal_name = ns_string("NSProcessInfoThermalStateDidChangeNotification");
-        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+        // Posted when a display is connected, disconnected, rearranged, or
+        // changes mode, which includes its refresh rate.
         let _: () = msg_send![notification_center, addObserver: this as id
-            selector: sel!(onThermalStateChange:)
-            name: thermal_name
-            object: process_info
+            selector: sel!(onScreenParametersChange:)
+            name: ns_string("NSApplicationDidChangeScreenParametersNotification")
+            object: nil
         ];
 
         // SAFETY: `this` is a live Objective-C object; only the pointer's type changes.
@@ -1495,26 +1404,25 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
+extern "C" fn on_screen_parameters_change(this: &mut Object, _: Sel, _: id) {
     // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell,
     // as NSNotificationCenter delivers this notification synchronously and it may fire while
     // the App is already borrowed (same pattern as quit() above).
     let platform = unsafe { get_mac_platform(this) };
     let platform_ptr = platform as *const MacPlatform as *mut c_void;
     unsafe {
-        DispatchQueue::main().exec_async_f(platform_ptr, on_thermal_state_change);
+        DispatchQueue::main().exec_async_f(platform_ptr, on_screen_parameters_change);
     }
 
-    extern "C" fn on_thermal_state_change(context: *mut c_void) {
+    extern "C" fn on_screen_parameters_change(context: *mut c_void) {
         let platform = unsafe { &*(context as *const MacPlatform) };
-        let mut lock = platform.0.lock();
-        if let Some(mut callback) = lock.on_thermal_state_change.take() {
-            drop(lock);
+        let callback = platform.0.lock().on_displays_changed.take();
+        if let Some(mut callback) = callback {
             callback();
             platform
                 .0
                 .lock()
-                .on_thermal_state_change
+                .on_displays_changed
                 .get_or_insert(callback);
         }
     }
@@ -1691,29 +1599,4 @@ unsafe extern "C" {
     pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
     pub(super) static kTISPropertyInputSourceType: CFStringRef;
     pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
-}
-
-mod security {
-    #![allow(non_upper_case_globals)]
-    use super::*;
-
-    #[link(name = "Security", kind = "framework")]
-    unsafe extern "C" {
-        pub static kSecClass: CFStringRef;
-        pub static kSecClassInternetPassword: CFStringRef;
-        pub static kSecAttrServer: CFStringRef;
-        pub static kSecAttrAccount: CFStringRef;
-        pub static kSecValueData: CFStringRef;
-        pub static kSecReturnAttributes: CFStringRef;
-        pub static kSecReturnData: CFStringRef;
-
-        pub fn SecItemAdd(attributes: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
-        pub fn SecItemUpdate(query: CFDictionaryRef, attributes: CFDictionaryRef) -> OSStatus;
-        pub fn SecItemDelete(query: CFDictionaryRef) -> OSStatus;
-        pub fn SecItemCopyMatching(query: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
-    }
-
-    pub const errSecSuccess: OSStatus = 0;
-    pub const errSecUserCanceled: OSStatus = -128;
-    pub const errSecItemNotFound: OSStatus = -25300;
 }
