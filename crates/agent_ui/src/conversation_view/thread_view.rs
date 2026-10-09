@@ -13876,10 +13876,14 @@ fn format_duration_until(
     let days = total_minutes / (24 * 60);
     let hours = total_minutes / 60 % 24;
     let minutes = total_minutes % 60;
-    if days > 0 {
+    if days > 0 && hours > 0 {
         format!("{days}d {hours}h")
-    } else if hours > 0 {
+    } else if days > 0 {
+        format!("{days}d")
+    } else if hours > 0 && minutes > 0 {
         format!("{hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h")
     } else {
         format!("{minutes}m")
     }
@@ -13911,6 +13915,8 @@ mod tests {
             format_duration_until(after(3 * 86400 + 5 * 3600), now),
             "3d 5h"
         );
+        assert_eq!(format_duration_until(after(4 * 86400 + 30 * 60), now), "4d");
+        assert_eq!(format_duration_until(after(3 * 3600 + 20), now), "3h");
     }
 
     #[test]
