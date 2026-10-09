@@ -1233,7 +1233,9 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
-    pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    text_style_stack: Vec<TextStyleRefinement>,
+    // Keep the large resolved value off Window and retain its allocation across invalidations.
+    resolved_text_style: RefCell<Option<Box<Option<TextStyle>>>>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
@@ -2140,6 +2142,7 @@ impl Window {
             root: None,
             element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
+            resolved_text_style: RefCell::new(None),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -2465,11 +2468,23 @@ impl Window {
 
     /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
     pub fn text_style(&self) -> TextStyle {
-        let mut style = TextStyle::default();
-        for refinement in &self.text_style_stack {
-            style.refine(refinement);
+        let mut cache = self.resolved_text_style.borrow_mut();
+        let resolved = cache.get_or_insert_with(|| Box::new(None));
+        resolved
+            .get_or_insert_with(|| {
+                let mut style = TextStyle::default();
+                for refinement in &self.text_style_stack {
+                    style.refine(refinement);
+                }
+                style
+            })
+            .clone()
+    }
+
+    fn invalidate_text_style(&mut self) {
+        if let Some(resolved) = self.resolved_text_style.get_mut() {
+            **resolved = None;
         }
-        style
     }
 
     /// Check if the platform window is maximized.
@@ -3885,6 +3900,7 @@ impl Window {
             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
+                self.invalidate_text_style();
                 let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                     self.element_id_stack
@@ -3922,6 +3938,7 @@ impl Window {
 
             self.element_id_stack.clear();
             self.text_style_stack.clear();
+            self.invalidate_text_style();
             round_start = round_end;
         }
     }
@@ -4104,8 +4121,10 @@ impl Window {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(style) = style {
             self.text_style_stack.push(style);
+            self.invalidate_text_style();
             let result = f(self);
             self.text_style_stack.pop();
+            self.invalidate_text_style();
             result
         } else {
             f(self)
@@ -7970,6 +7989,209 @@ mod tests {
             cx.update_window(window.into(), |_, window, _| window.remove_window())
                 .expect("randomized window");
         }
+    }
+
+    fn uncached_text_style(window: &Window) -> crate::TextStyle {
+        use refineable::Refineable as _;
+
+        let mut style = crate::TextStyle::default();
+        for refinement in &window.text_style_stack {
+            style.refine(refinement);
+        }
+        style
+    }
+
+    fn assert_resolved_text_style(window: &Window) -> crate::TextStyle {
+        let expected = uncached_text_style(window);
+        assert_eq!(window.text_style(), expected);
+        assert_eq!(window.text_style(), expected);
+        expected
+    }
+
+    fn text_style_cache_is_valid(window: &Window) -> bool {
+        window
+            .resolved_text_style
+            .borrow()
+            .as_deref()
+            .is_some_and(Option::is_some)
+    }
+
+    fn exercise_text_style_scopes(window: &mut Window) {
+        let initial = assert_resolved_text_style(window);
+        let allocation = window
+            .resolved_text_style
+            .borrow()
+            .as_deref()
+            .map(std::ptr::from_ref);
+        let depth = window.text_style_stack.len();
+        window.with_text_style(None, |window| {
+            assert!(text_style_cache_is_valid(window));
+            assert_eq!(window.text_style_stack.len(), depth);
+            assert_resolved_text_style(window);
+        });
+        window.with_text_style(Some(crate::TextStyleRefinement::default()), |window| {
+            assert!(!text_style_cache_is_valid(window));
+            assert_eq!(window.text_style_stack.len(), depth + 1);
+            assert_eq!(assert_resolved_text_style(window), initial);
+        });
+        assert!(!text_style_cache_is_valid(window));
+        assert_eq!(assert_resolved_text_style(window), initial);
+
+        let outer = crate::TextStyleRefinement {
+            font_size: Some(px(23.).into()),
+            color: Some(hsla(0., 1., 0.5, 1.)),
+            ..Default::default()
+        };
+        window.with_text_style(Some(outer), |window| {
+            assert!(!text_style_cache_is_valid(window));
+            let outer = assert_resolved_text_style(window);
+            for color in [hsla(0.3, 1., 0.5, 1.), hsla(0.6, 1., 0.5, 1.)] {
+                window.with_text_style(
+                    Some(crate::TextStyleRefinement {
+                        color: Some(color),
+                        ..Default::default()
+                    }),
+                    |window| {
+                        assert!(!text_style_cache_is_valid(window));
+                        assert_eq!(window.text_style_stack.len(), depth + 2);
+                        let mut owned = assert_resolved_text_style(window);
+                        assert_eq!(owned.color, color);
+                        assert_eq!(owned.font_size, outer.font_size);
+                        owned.font_size = px(99.).into();
+                        assert_ne!(window.text_style().font_size, owned.font_size);
+                    },
+                );
+                assert!(!text_style_cache_is_valid(window));
+                assert_eq!(assert_resolved_text_style(window), outer);
+            }
+        });
+        assert!(!text_style_cache_is_valid(window));
+        assert_eq!(window.text_style_stack.len(), depth);
+        assert_eq!(assert_resolved_text_style(window), initial);
+        assert_eq!(
+            window
+                .resolved_text_style
+                .borrow()
+                .as_deref()
+                .map(std::ptr::from_ref),
+            allocation
+        );
+    }
+
+    struct TextStyleScopesView;
+
+    impl Render for TextStyleScopesView {
+        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            assert_resolved_text_style(window);
+            canvas(
+                |_, window, _| exercise_text_style_scopes(window),
+                |_, _, window, _| exercise_text_style_scopes(window),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn resolved_text_style_scopes(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| TextStyleScopesView);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(window.text_style_stack.is_empty());
+            assert_eq!(
+                assert_resolved_text_style(window),
+                crate::TextStyle::default()
+            );
+        })
+        .unwrap();
+    }
+
+    struct DeferredTextStyleView {
+        observations: Rc<RefCell<Vec<(bool, crate::Hsla)>>>,
+    }
+
+    impl Render for DeferredTextStyleView {
+        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            assert!(window.text_style_stack.is_empty());
+            assert_resolved_text_style(window);
+            div()
+                .child(canvas(
+                    |_, _, _| {},
+                    |_, _, window, _| {
+                        // Read after the deferred round clears its stack, before sibling
+                        // paint scopes can invalidate a stale deferred style.
+                        assert!(window.text_style_stack.is_empty());
+                        assert_eq!(
+                            assert_resolved_text_style(window),
+                            crate::TextStyle::default()
+                        );
+                    },
+                ))
+                .children(
+                    [
+                        hsla(0., 1., 0.5, 1.),
+                        hsla(0.6, 1., 0.5, 1.),
+                        hsla(0.3, 1., 0.5, 1.),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, color)| {
+                        let prepaint_observations = self.observations.clone();
+                        let paint_observations = self.observations.clone();
+                        let child = canvas(
+                            move |_, window, _| {
+                                assert!(!text_style_cache_is_valid(window));
+                                let style = assert_resolved_text_style(window);
+                                assert_eq!(style.color, color);
+                                prepaint_observations
+                                    .borrow_mut()
+                                    .push((false, style.color));
+                            },
+                            move |_, _, window, _| {
+                                // Deferred paint does not restore the captured refinement stack.
+                                assert!(window.text_style_stack.is_empty());
+                                let style = assert_resolved_text_style(window);
+                                assert_eq!(style, crate::TextStyle::default());
+                                paint_observations.borrow_mut().push((true, style.color));
+                            },
+                        );
+                        let child = if index < 2 {
+                            crate::deferred(child).into_any_element()
+                        } else {
+                            crate::deferred(crate::deferred(child)).into_any_element()
+                        };
+                        div().text_color(color).child(child)
+                    }),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn resolved_text_style_deferred_restoration(cx: &mut TestAppContext) {
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let observations = observations.clone();
+            move |_, _| DeferredTextStyleView { observations }
+        });
+        observations.borrow_mut().clear();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(window.text_style_stack.is_empty());
+            assert_eq!(
+                assert_resolved_text_style(window),
+                crate::TextStyle::default()
+            );
+        })
+        .unwrap();
+        assert_eq!(
+            *observations.borrow(),
+            vec![
+                (false, hsla(0., 1., 0.5, 1.)),
+                (false, hsla(0.6, 1., 0.5, 1.)),
+                (false, hsla(0.3, 1., 0.5, 1.)),
+                (true, crate::TextStyle::default().color),
+                (true, crate::TextStyle::default().color),
+                (true, crate::TextStyle::default().color),
+            ]
+        );
     }
 
     #[cfg(feature = "profiler")]
