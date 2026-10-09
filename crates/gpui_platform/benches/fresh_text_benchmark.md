@@ -1,8 +1,9 @@
 # Fresh text baseline
 
-Static preparation only. Do not run Cargo, smoke, benchmarks, or profiles until
-the parent authorizes validation and the mainline font worker releases its
-exclusive validation slot.
+The warm text groups have been validated and measured. The separate
+first-populated-frame group below is still awaiting runtime validation.
+Run validation and measurement serially; do not overlap builds or tests with
+measured runs.
 
 - Branch: `gpui-fresh-text-benchmark`.
 - Exact base: `9ab0715969e9854f2efe61a9d782e7698e5fe6d2` (`origin/main` at preparation).
@@ -37,9 +38,10 @@ Record the actual font files and their hashes on the validation machine. Do not
 compare the two font groups as if they were the same workload, or assume the
 generic `monospace` request names an installed face.
 
-## Deferred validation
+## Warm benchmark reproduction
 
-These commands have **not been run**. Use one validation process at a time.
+The warm groups have completed smoke, quick, and measured runs using this
+feature configuration. Use one validation process at a time.
 Linux needs `x11` or `wayland` for production text shaping; commands below select
 `x11`. Do not enable `test-support`, directly or transitively.
 
@@ -195,3 +197,48 @@ Report first-populated wall-time confidence intervals, frame/foreground
 reports, secondary metrics, all correctness counts and setup heap deltas side
 by side. Linux present may discard the scene rather than submit GPU work;
 these runs cannot establish end-to-end display latency.
+
+## Measured fresh-only checkpoints
+
+These are historical warm-frame results, not measurements of the new
+first-populated-frame group. All stages still render the complete tree and
+construct a fresh dispatch tree and scene. No view-output retention is enabled.
+The workload has 96 panels with 64 labels each, updating two panels per frame.
+
+| Stage | Generic `monospace`: instructions / wall median | Installed Noto: instructions / wall median | Noto foreground allocations/frame |
+| --- | --- | --- | --- |
+| Original mainline `9ab0715969`, benchmark-only port | 550.69 M / 41.085 ms | 323.73 M / 25.843 ms | 102,981 |
+| Cached font-failure fix `70b9afd455` | 374.02 M / 29.040 ms | 323.54 M / 25.193 ms | 102,981 |
+| Fitting measurement and lazy wrapper `f5602320cd` | 289.18 M / 21.512 ms | 276.81 M / 20.637 ms | 90,431 |
+| Taffy 0.14 `4223238c9e` | 247.88 M / 18.626 ms | 236.10 M / 17.733 ms | 77,556 |
+
+Instructions are Criterion's foreground-instruction estimates; wall times and
+allocations are secondary medians from the same runs. For installed Noto/96,
+instruction confidence intervals were 323.38–324.12 M on mainline,
+276.64–277.02 M after fitting measurements, and 236.03–236.17 M after Taffy.
+Wall-time sample ranges were respectively 24.867–26.641 ms,
+20.234–25.066 ms, and 17.517–18.840 ms. These ranges are not wall-time
+confidence intervals. The font fix does not meaningfully reduce instructions
+when the preferred installed font resolves successfully.
+
+Local artifacts are in `target/fresh-performance/{baseline,font,fitting,taffy}-measured.log`.
+Runs used Linux x86_64, rustc 1.98.1, `release-fast`,
+`--no-default-features --features bench-support,x11`, CPU 0 affinity,
+`BENCH_MEASUREMENT=foreground-instructions`, 20 samples, one-second warmup
+and two-second measurement, with smoke and quick checks first. The original
+warm benchmark source was identical across these stages; the new
+first-populated group has a different source hash and requires new baseline
+and candidate captures. Taffy's dependency/lockfile change is intentional.
+
+The installed face was `/usr/share/fonts/noto/NotoSansMono-Regular.ttf`,
+Fontconfig face index 0, SHA-256
+`65b5e2b2c4a1fba9ae8be1f026cb35b03dcb8886d9b2a4147054fde12f7e767d`.
+Family verification is not a proof against per-character fallback.
+Glyph/full-refresh assertions passed. These measurements cover CPU-side frame
+production, not end-to-end display latency or GPU execution.
+
+The separate indexed-bounds experiment `624c05b94f` is not included in the
+table or the layout-cache comparison base. Alternating Noto/96 captures found
+about 1.1% fewer instructions but no consistent wall-time improvement. It
+remains an experiment, not a demonstrated speed win. Decoration-buffer trials
+are also excluded from this stack.

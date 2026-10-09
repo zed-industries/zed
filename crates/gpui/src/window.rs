@@ -998,7 +998,7 @@ impl ElementIdStack {
     }
 
     /// The hash of the whole path on the stack.
-    fn hash(&self) -> u64 {
+    pub(crate) fn hash(&self) -> u64 {
         self.hashes
             .last()
             .copied()
@@ -2130,7 +2130,13 @@ impl Window {
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
-            layout_engine: Some(TaffyLayoutEngine::new()),
+            layout_engine: Some({
+                let mut engine = TaffyLayoutEngine::new();
+                if std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1") {
+                    engine.enable_cache();
+                }
+                engine
+            }),
             root: None,
             element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
@@ -5180,6 +5186,15 @@ impl Window {
             })
     }
 
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn layout_cache_enabled(&self) -> bool {
+        self.layout_engine
+            .as_ref()
+            .expect("layout engine unavailable during layout computation")
+            .cache_enabled()
+    }
+
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
     /// calls to the [`Element::request_layout`] trait method and enables any element to participate in layout.
@@ -5199,12 +5214,9 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
 
-        self.layout_engine.as_mut().unwrap().request_layout(
-            style,
-            rem_size,
-            scale_factor,
-            &cx.layout_id_buffer,
-        )
+        let engine = self.layout_engine.as_mut().unwrap();
+        engine.set_request_scope(&self.element_id_stack);
+        engine.request_layout(style, rem_size, scale_factor, &cx.layout_id_buffer)
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -5224,10 +5236,21 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+        let engine = self.layout_engine.as_mut().unwrap();
+        engine.set_request_scope(&self.element_id_stack);
+        engine.request_measured_layout(style, rem_size, scale_factor, measure)
+    }
+
+    pub(crate) fn request_text_layout(
+        &mut self,
+        measure: crate::elements::TextMeasure,
+    ) -> LayoutId {
+        self.invalidator.debug_assert_prepaint();
+        let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
+        let engine = self.layout_engine.as_mut().unwrap();
+        engine.set_request_scope(&self.element_id_stack);
+        engine.request_text_layout(rem_size, scale_factor, measure)
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -7868,6 +7891,88 @@ mod tests {
         TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
         canvas, div, hsla, point, px, size,
     };
+
+    #[gpui::test(iterations = 4)]
+    fn layout_cache_randomized_scene_and_render_work_match(
+        mut rng: rand::rngs::StdRng,
+        cx: &mut TestAppContext,
+    ) {
+        use crate::{
+            TaffyLayoutEngine,
+            randomized_element_tree::{
+                RandomizedElementTree, RandomizedElementTreeConfig,
+                RandomizedElementTreeMutationKind,
+            },
+        };
+        use rand::Rng as _;
+
+        let config = RandomizedElementTreeConfig::new(rng.random(), 64)
+            .with_entity_density(0.2)
+            .with_handler_density(0.2);
+        let windows = [false, true].map(|cache_enabled| {
+            cx.open_window(size(px(1200.0), px(900.0)), move |window, cx| {
+                let mut engine = TaffyLayoutEngine::new();
+                if cache_enabled {
+                    engine.enable_cache();
+                }
+                window.layout_engine = Some(engine);
+                assert_eq!(window.layout_cache_enabled(), cache_enabled);
+                RandomizedElementTree::new_with_config(config, cx)
+            })
+        });
+        let roots = windows.map(|window| window.root(cx).expect("randomized root"));
+        for frame in 0..33 {
+            let mutation = (frame > 0).then(|| {
+                RandomizedElementTreeMutationKind::ALL
+                    [(frame - 1) % RandomizedElementTreeMutationKind::ALL.len()]
+            });
+            let mut scenes = Vec::new();
+            let mut counters = Vec::new();
+            for (window, root) in windows.iter().zip(&roots) {
+                root.update(cx, |tree, cx| {
+                    if let Some(mutation) = mutation {
+                        tree.apply_mutation(mutation, cx);
+                    }
+                });
+                let (scene, work) = cx
+                    .update_window((*window).into(), |_, window, cx| {
+                        window.set_scale_factor([1.0, 1.25, 2.0][frame % 3]);
+                        root.update(cx, |tree, _| tree.reset_work_counters());
+                        let arena_clear_needed = window.draw(cx);
+                        let quads = window
+                            .rendered_frame
+                            .scene
+                            .quads
+                            .iter()
+                            .map(|quad| {
+                                (
+                                    quad.order,
+                                    quad.border_style,
+                                    quad.bounds,
+                                    quad.content_mask,
+                                    quad.background,
+                                    quad.border_color,
+                                    quad.corner_radii,
+                                    quad.border_widths,
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        arena_clear_needed.clear(cx);
+                        (quads, root.read(cx).work_counters())
+                    })
+                    .expect("randomized window");
+                scenes.push(scene);
+                counters.push(work);
+            }
+            assert_eq!(scenes[0], scenes[1], "frame {frame}, {mutation:?}");
+            assert_eq!(counters[0], counters[1], "frame {frame}, {mutation:?}");
+            assert_eq!(counters[0].root_render_count(), 1);
+        }
+        for window in windows {
+            cx.update_window(window.into(), |_, window, _| window.remove_window())
+                .expect("randomized window");
+        }
+    }
 
     #[cfg(feature = "profiler")]
     #[gpui::test]

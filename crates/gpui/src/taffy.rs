@@ -7,6 +7,7 @@ use crate::{
     },
 };
 use collections::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
@@ -25,11 +26,27 @@ type MeasureFn =
     dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>;
 type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
 
-struct NodeContext {
-    measure: NodeMeasureFn,
+enum NodeContext {
+    Custom(NodeMeasureFn),
+    Text(Box<crate::elements::TextMeasure>),
 }
+
+#[derive(Default)]
+struct LayoutCache {
+    scopes: FxHashMap<u64, SmallVec<[LayoutScope; 1]>>,
+    request_scope: Option<(u64, usize)>,
+    font_generation: Option<usize>,
+}
+
+struct LayoutScope {
+    id: crate::GlobalElementId,
+    nodes: Vec<Option<LayoutId>>,
+    cursor: usize,
+}
+
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
+    cache: Option<Box<LayoutCache>>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
@@ -45,6 +62,7 @@ impl TaffyLayoutEngine {
         taffy.disable_rounding();
         TaffyLayoutEngine {
             taffy,
+            cache: None,
             absolute_layout_bounds: FxHashMap::default(),
             absolute_outer_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
@@ -52,11 +70,159 @@ impl TaffyLayoutEngine {
         }
     }
 
+    pub(crate) fn enable_cache(&mut self) {
+        self.cache = Some(Box::default());
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn cache_enabled(&self) -> bool {
+        self.cache.is_some()
+    }
+
+    pub(crate) fn set_request_scope(&mut self, stack: &crate::window::ElementIdStack) {
+        let Some(cache) = self.cache.as_mut() else {
+            return;
+        };
+        // Hashes select a bucket, never an identity. Anonymous requests consume
+        // ordinals in their nearest identified execution scope.
+        let scopes = cache.scopes.entry(stack.hash()).or_default();
+        let index = scopes
+            .iter()
+            .position(|scope| &*scope.id == &**stack)
+            .unwrap_or_else(|| {
+                scopes.push(LayoutScope {
+                    id: stack.global_id(),
+                    nodes: Vec::new(),
+                    cursor: 0,
+                });
+                scopes.len() - 1
+            });
+        cache.request_scope = Some((stack.hash(), index));
+    }
+
     pub fn clear(&mut self) {
-        self.taffy.clear();
+        if let Some(cache) = self.cache.as_mut() {
+            let reachable = &mut self.computed_layouts;
+            let stack = &mut self.layout_bounds_scratch_space;
+            stack.extend(reachable.iter().copied());
+            while let Some(id) = stack.pop() {
+                for child in self.taffy.child_ids(id.0).map(LayoutId) {
+                    if reachable.insert(child) {
+                        stack.push(child);
+                    }
+                }
+            }
+            cache.scopes.retain(|_, scopes| {
+                scopes.retain_mut(|scope| {
+                    for (index, node) in scope.nodes.iter_mut().enumerate() {
+                        if let Some(id) = *node {
+                            if index >= scope.cursor || !reachable.contains(&id) {
+                                // Taffy 0.14's remove does not remove node context data.
+                                self.taffy
+                                    .set_node_context(id.0, None)
+                                    .expect(EXPECT_MESSAGE);
+                                self.taffy.remove(id.0).expect(EXPECT_MESSAGE);
+                                *node = None;
+                            } else if matches!(
+                                self.taffy.get_node_context(id.0),
+                                Some(NodeContext::Custom(_))
+                            ) {
+                                self.taffy
+                                    .set_node_context(id.0, None)
+                                    .expect(EXPECT_MESSAGE);
+                            }
+                        }
+                    }
+                    scope.nodes.truncate(scope.cursor);
+                    scope.cursor = 0;
+                    scope.nodes.iter().any(Option::is_some)
+                });
+                !scopes.is_empty()
+            });
+            cache.request_scope = None;
+        } else {
+            self.taffy.clear();
+        }
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
+    }
+
+    fn request_node(
+        &mut self,
+        style: taffy::Style,
+        children: &[LayoutId],
+        context: Option<NodeContext>,
+    ) -> LayoutId {
+        let scope = self.cache.as_mut().map(|cache| {
+            let (hash, index) = cache
+                .request_scope
+                .take()
+                .expect("cached layout requests require an execution scope");
+            let scope = &mut cache.scopes.get_mut(&hash).expect(EXPECT_MESSAGE)[index];
+            let ordinal = scope.cursor;
+            scope.cursor += 1;
+            if ordinal == scope.nodes.len() {
+                scope.nodes.push(None);
+            }
+            &mut scope.nodes[ordinal]
+        });
+        let existing = scope.as_deref().copied().flatten();
+        let id = if let Some(id) = existing {
+            if self.taffy.style(id.0).expect(EXPECT_MESSAGE) != &style {
+                self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+            }
+            if !self
+                .taffy
+                .child_ids(id.0)
+                .eq(children.iter().map(|id| id.0))
+            {
+                self.taffy
+                    .set_children(id.0, LayoutId::to_taffy_slice(children))
+                    .expect(EXPECT_MESSAGE);
+            }
+            let carry_text = match (&context, self.taffy.get_node_context(id.0)) {
+                (Some(NodeContext::Text(current)), Some(NodeContext::Text(previous))) => {
+                    current.carry_from(previous)
+                }
+                _ => false,
+            };
+            if carry_text {
+                *self.taffy.get_node_context_mut(id.0).expect(EXPECT_MESSAGE) =
+                    context.expect(EXPECT_MESSAGE);
+            } else if context.is_some() || self.taffy.get_node_context(id.0).is_some() {
+                if let Some(NodeContext::Text(measure)) = &context {
+                    measure.reset();
+                }
+                // Opaque measurements can observe arbitrary external state.
+                // Replacing the callback must invalidate every cached constraint.
+                self.taffy
+                    .set_node_context(id.0, context)
+                    .expect(EXPECT_MESSAGE);
+            }
+            id
+        } else {
+            let id = self.taffy.new_leaf(style).expect(EXPECT_MESSAGE);
+            if !children.is_empty() {
+                // Unlike new_with_children, set_children detaches previous parents.
+                self.taffy
+                    .set_children(id, LayoutId::to_taffy_slice(children))
+                    .expect(EXPECT_MESSAGE);
+            }
+            if context.is_some() {
+                if let Some(NodeContext::Text(measure)) = &context {
+                    measure.reset();
+                }
+                self.taffy
+                    .set_node_context(id, context)
+                    .expect(EXPECT_MESSAGE);
+            }
+            LayoutId(id)
+        };
+        if let Some(scope) = scope {
+            *scope = Some(id);
+        }
+        id
     }
 
     pub fn request_layout(
@@ -68,6 +234,9 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
+        if self.cache.is_some() {
+            return self.request_node(taffy_style, children, None);
+        }
         if children.is_empty() {
             self.taffy
                 .new_leaf(taffy_style)
@@ -100,10 +269,31 @@ impl TaffyLayoutEngine {
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
 
+        if self.cache.is_some() {
+            return self.request_node(taffy_style, &[], Some(NodeContext::Custom(measure)));
+        }
         self.taffy
-            .new_leaf_with_context(taffy_style, NodeContext { measure })
+            .new_leaf_with_context(taffy_style, NodeContext::Custom(measure))
             .expect(EXPECT_MESSAGE)
             .into()
+    }
+
+    pub(crate) fn request_text_layout(
+        &mut self,
+        rem_size: Pixels,
+        scale_factor: f32,
+        measure: crate::elements::TextMeasure,
+    ) -> LayoutId {
+        let style = Style::default().to_taffy(rem_size, scale_factor);
+        let context = NodeContext::Text(Box::new(measure));
+        if self.cache.is_some() {
+            self.request_node(style, &[], Some(context))
+        } else {
+            self.taffy
+                .new_leaf_with_context(style, context)
+                .expect(EXPECT_MESSAGE)
+                .into()
+        }
     }
 
     /// Treats any `auto` dimension of the given node's style as filling `size`.
@@ -191,6 +381,36 @@ impl TaffyLayoutEngine {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if let Some(cache) = self.cache.as_mut() {
+            let generation = window.text_system().font_generation();
+            if cache.font_generation != Some(generation) {
+                // Fonts may be installed after request_layout, before this root
+                // is computed. Invalidating only at descriptor creation is too early.
+                for scope in cache.scopes.values().flatten() {
+                    for id in scope.nodes.iter().flatten() {
+                        if let Some(NodeContext::Text(measure)) =
+                            self.taffy.get_node_context_mut(id.0)
+                            && measure.refresh_fonts(generation)
+                        {
+                            self.taffy.mark_dirty(id.0).expect(EXPECT_MESSAGE);
+                        }
+                    }
+                }
+                cache.font_generation = Some(generation);
+            }
+        }
+        if let Some(cache) = self.cache.as_ref()
+            && let Some(parent) = self.taffy.parent(id.0)
+            && !cache
+                .scopes
+                .values()
+                .flatten()
+                .any(|scope| scope.nodes[..scope.cursor].contains(&Some(LayoutId(parent))))
+        {
+            // A root may still have a parent from the previous frame. Preserve
+            // current-frame parentage when a custom element computes a subtree.
+            self.taffy.remove_child(parent, id.0).expect(EXPECT_MESSAGE);
+        }
         // Leaving this here until we have a better instrumentation approach.
         // println!("Laying out {} children", self.count_all_children(id)?);
         // println!("Max layout depth: {}", self.max_depth(0, id)?);
@@ -232,6 +452,7 @@ impl TaffyLayoutEngine {
             transform(available_space.height),
         );
 
+        let cache_enabled = self.cache.is_some();
         self.taffy
             .compute_layout_with_measure(
                 id.into(),
@@ -264,12 +485,18 @@ impl TaffyLayoutEngine {
                                 untransform(available_space.height),
                             );
 
-                            let measured_size: Size<Pixels> = (node_context.measure)(
-                                known_dimensions,
-                                available_space,
-                                window,
-                                cx,
-                            );
+                            let measured_size = match node_context {
+                                NodeContext::Custom(measure) => {
+                                    measure(known_dimensions, available_space, window, cx)
+                                }
+                                NodeContext::Text(measure) => measure.measure(
+                                    known_dimensions,
+                                    available_space,
+                                    cache_enabled.then_some(inputs.run_mode),
+                                    window,
+                                    cx,
+                                ),
+                            };
                             snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
                         },
                     )
@@ -756,6 +983,190 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scoped_request(
+        engine: &mut TaffyLayoutEngine,
+        scope: u64,
+        style: Style,
+        scale: f32,
+        children: &[LayoutId],
+    ) -> LayoutId {
+        let mut stack = crate::window::ElementIdStack::default();
+        stack.push(scope.into());
+        engine.set_request_scope(&stack);
+        engine.request_layout(style, Pixels(16.0), scale, children)
+    }
+
+    #[gpui::test]
+    fn layout_cache_restores_root_style_when_reparented(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            window.set_scale_factor(1.0);
+            let mut engine = TaffyLayoutEngine::new();
+            engine.enable_cache();
+            let root = scoped_request(&mut engine, 1, Style::default(), 1.0, &[]);
+            let viewport = size(Pixels(200.0), Pixels(100.0));
+            engine.stretch_auto_size_to_fill(root, viewport, 1.0);
+            engine.compute_layout(root, viewport.into(), window, cx);
+            assert_eq!(engine.layout_bounds(root, 1.0).size, viewport);
+            engine.clear();
+
+            let child = scoped_request(&mut engine, 1, Style::default(), 1.0, &[]);
+            assert_eq!(child, root);
+            let root = scoped_request(&mut engine, 2, Style::default(), 1.0, &[child]);
+            engine.compute_layout(root, AvailableSpace::min_size(), window, cx);
+            assert_eq!(engine.layout_bounds(child, 1.0).size, Size::default());
+            engine.clear();
+        });
+    }
+
+    #[test]
+    fn layout_cache_compares_full_scope_identity_in_hash_buckets() {
+        let mut engine = TaffyLayoutEngine::new();
+        engine.enable_cache();
+        let mut stack = crate::window::ElementIdStack::default();
+        stack.push(1_u64.into());
+        let hash = stack.hash();
+        let cache = engine.cache.as_mut().expect("cache enabled");
+        // Inject a distinct identity into the target bucket to simulate a collision.
+        cache.scopes.entry(hash).or_default().push(LayoutScope {
+            id: crate::GlobalElementId::new(&[2_u64.into()]),
+            nodes: Vec::new(),
+            cursor: 0,
+        });
+        engine.set_request_scope(&stack);
+        let cache = engine.cache.as_ref().expect("cache enabled");
+        assert_eq!(cache.request_scope, Some((hash, 1)));
+        assert_eq!(cache.scopes[&hash].len(), 2);
+    }
+
+    #[gpui::test(iterations = 10)]
+    fn layout_cache_matches_fresh_geometry(
+        mut rng: rand::rngs::StdRng,
+        cx: &mut crate::TestAppContext,
+    ) {
+        use rand::{Rng as _, seq::SliceRandom as _};
+
+        cx.add_empty_window().update(|window, cx| {
+            let mut fresh = TaffyLayoutEngine::new();
+            let mut cached = TaffyLayoutEngine::new();
+            cached.enable_cache();
+            for frame in 0..40 {
+                let scale = [1.0, 1.25, 2.0][frame % 3];
+                window.set_scale_factor(scale);
+                let mut scopes: Vec<u64> = (10..26).collect();
+                scopes.shuffle(&mut rng);
+                scopes.truncate(rng.random_range(0..=16));
+                let styles: Vec<_> = scopes
+                    .iter()
+                    .map(|_| {
+                        let mut style = Style::default();
+                        style.size = size(
+                            Pixels(rng.random_range(5.0..80.0)).into(),
+                            Pixels(rng.random_range(5.0..30.0)).into(),
+                        );
+                        style.padding = Edges::all(Pixels(1.3).into());
+                        style
+                    })
+                    .collect();
+                let split = rng.random_range(0..=scopes.len());
+                let viewport = size(Pixels(400.0 + frame as f32), Pixels(300.0));
+                let mut results = Vec::new();
+                for engine in [&mut fresh, &mut cached] {
+                    let leaves: Vec<_> = scopes
+                        .iter()
+                        .zip(&styles)
+                        .map(|(scope, style)| {
+                            scoped_request(engine, *scope, style.clone(), scale, &[])
+                        })
+                        .collect();
+                    let left = scoped_request(engine, 1, Style::default(), scale, &leaves[..split]);
+                    let right =
+                        scoped_request(engine, 2, Style::default(), scale, &leaves[split..]);
+                    let root = scoped_request(engine, 0, Style::default(), scale, &[left, right]);
+                    engine.stretch_auto_size_to_fill(root, viewport, scale);
+                    engine.compute_layout(root, viewport.into(), window, cx);
+                    results.push(
+                        leaves
+                            .into_iter()
+                            .chain([left, right, root])
+                            .map(|id| engine.layout_bounds(id, scale))
+                            .collect::<Vec<_>>(),
+                    );
+                    engine.clear();
+                }
+                assert_eq!(results[0], results[1], "frame {frame}");
+                assert_eq!(cached.taffy.total_node_count(), scopes.len() + 3);
+            }
+            cached.clear();
+            assert_eq!(cached.taffy.total_node_count(), 0);
+        });
+    }
+
+    #[gpui::test]
+    fn layout_cache_reuses_ordinals_and_drops_measurements(cx: &mut crate::TestAppContext) {
+        use std::{cell::Cell, rc::Rc};
+
+        cx.add_empty_window().update(|window, cx| {
+            window.set_scale_factor(1.0);
+            let mut engine = TaffyLayoutEngine::new();
+            engine.enable_cache();
+            let scope = crate::window::ElementIdStack::default();
+            let calls = Rc::new(Cell::new(0));
+            let mut previous = None;
+            for frame in 0..4 {
+                let capture = Rc::new(());
+                let weak_capture = Rc::downgrade(&capture);
+                engine.set_request_scope(&scope);
+                let measured =
+                    engine.request_measured_layout(Style::default(), Pixels(16.0), 1.0, {
+                        let calls = calls.clone();
+                        move |_, _, _, _| {
+                            let _capture = &capture;
+                            calls.set(calls.get() + 1);
+                            size(Pixels(20.0 + frame as f32), Pixels(10.0))
+                        }
+                    });
+                engine.set_request_scope(&scope);
+                let root = engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[measured]);
+                if let Some(previous) = previous {
+                    assert_eq!((measured, root), previous);
+                }
+                previous = Some((measured, root));
+                let before = calls.get();
+                engine.compute_layout(root, AvailableSpace::min_size(), window, cx);
+                assert!(calls.get() > before);
+                assert_eq!(
+                    engine.layout_bounds(measured, 1.0).size,
+                    size(Pixels(20.0 + frame as f32), Pixels(10.0))
+                );
+                engine.clear();
+                assert!(weak_capture.upgrade().is_none());
+            }
+            engine.set_request_scope(&scope);
+            let unmeasured = engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[]);
+            assert_eq!(unmeasured, previous.expect("previous frame").0);
+            engine.compute_layout(unmeasured, AvailableSpace::min_size(), window, cx);
+            assert_eq!(engine.layout_bounds(unmeasured, 1.0).size, Size::default());
+            engine.clear();
+            assert_eq!(engine.taffy.total_node_count(), 1);
+
+            let abandoned_capture = Rc::new(());
+            let weak_capture = Rc::downgrade(&abandoned_capture);
+            engine.set_request_scope(&scope);
+            engine.request_measured_layout(
+                Style::default(),
+                Pixels(16.0),
+                1.0,
+                move |_, _, _, _| {
+                    let _capture = &abandoned_capture;
+                    Size::default()
+                },
+            );
+            engine.clear();
+            assert!(weak_capture.upgrade().is_none());
+            assert_eq!(engine.taffy.total_node_count(), 0);
+        });
+    }
 
     #[gpui::test]
     fn unmeasured_leaf_preserves_box_styles(cx: &mut crate::TestAppContext) {

@@ -630,6 +630,91 @@ struct TextLayoutInner {
     bounds: Option<Bounds<Pixels>>,
 }
 
+pub(crate) struct TextMeasure {
+    text: SharedString,
+    runs: Vec<TextRun>,
+    text_style: TextStyle,
+    font_size: Pixels,
+    line_height: Pixels,
+    rem_size: Pixels,
+    scale_factor: f32,
+    font_generation: usize,
+    element_state: TextLayout,
+}
+
+impl TextMeasure {
+    pub(crate) fn carry_from(&self, previous: &Self) -> bool {
+        if self.text != previous.text
+            || self.runs != previous.runs
+            || self.text_style != previous.text_style
+            || self.font_size != previous.font_size
+            || self.line_height != previous.line_height
+            || self.rem_size != previous.rem_size
+            || self.scale_factor != previous.scale_factor
+            || self.font_generation != previous.font_generation
+        {
+            return false;
+        }
+        {
+            let state = previous.element_state.0.borrow();
+            let Some(state) = state.as_ref() else {
+                return false;
+            };
+            if state.lines.is_empty() && !self.text.is_empty() {
+                return false;
+            }
+        }
+        let mut measured = if Rc::strong_count(&previous.element_state.0) == 1
+            || Rc::ptr_eq(&self.element_state.0, &previous.element_state.0)
+        {
+            previous
+                .element_state
+                .0
+                .borrow_mut()
+                .take()
+                .expect("validated final text state")
+        } else {
+            // Public TextLayout handles may outlive their frame. Preserve those
+            // handles, but move the state when only the old descriptor owns it.
+            let state = previous.element_state.0.borrow();
+            let state = state.as_ref().expect("validated final text state");
+            TextLayoutInner {
+                len: state.len,
+                lines: state
+                    .lines
+                    .iter()
+                    .map(|line| WrappedLine {
+                        layout: line.layout.clone(),
+                        text: line.text.clone(),
+                        decoration_runs: line.decoration_runs.clone(),
+                    })
+                    .collect(),
+                line_height: state.line_height,
+                wrap_width: state.wrap_width,
+                truncate_width: state.truncate_width,
+                size: state.size,
+                bounds: None,
+            }
+        };
+        measured.bounds = None;
+        self.element_state.0.borrow_mut().replace(measured);
+        true
+    }
+
+    pub(crate) fn refresh_fonts(&mut self, generation: usize) -> bool {
+        if self.font_generation == generation {
+            return false;
+        }
+        self.font_generation = generation;
+        self.reset();
+        true
+    }
+
+    pub(crate) fn reset(&self) {
+        self.element_state.0.borrow_mut().take();
+    }
+}
+
 impl TextLayoutInner {
     fn cached_size(
         &self,
@@ -661,6 +746,15 @@ impl TextLayout {
         window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
+        window.request_text_layout(self.measurement(text, runs, window))
+    }
+
+    fn measurement(
+        &self,
+        text: SharedString,
+        runs: Option<Vec<TextRun>>,
+        window: &Window,
+    ) -> TextMeasure {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
         let line_height = window.pixel_snap(
@@ -674,134 +768,170 @@ impl TextLayout {
         } else {
             vec![text_style.to_run(text.len())]
         };
-        window.request_measured_layout(Default::default(), {
-            let element_state = self.clone();
+        TextMeasure {
+            text,
+            runs,
+            text_style,
+            font_size,
+            line_height,
+            rem_size: window.rem_size(),
+            scale_factor: window.scale_factor(),
+            font_generation: window.text_system().font_generation(),
+            element_state: self.clone(),
+        }
+    }
+}
 
-            move |known_dimensions, available_space, window, cx| {
-                let wrap_width = if text_style.white_space == WhiteSpace::Normal {
-                    known_dimensions.width.or(match available_space.width {
-                        crate::AvailableSpace::Definite(x) => Some(x),
-                        _ => None,
-                    })
-                } else {
-                    None
-                };
+impl TextMeasure {
+    pub(crate) fn measure(
+        &self,
+        known_dimensions: Size<Option<Pixels>>,
+        available_space: Size<crate::AvailableSpace>,
+        run_mode: Option<taffy::RunMode>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Size<Pixels> {
+        let Self {
+            text,
+            runs,
+            text_style,
+            element_state,
+            ..
+        } = self;
+        let font_size = self.font_size;
+        let line_height = self.line_height;
+        // Taffy keeps preliminary size entries separately from its final layout
+        // entry. A probe must not overwrite paintable lines: final layout may hit
+        // that entry without calling us again. Taffy 0.14 always measures a leaf
+        // on a PerformLayout miss, even when both dimensions are known.
+        let publish = run_mode != Some(taffy::RunMode::ComputeSize);
+        let wrap_width = if text_style.white_space == WhiteSpace::Normal {
+            known_dimensions.width.or(match available_space.width {
+                crate::AvailableSpace::Definite(x) => Some(x),
+                _ => None,
+            })
+        } else {
+            None
+        };
 
-                let (truncate_width, truncation_affix, truncate_from) =
-                    if let Some(text_overflow) = text_style.text_overflow.clone() {
-                        let width = known_dimensions.width.or(match available_space.width {
-                            crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
-                                Some(max_lines) => Some(x * max_lines),
-                                None => Some(x),
-                            },
-                            _ => None,
-                        });
+        let (truncate_width, truncation_affix, truncate_from) =
+            if let Some(text_overflow) = text_style.text_overflow.clone() {
+                let width = known_dimensions.width.or(match available_space.width {
+                    crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
+                        Some(max_lines) => Some(x * max_lines),
+                        None => Some(x),
+                    },
+                    _ => None,
+                });
 
-                        match text_overflow {
-                            TextOverflow::Truncate(s) => (width, s, TruncateFrom::End),
-                            TextOverflow::TruncateStart(s) => (width, s, TruncateFrom::Start),
-                            TextOverflow::TruncateMiddle(s) => (width, s, TruncateFrom::Middle),
-                        }
-                    } else {
-                        (None, "".into(), TruncateFrom::End)
-                    };
-
-                if let Some(text_layout) = element_state.0.borrow().as_ref()
-                    && let Some(size) = text_layout.cached_size(wrap_width, truncate_width)
-                {
-                    return size;
+                match text_overflow {
+                    TextOverflow::Truncate(s) => (width, s, TruncateFrom::End),
+                    TextOverflow::TruncateStart(s) => (width, s, TruncateFrom::Start),
+                    TextOverflow::TruncateMiddle(s) => (width, s, TruncateFrom::Middle),
                 }
+            } else {
+                (None, "".into(), TruncateFrom::End)
+            };
 
-                let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    if let Some(max_lines) = text_style.line_clamp
-                        && let Some(wrap_width) = wrap_width
-                    {
-                        let mut line_wrapper =
-                            cx.text_system().line_wrapper(text_style.font(), font_size);
-                        line_wrapper.truncate_wrapped_line(
-                            text.clone(),
-                            wrap_width,
-                            max_lines,
-                            &truncation_affix,
-                            &runs,
-                            truncate_from,
-                        )
-                    } else if let Some(unclipped) = window
-                        .text_system()
-                        .shape_text(text.clone(), font_size, &runs, None, None)
-                        .log_err()
-                        && unclipped
-                            .iter()
-                            .all(|line| line.size(line_height).width <= truncate_width)
-                    {
-                        // The truncation decision below sums per-character advances,
-                        // which overestimates the shaped width (no kerning), truncating
-                        // text that fits exactly in its measured width. Skip truncation
-                        // whenever the honestly-shaped text fits; the shaping result
-                        // comes from the line layout cache when the same text was
-                        // already measured untruncated this frame.
-                        (text.clone(), Cow::Borrowed(&*runs))
-                    } else {
-                        let mut line_wrapper =
-                            cx.text_system().line_wrapper(text_style.font(), font_size);
-                        line_wrapper.truncate_line(
-                            text.clone(),
-                            truncate_width,
-                            &truncation_affix,
-                            &runs,
-                            truncate_from,
-                        )
-                    }
-                } else {
-                    (text.clone(), Cow::Borrowed(&*runs))
-                };
-                let len = text.len();
+        if let Some(text_layout) = element_state.0.borrow().as_ref()
+            && (run_mode.is_none() || wrap_width.is_some() || text_layout.wrap_width.is_none())
+            && let Some(size) = text_layout.cached_size(wrap_width, truncate_width)
+        {
+            return size;
+        }
 
-                let Some(lines) = window
-                    .text_system()
-                    .shape_text(
-                        text,
-                        font_size,
-                        &runs,
-                        wrap_width,            // Wrap if we know the width.
-                        text_style.line_clamp, // Limit the number of lines if line_clamp is set.
-                    )
-                    .log_err()
-                else {
-                    element_state.0.borrow_mut().replace(TextLayoutInner {
-                        lines: Default::default(),
-                        len: 0,
-                        line_height,
-                        wrap_width,
-                        truncate_width,
-                        size: Some(Size::default()),
-                        bounds: None,
-                    });
-                    return Size::default();
-                };
+        let (text, runs) = if let Some(truncate_width) = truncate_width {
+            if let Some(max_lines) = text_style.line_clamp
+                && let Some(wrap_width) = wrap_width
+            {
+                let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
+                line_wrapper.truncate_wrapped_line(
+                    text.clone(),
+                    wrap_width,
+                    max_lines,
+                    &truncation_affix,
+                    &runs,
+                    truncate_from,
+                )
+            } else if let Some(unclipped) = window
+                .text_system()
+                .shape_text(text.clone(), font_size, &runs, None, None)
+                .log_err()
+                && unclipped
+                    .iter()
+                    .all(|line| line.size(line_height).width <= truncate_width)
+            {
+                // The truncation decision below sums per-character advances,
+                // which overestimates the shaped width (no kerning), truncating
+                // text that fits exactly in its measured width. Skip truncation
+                // whenever the honestly-shaped text fits; the shaping result
+                // comes from the line layout cache when the same text was
+                // already measured untruncated this frame.
+                (text.clone(), Cow::Borrowed(runs.as_slice()))
+            } else {
+                let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
+                line_wrapper.truncate_line(
+                    text.clone(),
+                    truncate_width,
+                    &truncation_affix,
+                    &runs,
+                    truncate_from,
+                )
+            }
+        } else {
+            (text.clone(), Cow::Borrowed(runs.as_slice()))
+        };
+        let len = text.len();
 
-                let mut size: Size<Pixels> = Size::default();
-                for line in &lines {
-                    let line_size = line.size(line_height);
-                    size.height += line_size.height;
-                    size.width = size.width.max(line_size.width).ceil();
-                }
-
+        let Some(lines) = window
+            .text_system()
+            .shape_text(
+                text,
+                font_size,
+                &runs,
+                wrap_width,            // Wrap if we know the width.
+                text_style.line_clamp, // Limit the number of lines if line_clamp is set.
+            )
+            .log_err()
+        else {
+            if publish {
                 element_state.0.borrow_mut().replace(TextLayoutInner {
-                    lines,
-                    len,
+                    lines: Default::default(),
+                    len: 0,
                     line_height,
                     wrap_width,
                     truncate_width,
-                    size: Some(size),
+                    size: Some(Size::default()),
                     bounds: None,
                 });
-
-                size
             }
-        })
-    }
+            return Size::default();
+        };
 
+        let mut size: Size<Pixels> = Size::default();
+        for line in &lines {
+            let line_size = line.size(line_height);
+            size.height += line_size.height;
+            size.width = size.width.max(line_size.width).ceil();
+        }
+
+        if publish {
+            element_state.0.borrow_mut().replace(TextLayoutInner {
+                lines,
+                len,
+                line_height,
+                wrap_width,
+                truncate_width,
+                size: Some(size),
+                bounds: None,
+            });
+        }
+
+        size
+    }
+}
+
+impl TextLayout {
     fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
         let mut element_state = self.0.borrow_mut();
         let element_state = element_state
@@ -1368,6 +1498,431 @@ mod tests {
         layout.size = None;
         assert_eq!(layout.cached_size(None, None), None);
         assert_eq!(layout.cached_size(Some(crate::px(100.)), None), None);
+    }
+
+    #[gpui::test]
+    fn text_cache_transfers_state_preserves_old_handles_and_recovers_empty_state(
+        cx: &mut crate::TestAppContext,
+    ) {
+        cx.add_empty_window().update(|window, cx| {
+            let text: SharedString = "one two three four".into();
+            let available = Size {
+                width: crate::AvailableSpace::Definite(crate::px(50.0)),
+                height: crate::AvailableSpace::MaxContent,
+            };
+            let previous = TextLayout::default();
+            let previous_measure = previous.measurement(text.clone(), None, window);
+            let measured_size = previous_measure.measure(
+                Size::default(),
+                available,
+                Some(taffy::RunMode::PerformLayout),
+                window,
+                cx,
+            );
+            let old_bounds = Bounds::new(
+                crate::point(crate::px(13.0), crate::px(17.0)),
+                measured_size,
+            );
+            previous.prepaint(old_bounds, &text);
+            let old_text = previous.wrapped_text();
+            let fresh = TextLayout::default();
+            let fresh_measure = fresh.measurement(text.clone(), None, window);
+            assert!(fresh_measure.carry_from(&previous_measure));
+            assert_eq!(
+                previous.0.borrow().as_ref().expect("old state").bounds,
+                Some(old_bounds)
+            );
+            assert_eq!(previous.wrapped_text(), old_text);
+            assert_eq!(fresh.wrapped_text(), old_text);
+            assert_eq!(fresh.0.borrow().as_ref().expect("fresh state").bounds, None);
+            fresh_measure.measure(
+                Size::default(),
+                Size {
+                    width: crate::AvailableSpace::Definite(crate::px(15.0)),
+                    ..available
+                },
+                Some(taffy::RunMode::PerformLayout),
+                window,
+                cx,
+            );
+            assert_eq!(previous.wrapped_text(), old_text);
+            assert_eq!(
+                previous.0.borrow().as_ref().expect("old state").bounds,
+                Some(old_bounds)
+            );
+
+            drop(previous);
+            assert_eq!(Rc::strong_count(&previous_measure.element_state.0), 1);
+            let moved = TextLayout::default();
+            let moved_measure = moved.measurement(text.clone(), None, window);
+            assert!(moved_measure.carry_from(&previous_measure));
+            assert!(previous_measure.element_state.0.borrow().is_none());
+            assert_eq!(moved.wrapped_text(), old_text);
+            assert!(moved_measure.carry_from(&moved_measure));
+            assert_eq!(moved.wrapped_text(), old_text);
+
+            // shape_text currently has no Err producer. Seed exactly the empty
+            // failure result to exercise its rejection and next-frame recovery.
+            let mut engine = crate::TaffyLayoutEngine::new();
+            engine.enable_cache();
+            let scope = crate::window::ElementIdStack::default();
+            engine.set_request_scope(&scope);
+            let id =
+                engine.request_text_layout(window.rem_size(), window.scale_factor(), moved_measure);
+            engine.compute_layout(id, available, window, cx);
+            {
+                let mut state = moved.0.borrow_mut();
+                let state = state.as_mut().expect("measured state");
+                state.lines.clear();
+                state.len = 0;
+                state.size = Some(Size::default());
+                state.bounds = None;
+            }
+            engine.clear();
+            let recovered = TextLayout::default();
+            engine.set_request_scope(&scope);
+            let recovered_id = engine.request_text_layout(
+                window.rem_size(),
+                window.scale_factor(),
+                recovered.measurement(text, None, window),
+            );
+            assert_eq!(recovered_id, id);
+            assert!(
+                recovered.0.borrow().is_none(),
+                "failed state must not carry"
+            );
+            engine.compute_layout(recovered_id, available, window, cx);
+            assert_eq!(recovered.wrapped_text(), old_text);
+            assert_eq!(
+                recovered.0.borrow().as_ref().expect("recovered").size,
+                Some(measured_size)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn text_cache_probe_miss_preserves_cached_final_lines(cx: &mut crate::TestAppContext) {
+        use taffy::{LayoutInput, RunMode};
+
+        fn compute(
+            tree: &mut taffy::TaffyTree<()>,
+            id: taffy::NodeId,
+            input: LayoutInput,
+            measure: &TextMeasure,
+            calls: &mut usize,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> taffy::LayoutOutput {
+            taffy::compute_cached_layout(tree, id, input, |tree, id, input| {
+                *calls += 1;
+                taffy::compute_leaf_layout(
+                    input,
+                    tree.style(id).expect("text style"),
+                    |_, _| 0.0,
+                    |known, available| {
+                        let measured = measure.measure(
+                            Size {
+                                width: known.width.map(Pixels),
+                                height: known.height.map(Pixels),
+                            },
+                            available.into(),
+                            Some(input.run_mode),
+                            window,
+                            cx,
+                        );
+                        taffy::geometry::Size {
+                            width: measured.width.0,
+                            height: measured.height.0,
+                        }
+                    },
+                )
+            })
+        }
+
+        cx.add_empty_window().update(|window, cx| {
+            window
+                .invalidator
+                .set_phase(crate::window::DrawPhase::Prepaint);
+            window.set_scale_factor(1.0);
+            for white_space in [WhiteSpace::Normal, WhiteSpace::Nowrap] {
+                for overflow in [
+                    None,
+                    Some(TextOverflow::Truncate("…".into())),
+                    Some(TextOverflow::TruncateStart("…".into())),
+                    Some(TextOverflow::TruncateMiddle("…".into())),
+                ] {
+                    for line_clamp in [None, Some(1), Some(2)] {
+                        window.with_text_style(
+                            Some(crate::TextStyleRefinement {
+                                white_space: Some(white_space),
+                                text_overflow: overflow.clone(),
+                                line_clamp,
+                                ..Default::default()
+                            }),
+                            |window| {
+                                let text: SharedString =
+                                    "one two three four five six seven eight".into();
+                                let previous = TextLayout::default();
+                                let previous_measure =
+                                    previous.measurement(text.clone(), None, window);
+                                let mut tree = taffy::TaffyTree::<()>::new();
+                                let id = tree.new_leaf(Default::default()).expect("text leaf");
+                                let final_input = LayoutInput {
+                                    run_mode: RunMode::PerformLayout,
+                                    known_dimensions: taffy::geometry::Size {
+                                        width: Some(100.0),
+                                        height: Some(50.0),
+                                    },
+                                    ..LayoutInput::HIDDEN
+                                };
+                                let mut calls = 0;
+                                compute(
+                                    &mut tree,
+                                    id,
+                                    final_input,
+                                    &previous_measure,
+                                    &mut calls,
+                                    window,
+                                    cx,
+                                );
+                                assert!(previous.0.borrow().is_some());
+                                let expected = previous.wrapped_text();
+                                let fresh = TextLayout::default();
+                                let fresh_measure = fresh.measurement(text.clone(), None, window);
+                                assert!(fresh_measure.carry_from(&previous_measure));
+                                for (width, height, available_width) in [
+                                    (None, None, taffy::AvailableSpace::MinContent),
+                                    (None, None, taffy::AvailableSpace::MaxContent),
+                                    (None, None, taffy::AvailableSpace::Definite(15.0)),
+                                    (Some(30.0), None, taffy::AvailableSpace::MaxContent),
+                                    (None, Some(20.0), taffy::AvailableSpace::MaxContent),
+                                    (Some(40.0), Some(20.0), taffy::AvailableSpace::MaxContent),
+                                ] {
+                                    let probe = LayoutInput {
+                                        run_mode: RunMode::ComputeSize,
+                                        known_dimensions: taffy::geometry::Size { width, height },
+                                        available_space: taffy::geometry::Size {
+                                            width: available_width,
+                                            height: taffy::AvailableSpace::MaxContent,
+                                        },
+                                        ..LayoutInput::HIDDEN
+                                    };
+                                    let before_probe = calls;
+                                    let output = compute(
+                                        &mut tree,
+                                        id,
+                                        probe,
+                                        &fresh_measure,
+                                        &mut calls,
+                                        window,
+                                        cx,
+                                    );
+                                    let reference = TextLayout::default();
+                                    let reference_measure =
+                                        reference.measurement(text.clone(), None, window);
+                                    let mut reference_tree = taffy::TaffyTree::<()>::new();
+                                    let reference_id = reference_tree
+                                        .new_leaf(Default::default())
+                                        .expect("reference leaf");
+                                    let mut reference_calls = 0;
+                                    let reference_output = compute(
+                                        &mut reference_tree,
+                                        reference_id,
+                                        probe,
+                                        &reference_measure,
+                                        &mut reference_calls,
+                                        window,
+                                        cx,
+                                    );
+                                    assert_eq!(output, reference_output);
+                                    assert_eq!(calls, before_probe + 1);
+                                    assert_eq!(fresh.wrapped_text(), expected);
+                                    compute(
+                                        &mut tree,
+                                        id,
+                                        final_input,
+                                        &fresh_measure,
+                                        &mut calls,
+                                        window,
+                                        cx,
+                                    );
+                                    assert_eq!(calls, before_probe + 1, "final layout must hit");
+                                    assert_eq!(fresh.wrapped_text(), expected);
+                                }
+                            },
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn text_cache_rejects_changed_inputs_and_wrapped_intrinsic_sizes(
+        cx: &mut crate::TestAppContext,
+    ) {
+        cx.add_empty_window().update(|window, cx| {
+            let text: SharedString = "one two three four five six seven eight".into();
+            let previous = TextLayout::default();
+            let previous_measure = previous.measurement(text.clone(), None, window);
+            previous_measure.measure(
+                Size::default(),
+                Size {
+                    width: crate::AvailableSpace::Definite(crate::px(30.0)),
+                    height: crate::AvailableSpace::MaxContent,
+                },
+                Some(taffy::RunMode::PerformLayout),
+                window,
+                cx,
+            );
+            for change in 0..11 {
+                let fresh = TextLayout::default();
+                let mut measure = fresh.measurement(text.clone(), None, window);
+                match change {
+                    0 => measure.text = "ONE two three four five six seven eight".into(),
+                    1 => measure.runs[0].len -= 1,
+                    2 => measure.text_style.font_family = "different font".into(),
+                    3 => measure.text_style.white_space = WhiteSpace::Nowrap,
+                    4 => measure.text_style.line_clamp = Some(1),
+                    5 => {
+                        measure.text_style.text_overflow = Some(TextOverflow::Truncate("…".into()))
+                    }
+                    6 => measure.font_size += crate::px(1.0),
+                    7 => measure.line_height += crate::px(1.0),
+                    8 => measure.rem_size += crate::px(1.0),
+                    9 => measure.scale_factor += 0.25,
+                    10 => measure.font_generation += 1,
+                    _ => unreachable!(),
+                }
+                assert!(!measure.carry_from(&previous_measure), "change {change}");
+                assert!(fresh.0.borrow().is_none());
+            }
+
+            let fresh = TextLayout::default();
+            let measure = fresh.measurement(text.clone(), None, window);
+            assert!(measure.carry_from(&previous_measure));
+            let expected_lines = fresh.wrapped_text();
+            let intrinsic = measure.measure(
+                Size::default(),
+                Size {
+                    width: crate::AvailableSpace::MaxContent,
+                    height: crate::AvailableSpace::MaxContent,
+                },
+                Some(taffy::RunMode::ComputeSize),
+                window,
+                cx,
+            );
+            let reference = TextLayout::default()
+                .measurement(text, None, window)
+                .measure(
+                    Size::default(),
+                    Size {
+                        width: crate::AvailableSpace::MaxContent,
+                        height: crate::AvailableSpace::MaxContent,
+                    },
+                    None,
+                    window,
+                    cx,
+                );
+            assert_eq!(intrinsic, reference);
+            assert_eq!(fresh.wrapped_text(), expected_lines);
+        });
+    }
+
+    #[gpui::test]
+    fn text_layout_cache_matches_fresh_frames_and_font_installation(
+        cx: &mut crate::TestAppContext,
+    ) {
+        cx.add_empty_window().update(|window, cx| {
+            window
+                .invalidator
+                .set_phase(crate::window::DrawPhase::Prepaint);
+            for overflow in [
+                None,
+                Some(TextOverflow::Truncate("…".into())),
+                Some(TextOverflow::TruncateStart("…".into())),
+                Some(TextOverflow::TruncateMiddle("…".into())),
+            ] {
+                window.with_text_style(
+                    Some(crate::TextStyleRefinement {
+                        white_space: Some(WhiteSpace::Normal),
+                        text_overflow: overflow,
+                        line_clamp: Some(2),
+                        ..Default::default()
+                    }),
+                    |window| {
+                        let mut reference = crate::TaffyLayoutEngine::new();
+                        let mut cached = crate::TaffyLayoutEngine::new();
+                        cached.enable_cache();
+                        let scope = crate::window::ElementIdStack::default();
+                        let mut previous_id = None;
+                        for frame in 0..8 {
+                            let scale = if frame < 4 { 1.0 } else { 1.25 };
+                            window.set_scale_factor(scale);
+                            let width = if frame % 4 < 2 { 100.0 } else { 140.0 };
+                            let text: SharedString = if frame < 6 {
+                                "one two three four five six seven eight".into()
+                            } else {
+                                "ONE two three four five six seven eight".into()
+                            };
+                            let mut results = Vec::new();
+                            for (index, engine) in
+                                [&mut reference, &mut cached].into_iter().enumerate()
+                            {
+                                let layout = TextLayout::default();
+                                engine.set_request_scope(&scope);
+                                let id = engine.request_text_layout(
+                                    window.rem_size(),
+                                    scale,
+                                    layout.measurement(text.clone(), None, window),
+                                );
+                                if index == 1 {
+                                    if let Some(previous_id) = previous_id {
+                                        assert_eq!(id, previous_id);
+                                    }
+                                    previous_id = Some(id);
+                                    if frame == 1 {
+                                        assert!(
+                                            layout.0.borrow().is_some(),
+                                            "carry before cache hit"
+                                        );
+                                        layout.prepaint(Bounds::default(), &text);
+                                        window
+                                            .text_system()
+                                            .add_fonts(Vec::new())
+                                            .expect("font installation");
+                                    }
+                                }
+                                engine.compute_layout(
+                                    id,
+                                    Size {
+                                        width: crate::AvailableSpace::Definite(crate::px(width)),
+                                        height: crate::AvailableSpace::MaxContent,
+                                    },
+                                    window,
+                                    cx,
+                                );
+                                let inner = layout.0.borrow();
+                                let inner = inner.as_ref().expect("final text state");
+                                if frame == 1 && index == 1 {
+                                    assert!(
+                                        inner.bounds.is_none(),
+                                        "font generation must invalidate cached final state"
+                                    );
+                                }
+                                results.push((
+                                    engine.layout_bounds(id, scale),
+                                    inner.size,
+                                    layout.wrapped_text(),
+                                ));
+                                engine.clear();
+                            }
+                            assert_eq!(results[0], results[1], "frame {frame}");
+                        }
+                    },
+                );
+            }
+        });
     }
 
     #[gpui::test]
