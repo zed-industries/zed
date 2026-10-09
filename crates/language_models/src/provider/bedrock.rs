@@ -3603,6 +3603,8 @@ mod tests {
         for (model, source) in [
             (ConverseModel::ClaudeFable5_1, details.clone()),
             (ConverseModel::Gpt6Astra, None),
+            // The refusal fallback sends tagged history to a model without reasoning replay.
+            (ConverseModel::ClaudeOpus4_8, details.clone()),
         ] {
             let request = request_for(
                 model,
