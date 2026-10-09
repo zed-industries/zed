@@ -193,10 +193,9 @@ const MIN_DRAWS_TO_REPORT: u64 = 1_000;
 /// the given window drew enough frames at since its last report, so every
 /// report describes frames on displays with one refresh rate.
 ///
-/// Each report contains frame pacing (frames on time, late, delayed by the
-/// platform, and work per frame as a percentage of the refresh interval), the
-/// same for frames that responded to input, and bucketed draw and
-/// dirty-to-present durations.
+/// Each report contains frame pacing (frames on time and late, missed
+/// refreshes, and work per frame as a percentage of the refresh interval), the
+/// same for frames that responded to input, and bucketed draw durations.
 /// Buckets rather than percentiles, so reports can be summed.
 ///
 /// Call this periodically from a spawned task.
@@ -262,7 +261,6 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
                 "missed_refreshes".to_string(),
                 frames.missed_refreshes.into(),
             ),
-            ("frames_delayed".to_string(), frames.frames_delayed.into()),
             (
                 "frames_unmeasured".to_string(),
                 frames.frames_unmeasured.into(),
@@ -300,12 +298,6 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
             "draw_ms",
             &FRAME_DURATION_BUCKETS_MS,
             &frames.draw_duration,
-        );
-        insert_buckets(
-            &mut properties,
-            "dirty_to_present_ms",
-            &FRAME_DURATION_BUCKETS_MS,
-            &frames.dirty_to_present,
         );
         insert_buckets(
             &mut properties,

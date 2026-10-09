@@ -1355,7 +1355,6 @@ mod tests {
         assert_eq!(incident.trigger, HangTrigger::Budget);
         assert_eq!(incident.contributors.len(), 2);
         assert!(detect(sixty_hertz, FrameOpportunity::At(at(0)), 16).is_none());
-        assert!(detect(sixty_hertz, FrameOpportunity::Delayed, 25).is_none());
         assert!(detect(sixty_hertz, FrameOpportunity::Unmeasured, 25).is_none());
 
         let three_hundred_sixty_hertz = Duration::from_secs(1) / 360;

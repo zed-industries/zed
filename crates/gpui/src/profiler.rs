@@ -877,10 +877,6 @@ pub enum FrameOpportunity {
     /// a frame. Waiting for the platform's next frame isn't work, but
     /// everything the main thread does after this is.
     At(Instant),
-    /// The platform offered the frame more than two of its frame intervals
-    /// after the frame was needed: it withheld frames, or GPUI throttled the
-    /// window. The frame's work isn't GPUI's to account for.
-    Delayed,
     /// There's no platform frame time or refresh interval to measure from.
     Unmeasured,
 }
@@ -888,31 +884,19 @@ pub enum FrameOpportunity {
 #[cfg(feature = "profiler")]
 impl FrameOpportunity {
     /// Determines a frame's opportunity from when it became needed and when
-    /// the platform offered it. `offer_interval` is the time between the
-    /// platform's recent frame offers, which exceeds the refresh interval when
-    /// a variable refresh rate display runs slower than its maximum rate.
+    /// the platform offered it. However late the platform offered the frame,
+    /// only the main thread's time after the offer counts.
     pub fn new(
         refresh_interval: Option<Duration>,
-        offer_interval: Option<Duration>,
         dirty_at: Option<Instant>,
         signal_at: Option<Instant>,
     ) -> Self {
-        let (Some(refresh_interval), Some(signal_at)) = (refresh_interval, signal_at) else {
+        let (Some(_), Some(signal_at)) = (refresh_interval, signal_at) else {
             return Self::Unmeasured;
         };
-        let Some(dirty_at) = dirty_at else {
-            return Self::At(signal_at);
-        };
-        // A platform offers a frame within one of its frame intervals of being
-        // asked; two leave room for the request to reach it.
-        let frame_interval = offer_interval.map_or(refresh_interval, |offer_interval| {
-            offer_interval.max(refresh_interval)
-        });
-        if signal_at.saturating_duration_since(dirty_at) > frame_interval * 2 {
-            Self::Delayed
-        } else {
-            Self::At(dirty_at.max(signal_at))
-        }
+        // An offer can fire while the main thread is busy and only be handled
+        // after the window became dirty; time before then isn't the frame's.
+        Self::At(dirty_at.map_or(signal_at, |dirty_at| dirty_at.max(signal_at)))
     }
 }
 
@@ -930,7 +914,7 @@ impl FrameTiming {
     pub fn work(&self, submitted_at: Instant) -> Option<Duration> {
         match self.opportunity {
             FrameOpportunity::At(at) => Some(submitted_at.saturating_duration_since(at)),
-            FrameOpportunity::Delayed | FrameOpportunity::Unmeasured => None,
+            FrameOpportunity::Unmeasured => None,
         }
     }
 
@@ -1065,17 +1049,12 @@ pub struct RefreshIntervalFrames {
     pub frames_drawn: u64,
     /// Draw durations, bucketed by [`FRAME_DURATION_BUCKETS_MS`].
     pub draw_duration: FrameDurationBuckets,
-    /// Durations from the first invalidation to presentation, bucketed by
-    /// [`FRAME_DURATION_BUCKETS_MS`].
-    pub dirty_to_present: FrameDurationBuckets,
     /// Presented frames whose work fit within [`FrameTiming::budget`].
     pub frames_on_time: u64,
     /// Presented frames whose work exceeded [`FrameTiming::budget`].
     pub frames_late: u64,
     /// Refreshes that on-time and late frames missed in total.
     pub missed_refreshes: u64,
-    /// Presented frames whose opportunity was [`FrameOpportunity::Delayed`].
-    pub frames_delayed: u64,
     /// Presented frames whose opportunity was [`FrameOpportunity::Unmeasured`].
     pub frames_unmeasured: u64,
     /// Work of on-time and late frames, bucketed by
@@ -1109,13 +1088,11 @@ impl RefreshIntervalFrames {
             refresh_interval: self.refresh_interval,
             frames_drawn: self.frames_drawn.saturating_sub(earlier.frames_drawn),
             draw_duration: subtract(&self.draw_duration, &earlier.draw_duration),
-            dirty_to_present: subtract(&self.dirty_to_present, &earlier.dirty_to_present),
             frames_on_time: self.frames_on_time.saturating_sub(earlier.frames_on_time),
             frames_late: self.frames_late.saturating_sub(earlier.frames_late),
             missed_refreshes: self
                 .missed_refreshes
                 .saturating_sub(earlier.missed_refreshes),
-            frames_delayed: self.frames_delayed.saturating_sub(earlier.frames_delayed),
             frames_unmeasured: self
                 .frames_unmeasured
                 .saturating_sub(earlier.frames_unmeasured),
@@ -1136,10 +1113,6 @@ impl RefreshIntervalFrames {
         presentation: &PresentTiming,
         responded_to_input: bool,
     ) {
-        if let Some(dirty_at) = frame.dirty_at {
-            self.dirty_to_present
-                [duration_bucket(presentation.present_end.duration_since(dirty_at))] += 1;
-        }
         let Some(refresh_interval) = self.refresh_interval else {
             self.frames_unmeasured += 1;
             return;
@@ -1165,12 +1138,7 @@ impl RefreshIntervalFrames {
                     self.input_frames_on_time += u64::from(responded_to_input);
                 }
             }
-            _ => match frame.opportunity {
-                FrameOpportunity::Delayed => self.frames_delayed += 1,
-                FrameOpportunity::At(_) | FrameOpportunity::Unmeasured => {
-                    self.frames_unmeasured += 1
-                }
-            },
+            _ => self.frames_unmeasured += 1,
         }
     }
 }
@@ -1247,8 +1215,6 @@ pub struct WindowProfiler {
     pending_frame: Option<FrameTiming>,
     refresh_interval: Option<Duration>,
     frame_signal_at: Option<Instant>,
-    last_signal_at: Option<Instant>,
-    offer_interval: Option<Duration>,
     by_refresh_interval: Vec<RefreshIntervalFrames>,
     draw_phases: DrawPhases,
     /// For each view phase in progress, the time spent in views nested
@@ -1287,8 +1253,6 @@ impl WindowProfiler {
             pending_frame: None,
             refresh_interval: None,
             frame_signal_at: None,
-            last_signal_at: None,
-            offer_interval: None,
             by_refresh_interval: Vec::new(),
             draw_phases: DrawPhases::default(),
             nested_view_time: SmallVec::new(),
@@ -1380,20 +1344,6 @@ impl WindowProfiler {
     /// Coalesced requests report their first offer.
     pub fn record_frame_signal(&mut self, signal_at: Option<Instant>) {
         self.frame_signal_at = signal_at;
-        let Some(signal_at) = signal_at else {
-            return;
-        };
-        if let (Some(last_signal_at), Some(refresh_interval)) =
-            (self.last_signal_at, self.refresh_interval)
-        {
-            let interval = signal_at.saturating_duration_since(last_signal_at);
-            // Longer gaps are idle time between animations, not the
-            // platform's frame rate.
-            if !interval.is_zero() && interval <= refresh_interval * 8 {
-                self.offer_interval = Some(interval);
-            }
-        }
-        self.last_signal_at = Some(signal_at);
     }
 
     /// Sets the refresh interval of the window's display, which frames drawn
@@ -1466,12 +1416,7 @@ impl WindowProfiler {
             draw_start,
             draw_end,
             refresh_interval: self.refresh_interval,
-            opportunity: FrameOpportunity::new(
-                self.refresh_interval,
-                self.offer_interval,
-                dirty_at,
-                signal_at,
-            ),
+            opportunity: FrameOpportunity::new(self.refresh_interval, dirty_at, signal_at),
             phases: std::mem::take(&mut self.draw_phases),
         };
         let draw_duration = frame_timing.draw_duration();
@@ -1756,47 +1701,22 @@ mod tests {
         let refresh = Duration::from_millis(10);
         let start = Instant::now();
         let at = |ms| start + Duration::from_millis(ms);
-        let opportunity = |offer_interval: Option<u64>, dirty: Option<u64>, signal: Option<u64>| {
-            FrameOpportunity::new(
-                Some(refresh),
-                offer_interval.map(Duration::from_millis),
-                dirty.map(at),
-                signal.map(at),
-            )
+        let opportunity = |dirty: Option<u64>, signal: Option<u64>| {
+            FrameOpportunity::new(Some(refresh), dirty.map(at), signal.map(at))
         };
 
-        // Waiting for the platform's next frame isn't work.
-        assert_eq!(
-            opportunity(None, Some(0), Some(8)),
-            FrameOpportunity::At(at(8))
-        );
+        // Waiting for the platform's next frame isn't work, however long it
+        // took to offer one.
+        assert_eq!(opportunity(Some(0), Some(8)), FrameOpportunity::At(at(8)));
+        assert_eq!(opportunity(Some(0), Some(40)), FrameOpportunity::At(at(40)));
         // A frame needed after the platform offered one is measured from when
         // it was needed.
-        assert_eq!(
-            opportunity(None, Some(5), Some(0)),
-            FrameOpportunity::At(at(5))
-        );
+        assert_eq!(opportunity(Some(5), Some(0)), FrameOpportunity::At(at(5)));
         // Animation frames have no invalidation to wait for.
+        assert_eq!(opportunity(None, Some(0)), FrameOpportunity::At(at(0)));
+        assert_eq!(opportunity(Some(0), None), FrameOpportunity::Unmeasured);
         assert_eq!(
-            opportunity(None, None, Some(0)),
-            FrameOpportunity::At(at(0))
-        );
-        assert_eq!(
-            opportunity(None, Some(0), Some(21)),
-            FrameOpportunity::Delayed
-        );
-        // A variable refresh rate display offering frames every 25 ms isn't
-        // withholding them.
-        assert_eq!(
-            opportunity(Some(25), Some(0), Some(40)),
-            FrameOpportunity::At(at(40))
-        );
-        assert_eq!(
-            opportunity(None, Some(0), None),
-            FrameOpportunity::Unmeasured
-        );
-        assert_eq!(
-            FrameOpportunity::new(None, None, Some(at(0)), Some(at(1))),
+            FrameOpportunity::new(None, Some(at(0)), Some(at(1))),
             FrameOpportunity::Unmeasured
         );
 
@@ -1851,6 +1771,8 @@ mod tests {
                 present_start_ms: 5,
                 responded_to_input: false,
             },
+            // Offered late by the platform: only the 2 ms after the offer
+            // count.
             Frame {
                 refresh_interval: Some(sixty_hertz),
                 signal_ms: Some(40),
@@ -1894,7 +1816,6 @@ mod tests {
                 refresh_interval: frame.refresh_interval,
                 opportunity: FrameOpportunity::new(
                     frame.refresh_interval,
-                    None,
                     Some(at(0)),
                     frame.signal_ms.map(at),
                 ),
@@ -1922,16 +1843,15 @@ mod tests {
         };
         let sixty = frames_for(Some(sixty_hertz));
         assert_eq!(sixty.frames_drawn, 4);
-        assert_eq!(sixty.frames_on_time, 1);
+        assert_eq!(sixty.frames_on_time, 2);
         assert_eq!(sixty.frames_late, 1);
         // 40 ms of work at 16.7 ms per refresh.
         assert_eq!(sixty.missed_refreshes, 2);
         assert_eq!(sixty.frames_unmeasured, 1);
-        assert_eq!(sixty.frames_delayed, 1);
-        assert_eq!(sixty.work, [1, 0, 0, 0, 0, 0, 1, 0]);
+        assert_eq!(sixty.work, [2, 0, 0, 0, 0, 0, 1, 0]);
         assert_eq!(sixty.input_frames_on_time, 1);
         assert_eq!(sixty.input_frames_late, 1);
-        assert_eq!(sixty.input_work, sixty.work);
+        assert_eq!(sixty.input_work, [1, 0, 0, 0, 0, 0, 1, 0]);
 
         let one_hundred_twenty = frames_for(Some(one_hundred_twenty_hertz));
         assert_eq!(one_hundred_twenty.frames_late, 1);
