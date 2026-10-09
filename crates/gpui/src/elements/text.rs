@@ -672,12 +672,12 @@ impl TextMeasure {
                 .0
                 .borrow_mut()
                 .take()
-                .expect("validated final text state")
+                .expect("validated text state")
         } else {
             // Public TextLayout handles may outlive their frame. Preserve those
             // handles, but move the state when only the old descriptor owns it.
             let state = previous.element_state.0.borrow();
-            let state = state.as_ref().expect("validated final text state");
+            let state = state.as_ref().expect("validated text state");
             TextLayoutInner {
                 len: state.len,
                 lines: state
@@ -803,8 +803,11 @@ impl TextMeasure {
         // Taffy keeps preliminary size entries separately from its final layout
         // entry. A probe must not overwrite paintable lines: final layout may hit
         // that entry without calling us again. Taffy 0.14 always measures a leaf
-        // on a PerformLayout miss, even when both dimensions are known.
-        let publish = run_mode != Some(taffy::RunMode::ComputeSize);
+        // on a PerformLayout miss, even when both dimensions are known. Before
+        // any lines exist, keep the first probe so a fitting final measurement
+        // can reuse it without allocating another set of shaped-line wrappers.
+        let publish =
+            run_mode != Some(taffy::RunMode::ComputeSize) || element_state.0.borrow().is_none();
         let wrap_width = if text_style.white_space == WhiteSpace::Normal {
             known_dimensions.width.or(match available_space.width {
                 crate::AvailableSpace::Definite(x) => Some(x),
@@ -1593,6 +1596,95 @@ mod tests {
                 recovered.0.borrow().as_ref().expect("recovered").size,
                 Some(measured_size)
             );
+        });
+    }
+
+    #[gpui::test]
+    fn text_cache_first_probe_reuses_lines_without_overwriting_final(
+        cx: &mut crate::TestAppContext,
+    ) {
+        cx.add_empty_window().update(|window, cx| {
+            for text in ["one two three four five six", "one two three\nfour five"] {
+                let layout = TextLayout::default();
+                let measure = layout.measurement(text.into(), None, window);
+                let intrinsic = Size {
+                    width: crate::AvailableSpace::MaxContent,
+                    height: crate::AvailableSpace::MaxContent,
+                };
+                let size = measure.measure(
+                    Size::default(),
+                    intrinsic,
+                    Some(taffy::RunMode::ComputeSize),
+                    window,
+                    cx,
+                );
+                assert!(size.width > crate::px(0.));
+                let first_lines = layout.wrapped_text();
+                let bounds = Bounds::new(Point::default(), size);
+                layout.prepaint(bounds, text);
+                let fitting = Size {
+                    width: crate::AvailableSpace::Definite(size.width),
+                    ..intrinsic
+                };
+                assert_eq!(
+                    measure.measure(
+                        Size::default(),
+                        fitting,
+                        Some(taffy::RunMode::PerformLayout),
+                        window,
+                        cx,
+                    ),
+                    size
+                );
+                assert_eq!(layout.wrapped_text(), first_lines);
+                assert_eq!(
+                    layout.0.borrow().as_ref().expect("reused lines").bounds,
+                    Some(bounds)
+                );
+
+                let narrow = Size {
+                    width: crate::AvailableSpace::Definite(size.width / 2.),
+                    ..intrinsic
+                };
+                measure.measure(
+                    Size::default(),
+                    narrow,
+                    Some(taffy::RunMode::ComputeSize),
+                    window,
+                    cx,
+                );
+                assert_eq!(layout.wrapped_text(), first_lines);
+                assert_eq!(
+                    layout.0.borrow().as_ref().expect("final lines").bounds,
+                    Some(bounds)
+                );
+                let final_size = measure.measure(
+                    Size::default(),
+                    narrow,
+                    Some(taffy::RunMode::PerformLayout),
+                    window,
+                    cx,
+                );
+                let reference = TextLayout::default();
+                let reference_size = reference.measurement(text.into(), None, window).measure(
+                    Size::default(),
+                    narrow,
+                    None,
+                    window,
+                    cx,
+                );
+                assert_eq!(final_size, reference_size);
+                assert_eq!(layout.wrapped_text(), reference.wrapped_text());
+                assert!(
+                    layout
+                        .0
+                        .borrow()
+                        .as_ref()
+                        .expect("new final lines")
+                        .bounds
+                        .is_none()
+                );
+            }
         });
     }
 
