@@ -2726,31 +2726,36 @@ impl Thread {
     pub fn push_acp_user_block(
         &mut self,
         id: ClientUserMessageId,
-        blocks: impl IntoIterator<Item = acp::ContentBlock>,
+        blocks: impl IntoIterator<Item = acp_v2::ContentBlock>,
         path_style: PathStyle,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<()> {
         let content = blocks
             .into_iter()
             .map(|block| UserMessageContent::from_content_block(block, path_style))
-            .collect::<Arc<_>>();
+            .collect::<Result<Arc<_>>>()?;
         self.messages
             .push(Arc::new(Message::User(UserMessage { id, content })));
         cx.notify();
+        Ok(())
     }
 
-    pub fn push_acp_agent_block(&mut self, block: acp::ContentBlock, cx: &mut Context<Self>) {
+    pub fn push_acp_agent_block(
+        &mut self,
+        block: acp_v2::ContentBlock,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         let text = match block {
-            acp::ContentBlock::Text(text_content) => text_content.text,
-            acp::ContentBlock::Image(_) => "[image]".to_string(),
-            acp::ContentBlock::Audio(_) => "[audio]".to_string(),
-            acp::ContentBlock::ResourceLink(resource_link) => resource_link.uri,
-            acp::ContentBlock::Resource(resource) => match resource.resource {
-                acp::EmbeddedResourceResource::TextResourceContents(resource) => resource.uri,
-                acp::EmbeddedResourceResource::BlobResourceContents(resource) => resource.uri,
-                _ => "[resource]".to_string(),
+            acp_v2::ContentBlock::Text(text_content) => text_content.text,
+            acp_v2::ContentBlock::Image(_) => "[image]".to_string(),
+            acp_v2::ContentBlock::Audio(_) => "[audio]".to_string(),
+            acp_v2::ContentBlock::ResourceLink(resource_link) => resource_link.uri,
+            acp_v2::ContentBlock::Resource(resource) => match resource.resource {
+                acp_v2::EmbeddedResourceResource::TextResourceContents(resource) => resource.uri,
+                acp_v2::EmbeddedResourceResource::BlobResourceContents(resource) => resource.uri,
+                _ => anyhow::bail!("Native agent does not support this embedded resource variant"),
             },
-            _ => "[unknown]".to_string(),
+            _ => anyhow::bail!("Native agent does not support this content block variant"),
         };
 
         self.messages.push(Arc::new(Message::Agent(AgentMessage {
@@ -2758,6 +2763,7 @@ impl Thread {
             ..Default::default()
         })));
         cx.notify();
+        Ok(())
     }
 
     fn run_turn(
@@ -6912,15 +6918,32 @@ impl From<String> for UserMessageContent {
 }
 
 impl UserMessageContent {
-    pub fn from_content_block(value: acp::ContentBlock, path_style: PathStyle) -> Self {
+    pub fn validate_content_block(value: &acp_v2::ContentBlock) -> Result<()> {
         match value {
-            acp::ContentBlock::Text(text_content) => Self::Text(text_content.text),
-            acp::ContentBlock::Image(image_content) => Self::Image(convert_image(image_content)),
-            acp::ContentBlock::Audio(_) => {
+            acp_v2::ContentBlock::Text(_)
+            | acp_v2::ContentBlock::Image(_)
+            | acp_v2::ContentBlock::Audio(_)
+            | acp_v2::ContentBlock::ResourceLink(_) => Ok(()),
+            acp_v2::ContentBlock::Resource(resource) => match &resource.resource {
+                acp_v2::EmbeddedResourceResource::TextResourceContents(_)
+                | acp_v2::EmbeddedResourceResource::BlobResourceContents(_) => Ok(()),
+                _ => anyhow::bail!("Native agent does not support this embedded resource variant"),
+            },
+            _ => anyhow::bail!("Native agent does not support this content block variant"),
+        }
+    }
+
+    pub fn from_content_block(value: acp_v2::ContentBlock, path_style: PathStyle) -> Result<Self> {
+        Ok(match value {
+            acp_v2::ContentBlock::Text(text_content) => Self::Text(text_content.text),
+            acp_v2::ContentBlock::Image(image_content) => Self::Image(LanguageModelImage {
+                source: image_content.data.into(),
+            }),
+            acp_v2::ContentBlock::Audio(_) => {
                 // TODO
                 Self::Text("[audio]".to_string())
             }
-            acp::ContentBlock::ResourceLink(resource_link) => {
+            acp_v2::ContentBlock::ResourceLink(resource_link) => {
                 match MentionUri::parse(&resource_link.uri, path_style) {
                     Ok(uri) => Self::Mention {
                         uri,
@@ -6932,8 +6955,8 @@ impl UserMessageContent {
                     }
                 }
             }
-            acp::ContentBlock::Resource(resource) => match resource.resource {
-                acp::EmbeddedResourceResource::TextResourceContents(resource) => {
+            acp_v2::ContentBlock::Resource(resource) => match resource.resource {
+                acp_v2::EmbeddedResourceResource::TextResourceContents(resource) => {
                     match MentionUri::parse(&resource.uri, path_style) {
                         Ok(uri) => Self::Mention {
                             uri,
@@ -6951,42 +6974,32 @@ impl UserMessageContent {
                         }
                     }
                 }
-                acp::EmbeddedResourceResource::BlobResourceContents(_) => {
+                acp_v2::EmbeddedResourceResource::BlobResourceContents(_) => {
                     // TODO
                     Self::Text("[blob]".to_string())
                 }
-                other => {
-                    log::warn!("Unexpected content type: {:?}", other);
-                    Self::Text("[unknown]".to_string())
-                }
+                _ => anyhow::bail!("Native agent does not support this embedded resource variant"),
             },
-            other => {
-                log::warn!("Unexpected content type: {:?}", other);
-                Self::Text("[unknown]".to_string())
-            }
-        }
+            _ => anyhow::bail!("Native agent does not support this content block variant"),
+        })
     }
 }
 
-impl From<UserMessageContent> for acp::ContentBlock {
+impl From<UserMessageContent> for acp_v2::ContentBlock {
     fn from(content: UserMessageContent) -> Self {
         match content {
             UserMessageContent::Text(text) => text.into(),
             UserMessageContent::Image(image) => {
-                acp::ContentBlock::Image(acp::ImageContent::new(image.source, "image/png"))
+                acp_v2::ContentBlock::Image(acp_v2::ImageContent::new(image.source, "image/png"))
             }
-            UserMessageContent::Mention { uri, content } => acp::ContentBlock::Resource(
-                acp::EmbeddedResource::new(acp::EmbeddedResourceResource::TextResourceContents(
-                    acp::TextResourceContents::new(content, uri.to_uri().to_string()),
-                )),
-            ),
+            UserMessageContent::Mention { uri, content } => {
+                acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
+                    acp_v2::EmbeddedResourceResource::TextResourceContents(
+                        acp_v2::TextResourceContents::new(content, uri.to_uri().to_string()),
+                    ),
+                ))
+            }
         }
-    }
-}
-
-fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
-    LanguageModelImage {
-        source: image_content.data.into(),
     }
 }
 
