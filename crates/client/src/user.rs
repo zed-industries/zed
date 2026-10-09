@@ -762,6 +762,15 @@ impl UserStore {
         cx.notify();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_current_organization_plan_for_test(&mut self, plan: Plan, cx: &mut Context<Self>) {
+        if let Some(organization) = &self.current_organization {
+            self.plans_by_organization
+                .insert(organization.id.clone(), plan);
+        }
+        cx.notify();
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -782,6 +791,17 @@ impl UserStore {
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
+    }
+
+    pub fn current_organization_has_no_active_subscription(&self) -> bool {
+        self.plan_info.is_some()
+            && self
+                .current_organization
+                .as_ref()
+                .is_some_and(|organization| {
+                    !organization.is_personal
+                        && !self.plans_by_organization.contains_key(&organization.id)
+                })
     }
 
     pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
@@ -830,6 +850,13 @@ impl UserStore {
 
     pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
         self.edit_prediction_usage
+    }
+
+    /// Returns whether the current plan doesn't include Zed's hosted edit predictions. This is
+    /// decided by plan rather than by the usage limit Cloud reports, because Cloud may still
+    /// report a nonzero Free allowance while it denies requests.
+    pub fn edit_predictions_excluded_from_plan(&self) -> bool {
+        self.plan() == Some(Plan::ZedFree)
     }
 
     pub fn update_edit_prediction_usage(
@@ -904,7 +931,7 @@ impl UserStore {
     fn handle_message_to_client(this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
         match message {
             MessageToClient::UserUpdated => {}
-            MessageToClient::NotificationsUpdated => return,
+            MessageToClient::NotificationsUpdated | MessageToClient::SettingsUpdated => return,
         }
 
         cx.spawn(async move |cx| {
@@ -1081,5 +1108,75 @@ impl EditPredictionUsage {
             EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME,
             headers,
         )?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::make_get_authenticated_user_response;
+    use clock::FakeSystemClock;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_current_organization_has_no_active_subscription(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::new()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
+        let user_store = cx.new(|cx| UserStore::new(client, cx));
+
+        let organization = |id: &str, is_personal| Organization {
+            id: OrganizationId(id.into()),
+            name: id.into(),
+            is_personal,
+        };
+
+        assert!(!user_store.read_with(cx, |store, _| {
+            store.current_organization_has_no_active_subscription()
+        }));
+
+        user_store.update(cx, |store, cx| {
+            let mut response = make_get_authenticated_user_response(1, "user".into());
+            response.organizations = vec![
+                organization("personal", true),
+                organization("unsubscribed", false),
+                organization("paid", false),
+            ];
+            response.default_organization_id = Some(OrganizationId("unsubscribed".into()));
+            response.plans_by_organization.insert(
+                OrganizationId("personal".into()),
+                KnownOrUnknown::Known(Plan::ZedPro),
+            );
+            response.plans_by_organization.insert(
+                OrganizationId("paid".into()),
+                KnownOrUnknown::Known(Plan::ZedBusiness),
+            );
+            store.update_authenticated_user(response, cx);
+        });
+        assert!(user_store.read_with(cx, |store, _| {
+            store.current_organization_has_no_active_subscription()
+        }));
+
+        for organization in [organization("personal", true), organization("paid", false)] {
+            user_store
+                .update(cx, |store, cx| {
+                    store.set_current_organization(Arc::new(organization), cx)
+                })
+                .await
+                .unwrap();
+            assert!(!user_store.read_with(cx, |store, _| {
+                store.current_organization_has_no_active_subscription()
+            }));
+        }
     }
 }

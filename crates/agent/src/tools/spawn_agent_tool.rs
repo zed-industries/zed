@@ -1,5 +1,5 @@
 use acp_thread::{SUBAGENT_SESSION_INFO_META_KEY, SubagentSessionInfo};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
@@ -7,6 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
+
+use acp_thread::AgentModelId;
 
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
@@ -30,6 +32,12 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - When a plan has multiple independent steps, prefer delegating those steps in parallel rather than serializing them unnecessarily.
 /// - Reuse the returned session_id when you want to follow up on the same delegated subproblem instead of creating a duplicate session.
 ///
+/// ### Model selection
+/// - When the user requests a particular model or asks you to choose based on cost or capability, call `list_agents_and_models` first, then pass the exact `models[].id` from the native Zed agent entry (`is_native: true`) in `model`.
+/// - Omit `model` to use the user's configured subagent model, or the parent model when no subagent model is configured.
+/// - Do not silently choose a different model when an explicit model is unavailable unless the user allowed fallback.
+/// - A resumed session keeps its existing model, so `model` cannot be combined with `session_id`.
+///
 /// ### Output
 /// - You will receive only the agent's final message as output.
 /// - Successful calls return a session_id that you can use for follow-up messages.
@@ -43,10 +51,15 @@ pub struct SpawnAgentToolInput {
     pub message: String,
     /// Session ID of an existing agent session to continue instead of creating a new one. Omit to create a new agent.
     #[serde(default, deserialize_with = "deserialize_session_id")]
-    pub session_id: Option<acp::SessionId>,
+    pub session_id: Option<acp_v2::SessionId>,
+    /// Optional model override. Pass the exact `models[].id` returned for the
+    /// native Zed agent (`is_native: true`) by `list_agents_and_models`.
+    /// Omit to preserve default behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
-fn deserialize_session_id<'de, D>(deserializer: D) -> Result<Option<acp::SessionId>, D::Error>
+fn deserialize_session_id<'de, D>(deserializer: D) -> Result<Option<acp_v2::SessionId>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -71,14 +84,14 @@ where
 #[serde(rename_all = "snake_case")]
 pub enum SpawnAgentToolOutput {
     Success {
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         output: String,
         session_info: SubagentSessionInfo,
     },
     Error {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(default)]
-        session_id: Option<acp::SessionId>,
+        session_id: Option<acp_v2::SessionId>,
         error: String,
         session_info: Option<SubagentSessionInfo>,
     },
@@ -126,8 +139,8 @@ impl AgentTool for SpawnAgentTool {
 
     const NAME: &'static str = "spawn_agent";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Other
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Other
     }
 
     fn initial_title(
@@ -161,11 +174,22 @@ impl AgentTool for SpawnAgentTool {
                     session_info: None,
                 })?;
 
+            let SpawnAgentToolInput {
+                label,
+                message,
+                session_id,
+                model,
+            } = input;
             let (subagent, mut session_info) = cx.update(|cx| {
-                let subagent = if let Some(session_id) = input.session_id {
-                    self.environment.resume_subagent(session_id, cx)
-                } else {
-                    self.environment.create_subagent(input.label, cx)
+                let subagent = match (session_id, model) {
+                    (Some(_), Some(_)) => Err(anyhow::anyhow!(
+                        "model cannot be changed when resuming a subagent session"
+                    )),
+                    (Some(session_id), None) => self.environment.resume_subagent(session_id, cx),
+                    (None, model) => {
+                        self.environment
+                            .create_subagent(label, model.map(AgentModelId::from), cx)
+                    }
                 };
                 let subagent = subagent.map_err(|err| SpawnAgentToolOutput::Error {
                     session_id: None,
@@ -179,18 +203,17 @@ impl AgentTool for SpawnAgentTool {
                 };
 
                 event_stream.subagent_spawned(subagent.id());
-                event_stream.update_fields_with_meta(
-                    acp::ToolCallUpdateFields::new(),
-                    Some(acp::Meta::from_iter([(
+                event_stream.update_fields(|update| {
+                    update.meta(acp_v2::Meta::from_iter([(
                         SUBAGENT_SESSION_INFO_META_KEY.into(),
                         serde_json::json!(&session_info),
-                    )])),
-                );
+                    )]))
+                });
 
                 Ok((subagent, session_info))
             })?;
 
-            let send_result = subagent.send(input.message, cx).await;
+            let send_result = subagent.send(message, cx).await;
 
             let status = if send_result.is_ok() {
                 "completed"
@@ -206,7 +229,7 @@ impl AgentTool for SpawnAgentTool {
             session_info.message_end_index =
                 cx.update(|cx| Some(subagent.num_entries(cx).saturating_sub(1)));
 
-            let meta = Some(acp::Meta::from_iter([(
+            let meta = Some(acp_v2::Meta::from_iter([(
                 SUBAGENT_SESSION_INFO_META_KEY.into(),
                 serde_json::json!(&session_info),
             )]));
@@ -232,10 +255,13 @@ impl AgentTool for SpawnAgentTool {
                     )
                 }
             };
-            event_stream.update_fields_with_meta(
-                acp::ToolCallUpdateFields::new().content(vec![output.into()]),
-                meta,
-            );
+            event_stream.update_fields(|update| {
+                let update = update.content(vec![output.into()]);
+                match meta {
+                    Some(meta) => update.meta(meta),
+                    None => update,
+                }
+            });
             result
         })
     }
@@ -261,15 +287,18 @@ impl AgentTool for SpawnAgentTool {
         };
 
         let meta = session_info.map(|session_info| {
-            acp::Meta::from_iter([(
+            acp_v2::Meta::from_iter([(
                 SUBAGENT_SESSION_INFO_META_KEY.into(),
                 serde_json::json!(&session_info),
             )])
         });
-        event_stream.update_fields_with_meta(
-            acp::ToolCallUpdateFields::new().content(vec![content]),
-            meta,
-        );
+        event_stream.update_fields(|update| {
+            let update = update.content(vec![content]);
+            match meta {
+                Some(meta) => update.meta(meta),
+                None => update,
+            }
+        });
 
         Ok(())
     }
@@ -279,6 +308,31 @@ impl AgentTool for SpawnAgentTool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn session_ids_preserve_legacy_tool_json() -> Result<(), serde_json::Error> {
+        let session_id = "  session/雪:\"quoted\"\\opaque  ";
+        let input_json = json!({
+            "label": "label",
+            "message": "message",
+            "session_id": session_id,
+        });
+        let input: SpawnAgentToolInput = serde_json::from_value(input_json.clone())?;
+        assert_eq!(
+            input.session_id.as_ref().map(|id| id.0.as_ref()),
+            Some(session_id)
+        );
+        assert_eq!(serde_json::to_value(input)?, input_json);
+
+        let output_json = json!({
+            "session_id": session_id,
+            "error": "failed after session creation",
+            "session_info": null,
+        });
+        let output: SpawnAgentToolOutput = serde_json::from_value(output_json.clone())?;
+        assert_eq!(serde_json::to_value(output)?, output_json);
+        Ok(())
+    }
 
     #[test]
     fn deserializes_blank_session_id_as_absent() {

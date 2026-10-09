@@ -23,13 +23,11 @@ use language::{
     },
 };
 use project::{DisableAiSettings, Project};
-use regex::Regex;
-use settings::{Settings, SettingsStore, update_settings_file};
-use std::{
-    rc::Rc,
-    sync::{Arc, LazyLock},
-    time::Duration,
+use settings::{
+    Settings, SettingsContent, SettingsStore, SplicingVec, find_value_range_in_json_text,
+    update_settings_file,
 };
+use std::{ops::Range, rc::Rc, sync::Arc, time::Duration};
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
     Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
@@ -345,6 +343,11 @@ impl Render for EditPredictionButton {
                 )
             }
             provider @ (EditPredictionProvider::Zed | EditPredictionProvider::Mercury) => {
+                if edit_prediction::zed_edit_predictions_off_for_plan(self.user_store.read(cx), cx)
+                {
+                    return div().hidden();
+                }
+
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let file = self.file.clone();
                 let language = self.language.clone();
@@ -430,28 +433,43 @@ impl Render for EditPredictionButton {
 
                 let show_editor_predictions = self.editor_show_predictions;
                 let user = self.user_store.read(cx).current_user();
+                let zed_cloud_has_no_active_subscription =
+                    matches!(provider, EditPredictionProvider::Zed)
+                        && self
+                            .user_store
+                            .read(cx)
+                            .current_organization_has_no_active_subscription();
+                let excluded_from_plan = edit_prediction::zed_edit_predictions_excluded_from_plan(
+                    self.user_store.read(cx),
+                    cx,
+                );
 
                 let mercury_has_error = matches!(provider, EditPredictionProvider::Mercury)
                     && edit_prediction::EditPredictionStore::try_global(cx).is_some_and(
                         |ep_store| ep_store.read(cx).mercury_has_payment_required_error(),
                     );
 
-                let indicator_color = if missing_token || mercury_has_error {
-                    Some(Color::Error)
-                } else if enabled && (!show_editor_predictions || over_limit) {
-                    Some(if over_limit {
-                        Color::Error
+                let indicator_color =
+                    if missing_token || mercury_has_error || zed_cloud_has_no_active_subscription {
+                        Some(Color::Error)
+                    } else if excluded_from_plan {
+                        Some(Color::Muted)
+                    } else if enabled && (!show_editor_predictions || over_limit) {
+                        Some(if over_limit {
+                            Color::Error
+                        } else {
+                            Color::Muted
+                        })
                     } else {
-                        Color::Muted
-                    })
-                } else {
-                    None
-                };
+                        None
+                    };
 
                 let zed_cloud_needs_sign_in =
                     matches!(provider, EditPredictionProvider::Zed) && user.is_none();
-                let provider_unavailable =
-                    missing_token || mercury_has_error || zed_cloud_needs_sign_in;
+                let provider_unavailable = missing_token
+                    || mercury_has_error
+                    || zed_cloud_needs_sign_in
+                    || zed_cloud_has_no_active_subscription;
 
                 let icon_button = IconButton::new("zed-predict-pending-button", ep_icon)
                     .shape(IconButtonShape::Square)
@@ -467,6 +485,10 @@ impl Render for EditPredictionButton {
                                 "Disabled For This File"
                             } else if zed_cloud_needs_sign_in {
                                 "Sign In Or Configure a Provider"
+                            } else if zed_cloud_has_no_active_subscription {
+                                "This organization has no active subscription"
+                            } else if excluded_from_plan {
+                                "Configure a Provider"
                             } else if provider_unavailable || show_editor_predictions {
                                 tooltip_meta
                             } else {
@@ -559,6 +581,8 @@ impl EditPredictionButton {
         cx.observe_global::<EditPredictionStore>(move |_, cx| cx.notify())
             .detach();
 
+        cx.observe(&user_store, |_, _, cx| cx.notify()).detach();
+
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
         let open_ai_compatible_api_token_task =
             edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
@@ -602,6 +626,9 @@ impl EditPredictionButton {
 
         let is_zed_provider_disabled = organization_configuration
             .is_some_and(|configuration| !configuration.edit_prediction.is_enabled);
+        let user_store = self.user_store.read(cx);
+        let is_zed_provider_unavailable = user_store.current_user().is_none()
+            || edit_prediction::zed_edit_predictions_excluded_from_plan(user_store, cx);
 
         let available_providers = get_available_providers(cx);
 
@@ -620,11 +647,18 @@ impl EditPredictionButton {
                 let is_current = provider == current_provider;
                 let is_disabled_zed_provider =
                     provider == EditPredictionProvider::Zed && is_zed_provider_disabled;
+                // Zed stays selected in settings, but checking it would imply predictions are
+                // working when the user still needs to sign in or upgrade.
+                let is_unavailable_zed_provider =
+                    provider == EditPredictionProvider::Zed && is_zed_provider_unavailable;
                 let fs = self.fs.clone();
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(IconPosition::Start, is_current && !is_disabled_zed_provider)
+                        .toggleable(
+                            IconPosition::Start,
+                            is_current && !is_disabled_zed_provider && !is_unavailable_zed_provider,
+                        )
                         .disabled(is_disabled_zed_provider)
                         .when(is_disabled_zed_provider, |item| {
                             item.documentation_aside(DocumentationSide::Left, move |_cx| {
@@ -1000,22 +1034,34 @@ impl EditPredictionButton {
         }
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
+            let zed_cloud_has_no_active_subscription =
+                all_language_settings(None, cx).edit_predictions.provider
+                    == EditPredictionProvider::Zed
+                    && self
+                        .user_store
+                        .read(cx)
+                        .current_organization_has_no_active_subscription();
             menu = menu
                 .separator()
                 .header("Actions")
-                .entry(
-                    "Predict Edit at Cursor",
-                    Some(Box::new(ShowEditPrediction)),
-                    {
-                        let editor_focus_handle = editor_focus_handle.clone();
-                        move |window, cx| {
-                            telemetry::event!(
-                                "Edit Prediction Menu Action",
-                                action = "predict_at_cursor",
-                            );
-                            editor_focus_handle.dispatch_action(&ShowEditPrediction, window, cx);
-                        }
-                    },
+                .item(
+                    ContextMenuEntry::new("Predict Edit at Cursor")
+                        .action(Box::new(ShowEditPrediction))
+                        .disabled(zed_cloud_has_no_active_subscription)
+                        .handler({
+                            let editor_focus_handle = editor_focus_handle.clone();
+                            move |window, cx| {
+                                telemetry::event!(
+                                    "Edit Prediction Menu Action",
+                                    action = "predict_at_cursor",
+                                );
+                                editor_focus_handle.dispatch_action(
+                                    &ShowEditPrediction,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }),
                 )
                 .context(editor_focus_handle)
                 .when(
@@ -1038,14 +1084,11 @@ impl EditPredictionButton {
             .copilot
             .enable_next_edit_suggestions
             .unwrap_or(true);
-        let copilot_config = copilot_chat::CopilotChatConfiguration {
-            enterprise_uri: all_language_settings
-                .edit_predictions
-                .copilot
+        let settings_url = copilot_settings_url(
+            settings::CopilotSettings::get_global(cx)
                 .enterprise_uri
-                .clone(),
-        };
-        let settings_url = copilot_settings_url(copilot_config.enterprise_uri.as_deref());
+                .as_deref(),
+        );
 
         ContextMenu::build(window, cx, |menu, window, cx| {
             let menu = self.build_language_settings_menu(menu, window, cx);
@@ -1123,8 +1166,8 @@ impl EditPredictionButton {
                 menu = menu
                     .custom_row(move |_window, cx| {
                         let description = indoc! {
-                            "You get 2,000 accepted suggestions at every keystroke for free, \
-                            powered by Zeta, our open-source, open-data model"
+                            "Suggestions at every keystroke, powered by Zeta, our open-source, \
+                            open-data model. Included with Zed Pro and the Pro trial."
                         };
 
                         v_flex()
@@ -1140,7 +1183,7 @@ impl EditPredictionButton {
                             .into_any_element()
                     })
                     .separator()
-                    .entry("Sign In & Start Using", None, |window, cx| {
+                    .entry("Sign In", None, |window, cx| {
                         telemetry::event!(
                             "Edit Prediction Menu Action",
                             action = "sign_in",
@@ -1190,7 +1233,53 @@ impl EditPredictionButton {
                         .separator();
                 }
 
-                if let Some(usage) = self
+                let zed_cloud_has_no_active_subscription =
+                    matches!(provider, EditPredictionProvider::Zed)
+                        && self
+                            .user_store
+                            .read(cx)
+                            .current_organization_has_no_active_subscription();
+
+                if zed_cloud_has_no_active_subscription {
+                    menu = menu
+                        .header("Zed AI")
+                        .item(
+                            ContextMenuEntry::new(
+                                "This organization has no active subscription",
+                            )
+                            .disabled(true),
+                        )
+                        .item(
+                            ContextMenuEntry::new(
+                                "Switch organizations or configure another provider to use edit predictions",
+                            )
+                            .disabled(true),
+                        )
+                        .separator();
+                } else if edit_prediction::zed_edit_predictions_excluded_from_plan(
+                    self.user_store.read(cx),
+                    cx,
+                ) {
+                    menu = menu
+                        .custom_entry(
+                            |_window, _cx| {
+                                Label::new("Zed's edit predictions not included in the Free plan.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .into_any_element()
+                            },
+                            |_window, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)),
+                        )
+                        .entry("Upgrade to Pro", None, |_window, cx| {
+                            telemetry::event!(
+                                "Edit Prediction Menu Action",
+                                action = "upsell_clicked",
+                                reason = "excluded_from_plan",
+                            );
+                            cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                        })
+                        .separator();
+                } else if let Some(usage) = self
                     .edit_prediction_provider
                     .as_ref()
                     .and_then(|provider| provider.usage(cx))
@@ -1402,6 +1491,25 @@ impl StatusItemView for EditPredictionButton {
     }
 }
 
+fn initialize_disabled_globs_setting(file: &mut SettingsContent) {
+    file.project
+        .all_languages
+        .edit_predictions
+        .get_or_insert_with(Default::default)
+        .disabled_globs
+        .get_or_insert_with(|| SplicingVec::from(vec![SplicingVec::REST.to_string()]));
+}
+
+fn disabled_globs_content_range(text: &str) -> Option<Range<usize>> {
+    let array_range = find_value_range_in_json_text(text, &["edit_predictions", "disabled_globs"])?;
+    let content = text
+        .get(array_range.clone())?
+        .strip_prefix('[')?
+        .strip_suffix(']')?;
+    let start = array_range.start + 1 + (content.len() - content.trim_start().len());
+    Some(start..start + content.trim().len())
+}
+
 async fn open_disabled_globs_setting_in_editor(
     workspace: WeakEntity<Workspace>,
     cx: &mut AsyncWindowContext,
@@ -1423,16 +1531,8 @@ async fn open_disabled_globs_setting_in_editor(
 
             let settings = cx.global::<SettingsStore>();
 
-            // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
             let Some(edits) = settings
-                .edits_for_update(&text, |file| {
-                    file.project
-                        .all_languages
-                        .edit_predictions
-                        .get_or_insert_with(Default::default)
-                        .disabled_globs
-                        .get_or_insert_with(Vec::new);
-                })
+                .edits_for_update(&text, initialize_disabled_globs_setting)
                 .log_err()
             else {
                 return;
@@ -1449,16 +1549,7 @@ async fn open_disabled_globs_setting_in_editor(
 
             let text = item.buffer().read(cx).snapshot(cx).text();
 
-            static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-                Regex::new(r#""disabled_globs":\s*\[\s*(?P<content>(?:.|\n)*?)\s*\]"#).unwrap()
-            });
-            // Only capture [...]
-            let range = DISABLED_GLOBS_REGEX.captures(&text).and_then(|captures| {
-                captures
-                    .name("content")
-                    .map(|inner_match| inner_match.start()..inner_match.end())
-            });
-            if let Some(range) = range {
+            if let Some(range) = disabled_globs_content_range(&text) {
                 let range = MultiBufferOffset(range.start)..MultiBufferOffset(range.end);
                 item.change_selections(
                     SelectionEffects::scroll(Autoscroll::newest()),
@@ -1686,7 +1777,118 @@ fn copilot_settings_url(enterprise_uri: Option<&str>) -> Arc<str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context as _;
     use gpui::TestAppContext;
+    use settings::RootUserSettings;
+
+    #[test]
+    fn test_disabled_globs_selection_and_replacement() -> Result<()> {
+        for contents in [
+            r#""[.][.][.]""#,
+            r#""**/[ab]/**", "...""#,
+            r#""escaped\"]", "backslash\\", "...""#,
+            r#""escaped\\]", "line\nbreak]", "unicode\u005d""#,
+            "\n    \"é[ab]\",\n    \"...\"\n  ",
+            "// Ignore filenames containing a \" character\n    \"**/private/**\"\n",
+            "/* Ignore \" and ] */\n    \"**/private/**\"\n",
+            "\"**/private/**\", // Keep \" and ]\n    \"...\"\n",
+            r#""**/build/**", "...""#,
+            "",
+            "\n  ",
+        ] {
+            let mut text = format!(
+                r#"// "disabled_globs": ["commented/**"]
+{{"languages":{{"Rust":{{"disabled_globs":["nested/**"]}}}},
+/* "disabled_globs": ["commented/**"] */
+"edit_predictions":{{"disabled_globs":[{contents}],"mode":"subtle"}}}}"#
+            );
+            let mut expected = SettingsContent::parse_json_with_comments(&text)?;
+            let range = disabled_globs_content_range(&text).context("disabled globs selection")?;
+            assert_eq!(text.get(range.clone()), Some(contents.trim()));
+
+            text.replace_range(range, r#""**/replacement/**", "...""#);
+            expected
+                .project
+                .all_languages
+                .edit_predictions
+                .as_mut()
+                .context("edit prediction settings")?
+                .disabled_globs = Some(SplicingVec::from(vec![
+                "**/replacement/**".to_string(),
+                SplicingVec::REST.to_string(),
+            ]));
+            assert_eq!(SettingsContent::parse_json_with_comments(&text)?, expected);
+        }
+        Ok(())
+    }
+
+    #[gpui::test]
+    fn test_initialize_disabled_globs_setting(cx: &mut App) {
+        let store = SettingsStore::new(cx, &settings::default_settings());
+
+        let cases: &[(&str, &[&str])] = &[
+            ("", &[SplicingVec::REST]),
+            (r#"{}"#, &[SplicingVec::REST]),
+            (r#"{"edit_predictions":{}}"#, &[SplicingVec::REST]),
+            (
+                r#"{"edit_predictions":{"mode":"subtle"}}"#,
+                &[SplicingVec::REST],
+            ),
+            (r#"{"edit_predictions":{"disabled_globs":[]}}"#, &[]),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["**/build/**"]}}"#,
+                &["**/build/**"],
+            ),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["...","**/build/**"]}}"#,
+                &[SplicingVec::REST, "**/build/**"],
+            ),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["[.][.][.]"]}}"#,
+                &["[.][.][.]"],
+            ),
+        ];
+        for &(content, expected_globs) in cases {
+            let original = if content.is_empty() { "{}" } else { content };
+            let mut expected_content = SettingsContent::parse_json_with_comments(original)
+                .expect("settings content parses");
+            let original_globs = &mut expected_content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_with(Default::default)
+                .disabled_globs;
+            let already_configured = original_globs.is_some();
+            *original_globs = Some(SplicingVec::from(
+                expected_globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            ));
+
+            let edits = store
+                .edits_for_update(content, initialize_disabled_globs_setting)
+                .expect("settings edits are generated");
+            assert_eq!(edits.is_empty(), already_configured, "{content}");
+            let mut updated = content.to_string();
+            for (range, replacement) in edits {
+                updated.replace_range(range, &replacement);
+            }
+            assert_eq!(
+                SettingsContent::parse_json_with_comments(&updated)
+                    .expect("updated settings parse"),
+                expected_content,
+                "{content}",
+            );
+            assert!(
+                store
+                    .edits_for_update(&updated, initialize_disabled_globs_setting)
+                    .expect("repeated settings edits are generated")
+                    .is_empty(),
+                "{content}",
+            );
+        }
+    }
 
     #[gpui::test]
     async fn test_copilot_settings_url_with_enterprise_uri(cx: &mut TestAppContext) {
@@ -1698,18 +1900,15 @@ mod tests {
         cx.update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store
                 .set_user_settings(
-                    r#"{"edit_predictions":{"copilot":{"enterprise_uri":"https://my-company.ghe.com"}}}"#,
+                    r#"{"copilot":{"enterprise_uri":"https://my-company.ghe.com"}}"#,
                     cx,
                 )
                 .unwrap();
         });
 
         let url = cx.update(|cx| {
-            let all_language_settings = all_language_settings(None, cx);
             copilot_settings_url(
-                all_language_settings
-                    .edit_predictions
-                    .copilot
+                settings::CopilotSettings::get_global(cx)
                     .enterprise_uri
                     .as_deref(),
             )
@@ -1728,18 +1927,15 @@ mod tests {
         cx.update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store
                 .set_user_settings(
-                    r#"{"edit_predictions":{"copilot":{"enterprise_uri":"https://my-company.ghe.com/"}}}"#,
+                    r#"{"copilot":{"enterprise_uri":"https://my-company.ghe.com/"}}"#,
                     cx,
                 )
                 .unwrap();
         });
 
         let url = cx.update(|cx| {
-            let all_language_settings = all_language_settings(None, cx);
             copilot_settings_url(
-                all_language_settings
-                    .edit_predictions
-                    .copilot
+                settings::CopilotSettings::get_global(cx)
                     .enterprise_uri
                     .as_deref(),
             )
@@ -1756,11 +1952,8 @@ mod tests {
         });
 
         let url = cx.update(|cx| {
-            let all_language_settings = all_language_settings(None, cx);
             copilot_settings_url(
-                all_language_settings
-                    .edit_predictions
-                    .copilot
+                settings::CopilotSettings::get_global(cx)
                     .enterprise_uri
                     .as_deref(),
             )

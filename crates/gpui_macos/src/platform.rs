@@ -1,39 +1,40 @@
 use crate::{
-    BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
-    events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
+    AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
+    MacWindow, events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
     set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight, NSApplication,
-        NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular, NSControl as _,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSSavePanel,
-        NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSApplicationActivationPolicy,
+        NSApplicationActivationPolicy::{
+            NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
+        },
+        NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSVisualEffectState,
+        NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
         NSArray, NSAutoreleasePool, NSBundle, NSInteger, NSProcessInfo, NSString, NSUInteger, NSURL,
     },
 };
-use core_foundation::{
-    base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
-    boolean::CFBoolean,
-    data::CFData,
-    dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
-    runloop::CFRunLoopRun,
-    string::{CFString, CFStringRef},
-};
+use core_foundation::{base::CFRelease, runloop::CFRunLoopRun, string::CFStringRef};
 use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowKind,
-    WindowParams, popup::PopupNotSupportedError,
+    Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
+    CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
+    OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task,
+    ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
+    popup::PopupNotSupportedError,
+};
+use gpui_apple::{
+    keychain,
+    thermal::{self, ThermalObserver},
 };
 use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
@@ -44,7 +45,12 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
-use objc2::MainThreadMarker;
+use objc2::{MainThreadMarker, runtime::AnyObject};
+use objc2_app_kit::{
+    NSModalResponse, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSWorkspace,
+    NSWorkspaceDidWakeNotification, NSWorkspaceWillSleepNotification,
+};
+use objc2_foundation::NSActivityOptions;
 use parking_lot::Mutex;
 use ptr::null_mut;
 use semver::Version;
@@ -150,8 +156,13 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
-                sel!(onThermalStateChange:),
-                on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
+                sel!(onScreenParametersChange:),
+                on_screen_parameters_change as extern "C" fn(&mut Object, Sel, id),
+            );
+
+            decl.add_method(
+                sel!(onSystemSleep:),
+                on_system_sleep as extern "C" fn(&mut Object, Sel, id),
             );
 
             decl.add_method(
@@ -172,13 +183,17 @@ pub(crate) struct MacPlatformState {
     text_system: Arc<dyn PlatformTextSystem>,
     renderer_context: renderer::Context,
     headless: bool,
+    activation_policy: ActivationPolicy,
+    application_created: bool,
     general_pasteboard: Pasteboard,
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
-    on_thermal_state_change: Option<Box<dyn FnMut()>>,
+    thermal_observer: Option<ThermalObserver>,
+    on_displays_changed: Option<Box<dyn FnMut()>>,
+    on_system_sleep: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
-    system_wake_observer_registered: bool,
+    system_power_observers_registered: bool,
     quit: Option<Box<dyn FnMut() -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -194,13 +209,29 @@ pub(crate) struct MacPlatformState {
     system_notifications: crate::system_notifications::SystemNotificationState,
 }
 
+/// The activation policy that stands for a windowing mode: an app is headless while it has no
+/// Dock icon or menu bar.
+fn activation_policy_for(request: &WindowingRequest) -> ActivationPolicy {
+    match request {
+        WindowingRequest::Headless => ActivationPolicy::Accessory,
+        WindowingRequest::Windowed(_) => ActivationPolicy::Regular,
+    }
+}
+
+fn native_activation_policy(policy: ActivationPolicy) -> NSApplicationActivationPolicy {
+    match policy {
+        ActivationPolicy::Regular => NSApplicationActivationPolicyRegular,
+        ActivationPolicy::Accessory => NSApplicationActivationPolicyAccessory,
+    }
+}
+
 impl MacPlatform {
     pub fn new(headless: bool) -> Self {
         let marker = MainThreadMarker::new().expect("Mac platform not created on main thread");
-        let dispatcher = Arc::new(MacDispatcher::new());
+        let dispatcher = Arc::new(AppleDispatcher::new());
 
         #[cfg(feature = "font-kit")]
-        let text_system = Arc::new(crate::MacTextSystem::new());
+        let text_system = Arc::new(gpui_apple::AppleTextSystem::new());
 
         #[cfg(not(feature = "font-kit"))]
         let text_system = {
@@ -217,6 +248,8 @@ impl MacPlatform {
 
         let state = Mutex::new(MacPlatformState {
             headless,
+            activation_policy: ActivationPolicy::Regular,
+            application_created: false,
             text_system,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
@@ -233,9 +266,11 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
-            on_thermal_state_change: None,
+            thermal_observer: None,
+            on_displays_changed: None,
+            on_system_sleep: None,
             on_system_wake: None,
-            system_wake_observer_registered: false,
+            system_power_observers_registered: false,
             menus: None,
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
@@ -476,6 +511,28 @@ impl MacPlatform {
             version.patchVersion,
         )
     }
+
+    // Before the app finishes launching there is no delegate yet;
+    // `did_finish_launching` registers the observers then.
+    fn ensure_system_power_observers(&self) {
+        if self.0.lock().system_power_observers_registered {
+            return;
+        }
+
+        // The shared application must be created through `APP_CLASS`, or `run`
+        // finds a plain `NSApplication` without the `platform` ivar; only the
+        // delegate lookup goes through the typed binding.
+        // SAFETY: APP_CLASS is registered during startup and `sharedApplication`
+        // returns a live NSApplication instance.
+        let delegate = unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            (*(app as *const objc2_app_kit::NSApplication)).delegate()
+        };
+        if let Some(delegate) = delegate {
+            register_system_power_observers(delegate.as_ref());
+            self.0.lock().system_power_observers_registered = true;
+        }
+    }
 }
 
 impl Platform for MacPlatform {
@@ -504,6 +561,18 @@ impl Platform for MacPlatform {
 
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
+            // An accessory app must not register in the Dock during launch, so its
+            // policy has to precede the run loop. `Regular` is applied in
+            // `did_finish_launching` instead: setting it this early leaves the menu
+            // bar of an unbundled app launched from a terminal unclickable.
+            let policy = {
+                let mut state = self.0.lock();
+                state.application_created = true;
+                state.activation_policy
+            };
+            if policy == ActivationPolicy::Accessory {
+                app.setActivationPolicy_(native_activation_policy(policy));
+            }
             let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
             app.setDelegate_(app_delegate);
 
@@ -518,6 +587,7 @@ impl Platform for MacPlatform {
             (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
             (*NSWindow::delegate(app)).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
         }
+        self.0.lock().application_created = false;
     }
 
     fn quit(&self) {
@@ -595,6 +665,48 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_activation_policy(&self, policy: ActivationPolicy) {
+        let mut state = self.0.lock();
+        state.activation_policy = policy;
+        let should_apply = state.application_created && !state.headless;
+        drop(state);
+        if should_apply {
+            unsafe {
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                app.setActivationPolicy_(native_activation_policy(policy));
+            }
+        }
+    }
+
+    fn set_initial_windowing(&self, request: WindowingRequest) {
+        self.set_activation_policy(activation_policy_for(&request));
+    }
+
+    fn request_windowing(&self, request: WindowingRequest) -> Task<Result<()>> {
+        let state = self.0.lock();
+        if state.headless {
+            return Task::ready(Err(anyhow!(
+                "a platform created headless has no application to switch windowing modes"
+            )));
+        }
+        let policy = activation_policy_for(&request);
+        if state.activation_policy == policy {
+            return Task::ready(Err(match request {
+                WindowingRequest::Headless => anyhow!("already headless"),
+                WindowingRequest::Windowed(_) => anyhow!("already windowed"),
+            }));
+        }
+        drop(state);
+        self.set_activation_policy(policy);
+        Task::ready(Ok(()))
+    }
+
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        let state = self.0.lock();
+        (!state.headless && state.activation_policy == ActivationPolicy::Regular)
+            .then(GraphicalEnvironment::detect)
+    }
+
     fn hide(&self) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -626,6 +738,10 @@ impl Platform for MacPlatform {
             .collect()
     }
 
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_displays_changed = Some(callback);
+    }
+
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         let min_version = cocoa::foundation::NSOperatingSystemVersion::new(12, 3, 0);
@@ -636,7 +752,7 @@ impl Platform for MacPlatform {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>> {
-        crate::screen_capture::get_sources()
+        crate::screen_capture::get_sources(self.1)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -726,6 +842,8 @@ impl Platform for MacPlatform {
     }
 
     fn register_url_scheme(&self, scheme: &str) -> Task<anyhow::Result<()>> {
+        use objc2_foundation::{NSBundle, NSError, NSString};
+
         // API only available post Monterey
         // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
         let (done_tx, done_rx) = oneshot::channel();
@@ -735,43 +853,42 @@ impl Platform for MacPlatform {
             )));
         }
 
-        let bundle_id = unsafe {
-            let bundle: id = msg_send![class!(NSBundle), mainBundle];
-            let bundle_id: id = msg_send![bundle, bundleIdentifier];
-            if bundle_id == nil {
-                return Task::ready(Err(anyhow!("Can only register URL scheme in bundled apps")));
-            }
-            bundle_id
+        let Some(bundle_id) = NSBundle::mainBundle().bundleIdentifier() else {
+            return Task::ready(Err(anyhow!("Can only register URL scheme in bundled apps")));
         };
 
-        unsafe {
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-            let scheme: id = ns_string(scheme);
-            let app: id = msg_send![workspace, URLForApplicationWithBundleIdentifier: bundle_id];
-            if app == nil {
-                return Task::ready(Err(anyhow!(
-                    "Cannot register URL scheme until app is installed"
-                )));
+        let workspace = NSWorkspace::sharedWorkspace();
+        let Some(app) = workspace.URLForApplicationWithBundleIdentifier(&bundle_id) else {
+            return Task::ready(Err(anyhow!(
+                "Cannot register URL scheme until app is installed"
+            )));
+        };
+
+        let scheme = NSString::from_str(scheme);
+
+        let done_tx = Cell::new(Some(done_tx));
+        let handler = RcBlock::new(move |error: *mut NSError| {
+            let result = if let Some(error) = unsafe { error.as_ref() } {
+                Err(anyhow!(
+                    "Failed to register: {}",
+                    error.localizedDescription()
+                ))
+            } else {
+                Ok(())
+            };
+
+            if let Some(done_tx) = done_tx.take() {
+                _ = done_tx.send(result);
             }
-            let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |error: id| {
-                let result = if error == nil {
-                    Ok(())
-                } else {
-                    let msg: id = msg_send![error, localizedDescription];
-                    Err(anyhow!("Failed to register: {msg:?}"))
-                };
+        });
 
-                if let Some(done_tx) = done_tx.take() {
-                    let _ = done_tx.send(result);
-                }
-            });
-            let block = block.copy();
-            let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: block];
-        }
+        workspace.setDefaultApplicationAtURL_toOpenURLsWithScheme_completionHandler(
+            &app,
+            &scheme,
+            Some(&handler),
+        );
 
-        self.background_executor()
-            .spawn(async { done_rx.await.map_err(|e| anyhow!(e))? })
+        self.background_executor().spawn(async { done_rx.await? })
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -782,47 +899,45 @@ impl Platform for MacPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        use objc2_foundation::NSString;
+
+        let marker = self.1;
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                unsafe {
-                    let panel = NSOpenPanel::openPanel(nil);
-                    panel.setCanChooseDirectories_(options.directories.to_objc());
-                    panel.setCanChooseFiles_(options.files.to_objc());
-                    panel.setAllowsMultipleSelection_(options.multiple.to_objc());
+                let panel = NSOpenPanel::openPanel(marker);
+                panel.setCanChooseDirectories(options.directories);
+                panel.setCanChooseFiles(options.files);
+                panel.setAllowsMultipleSelection(options.multiple);
 
-                    panel.setCanCreateDirectories(true.to_objc());
-                    panel.setResolvesAliases_(false.to_objc());
-                    let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
-                        let result = if response == NSModalResponse::NSModalResponseOk {
-                            let mut result = Vec::new();
-                            let urls = panel.URLs();
-                            for i in 0..urls.count() {
-                                let url = urls.objectAtIndex(i);
-                                if url.isFileURL() == YES
-                                    && let Ok(path) = ns_url_to_path(url)
-                                {
-                                    result.push(path)
-                                }
-                            }
-                            Some(result)
-                        } else {
-                            None
+                panel.setCanCreateDirectories(true);
+                panel.setResolvesAliases(false);
+
+                let done_tx = Cell::new(Some(done_tx));
+                let handler = RcBlock::new({
+                    let panel = panel.clone();
+                    move |response: NSModalResponse| {
+                        let Some(done_tx) = done_tx.take() else {
+                            return;
                         };
 
-                        if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(Ok(result));
-                        }
-                    });
-                    let block = block.copy();
-
-                    if let Some(prompt) = options.prompt {
-                        let _: () = msg_send![panel, setPrompt: ns_string(&prompt)];
+                        let result = (response == NSModalResponseOK).then(|| {
+                            panel
+                                .URLs()
+                                .iter()
+                                .filter(|url| url.isFileURL())
+                                .filter_map(|url| url.to_file_path())
+                                .collect::<Vec<_>>()
+                        });
+                        _ = done_tx.send(Ok(result));
                     }
+                });
 
-                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
+                if let Some(prompt) = options.prompt {
+                    panel.setPrompt(Some(&NSString::from_str(prompt.as_str())));
                 }
+
+                panel.beginWithCompletionHandler(&handler);
             })
             .detach();
         done_rx
@@ -833,31 +948,37 @@ impl Platform for MacPlatform {
         directory: &Path,
         suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
-        let directory = directory.to_owned();
-        let suggested_name = suggested_name.map(|s| s.to_owned());
+        use objc2_foundation::{NSString, NSURL};
+
+        let url = NSURL::from_directory_path(directory);
+        let suggested_name = suggested_name.map(NSString::from_str);
         let (done_tx, done_rx) = oneshot::channel();
+        let marker = self.1;
         self.foreground_executor()
             .spawn(async move {
-                unsafe {
-                    let panel = NSSavePanel::savePanel(nil);
-                    let path = ns_string(directory.to_string_lossy().as_ref());
-                    let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
-                    panel.setDirectoryURL(url);
+                let panel = NSSavePanel::savePanel(marker);
+                panel.setDirectoryURL(url.as_deref());
 
-                    if let Some(suggested_name) = suggested_name {
-                        let name_string = ns_string(&suggested_name);
-                        let _: () = msg_send![panel, setNameFieldStringValue: name_string];
-                    }
+                if let Some(suggested_name) = suggested_name {
+                    panel.setNameFieldStringValue(&suggested_name);
+                }
 
-                    let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
-                        let mut result = None;
-                        if response == NSModalResponse::NSModalResponseOk {
-                            let url = panel.URL();
-                            if url.isFileURL() == YES {
-                                result = ns_url_to_path(panel.URL()).ok().map(|mut result| {
-                                    let Some(filename) = result.file_name() else {
-                                        return result;
+                let done_tx = Cell::new(Some(done_tx));
+                let handler = RcBlock::new({
+                    let panel = panel.clone();
+                    move |response: NSModalResponse| {
+                        let Some(done_tx) = done_tx.take() else {
+                            return;
+                        };
+
+                        let result = if response == NSModalResponseOK {
+                            panel
+                                .URL()
+                                .filter(|url| url.isFileURL())
+                                .and_then(|url| url.to_file_path())
+                                .map(|mut path| {
+                                    let Some(filename) = path.file_name() else {
+                                        return path;
                                     };
                                     let chunks = filename
                                         .as_bytes()
@@ -871,29 +992,24 @@ impl Platform for MacPlatform {
                                     // This is conditional on OS version because I'd like to get rid of it, so that
                                     // you can manually create a file called `a.sql.s`. That said it seems better
                                     // to break that use-case than breaking `a.sql`.
-                                    if chunks.len() == 3
-                                        && chunks[1].starts_with(chunks[2])
+                                    if let &[_, second, third] = chunks.as_slice()
+                                        && second.starts_with(third)
                                         && Self::os_version() >= Version::new(15, 0, 0)
                                     {
-                                        let new_filename = OsStr::from_bytes(
-                                            &filename.as_bytes()
-                                                [..chunks[0].len() + 1 + chunks[1].len()],
-                                        )
-                                        .to_owned();
-                                        result.set_file_name(&new_filename);
+                                        path.set_extension("");
                                     }
-                                    result
-                                })
-                            }
-                        }
 
-                        if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(Ok(result));
-                        }
-                    });
-                    let block = block.copy();
-                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
-                }
+                                    path
+                                })
+                        } else {
+                            None
+                        };
+
+                        _ = done_tx.send(Ok(result));
+                    }
+                });
+
+                panel.beginWithCompletionHandler(&handler);
             })
             .detach();
 
@@ -969,40 +1085,29 @@ impl Platform for MacPlatform {
     }
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().on_thermal_state_change = Some(callback);
+        let observer = ThermalObserver::new(&self.foreground_executor(), callback);
+        self.0.lock().thermal_observer = Some(observer);
+    }
+
+    fn on_system_sleep(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_system_sleep = Some(callback);
+        self.ensure_system_power_observers();
     }
 
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
-        let mut state = self.0.lock();
-        state.on_system_wake = Some(callback);
-        if state.system_wake_observer_registered {
-            return;
-        }
-        drop(state);
-
-        // SAFETY: APP_CLASS is registered during startup and returns the shared NSApplication.
-        unsafe {
-            let app: id = msg_send![APP_CLASS, sharedApplication];
-            let delegate: id = msg_send![app, delegate];
-            if delegate != nil {
-                register_system_wake_observer(delegate);
-                self.0.lock().system_wake_observer_registered = true;
-            }
-        }
+        self.0.lock().on_system_wake = Some(callback);
+        self.ensure_system_power_observers();
     }
 
     fn thermal_state(&self) -> ThermalState {
-        unsafe {
-            let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
-            let state: NSInteger = msg_send![process_info, thermalState];
-            match state {
-                0 => ThermalState::Nominal,
-                1 => ThermalState::Fair,
-                2 => ThermalState::Serious,
-                3 => ThermalState::Critical,
-                _ => ThermalState::Nominal,
-            }
-        }
+        thermal::thermal_state()
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Ok(AppleActivity::begin(
+            reason,
+            NSActivityOptions::UserInitiated,
+        )))
     }
 
     fn show_system_notification(&self, notification: gpui::SystemNotification) {
@@ -1148,105 +1253,20 @@ impl Platform for MacPlatform {
         let url = url.to_string();
         let username = username.to_string();
         let password = password.to_vec();
-        self.background_executor().spawn(async move {
-            unsafe {
-                use security::*;
-
-                let url = CFString::from(url.as_str());
-                let username = CFString::from(username.as_str());
-                let password = CFData::from_buffer(&password);
-
-                // First, check if there are already credentials for the given server. If so, then
-                // update the username and password.
-                let mut verb = "updating";
-                let mut query_attrs = CFMutableDictionary::with_capacity(2);
-                query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-
-                let mut attrs = CFMutableDictionary::with_capacity(4);
-                attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-                attrs.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
-                attrs.set(kSecValueData as *const _, password.as_CFTypeRef());
-
-                let mut status = SecItemUpdate(
-                    query_attrs.as_concrete_TypeRef(),
-                    attrs.as_concrete_TypeRef(),
-                );
-
-                // If there were no existing credentials for the given server, then create them.
-                if status == errSecItemNotFound {
-                    verb = "creating";
-                    status = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
-                }
-                anyhow::ensure!(status == errSecSuccess, "{verb} password failed: {status}");
-            }
-            Ok(())
-        })
+        self.background_executor()
+            .spawn(async move { Ok(keychain::write_credentials(&url, &username, &password)?) })
     }
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
-        self.background_executor().spawn(async move {
-            let url = CFString::from(url.as_str());
-            let cf_true = CFBoolean::true_value().as_CFTypeRef();
-
-            unsafe {
-                use security::*;
-
-                // Find any credentials for the given server URL.
-                let mut attrs = CFMutableDictionary::with_capacity(5);
-                attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-                attrs.set(kSecReturnAttributes as *const _, cf_true);
-                attrs.set(kSecReturnData as *const _, cf_true);
-
-                let mut result = CFTypeRef::from(ptr::null());
-                let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
-                match status {
-                    security::errSecSuccess => {}
-                    security::errSecItemNotFound | security::errSecUserCanceled => return Ok(None),
-                    _ => anyhow::bail!("reading password failed: {status}"),
-                }
-
-                let result = CFType::wrap_under_create_rule(result)
-                    .downcast::<CFDictionary>()
-                    .context("keychain item was not a dictionary")?;
-                let username = result
-                    .find(kSecAttrAccount as *const _)
-                    .context("account was missing from keychain item")?;
-                let username = CFType::wrap_under_get_rule(*username)
-                    .downcast::<CFString>()
-                    .context("account was not a string")?;
-                let password = result
-                    .find(kSecValueData as *const _)
-                    .context("password was missing from keychain item")?;
-                let password = CFType::wrap_under_get_rule(*password)
-                    .downcast::<CFData>()
-                    .context("password was not a string")?;
-
-                Ok(Some((username.to_string(), password.bytes().to_vec())))
-            }
-        })
+        self.background_executor()
+            .spawn(async move { Ok(keychain::read_credentials(&url)?) })
     }
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
-
-        self.background_executor().spawn(async move {
-            unsafe {
-                use security::*;
-
-                let url = CFString::from(url.as_str());
-                let mut query_attrs = CFMutableDictionary::with_capacity(2);
-                query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-
-                let status = SecItemDelete(query_attrs.as_concrete_TypeRef());
-                anyhow::ensure!(status == errSecSuccess, "delete password failed: {status}");
-            }
-            Ok(())
-        })
+        self.background_executor()
+            .spawn(async move { Ok(keychain::delete_credentials(&url)?) })
     }
 }
 
@@ -1285,7 +1305,8 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
-        app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+        let policy = get_mac_platform(this).0.lock().activation_policy;
+        app.setActivationPolicy_(native_activation_policy(policy));
 
         let notification_center: *mut Object =
             msg_send![class!(NSNotificationCenter), defaultCenter];
@@ -1296,21 +1317,24 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: nil
         ];
 
-        let thermal_name = ns_string("NSProcessInfoThermalStateDidChangeNotification");
-        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+        // Posted when a display is connected, disconnected, rearranged, or
+        // changes mode, which includes its refresh rate.
         let _: () = msg_send![notification_center, addObserver: this as id
-            selector: sel!(onThermalStateChange:)
-            name: thermal_name
-            object: process_info
+            selector: sel!(onScreenParametersChange:)
+            name: ns_string("NSApplicationDidChangeScreenParametersNotification")
+            object: nil
         ];
 
-        let observer = this as *mut Object as id;
+        // SAFETY: `this` is a live Objective-C object; only the pointer's type changes.
+        let observer = &*(this as *mut Object as *const AnyObject);
         let platform = get_mac_platform(this);
         let callback = {
             let mut state = platform.0.lock();
-            if state.on_system_wake.is_some() && !state.system_wake_observer_registered {
-                register_system_wake_observer(observer);
-                state.system_wake_observer_registered = true;
+            if (state.on_system_sleep.is_some() || state.on_system_wake.is_some())
+                && !state.system_power_observers_registered
+            {
+                register_system_power_observers(observer);
+                state.system_power_observers_registered = true;
             }
             state.finish_launching.take()
         };
@@ -1320,17 +1344,25 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-unsafe fn register_system_wake_observer(observer: id) {
-    // SAFETY: observer is an Objective-C object implementing onSystemWake:.
+/// `observer` must be the app delegate, whose class declares `onSystemSleep:`
+/// and `onSystemWake:` (see `build_classes`).
+fn register_system_power_observers(observer: &AnyObject) {
+    let center = NSWorkspace::sharedWorkspace().notificationCenter();
+    // SAFETY: both selectors are declared on the delegate class with the
+    // notification-handler signature these observers are invoked with.
     unsafe {
-        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let workspace_center: *mut Object = msg_send![workspace, notificationCenter];
-        let wake_name = ns_string("NSWorkspaceDidWakeNotification");
-        let _: () = msg_send![workspace_center, addObserver: observer
-            selector: sel!(onSystemWake:)
-            name: wake_name
-            object: nil
-        ];
+        center.addObserver_selector_name_object(
+            observer,
+            objc2::sel!(onSystemSleep:),
+            Some(NSWorkspaceWillSleepNotification),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            observer,
+            objc2::sel!(onSystemWake:),
+            Some(NSWorkspaceDidWakeNotification),
+            None,
+        );
     }
 }
 
@@ -1372,27 +1404,50 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
+extern "C" fn on_screen_parameters_change(this: &mut Object, _: Sel, _: id) {
     // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell,
     // as NSNotificationCenter delivers this notification synchronously and it may fire while
     // the App is already borrowed (same pattern as quit() above).
     let platform = unsafe { get_mac_platform(this) };
     let platform_ptr = platform as *const MacPlatform as *mut c_void;
     unsafe {
-        DispatchQueue::main().exec_async_f(platform_ptr, on_thermal_state_change);
+        DispatchQueue::main().exec_async_f(platform_ptr, on_screen_parameters_change);
     }
 
-    extern "C" fn on_thermal_state_change(context: *mut c_void) {
+    extern "C" fn on_screen_parameters_change(context: *mut c_void) {
         let platform = unsafe { &*(context as *const MacPlatform) };
-        let mut lock = platform.0.lock();
-        if let Some(mut callback) = lock.on_thermal_state_change.take() {
-            drop(lock);
+        let callback = platform.0.lock().on_displays_changed.take();
+        if let Some(mut callback) = callback {
             callback();
             platform
                 .0
                 .lock()
-                .on_thermal_state_change
+                .on_displays_changed
                 .get_or_insert(callback);
+        }
+    }
+}
+
+// Deferred to the main queue like the wake and thermal notifications. The
+// machine keeps running the main run loop for well over a frame after the
+// observers return, so the block runs before it suspends.
+extern "C" fn on_system_sleep(this: &mut Object, _: Sel, _: id) {
+    // SAFETY: this is the registered app delegate carrying MAC_PLATFORM_IVAR.
+    let platform = unsafe { get_mac_platform(this) };
+    let platform_ptr = platform as *const MacPlatform as *mut c_void;
+    // SAFETY: platform lives for the process lifetime while callbacks are registered.
+    unsafe {
+        DispatchQueue::main().exec_async_f(platform_ptr, on_system_sleep);
+    }
+
+    extern "C" fn on_system_sleep(context: *mut c_void) {
+        // SAFETY: context is the MacPlatform pointer queued above.
+        let platform = unsafe { &*(context as *const MacPlatform) };
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.on_system_sleep.take() {
+            drop(lock);
+            callback();
+            platform.0.lock().on_system_sleep.get_or_insert(callback);
         }
     }
 }
@@ -1544,29 +1599,4 @@ unsafe extern "C" {
     pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
     pub(super) static kTISPropertyInputSourceType: CFStringRef;
     pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
-}
-
-mod security {
-    #![allow(non_upper_case_globals)]
-    use super::*;
-
-    #[link(name = "Security", kind = "framework")]
-    unsafe extern "C" {
-        pub static kSecClass: CFStringRef;
-        pub static kSecClassInternetPassword: CFStringRef;
-        pub static kSecAttrServer: CFStringRef;
-        pub static kSecAttrAccount: CFStringRef;
-        pub static kSecValueData: CFStringRef;
-        pub static kSecReturnAttributes: CFStringRef;
-        pub static kSecReturnData: CFStringRef;
-
-        pub fn SecItemAdd(attributes: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
-        pub fn SecItemUpdate(query: CFDictionaryRef, attributes: CFDictionaryRef) -> OSStatus;
-        pub fn SecItemDelete(query: CFDictionaryRef) -> OSStatus;
-        pub fn SecItemCopyMatching(query: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
-    }
-
-    pub const errSecSuccess: OSStatus = 0;
-    pub const errSecUserCanceled: OSStatus = -128;
-    pub const errSecItemNotFound: OSStatus = -25300;
 }
