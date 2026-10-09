@@ -10,7 +10,7 @@ use language::{Buffer, BufferEvent};
 use multi_buffer::MultiBuffer;
 use ui::prelude::*;
 use workspace::item::Item;
-use workspace::{Pane, Workspace};
+use workspace::{ItemNavHistory, Pane, Workspace};
 
 use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
 
@@ -21,6 +21,7 @@ pub struct SvgPreviewView {
     _refresh: Task<()>,
     _buffer_subscription: Option<Subscription>,
     _workspace_subscription: Option<Subscription>,
+    nav_history: Option<ItemNavHistory>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,6 +62,7 @@ impl SvgPreviewView {
                 _buffer_subscription: subscription,
                 _workspace_subscription: workspace_subscription,
                 _refresh: Task::ready(()),
+                nav_history: None,
             };
             this.render_image(window, cx);
 
@@ -340,4 +342,19 @@ impl Item for SvgPreviewView {
     }
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
+
+    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(nav_history) = self.nav_history.as_mut() {
+            nav_history.push::<()>(None, None, cx);
+        }
+    }
+
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.nav_history = Some(history);
+    }
 }

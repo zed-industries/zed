@@ -27,8 +27,8 @@ use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*};
 use util::{ResultExt as _, paths::PathExt};
 use workspace::{
-    ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
-    WorkspaceId, delete_unloaded_items,
+    ItemId, ItemNavHistory, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace, WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
     item::{HighlightedText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
 };
@@ -73,6 +73,7 @@ pub struct ImageView {
     image_size: Option<(u32, u32)>,
     pending_image: Option<Arc<gpui::Image>>,
     displayed_image: Option<DisplayedImage>,
+    nav_history: Option<ItemNavHistory>,
 }
 
 struct DisplayedImage {
@@ -182,6 +183,7 @@ impl ImageView {
             image_size,
             pending_image: Some(pending_image),
             displayed_image: None,
+            nav_history: None,
         }
     }
 
@@ -658,6 +660,7 @@ impl Item for ImageView {
             image_size: self.image_size,
             pending_image: None,
             displayed_image: None,
+            nav_history: None,
         })))
     }
 
@@ -666,6 +669,21 @@ impl Item for ImageView {
     }
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
         workspace::item::ItemBufferKind::Singleton
+    }
+
+    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(nav_history) = self.nav_history.as_mut() {
+            nav_history.push::<()>(None, None, cx);
+        }
+    }
+
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.nav_history = Some(history);
     }
 }
 
