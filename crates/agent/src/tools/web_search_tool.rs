@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use acp_thread::NativeToolCallUpdateFields;
 use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
 use cloud_llm_client::WebSearchResponse;
@@ -110,7 +109,7 @@ impl AgentTool for WebSearchTool {
                         Ok(response) => response,
                         Err(err) => {
                             event_stream
-                                .update_fields(NativeToolCallUpdateFields::new().title("Web Search Failed"));
+                                .update_fields(|update| update.title("Web Search Failed"));
                             return Err(WebSearchToolOutput::Error { error: err.to_string() });
                         }
                     }
@@ -145,8 +144,8 @@ fn emit_update(response: &WebSearchResponse, event_stream: &ToolCallEventStream)
     } else {
         format!("{} results", response.results.len())
     };
-    event_stream.update_fields(
-        NativeToolCallUpdateFields::new()
+    event_stream.update_fields(|update| {
+        update
             .title(format!("Searched the web: {result_text}"))
             .content(
                 response
@@ -160,6 +159,6 @@ fn emit_update(response: &WebSearchResponse, event_stream: &ToolCallEventStream)
                         ))
                     })
                     .collect::<Vec<_>>(),
-            ),
-    );
+            )
+    });
 }

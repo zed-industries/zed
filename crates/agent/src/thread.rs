@@ -7,10 +7,7 @@ use crate::{
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     WriteFileTool, decide_permission_from_settings,
 };
-use acp_thread::{
-    AgentModelId, ClientUserMessageId, MentionUri, NativeToolCall, NativeToolCallUpdate,
-    NativeToolCallUpdateFields,
-};
+use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
@@ -906,7 +903,6 @@ pub enum ThreadEvent {
     UserMessage(UserMessage),
     AgentText(String),
     AgentThinking(String),
-    ToolCall(NativeToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
     ToolCallAuthorizationResolved {
@@ -997,15 +993,15 @@ impl ToolPermissionContext {
         let input_values = &self.input_values;
         if self.scope == ToolPermissionScope::SymlinkTarget {
             return acp_thread::PermissionOptions::Flat(vec![
-                acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("allow"),
+                acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("allow"),
                     "Yes",
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
-                acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("deny"),
                     "No",
-                    acp::PermissionOptionKind::RejectOnce,
+                    acp_v2::PermissionOptionKind::RejectOnce,
                 ),
             ]);
         }
@@ -1013,15 +1009,15 @@ impl ToolPermissionContext {
         // Skills always prompt, so offer only once-only allow/deny.
         if self.scope == ToolPermissionScope::AgentSkills {
             return acp_thread::PermissionOptions::Flat(vec![
-                acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("allow"),
+                acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("allow"),
                     "Allow",
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
-                acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("deny"),
                     "Deny",
-                    acp::PermissionOptionKind::RejectOnce,
+                    acp_v2::PermissionOptionKind::RejectOnce,
                 ),
             ]);
         }
@@ -1042,28 +1038,28 @@ impl ToolPermissionContext {
                 if all_patterns.len() > 1 {
                     let mut choices = Vec::new();
                     choices.push(acp_thread::PermissionOptionChoice {
-                        allow: acp::PermissionOption::new(
-                            acp::PermissionOptionId::new(format!("always_allow:{}", tool_name)),
+                        allow: acp_v2::PermissionOption::new(
+                            acp_v2::PermissionOptionId::new(format!("always_allow:{}", tool_name)),
                             format!("Always for {}", tool_name.replace('_', " ")),
-                            acp::PermissionOptionKind::AllowAlways,
+                            acp_v2::PermissionOptionKind::AllowAlways,
                         ),
-                        deny: acp::PermissionOption::new(
-                            acp::PermissionOptionId::new(format!("always_deny:{}", tool_name)),
+                        deny: acp_v2::PermissionOption::new(
+                            acp_v2::PermissionOptionId::new(format!("always_deny:{}", tool_name)),
                             format!("Always for {}", tool_name.replace('_', " ")),
-                            acp::PermissionOptionKind::RejectAlways,
+                            acp_v2::PermissionOptionKind::RejectAlways,
                         ),
                         sub_patterns: vec![],
                     });
                     choices.push(acp_thread::PermissionOptionChoice {
-                        allow: acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("allow"),
+                        allow: acp_v2::PermissionOption::new(
+                            acp_v2::PermissionOptionId::new("allow"),
                             "Only this time",
-                            acp::PermissionOptionKind::AllowOnce,
+                            acp_v2::PermissionOptionKind::AllowOnce,
                         ),
-                        deny: acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("deny"),
+                        deny: acp_v2::PermissionOption::new(
+                            acp_v2::PermissionOptionId::new("deny"),
                             "Only this time",
-                            acp::PermissionOptionKind::RejectOnce,
+                            acp_v2::PermissionOptionKind::RejectOnce,
                         ),
                         sub_patterns: vec![],
                     });
@@ -1127,13 +1123,13 @@ impl ToolPermissionContext {
         let mut push_choice =
             |label: String, allow_id, deny_id, allow_kind, deny_kind, sub_patterns: Vec<String>| {
                 choices.push(acp_thread::PermissionOptionChoice {
-                    allow: acp::PermissionOption::new(
-                        acp::PermissionOptionId::new(allow_id),
+                    allow: acp_v2::PermissionOption::new(
+                        acp_v2::PermissionOptionId::new(allow_id),
                         label.clone(),
                         allow_kind,
                     ),
-                    deny: acp::PermissionOption::new(
-                        acp::PermissionOptionId::new(deny_id),
+                    deny: acp_v2::PermissionOption::new(
+                        acp_v2::PermissionOptionId::new(deny_id),
                         label,
                         deny_kind,
                     ),
@@ -1146,8 +1142,8 @@ impl ToolPermissionContext {
                 format!("Always for {}", tool_name.replace('_', " ")),
                 format!("always_allow:{}", tool_name),
                 format!("always_deny:{}", tool_name),
-                acp::PermissionOptionKind::AllowAlways,
-                acp::PermissionOptionKind::RejectAlways,
+                acp_v2::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::RejectAlways,
                 vec![],
             );
 
@@ -1161,8 +1157,8 @@ impl ToolPermissionContext {
                     button_text,
                     format!("always_allow:{}", tool_name),
                     format!("always_deny:{}", tool_name),
-                    acp::PermissionOptionKind::AllowAlways,
-                    acp::PermissionOptionKind::RejectAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::RejectAlways,
                     vec![pattern],
                 );
             }
@@ -1172,8 +1168,8 @@ impl ToolPermissionContext {
             "Only this time".to_string(),
             "allow".to_string(),
             "deny".to_string(),
-            acp::PermissionOptionKind::AllowOnce,
-            acp::PermissionOptionKind::RejectOnce,
+            acp_v2::PermissionOptionKind::AllowOnce,
+            acp_v2::PermissionOptionKind::RejectOnce,
             vec![],
         );
 
@@ -1183,7 +1179,7 @@ impl ToolPermissionContext {
 
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
-    pub tool_call: NativeToolCallUpdate,
+    pub tool_call: acp_v2::ToolCallUpdate,
     pub options: acp_thread::PermissionOptions,
     pub response: oneshot::Sender<acp_thread::SelectedPermissionOutcome>,
     pub context: Option<ToolPermissionContext>,
@@ -1218,9 +1214,9 @@ fn auto_resolve_permission_outcome(
     is_allow: bool,
 ) -> Result<acp_thread::SelectedPermissionOutcome> {
     let kind = if is_allow {
-        acp::PermissionOptionKind::AllowOnce
+        acp_v2::PermissionOptionKind::AllowOnce
     } else {
-        acp::PermissionOptionKind::RejectOnce
+        acp_v2::PermissionOptionKind::RejectOnce
     };
     let option = options
         .first_option_of_kind(kind)
@@ -1228,7 +1224,7 @@ fn auto_resolve_permission_outcome(
 
     Ok(acp_thread::SelectedPermissionOutcome::new(
         option.option_id.clone(),
-        option.kind,
+        option.kind.clone(),
     ))
 }
 
@@ -1673,22 +1669,23 @@ impl Thread {
         let Some(tool) = tool else {
             // Tool not found (e.g., MCP server not connected after restart),
             // but still display the saved result if available.
-            stream
-                .sender
-                .unbounded_send(Ok(ThreadEvent::ToolCall(
-                    NativeToolCall::new(tool_call_id.clone(), tool_use.name.to_string())
-                        .name(tool_use.name.to_string())
-                        .status(status.clone())
-                        .raw_input(tool_use.input.to_display_json()),
-                )))
-                .ok();
-            let mut fields = NativeToolCallUpdateFields::new()
-                .status(status)
-                .raw_output(output);
-            if let Some(content) = replay_content {
-                fields = fields.content(content);
-            }
-            stream.update_tool_call_fields(&tool_call_id, fields, None);
+            stream.send_tool_call(
+                &tool_call_id,
+                &tool_use.name,
+                tool_use.name.to_string().into(),
+                acp_v2::ToolKind::Other,
+                tool_use.input.to_display_json(),
+            );
+            stream.update_tool_call_fields(&tool_call_id, |update| {
+                let mut update = update.status(status);
+                if let Some(output) = output {
+                    update = update.raw_output(output);
+                }
+                if let Some(content) = replay_content {
+                    update = update.content(content);
+                }
+                update
+            });
             return;
         };
 
@@ -1700,11 +1697,7 @@ impl Thread {
         stream.send_tool_call(&tool_call_id, &tool_use.name, title, kind, input.clone());
 
         if let Some(content) = replay_content {
-            stream.update_tool_call_fields(
-                &tool_call_id,
-                NativeToolCallUpdateFields::new().content(content),
-                None,
-            );
+            stream.update_tool_call_fields(&tool_call_id, |update| update.content(content));
         }
 
         if let Some(output) = output.clone() {
@@ -1722,13 +1715,14 @@ impl Thread {
             tool.replay(input, output, tool_event_stream, cx).log_err();
         }
 
-        stream.update_tool_call_fields(
-            &tool_call_id,
-            NativeToolCallUpdateFields::new()
-                .status(status)
-                .raw_output(output),
-            None,
-        );
+        stream.update_tool_call_fields(&tool_call_id, |update| {
+            let update = update.status(status);
+            if let Some(output) = output {
+                update.raw_output(output)
+            } else {
+                update
+            }
+        });
     }
 
     /// A canceled tool result carries only the model-facing `TOOL_CANCELED_MESSAGE`
@@ -3392,14 +3386,18 @@ impl Thread {
 
         event_stream.update_tool_call_fields(
             &scoped_tool_call_id(owning_message_ix, &tool_result.tool_use_id),
-            NativeToolCallUpdateFields::new()
-                .status(if tool_result.is_error {
+            |update| {
+                let update = update.status(if tool_result.is_error {
                     acp_v2::ToolCallStatus::Failed
                 } else {
                     acp_v2::ToolCallStatus::Completed
-                })
-                .raw_output(tool_result.output.clone()),
-            None,
+                });
+                if let Some(output) = tool_result.output.clone() {
+                    update.raw_output(output)
+                } else {
+                    update
+                }
+            },
         );
         this.update(cx, |this, _cx| {
             this.pending_message()
@@ -3741,9 +3739,7 @@ impl Thread {
             self.sandbox_grants.clone(),
             Some(cx.weak_entity()),
         );
-        tool_event_stream.update_fields(
-            NativeToolCallUpdateFields::new().status(acp_v2::ToolCallStatus::InProgress),
-        );
+        tool_event_stream.update_fields(|update| update.status(acp_v2::ToolCallStatus::InProgress));
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
         cx.foreground_executor().spawn(async move {
@@ -3908,14 +3904,12 @@ impl Thread {
                 .content
                 .push(AgentMessageContent::ToolUse(tool_use.clone()));
         } else {
-            event_stream.update_tool_call_fields(
-                &tool_call_id,
-                NativeToolCallUpdateFields::new()
+            event_stream.update_tool_call_fields(&tool_call_id, |update| {
+                update
                     .title(title.as_str())
                     .kind(kind)
-                    .raw_input(tool_use.input.to_display_json()),
-                None,
-            );
+                    .raw_input(tool_use.input.to_display_json())
+            });
         }
     }
 
@@ -5496,13 +5490,9 @@ impl ThreadEventStream {
         input: serde_json::Value,
     ) {
         self.sender
-            .unbounded_send(Ok(ThreadEvent::ToolCall(Self::initial_tool_call(
-                id,
-                tool_name,
-                title.to_string(),
-                kind,
-                input,
-            ))))
+            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
+                Self::initial_tool_call(id, tool_name, title.to_string(), kind, input).into(),
+            )))
             .ok();
     }
 
@@ -5512,25 +5502,24 @@ impl ThreadEventStream {
         title: String,
         kind: acp_v2::ToolKind,
         input: serde_json::Value,
-    ) -> NativeToolCall {
-        NativeToolCall::new(id.clone(), title)
+    ) -> acp_v2::ToolCallUpdate {
+        acp_v2::ToolCallUpdate::new(id.clone())
+            .title(title)
             .name(tool_name)
             .kind(kind)
+            .status(acp_v2::ToolCallStatus::Pending)
             .raw_input(input)
     }
 
     fn update_tool_call_fields(
         &self,
         tool_call_id: &acp_v2::ToolCallId,
-        fields: NativeToolCallUpdateFields,
-        meta: Option<acp_v2::Meta>,
+        update: impl FnOnce(acp_v2::ToolCallUpdate) -> acp_v2::ToolCallUpdate,
     ) {
+        let mut update = update(acp_v2::ToolCallUpdate::new(tool_call_id.clone()));
+        update.tool_call_id = tool_call_id.clone();
         self.sender
-            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                NativeToolCallUpdate::new(tool_call_id.clone(), fields)
-                    .meta(meta)
-                    .into(),
-            )))
+            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(update.into())))
             .ok();
     }
 
@@ -5804,18 +5793,12 @@ impl ToolCallEventStream {
         &self.tool_call_id
     }
 
-    pub fn update_fields(&self, fields: NativeToolCallUpdateFields) {
-        self.stream
-            .update_tool_call_fields(&self.tool_call_id, fields, None);
-    }
-
-    pub fn update_fields_with_meta(
+    pub fn update_fields(
         &self,
-        fields: NativeToolCallUpdateFields,
-        meta: Option<acp_v2::Meta>,
+        update: impl FnOnce(acp_v2::ToolCallUpdate) -> acp_v2::ToolCallUpdate,
     ) {
         self.stream
-            .update_tool_call_fields(&self.tool_call_id, fields, meta);
+            .update_tool_call_fields(&self.tool_call_id, update);
     }
 
     pub fn resolve_authorization(&self, outcome: acp_thread::SelectedPermissionOutcome) {
@@ -5861,28 +5844,28 @@ impl ToolCallEventStream {
         let title = title.into();
         let options = acp_thread::PermissionOptions::Dropdown(vec![
             acp_thread::PermissionOptionChoice {
-                allow: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new(format!("always_allow_mcp:{tool_id}")),
+                allow: acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new(format!("always_allow_mcp:{tool_id}")),
                     format!("Always for {display_name} MCP tool"),
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
-                deny: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new(format!("always_deny_mcp:{tool_id}")),
+                deny: acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new(format!("always_deny_mcp:{tool_id}")),
                     format!("Always for {display_name} MCP tool"),
-                    acp::PermissionOptionKind::RejectAlways,
+                    acp_v2::PermissionOptionKind::RejectAlways,
                 ),
                 sub_patterns: vec![],
             },
             acp_thread::PermissionOptionChoice {
-                allow: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("allow"),
+                allow: acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("allow"),
                     "Only this time",
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
-                deny: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("deny"),
+                deny: acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("deny"),
                     "Only this time",
-                    acp::PermissionOptionKind::RejectOnce,
+                    acp_v2::PermissionOptionKind::RejectOnce,
                 ),
                 sub_patterns: vec![],
             },
@@ -6003,25 +5986,25 @@ impl ToolCallEventStream {
             "Allow for this thread"
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
                 "Allow once",
-                acp::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
             ),
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
                 allow_thread_label,
-                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::AllowAlways,
             ),
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowAlways.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowAlways.as_id()),
                 "Allow always",
-                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::AllowAlways,
             ),
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
                 "Deny",
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
             ),
         ]);
 
@@ -6041,13 +6024,7 @@ impl ToolCallEventStream {
                     .sender
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
-                            tool_call: NativeToolCallUpdate::new(
-                                tool_call_id.clone(),
-                                // Leave the title untouched so the card keeps
-                                // showing the command (matching the fallback flow).
-                                NativeToolCallUpdateFields::new(),
-                            )
-                            .meta(
+                            tool_call: acp_v2::ToolCallUpdate::new(tool_call_id.clone()).meta(
                                 acp_thread::meta_with_sandbox_authorization(
                                     sandbox_authorization_details,
                                 ),
@@ -6135,24 +6112,19 @@ impl ToolCallEventStream {
             reason: String::new(),
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
                 "Continue",
-                acp::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
             ),
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
                 "Abort",
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
             ),
         ]);
 
         let stream = self.stream.clone();
-        // The update must target the ACP-facing (scoped) id: an update keyed
-        // by the raw provider id matches no existing tool call, and creating
-        // one from empty fields is rejected downstream ("title is required"),
-        // which tears down the stream and turns the prompt into a phantom
-        // decline.
         let tool_call_id = self.tool_call_id.clone();
         cx.spawn(async move |_cx| {
             let (response_tx, response_rx) = oneshot::channel();
@@ -6161,14 +6133,8 @@ impl ToolCallEventStream {
                     .sender
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
-                            tool_call: NativeToolCallUpdate::new(
-                                tool_call_id,
-                                // Leave the title untouched so the card keeps
-                                // showing the command (matching the escalation
-                                // flow).
-                                NativeToolCallUpdateFields::new(),
-                            )
-                            .meta(acp_thread::meta_with_sandbox_authorization(details)),
+                            tool_call: acp_v2::ToolCallUpdate::new(tool_call_id)
+                                .meta(acp_thread::meta_with_sandbox_authorization(details)),
                             options,
                             response: response_tx,
                             context: None,
@@ -6395,30 +6361,30 @@ impl ToolCallEventStream {
             // governs keybindings. Use `RejectAlways` (which has none) so the
             // "allow once" shortcut maps to "Run without sandbox once" rather
             // than to Retry.
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID),
                 retry_label,
-                acp::PermissionOptionKind::RejectAlways,
+                acp_v2::PermissionOptionKind::RejectAlways,
             ),
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
                 "Run without sandbox once",
-                acp::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
             ),
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
                 allow_thread_label,
-                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::AllowAlways,
             ),
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowAlways.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowAlways.as_id()),
                 "Always run without sandbox",
-                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::AllowAlways,
             ),
-            acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
                 "Deny",
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
             ),
         ]);
 
@@ -6439,11 +6405,7 @@ impl ToolCallEventStream {
                             // failure reason): it's critical the user can see what
                             // they're approving to run unsandboxed. The reason is
                             // surfaced separately by the fallback details / warning.
-                            tool_call: NativeToolCallUpdate::new(
-                                tool_call_id.clone(),
-                                NativeToolCallUpdateFields::new(),
-                            )
-                            .meta(
+                            tool_call: acp_v2::ToolCallUpdate::new(tool_call_id.clone()).meta(
                                 acp_thread::meta_with_sandbox_fallback_authorization(details),
                             ),
                             options,
@@ -6527,19 +6489,19 @@ impl ToolCallEventStream {
         &self,
         title: Option<String>,
         message: Option<String>,
-        options: Vec<acp::PermissionOption>,
+        options: Vec<acp_v2::PermissionOption>,
         cx: &mut App,
-    ) -> Task<Result<acp::PermissionOptionId>> {
+    ) -> Task<Result<acp_v2::PermissionOptionId>> {
         let options = acp_thread::PermissionOptions::Flat(options);
         let stream = self.stream.clone();
         let tool_call_id = self.tool_call_id.clone();
         cx.spawn(async move |_cx| {
-            let mut fields = NativeToolCallUpdateFields::new();
+            let mut update = acp_v2::ToolCallUpdate::new(tool_call_id.clone());
             if let Some(title) = title {
-                fields = fields.title(title);
+                update = update.title(title);
             }
             if let Some(message) = message {
-                fields = fields.content(vec![acp_v2::ToolCallContent::from(message)]);
+                update = update.content(vec![acp_v2::ToolCallContent::from(message)]);
             }
 
             let (response_tx, response_rx) = oneshot::channel();
@@ -6548,7 +6510,7 @@ impl ToolCallEventStream {
                     .sender
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
-                            tool_call: NativeToolCallUpdate::new(tool_call_id.clone(), fields),
+                            tool_call: update,
                             options,
                             response: response_tx,
                             context: None,
@@ -6657,10 +6619,8 @@ impl ToolCallEventStream {
                     .sender
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
-                            tool_call: NativeToolCallUpdate::new(
-                                tool_call_id.clone(),
-                                NativeToolCallUpdateFields::new().title(title),
-                            ),
+                            tool_call: acp_v2::ToolCallUpdate::new(tool_call_id.clone())
+                                .title(title),
                             options,
                             response: response_tx,
                             context,
@@ -6873,13 +6833,13 @@ impl ToolCallEventStreamReceiver {
         }
     }
 
-    pub async fn expect_update_fields(&mut self) -> NativeToolCallUpdateFields {
+    pub async fn expect_update_fields(&mut self) -> acp_v2::ToolCallUpdate {
         let event = self.0.next().await;
-        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(
+        if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(
             update,
         )))) = event
         {
-            update.fields
+            update
         } else {
             panic!("Expected update fields but got: {:?}", event);
         }
@@ -7035,6 +6995,7 @@ fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_client_protocol::schema::MaybeUndefined;
     use gpui::TestAppContext;
     use language_model::LanguageModelToolUseId;
     use language_model::fake_provider::FakeLanguageModelProvider;
@@ -7056,24 +7017,35 @@ mod tests {
             acp_v2::ToolKind::Unknown("_native".into()),
             json!(null),
         );
-        let ThreadEvent::ToolCall(tool_call) = receiver
-            .next()
-            .await
-            .expect("tool call event exists")
-            .expect("tool call event succeeded")
+        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(tool_call)) =
+            receiver
+                .next()
+                .await
+                .expect("tool call event exists")
+                .expect("tool call event succeeded")
         else {
             panic!("expected native tool call payload");
         };
         assert_eq!(tool_call.tool_call_id.0.as_ref(), storage.as_ref());
         assert!(Arc::ptr_eq(&tool_call.tool_call_id.0, &storage));
-        assert_eq!(tool_call.kind, acp_v2::ToolKind::Unknown("_native".into()));
-        assert_eq!(tool_call.status, acp_v2::ToolCallStatus::Pending);
-        assert_eq!(tool_call.raw_input, Some(json!(null)));
-        assert!(tool_call.content.is_empty());
-        assert!(tool_call.locations.is_empty());
+        assert_eq!(tool_call.title, MaybeUndefined::Value("Test tool".into()));
+        assert_eq!(tool_call.name, MaybeUndefined::Value("test_tool".into()));
+        assert_eq!(
+            tool_call.kind,
+            MaybeUndefined::Value(acp_v2::ToolKind::Unknown("_native".into()))
+        );
+        assert_eq!(
+            tool_call.status,
+            MaybeUndefined::Value(acp_v2::ToolCallStatus::Pending)
+        );
+        assert_eq!(tool_call.raw_input, MaybeUndefined::Value(json!(null)));
+        assert!(tool_call.raw_output.is_undefined());
+        assert!(tool_call.content.is_undefined());
+        assert!(tool_call.locations.is_undefined());
+        assert!(tool_call.meta.is_undefined());
 
-        stream.update_tool_call_fields(&tool_call_id, NativeToolCallUpdateFields::new(), None);
-        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(update)) =
+        stream.update_tool_call_fields(&tool_call_id, |update| update);
+        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(update)) =
             receiver
                 .next()
                 .await
@@ -7084,13 +7056,15 @@ mod tests {
         };
         assert_eq!(update.tool_call_id.0.as_ref(), storage.as_ref());
         assert!(Arc::ptr_eq(&update.tool_call_id.0, &storage));
-        assert!(update.fields.title.is_none());
-        assert!(update.fields.kind.is_none());
-        assert!(update.fields.status.is_none());
-        assert!(update.fields.content.is_none());
-        assert!(update.fields.locations.is_none());
-        assert!(update.fields.raw_input.is_none());
-        assert!(update.fields.raw_output.is_none());
+        assert!(update.title.is_undefined());
+        assert!(update.name.is_undefined());
+        assert!(update.kind.is_undefined());
+        assert!(update.status.is_undefined());
+        assert!(update.content.is_undefined());
+        assert!(update.locations.is_undefined());
+        assert!(update.raw_input.is_undefined());
+        assert!(update.raw_output.is_undefined());
+        assert!(update.meta.is_undefined());
 
         let (_cancellation_tx, cancellation_rx) = watch::channel(false);
         let tool_stream = ToolCallEventStream::new(
@@ -7122,10 +7096,10 @@ mod tests {
             &storage
         ));
         assert_eq!(
-            authorization.tool_call.fields.title.as_deref(),
-            Some("Confirm tool")
+            authorization.tool_call.title,
+            MaybeUndefined::Value("Confirm tool".into())
         );
-        assert!(authorization.tool_call.fields.content.is_none());
+        assert!(authorization.tool_call.content.is_undefined());
         assert_eq!(
             authorization.kind,
             acp_thread::AuthorizationKind::PermissionGrant
@@ -7134,8 +7108,8 @@ mod tests {
             authorization
                 .response
                 .send(acp_thread::SelectedPermissionOutcome::new(
-                    acp::PermissionOptionId::new("allow"),
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionId::new("allow"),
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ))
                 .is_ok()
         );
@@ -7144,8 +7118,8 @@ mod tests {
         stream.resolve_tool_call_authorization(
             &tool_call_id,
             acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("allow"),
-                acp::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionId::new("allow"),
+                acp_v2::PermissionOptionKind::AllowOnce,
             ),
         );
         let ThreadEvent::ToolCallAuthorizationResolved { tool_call_id, .. } = receiver
@@ -7170,22 +7144,22 @@ mod tests {
             ))
             .meta(meta.clone()),
         ))];
-        let locations = vec![acp_thread::ToolCallLocation {
-            path: PathBuf::from("relative/雪.rs"),
-            line: Some(7),
-            meta: Some(meta.clone()),
-        }];
-        stream.update_fields_with_meta(
-            NativeToolCallUpdateFields::new()
+        let locations = vec![
+            acp_v2::ToolCallLocation::new(PathBuf::from("/repo/雪.rs"))
+                .line(7)
+                .meta(meta.clone()),
+        ];
+        stream.update_fields(|update| {
+            update
                 .kind(acp_v2::ToolKind::Unknown("_native".into()))
                 .status(acp_v2::ToolCallStatus::Other("_paused".into()))
                 .content(content.clone())
                 .locations(locations.clone())
                 .raw_input(json!(null))
-                .raw_output(json!(null)),
-            Some(meta.clone()),
-        );
-        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(update)) =
+                .raw_output(json!(null))
+                .meta(meta.clone())
+        });
+        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(update)) =
             receiver
                 .next()
                 .await
@@ -7199,30 +7173,59 @@ mod tests {
             &stream.tool_call_id().0
         ));
         assert_eq!(
-            update.fields.kind,
-            Some(acp_v2::ToolKind::Unknown("_native".into()))
+            update.kind,
+            MaybeUndefined::Value(acp_v2::ToolKind::Unknown("_native".into()))
         );
         assert_eq!(
-            update.fields.status,
-            Some(acp_v2::ToolCallStatus::Other("_paused".into()))
+            update.status,
+            MaybeUndefined::Value(acp_v2::ToolCallStatus::Other("_paused".into()))
         );
-        assert_eq!(update.fields.content, Some(content));
-        assert_eq!(update.fields.locations, Some(locations));
-        assert_eq!(update.fields.raw_input, Some(json!(null)));
-        assert_eq!(update.fields.raw_output, Some(json!(null)));
-        assert_eq!(update.meta, Some(meta));
-        assert!(update.fields.title.is_none());
+        assert_eq!(update.content, MaybeUndefined::Value(content));
+        assert_eq!(update.locations, MaybeUndefined::Value(locations));
+        assert_eq!(update.raw_input, MaybeUndefined::Value(json!(null)));
+        assert_eq!(update.raw_output, MaybeUndefined::Value(json!(null)));
+        assert_eq!(update.meta, MaybeUndefined::Value(meta));
+        assert!(update.title.is_undefined());
 
-        stream.update_fields(
-            NativeToolCallUpdateFields::new()
-                .content(vec![])
-                .locations(vec![]),
-        );
+        stream.update_fields(|update| update.content(vec![]).locations(vec![]));
         let fields = receiver.expect_update_fields().await;
-        assert_eq!(fields.content, Some(vec![]));
-        assert_eq!(fields.locations, Some(vec![]));
-        assert!(fields.raw_input.is_none());
-        assert!(fields.raw_output.is_none());
+        assert_eq!(fields.content, MaybeUndefined::Value(vec![]));
+        assert_eq!(fields.locations, MaybeUndefined::Value(vec![]));
+        assert!(fields.raw_input.is_undefined());
+        assert!(fields.raw_output.is_undefined());
+    }
+
+    #[gpui::test]
+    async fn test_native_tool_updates_preserve_metadata_patch_semantics() {
+        let (stream, mut receiver) = ToolCallEventStream::test();
+        let first_meta = acp_v2::Meta::from_iter([("first".into(), json!(true))]);
+        stream.update_fields(|update| update.meta(first_meta.clone()));
+        assert_eq!(
+            receiver.expect_update_fields().await.meta,
+            MaybeUndefined::Value(first_meta)
+        );
+
+        let replacement_meta = acp_v2::Meta::from_iter([("replacement".into(), json!(true))]);
+        stream.update_fields(|update| update.meta(replacement_meta.clone()));
+        assert_eq!(
+            receiver.expect_update_fields().await.meta,
+            MaybeUndefined::Value(replacement_meta)
+        );
+
+        stream.update_fields(|update| update.status(acp_v2::ToolCallStatus::Completed));
+        assert!(receiver.expect_update_fields().await.meta.is_undefined());
+
+        stream.update_fields(|update| update.meta(MaybeUndefined::Null));
+        assert!(receiver.expect_update_fields().await.meta.is_null());
+
+        stream.update_fields(|update| update);
+        assert!(receiver.expect_update_fields().await.meta.is_undefined());
+
+        stream.update_fields(|_| acp_v2::ToolCallUpdate::new("another_tool_call"));
+        assert_eq!(
+            receiver.expect_update_fields().await.tool_call_id,
+            *stream.tool_call_id()
+        );
     }
 
     #[gpui::test]
@@ -7235,10 +7238,10 @@ mod tests {
                 stream.prompt_for_decision(
                     None,
                     Some("Choose an action".into()),
-                    vec![acp::PermissionOption::new(
-                        acp::PermissionOptionId::new("discard"),
+                    vec![acp_v2::PermissionOption::new(
+                        acp_v2::PermissionOptionId::new("discard"),
                         "Discard",
-                        acp::PermissionOptionKind::RejectOnce,
+                        acp_v2::PermissionOptionKind::RejectOnce,
                     )],
                     cx,
                 )
@@ -7248,11 +7251,11 @@ mod tests {
                 &authorization.tool_call.tool_call_id.0,
                 &stream.tool_call_id().0
             ));
-            assert!(authorization.tool_call.fields.title.is_none());
-            assert!(authorization.tool_call.fields.status.is_none());
+            assert!(authorization.tool_call.title.is_undefined());
+            assert!(authorization.tool_call.status.is_undefined());
             assert_eq!(
-                authorization.tool_call.fields.content,
-                Some(vec![acp_v2::ToolCallContent::from("Choose an action")])
+                authorization.tool_call.content,
+                MaybeUndefined::Value(vec![acp_v2::ToolCallContent::from("Choose an action")])
             );
             assert_eq!(
                 authorization.kind,
@@ -7262,8 +7265,8 @@ mod tests {
                 authorization
                     .response
                     .send(acp_thread::SelectedPermissionOutcome::new(
-                        acp::PermissionOptionId::new(option_id),
-                        acp::PermissionOptionKind::RejectOnce,
+                        acp_v2::PermissionOptionId::new(option_id),
+                        acp_v2::PermissionOptionKind::RejectOnce,
                     ))
                     .is_ok()
             );
@@ -8783,16 +8786,17 @@ mod tests {
             )
         });
         let authorization = receiver.expect_authorization().await;
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
-                .expect("sandbox authorization should include request details");
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization.tool_call.meta.value().cloned(),
+        )
+        .expect("sandbox authorization should include request details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);
-        assert!(authorization.tool_call.fields.title.is_none());
-        assert!(authorization.tool_call.fields.content.is_none());
+        assert!(authorization.tool_call.title.is_undefined());
+        assert!(authorization.tool_call.content.is_undefined());
         assert_eq!(
             authorization.kind,
             acp_thread::AuthorizationKind::PermissionGrant
@@ -8807,33 +8811,37 @@ mod tests {
                 (
                     option.option_id.0.as_ref(),
                     option.name.as_ref(),
-                    option.kind,
+                    option.kind.clone(),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             options,
             vec![
-                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow",
+                    "Allow once",
+                    acp_v2::PermissionOptionKind::AllowOnce
+                ),
                 (
                     "allow_thread",
                     "Allow for this thread",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
                 (
                     "allow_always",
                     "Allow always",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
-                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+                ("deny", "Deny", acp_v2::PermissionOptionKind::RejectOnce),
             ]
         );
 
         let send_result = authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("allow_always"),
-                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionId::new("allow_always"),
+                acp_v2::PermissionOptionKind::AllowAlways,
             ));
         assert!(send_result.is_ok());
         authorize.await.unwrap();
@@ -8867,7 +8875,7 @@ mod tests {
         });
         let authorization = receiver.expect_authorization().await;
         let details = acp_thread::sandbox_fallback_authorization_details_from_meta(
-            &authorization.tool_call.meta,
+            &authorization.tool_call.meta.value().cloned(),
         )
         .expect("fallback authorization should include details");
         assert_eq!(details.command.as_deref(), Some("cargo build"));
@@ -8876,8 +8884,8 @@ mod tests {
             details.docs_section.as_deref(),
             Some("installing-bubblewrap")
         );
-        assert!(authorization.tool_call.fields.title.is_none());
-        assert!(authorization.tool_call.fields.content.is_none());
+        assert!(authorization.tool_call.title.is_undefined());
+        assert!(authorization.tool_call.content.is_undefined());
         assert_eq!(
             authorization.kind,
             acp_thread::AuthorizationKind::ActionChoice
@@ -8904,8 +8912,8 @@ mod tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new(acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID),
-                acp::PermissionOptionKind::RejectAlways,
+                acp_v2::PermissionOptionId::new(acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID),
+                acp_v2::PermissionOptionKind::RejectAlways,
             ))
             .unwrap();
         assert_eq!(authorize.await.unwrap(), SandboxFallbackDecision::Retry);
@@ -8942,8 +8950,8 @@ mod tests {
             authorization
                 .response
                 .send(acp_thread::SelectedPermissionOutcome::new(
-                    acp::PermissionOptionId::new(acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID),
-                    acp::PermissionOptionKind::RejectAlways,
+                    acp_v2::PermissionOptionId::new(acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID),
+                    acp_v2::PermissionOptionKind::RejectAlways,
                 ))
                 .unwrap();
             authorize.await.unwrap();
@@ -8976,8 +8984,8 @@ mod tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
-                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
+                acp_v2::PermissionOptionKind::AllowAlways,
             ))
             .unwrap();
         assert_eq!(
@@ -9009,8 +9017,8 @@ mod tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .unwrap();
         assert_eq!(authorize.await.unwrap(), SandboxFallbackDecision::Deny);
@@ -9041,16 +9049,17 @@ mod tests {
             &authorization.tool_call.tool_call_id.0,
             &event_stream.tool_call_id().0,
         ));
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
-                .expect("warning authorization should include sandbox details");
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization.tool_call.meta.value().cloned(),
+        )
+        .expect("warning authorization should include sandbox details");
         assert!(details.warn_windows_fs);
 
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
-                acp::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
+                acp_v2::PermissionOptionKind::AllowOnce,
             ))
             .unwrap();
         authorize.await.unwrap();
@@ -9060,28 +9069,28 @@ mod tests {
     fn test_auto_resolve_permission_outcome_uses_once_only_options() {
         let options = acp_thread::PermissionOptions::Dropdown(vec![
             acp_thread::PermissionOptionChoice {
-                allow: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("always_allow:test_tool"),
+                allow: acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("always_allow:test_tool"),
                     "Always allow",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
-                deny: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("always_deny:test_tool"),
+                deny: acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("always_deny:test_tool"),
                     "Always deny",
-                    acp::PermissionOptionKind::RejectAlways,
+                    acp_v2::PermissionOptionKind::RejectAlways,
                 ),
                 sub_patterns: vec![],
             },
             acp_thread::PermissionOptionChoice {
-                allow: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("allow"),
+                allow: acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("allow"),
                     "Allow once",
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
-                deny: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new("deny"),
+                deny: acp_v2::PermissionOption::new(
+                    acp_v2::PermissionOptionId::new("deny"),
                     "Deny once",
-                    acp::PermissionOptionKind::RejectOnce,
+                    acp_v2::PermissionOptionKind::RejectOnce,
                 ),
                 sub_patterns: vec![],
             },
@@ -9089,13 +9098,13 @@ mod tests {
 
         let allow = auto_resolve_permission_outcome(&options, true)
             .expect("allow auto-resolve should use once-only option");
-        assert_eq!(allow.option_id, acp::PermissionOptionId::new("allow"));
-        assert_eq!(allow.option_kind, acp::PermissionOptionKind::AllowOnce);
+        assert_eq!(allow.option_id, acp_v2::PermissionOptionId::new("allow"));
+        assert_eq!(allow.option_kind, acp_v2::PermissionOptionKind::AllowOnce);
 
         let deny = auto_resolve_permission_outcome(&options, false)
             .expect("deny auto-resolve should use once-only option");
-        assert_eq!(deny.option_id, acp::PermissionOptionId::new("deny"));
-        assert_eq!(deny.option_kind, acp::PermissionOptionKind::RejectOnce);
+        assert_eq!(deny.option_id, acp_v2::PermissionOptionId::new("deny"));
+        assert_eq!(deny.option_kind, acp_v2::PermissionOptionKind::RejectOnce);
     }
 
     #[test]
@@ -9301,19 +9310,23 @@ mod tests {
         let registered_tool_call_id = scoped_tool_call_id(0, &registered_tool_use_id).to_string();
         let missing_tool_call_id = scoped_tool_call_id(0, &missing_tool_use_id).to_string();
         let mut tool_names_by_id = HashMap::default();
+        let mut raw_inputs_by_id = HashMap::default();
         let mut content_by_id = HashMap::default();
         let mut statuses_by_id = HashMap::default();
         while let Some(event) = replay_events.next().await {
             let event = event.unwrap();
             match event {
-                ThreadEvent::ToolCall(tool_call) => {
-                    tool_names_by_id.insert(tool_call.tool_call_id.to_string(), tool_call.name);
-                }
-                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::NativeFields(update)) => {
-                    if let Some(content) = update.fields.content {
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::ProtocolFields(update)) => {
+                    if let MaybeUndefined::Value(name) = update.name {
+                        tool_names_by_id.insert(update.tool_call_id.to_string(), name);
+                    }
+                    if let MaybeUndefined::Value(input) = update.raw_input {
+                        raw_inputs_by_id.insert(update.tool_call_id.to_string(), input);
+                    }
+                    if let MaybeUndefined::Value(content) = update.content {
                         content_by_id.insert(update.tool_call_id.to_string(), content);
                     }
-                    if let Some(status) = update.fields.status {
+                    if let MaybeUndefined::Value(status) = update.status {
                         statuses_by_id.insert(update.tool_call_id.to_string(), status);
                     }
                 }
@@ -9343,15 +9356,23 @@ mod tests {
             );
         }
         assert_eq!(
+            raw_inputs_by_id.get(&registered_tool_call_id),
+            Some(&json!(null))
+        );
+        assert_eq!(
+            raw_inputs_by_id.get(&missing_tool_call_id),
+            Some(&json!({}))
+        );
+        assert_eq!(
             tool_names_by_id
                 .get(&registered_tool_call_id)
-                .and_then(Option::as_deref),
+                .map(String::as_str),
             Some(ReplayImageTool::NAME)
         );
         assert_eq!(
             tool_names_by_id
                 .get(&missing_tool_call_id)
-                .and_then(Option::as_deref),
+                .map(String::as_str),
             Some("missing_image_tool")
         );
     }

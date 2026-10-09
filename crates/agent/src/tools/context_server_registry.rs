@@ -1,5 +1,4 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
-use acp_thread::NativeToolCallUpdateFields;
 use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -456,7 +455,7 @@ impl AnyAgentTool for ContextServerTool {
             }
             if !tool_call_content.is_empty() {
                 event_stream
-                    .update_fields(NativeToolCallUpdateFields::new().content(tool_call_content));
+                    .update_fields(|update| update.content(tool_call_content));
             }
             let raw_output = serde_json::Value::String(concatenated_text);
             Ok(AgentToolOutput {

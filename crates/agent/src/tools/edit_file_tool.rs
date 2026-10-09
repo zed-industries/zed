@@ -7,9 +7,7 @@ use super::edit_session::{
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
-#[cfg(test)]
-use agent_client_protocol::schema::v1 as acp;
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
@@ -233,8 +231,8 @@ impl AgentTool for EditFileTool {
         true
     }
 
-    fn kind() -> acp_v2::ToolKind {
-        acp_v2::ToolKind::Edit
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Edit
     }
 
     fn initial_title(
@@ -289,6 +287,7 @@ impl AgentTool for EditFileTool {
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates, ToolInputSender};
+    use agent_client_protocol::schema::MaybeUndefined;
     use fs::Fs as _;
     use gpui::{AppContext as _, TestAppContext, UpdateGlobal};
     use language_model::LanguageModelRegistry;
@@ -654,7 +653,11 @@ mod tests {
 
         event_rx.expect_update_fields().await;
         let auth = event_rx.expect_authorization().await;
-        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        let title = auth
+            .tool_call
+            .title
+            .value()
+            .expect("expected authorization title");
         assert!(
             title.contains("agent skills"),
             "Authorization title should mention agent skills, got: {title}",
@@ -740,17 +743,17 @@ mod tests {
             use futures::StreamExt as _;
             while let Some(event) = receiver.next().await {
                 let Ok(crate::ThreadEvent::ToolCallUpdate(
-                    acp_thread::ToolCallUpdate::NativeFields(update),
+                    acp_thread::ToolCallUpdate::ProtocolFields(update),
                 )) = event
                 else {
                     continue;
                 };
-                let Some(content) = update.fields.content else {
+                let Some(content) = update.content.take() else {
                     continue;
                 };
                 for item in content {
-                    if let acp_v2::ToolCallContent::Content(content) = item
-                        && let acp_v2::ContentBlock::Text(text) = content.content
+                    if let acp::ToolCallContent::Content(content) = item
+                        && let acp::ContentBlock::Text(text) = content.content
                     {
                         return Some(text.text);
                     }
@@ -1493,8 +1496,8 @@ mod tests {
 
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
-            event.tool_call.fields.title,
-            Some("Edit `.zed/settings.json` (local settings)".into())
+            event.tool_call.title,
+            MaybeUndefined::Value("Edit `.zed/settings.json` (local settings)".into())
         );
 
         // Test 2: Path outside project should require confirmation
@@ -1504,8 +1507,8 @@ mod tests {
 
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
-            event.tool_call.fields.title,
-            Some("Edit `/etc/hosts`".into())
+            event.tool_call.title,
+            MaybeUndefined::Value("Edit `/etc/hosts`".into())
         );
 
         // Test 3: Relative path without .zed should not require confirmation
@@ -1522,8 +1525,8 @@ mod tests {
         });
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
-            event.tool_call.fields.title,
-            Some("Edit `root/.zed/tasks.json` (local settings)".into())
+            event.tool_call.title,
+            MaybeUndefined::Value("Edit `root/.zed/tasks.json` (local settings)".into())
         );
 
         // Test 5: When global default is allow, sensitive and outside-project
@@ -1540,8 +1543,8 @@ mod tests {
             .update(|cx| edit_tool.authorize(&PathBuf::from(".zed/settings.json"), &stream_tx, cx));
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
-            event.tool_call.fields.title,
-            Some("Edit `.zed/settings.json` (local settings)".into())
+            event.tool_call.title,
+            MaybeUndefined::Value("Edit `.zed/settings.json` (local settings)".into())
         );
 
         // 5.2: /etc/hosts is outside the project, but Allow auto-approves
@@ -1571,8 +1574,8 @@ mod tests {
 
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
-            event.tool_call.fields.title,
-            Some("Edit `/etc/hosts`".into())
+            event.tool_call.title,
+            MaybeUndefined::Value("Edit `/etc/hosts`".into())
         );
 
         // 5.5: .agents/skills is a sensitive path — still prompts. The
@@ -1589,8 +1592,10 @@ mod tests {
         });
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
-            event.tool_call.fields.title,
-            Some("Edit `root/.agents/skills/my-skill/SKILL.md` (agent skills)".into())
+            event.tool_call.title,
+            MaybeUndefined::Value(
+                "Edit `root/.agents/skills/my-skill/SKILL.md` (agent skills)".into()
+            )
         );
         // Skills always prompt, so no "Always allow" option is offered.
         assert!(
@@ -1617,9 +1622,8 @@ mod tests {
         assert!(
             event
                 .tool_call
-                .fields
                 .title
-                .as_deref()
+                .value()
                 .is_some_and(|title| title.ends_with("(agent skills)"))
         );
     }
@@ -1658,12 +1662,11 @@ mod tests {
         assert!(
             event
                 .tool_call
-                .fields
                 .title
-                .as_deref()
+                .value()
                 .is_some_and(|title| title.ends_with("(agent skills)")),
             "`..` traversal into .agents/skills must still prompt: {:?}",
-            event.tool_call.fields.title,
+            event.tool_call.title,
         );
     }
 
@@ -1697,12 +1700,11 @@ mod tests {
         assert!(
             event
                 .tool_call
-                .fields
                 .title
-                .as_deref()
+                .value()
                 .is_some_and(|title| title.ends_with("(local settings)")),
             "`..` traversal into .zed must still prompt: {:?}",
-            event.tool_call.fields.title,
+            event.tool_call.title,
         );
     }
 
@@ -1740,12 +1742,11 @@ mod tests {
         assert!(
             event
                 .tool_call
-                .fields
                 .title
-                .as_deref()
+                .value()
                 .is_some_and(|title| title.ends_with("(local settings)")),
             "Intra-project symlink to .zed must still prompt: {:?}",
-            event.tool_call.fields.title,
+            event.tool_call.title,
         );
     }
 
@@ -1783,12 +1784,11 @@ mod tests {
         assert!(
             event
                 .tool_call
-                .fields
                 .title
-                .as_deref()
+                .value()
                 .is_some_and(|title| title.ends_with("(agent skills)")),
             "Intra-project symlink to .agents/skills must still prompt: {:?}",
-            event.tool_call.fields.title,
+            event.tool_call.title,
         );
     }
 
@@ -1818,9 +1818,8 @@ mod tests {
         assert!(
             event
                 .tool_call
-                .fields
                 .title
-                .as_deref()
+                .value()
                 .is_some_and(|title| title.contains("points outside the project")),
             "Expected symlink escape authorization for create under external symlink"
         );
@@ -1875,7 +1874,11 @@ mod tests {
         });
 
         let auth = stream_rx.expect_authorization().await;
-        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        let title = auth
+            .tool_call
+            .title
+            .value()
+            .expect("expected authorization title");
         assert!(
             title.contains("points outside the project"),
             "title should mention symlink escape, got: {title}"
@@ -2549,13 +2552,16 @@ mod tests {
 
         let _update = stream_rx.expect_update_fields().await;
         let auth = stream_rx.expect_authorization().await;
-        let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
-        let acp_v2::ToolCallContent::Content(text) =
-            content.first().expect("expected message body")
+        let content = auth
+            .tool_call
+            .content
+            .value()
+            .expect("expected authorization content");
+        let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
         else {
             panic!("expected text body, got: {:?}", content.first());
         };
-        let acp_v2::ContentBlock::Text(text) = &text.content else {
+        let acp::ContentBlock::Text(text) = &text.content else {
             panic!("expected text body, got: {:?}", text.content);
         };
         assert!(

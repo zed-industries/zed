@@ -2348,7 +2348,7 @@ impl NativeAgentConnection {
                                 kind,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_native_tool_call_authorization(
+                                    thread.request_tool_call_update_authorization(
                                         tool_call, options, kind, cx,
                                     )
                                 })??;
@@ -2357,10 +2357,10 @@ impl NativeAgentConnection {
                                         acp_thread::RequestPermissionOutcome::Selected(outcome) => outcome,
                                         acp_thread::RequestPermissionOutcome::InterruptedByFollowUp => {
                                             acp_thread::SelectedPermissionOutcome::new(
-                                                acp_v1::PermissionOptionId::new(
+                                                acp_v2::PermissionOptionId::new(
                                                     FOLLOW_UP_PERMISSION_DENIED_OPTION_ID,
                                                 ),
-                                                acp_v1::PermissionOptionKind::RejectOnce,
+                                                acp_v2::PermissionOptionKind::RejectOnce,
                                             )
                                         }
                                         acp_thread::RequestPermissionOutcome::Cancelled => return,
@@ -2422,11 +2422,6 @@ impl NativeAgentConnection {
                                             .ok();
                                     }
                                 }
-                            }
-                            ThreadEvent::ToolCall(tool_call) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.upsert_native_tool_call(tool_call, cx)
-                                })??;
                             }
                             ThreadEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
@@ -4154,15 +4149,16 @@ mod internal_tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp_v1::PermissionOptionId::new("allow"),
-                acp_v1::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionId::new("allow"),
+                acp_v2::PermissionOptionKind::AllowOnce,
             ))
             .expect("authorization response should send");
 
         let update = receiver.expect_update_fields().await;
         let terminal_id = update
             .content
-            .iter()
+            .value()
+            .into_iter()
             .flatten()
             .find_map(|content| match content {
                 acp_v2::ToolCallContent::Terminal(terminal) => {

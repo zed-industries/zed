@@ -7,14 +7,13 @@ pub mod content;
 mod diff;
 pub mod elicitation;
 mod mention;
-mod native_tool_call;
 pub mod notices;
 pub mod prompt_capabilities;
 mod submission;
 mod terminal;
 pub use ::terminal::HeadlessTerminal;
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::schema::{IntoOption, MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
@@ -35,7 +34,6 @@ use language::{
 };
 use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
-pub use native_tool_call::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{
     AgentLocation, Project,
@@ -1026,26 +1024,6 @@ pub struct ToolCallLocation {
     pub meta: Option<acp_v2::Meta>,
 }
 
-impl ToolCallLocation {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            line: None,
-            meta: None,
-        }
-    }
-
-    pub fn line(mut self, line: impl IntoOption<u32>) -> Self {
-        self.line = line.into_option();
-        self
-    }
-
-    pub fn meta(mut self, meta: impl IntoOption<acp_v2::Meta>) -> Self {
-        self.meta = meta.into_option();
-        self
-    }
-}
-
 impl PartialEq for ToolCallLocation {
     fn eq(&self, other: &Self) -> bool {
         // Path equality compares components, hiding changes to the raw spelling.
@@ -1171,7 +1149,7 @@ struct ToolCallPatch {
 
 enum ToolContentPatch {
     Legacy(Vec<acp_v1::ToolCallContent>),
-    Native(Vec<acp_v2::ToolCallContent>),
+    ClientManaged(Vec<acp_v2::ToolCallContent>),
     Protocol(Vec<acp_v2::ToolCallContent>),
 }
 
@@ -1183,8 +1161,8 @@ impl ToolContentPatch {
     ) -> Result<Vec<PreparedToolCallContent>> {
         match self {
             Self::Legacy(content) => PreparedToolCallContent::prepare(content, terminals),
-            Self::Native(content) => {
-                PreparedToolCallContent::prepare_native(content, terminals, cx)
+            Self::ClientManaged(content) => {
+                PreparedToolCallContent::prepare_client_managed(content, terminals, cx)
             }
             Self::Protocol(content) => PreparedToolCallContent::prepare_v2(content, terminals),
         }
@@ -1227,18 +1205,12 @@ fn tool_status_from_v1(status: acp_v1::ToolCallStatus) -> Option<acp_v2::ToolCal
 }
 
 impl ToolCallPatch {
-    fn native(update: NativeToolCallUpdate) -> Self {
-        let fields = update.fields;
+    fn client_managed(mut update: acp_v2::ToolCallUpdate) -> Self {
+        let content =
+            std::mem::take(&mut update.content).map_value(ToolContentPatch::ClientManaged);
         Self {
-            title: legacy_tool_field(fields.title),
-            name: legacy_tool_field(fields.name),
-            kind: legacy_tool_field(fields.kind),
-            status: legacy_tool_field(fields.status),
-            content: legacy_tool_field(fields.content.map(ToolContentPatch::Native)),
-            locations: legacy_tool_field(fields.locations),
-            raw_input: legacy_tool_field(fields.raw_input),
-            raw_output: legacy_tool_field(fields.raw_output),
-            meta: ToolMetadataPatch::Legacy(update.meta),
+            content,
+            ..Self::protocol(update)
         }
     }
 
@@ -1391,7 +1363,7 @@ impl ToolCall {
             .unwrap_or(ToolCallStatus::Pending)
     }
 
-    fn permission_status(&self) -> Option<acp_v1::ToolCallStatus> {
+    fn permission_status(&self) -> Option<acp_v2::ToolCallStatus> {
         self.local_status
             .or_else(|| ToolCallStatus::from_reported(self.reported_status.as_ref()))
             .and_then(|status| status.as_acp_status())
@@ -1559,15 +1531,16 @@ impl ToolCall {
 
         if !title.is_undefined() {
             self.title = title.take().map(SharedString::from);
-            if legacy_terminal_labels
-                && self.kind() == &acp_v2::ToolKind::Execute
+            if self.kind() == &acp_v2::ToolKind::Execute
                 && let Some(title) = self.effective_title()
             {
                 // A missing tool title must not overwrite an actual terminal command.
                 for terminal in self.terminals() {
-                    terminal.update(cx, |terminal, cx| {
-                        terminal.update_command_label(title, cx);
-                    });
+                    if legacy_terminal_labels || terminal.read(cx).is_process_backed() {
+                        terminal.update(cx, |terminal, cx| {
+                            terminal.update_command_label(title, cx);
+                        });
+                    }
                 }
             }
         }
@@ -1837,15 +1810,15 @@ pub enum SelectedPermissionParams {
 
 #[derive(Debug, Clone)]
 pub struct SelectedPermissionOutcome {
-    pub option_id: acp_v1::PermissionOptionId,
-    pub option_kind: acp_v1::PermissionOptionKind,
+    pub option_id: acp_v2::PermissionOptionId,
+    pub option_kind: acp_v2::PermissionOptionKind,
     pub params: Option<SelectedPermissionParams>,
 }
 
 impl SelectedPermissionOutcome {
     pub fn new(
-        option_id: acp_v1::PermissionOptionId,
-        option_kind: acp_v1::PermissionOptionKind,
+        option_id: acp_v2::PermissionOptionId,
+        option_kind: acp_v2::PermissionOptionKind,
     ) -> Self {
         Self {
             option_id,
@@ -1860,27 +1833,11 @@ impl SelectedPermissionOutcome {
     }
 }
 
-impl From<SelectedPermissionOutcome> for acp_v1::SelectedPermissionOutcome {
-    fn from(value: SelectedPermissionOutcome) -> Self {
-        Self::new(value.option_id)
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum RequestPermissionOutcome {
     Cancelled,
     InterruptedByFollowUp,
     Selected(SelectedPermissionOutcome),
-}
-
-impl From<RequestPermissionOutcome> for acp_v1::RequestPermissionOutcome {
-    fn from(value: RequestPermissionOutcome) -> Self {
-        match value {
-            RequestPermissionOutcome::Cancelled
-            | RequestPermissionOutcome::InterruptedByFollowUp => Self::Cancelled,
-            RequestPermissionOutcome::Selected(outcome) => Self::Selected(outcome.into()),
-        }
-    }
 }
 
 /// What a `WaitingForConfirmation` prompt represents semantically.
@@ -1936,20 +1893,21 @@ impl ToolCallStatus {
         }
     }
 
-    fn as_acp_status(&self) -> Option<acp_v1::ToolCallStatus> {
+    fn as_acp_status(&self) -> Option<acp_v2::ToolCallStatus> {
         match self {
-            ToolCallStatus::Pending => Some(acp_v1::ToolCallStatus::Pending),
-            ToolCallStatus::InProgress => Some(acp_v1::ToolCallStatus::InProgress),
-            ToolCallStatus::Completed => Some(acp_v1::ToolCallStatus::Completed),
-            ToolCallStatus::Failed => Some(acp_v1::ToolCallStatus::Failed),
-            ToolCallStatus::WaitingForConfirmation
-            | ToolCallStatus::Rejected
-            | ToolCallStatus::Canceled => None,
+            ToolCallStatus::Pending => Some(acp_v2::ToolCallStatus::Pending),
+            ToolCallStatus::InProgress => Some(acp_v2::ToolCallStatus::InProgress),
+            ToolCallStatus::Completed => Some(acp_v2::ToolCallStatus::Completed),
+            ToolCallStatus::Failed => Some(acp_v2::ToolCallStatus::Failed),
+            // A new authorization can retry a locally canceled tool; the
+            // incoming request then supplies its continuation status.
+            ToolCallStatus::Canceled => None,
+            ToolCallStatus::WaitingForConfirmation | ToolCallStatus::Rejected => None,
         }
     }
 
-    fn status_after_permission_grant(status: acp_v1::ToolCallStatus) -> ToolCallStatus {
-        match ToolCallStatus::from(status) {
+    fn status_after_permission_grant(status: acp_v2::ToolCallStatus) -> ToolCallStatus {
+        match Self::from_reported(Some(&status)).unwrap_or(Self::Pending) {
             ToolCallStatus::Pending => ToolCallStatus::InProgress,
             status => status,
         }
@@ -3052,7 +3010,7 @@ impl PreparedToolCallContent {
             .collect()
     }
 
-    fn prepare_native(
+    fn prepare_client_managed(
         content: Vec<acp_v2::ToolCallContent>,
         terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
         cx: &App,
@@ -3064,7 +3022,7 @@ impl PreparedToolCallContent {
                 // whether the renderer still has an active PTY.
                 anyhow::ensure!(
                     terminal.read(cx).is_process_backed(),
-                    "Native tool content cannot reference an agent-owned display terminal"
+                    "Client-managed tool content cannot reference an agent-owned display terminal"
                 );
             }
         }
@@ -3235,7 +3193,7 @@ impl ToolCallContent {
 
 #[derive(Debug, PartialEq)]
 pub enum ToolCallUpdate {
-    NativeFields(NativeToolCallUpdate),
+    ProtocolFields(acp_v2::ToolCallUpdate),
     UpdateFields(acp_v1::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
@@ -3244,7 +3202,7 @@ pub enum ToolCallUpdate {
 impl ToolCallUpdate {
     fn id(&self) -> acp_v2::ToolCallId {
         match self {
-            Self::NativeFields(update) => update.tool_call_id.clone(),
+            Self::ProtocolFields(update) => update.tool_call_id.clone(),
             Self::UpdateFields(update) => acp_v2::ToolCallId::new(update.tool_call_id.0.clone()),
             Self::UpdateDiff(diff) => diff.id.clone(),
             Self::UpdateTerminal(terminal) => terminal.id.clone(),
@@ -3252,9 +3210,9 @@ impl ToolCallUpdate {
     }
 }
 
-impl From<NativeToolCallUpdate> for ToolCallUpdate {
-    fn from(update: NativeToolCallUpdate) -> Self {
-        Self::NativeFields(update)
+impl From<acp_v2::ToolCallUpdate> for ToolCallUpdate {
+    fn from(update: acp_v2::ToolCallUpdate) -> Self {
+        Self::ProtocolFields(update)
     }
 }
 
@@ -5349,7 +5307,12 @@ impl AcpThread {
         update: impl Into<ToolCallUpdate>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let update = update.into();
+        let update = match update.into() {
+            ToolCallUpdate::ProtocolFields(update) => {
+                return self.upsert_tool_call_update(update, cx);
+            }
+            update => update,
+        };
         let languages = self.project.read(cx).languages().clone();
 
         let id = update.id();
@@ -5376,7 +5339,7 @@ impl AcpThread {
         };
 
         let patch = match update {
-            ToolCallUpdate::NativeFields(update) => Some(ToolCallPatch::native(update)),
+            ToolCallUpdate::ProtocolFields(_) => unreachable!(),
             ToolCallUpdate::UpdateFields(update) => {
                 Some(ToolCallPatch::legacy(update.fields, update.meta))
             }
@@ -5430,24 +5393,6 @@ impl AcpThread {
             self.report_tool_call_completed(status);
         }
         self.upsert_tool_call_inner(tool_call.into(), status, cx)
-    }
-
-    pub fn upsert_native_tool_call(
-        &mut self,
-        tool_call: NativeToolCall,
-        cx: &mut Context<Self>,
-    ) -> Result<()> {
-        let status = ToolCallStatus::from_reported(Some(&tool_call.status));
-        if let Some(status) = status {
-            self.report_tool_call_completed(status);
-        }
-        let id = tool_call.tool_call_id.clone();
-        self.upsert_legacy_behavior_tool_call(
-            id,
-            ToolCallPatch::native(tool_call.into()),
-            status,
-            cx,
-        )
     }
 
     fn report_tool_call_completed(&self, status: ToolCallStatus) {
@@ -5550,6 +5495,27 @@ impl AcpThread {
         }
         let id = update.tool_call_id.clone();
         let patch = ToolCallPatch::protocol(update);
+        self.upsert_tool_call_patch_inner(id, patch, cx)
+    }
+
+    /// In-process updates may reference registered client-managed terminals, but
+    /// must not create or take ownership of agent-reported display terminals.
+    pub fn upsert_tool_call_update(
+        &mut self,
+        update: acp_v2::ToolCallUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let id = update.tool_call_id.clone();
+        let patch = ToolCallPatch::client_managed(update);
+        self.upsert_tool_call_patch_inner(id, patch, cx)
+    }
+
+    fn upsert_tool_call_patch_inner(
+        &mut self,
+        id: acp_v2::ToolCallId,
+        patch: ToolCallPatch,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         let locations_changed = !patch.locations.is_undefined();
         if let Some(status) = ToolCallStatus::from_reported(patch.status.value()) {
             self.report_tool_call_completed(status);
@@ -5874,8 +5840,7 @@ impl AcpThread {
         let current_status = self
             .tool_call(&tool_call_id)
             .and_then(|(_, tool_call)| tool_call.permission_status())
-            .or(tool_call.fields.status)
-            .and_then(tool_status_from_v1);
+            .or_else(|| tool_call.fields.status.and_then(tool_status_from_v1));
         let current_status = ToolCallStatus::from_reported(current_status.as_ref())
             .unwrap_or(ToolCallStatus::Pending);
 
@@ -5883,45 +5848,36 @@ impl AcpThread {
         self.install_tool_call_authorization(tool_call_id, options, kind, cx)
     }
 
-    pub fn request_native_tool_call_authorization(
+    pub fn request_tool_call_update_authorization(
         &mut self,
-        tool_call: NativeToolCallUpdate,
+        tool_call: acp_v2::ToolCallUpdate,
         options: PermissionOptions,
         kind: AuthorizationKind,
         cx: &mut Context<Self>,
     ) -> Result<Task<RequestPermissionOutcome>> {
-        self.request_native_tool_call_authorization_with_id(tool_call, options, kind, cx)
+        self.request_tool_call_update_authorization_with_id(tool_call, options, kind, cx)
             .map(|(_, task)| task)
     }
 
-    pub fn request_native_tool_call_authorization_with_id(
+    pub fn request_tool_call_update_authorization_with_id(
         &mut self,
-        mut tool_call: NativeToolCallUpdate,
+        tool_call: acp_v2::ToolCallUpdate,
         options: PermissionOptions,
         kind: AuthorizationKind,
         cx: &mut Context<Self>,
     ) -> Result<(PermissionRequestId, Task<RequestPermissionOutcome>)> {
         let tool_call_id = tool_call.tool_call_id.clone();
-        if self.index_for_tool_call(&tool_call_id).is_none() {
-            tool_call.fields.kind.get_or_insert(acp_v2::ToolKind::Other);
-            tool_call
-                .fields
-                .status
-                .get_or_insert(acp_v2::ToolCallStatus::Pending);
-        }
         let current_status = self
             .tool_call(&tool_call_id)
             .and_then(|(_, call)| call.permission_status())
-            .and_then(tool_status_from_v1)
-            .or_else(|| tool_call.fields.status.clone());
+            .or_else(|| tool_call.status.value().cloned());
         let current_status = ToolCallStatus::from_reported(current_status.as_ref())
             .unwrap_or(ToolCallStatus::Pending);
-        self.upsert_legacy_behavior_tool_call(
-            tool_call_id.clone(),
-            ToolCallPatch::native(tool_call),
-            Some(current_status),
-            cx,
-        )?;
+        self.upsert_tool_call_update(tool_call, cx)?;
+        let (_, call) = self
+            .tool_call_mut(&tool_call_id)
+            .context("tool call disappeared while requesting authorization")?;
+        call.set_local_status(current_status);
         self.install_tool_call_authorization(tool_call_id, options, kind, cx)
     }
 
@@ -6042,7 +5998,7 @@ impl AcpThread {
             log::debug!("Permission choice is not an offered option");
             return;
         };
-        outcome.option_kind = option.kind;
+        outcome.option_kind = option.kind.clone();
         let tool_call_id = tool_call_id.clone();
         let kind = *kind;
         let Some((_, call)) = self.tool_call_mut(&tool_call_id) else {
@@ -6057,9 +6013,18 @@ impl AcpThread {
             AuthorizationKind::PermissionGrant => {
                 let current_status = call.permission_status().unwrap_or_default();
                 match outcome.option_kind {
-                    acp_v1::PermissionOptionKind::RejectOnce
-                    | acp_v1::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
-                    _ => ToolCallStatus::status_after_permission_grant(current_status),
+                    acp_v2::PermissionOptionKind::RejectOnce
+                    | acp_v2::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
+                    acp_v2::PermissionOptionKind::AllowOnce
+                    | acp_v2::PermissionOptionKind::AllowAlways => {
+                        ToolCallStatus::status_after_permission_grant(current_status)
+                    }
+                    _ => {
+                        log::warn!(
+                            "Cannot authorize a tool with an unknown permission option kind"
+                        );
+                        return;
+                    }
                 }
             }
         };
@@ -10511,8 +10476,9 @@ mod tests {
             assert!(terminal.read(cx).is_process_backed());
             let tool_id = acp_v2::ToolCallId::new("native-process-tool");
             thread
-                .upsert_native_tool_call(
-                    NativeToolCall::new(tool_id.clone(), "Native process")
+                .upsert_tool_call_update(
+                    acp_v2::ToolCallUpdate::new(tool_id.clone())
+                        .title("Native process")
                         .kind(acp_v2::ToolKind::Execute)
                         .content(vec![acp_v2::ToolCallContent::Terminal(
                             acp_v2::Terminal::new(acp_v2::TerminalId::new(terminal_id.0.clone())),
@@ -10523,6 +10489,16 @@ mod tests {
             let (_, call) = thread.tool_call(&tool_id).expect("native tool");
             assert_eq!(call.terminals().next(), Some(&terminal));
             assert_eq!(thread.terminals.len(), 1);
+            thread
+                .update_tool_call(
+                    acp_v2::ToolCallUpdate::new(tool_id).title("Updated native command"),
+                    cx,
+                )
+                .expect("v2 title update changes the client-managed command label");
+            assert_eq!(
+                terminal.read(cx).command().read(cx).source().as_ref(),
+                "```\nUpdated native command\n```"
+            );
         });
 
         // Poll until the printf command produces output, rather than using a
@@ -11236,8 +11212,8 @@ mod tests {
             thread.authorize_tool_call(
                 tool_call_id,
                 SelectedPermissionOutcome::new(
-                    acp_v1::PermissionOptionId::new("allow"),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionId::new("allow"),
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -13415,9 +13391,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_native_tool_fields_preserve_omissions_and_creation_defaults(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_native_tool_updates_follow_v2_patch_semantics(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
         thread.update(cx, |thread, cx| {
@@ -13429,16 +13403,16 @@ mod tests {
                     json!({"session_id": "child", "message_start_index": 0}),
                 ),
             ]);
-            let location =
-                ToolCallLocation::new("src//./../file.rs")
-                    .line(7)
-                    .meta(acp_v2::Meta::from_iter([(
-                        "item".into(),
-                        json!({"keep": true}),
-                    )]));
+            let location = acp_v2::ToolCallLocation::new(PathBuf::from("src//./../file.rs"))
+                .line(7)
+                .meta(acp_v2::Meta::from_iter([(
+                    "item".into(),
+                    json!({"keep": true}),
+                )]));
             thread
-                .upsert_native_tool_call(
-                    NativeToolCall::new(id.clone(), "Native tool")
+                .upsert_tool_call_update(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Native tool")
                         .name("native_name")
                         .kind(acp_v2::ToolKind::Read)
                         .status(acp_v2::ToolCallStatus::InProgress)
@@ -13450,21 +13424,11 @@ mod tests {
                     cx,
                 )
                 .expect("native creation");
+            let omitted = acp_v2::ToolCallUpdate::new(id.clone());
+            assert_eq!(omitted.raw_input, MaybeUndefined::Undefined);
+            assert_eq!(omitted.raw_output, MaybeUndefined::Undefined);
             thread
-                .update_tool_call(
-                    NativeToolCallUpdate::new(
-                        id.clone(),
-                        NativeToolCallUpdateFields::new()
-                            .title(None::<String>)
-                            .name(None::<String>)
-                            .content(None)
-                            .locations(None)
-                            .raw_input(None)
-                            .raw_output(None),
-                    )
-                    .meta(None),
-                    cx,
-                )
+                .update_tool_call(omitted, cx)
                 .expect("omitted fields preserve native state");
             let (_, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.title.as_deref(), Some("Native tool"));
@@ -13475,63 +13439,101 @@ mod tests {
                 Some(acp_v2::ToolCallStatus::InProgress)
             );
             assert_eq!(call.structured_content.len(), 1);
-            assert_eq!(call.locations, vec![location]);
+            assert_eq!(call.locations, vec![ToolCallLocation::from(location)]);
             assert_eq!(
                 call.locations.first().expect("location").path.as_os_str(),
                 "src//./../file.rs"
             );
             assert_eq!(call.raw_input, Some(json!({"input": true})));
             assert_eq!(call.raw_output, Some(json!({"output": true})));
-            assert_eq!(call.meta, Some(meta));
+            assert_eq!(call.meta, Some(meta.clone()));
             assert!(call.subagent_session_info.is_some());
 
+            let json_null = acp_v2::ToolCallUpdate::new(id.clone())
+                .raw_input(json!(null))
+                .raw_output(json!(null));
+            assert_eq!(json_null.raw_input, MaybeUndefined::Value(json!(null)));
+            assert_eq!(json_null.raw_output, MaybeUndefined::Value(json!(null)));
+            thread
+                .update_tool_call(json_null, cx)
+                .expect("JSON null remains data in a typed update");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.raw_input, Some(json!(null)));
+            assert_eq!(call.raw_output, Some(json!(null)));
+
+            let replacement_meta =
+                acp_v2::Meta::from_iter([(TOOL_NAME_META_KEY.into(), json!("replacement_name"))]);
             thread
                 .update_tool_call(
-                    NativeToolCallUpdate::new(
-                        id.clone(),
-                        NativeToolCallUpdateFields::new()
-                            .content(Vec::new())
-                            .locations(Vec::new())
-                            .raw_input(serde_json::Value::Null)
-                            .raw_output(serde_json::Value::Null),
-                    )
-                    .meta(acp_v2::Meta::new()),
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .name(MaybeUndefined::Null)
+                        .meta(replacement_meta.clone()),
                     cx,
                 )
-                .expect("empty collections clear, JSON null remains data");
+                .expect("metadata replaces derived hints instead of keeping them sticky");
             let (_, call) = thread.tool_call(&id).expect("tool");
-            assert!(call.structured_content.is_empty());
-            assert!(call.locations.is_empty());
-            assert_eq!(call.raw_input, Some(serde_json::Value::Null));
-            assert_eq!(call.raw_output, Some(serde_json::Value::Null));
-            assert!(call.subagent_session_info.is_some());
-            assert_eq!(call.tool_name.as_deref(), Some("native_name"));
+            assert!(call.name.is_none());
+            assert_eq!(call.tool_name.as_deref(), Some("replacement_name"));
+            assert_eq!(call.meta, Some(replacement_meta));
+            assert!(call.subagent_session_info.is_none());
             thread
-                .upsert_native_tool_call(NativeToolCall::new(id.clone(), "Defaults"), cx)
-                .expect("creation defaults are explicit on an existing tool");
+                .update_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone()).meta(acp_v2::Meta::new()),
+                    cx,
+                )
+                .expect("empty metadata removes derived tool name");
             let (_, call) = thread.tool_call(&id).expect("tool");
-            assert_eq!(call.reported_kind, Some(acp_v2::ToolKind::Other));
-            assert_eq!(call.reported_status, Some(acp_v2::ToolCallStatus::Pending));
-            assert_eq!(call.status(), ToolCallStatus::Pending);
+            assert_eq!(call.meta, Some(acp_v2::Meta::new()));
+            assert!(call.tool_name.is_none());
+            thread
+                .update_tool_call(acp_v2::ToolCallUpdate::new(id.clone()).meta(meta), cx)
+                .expect("restore metadata before explicitly clearing it");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.tool_name.as_deref(), Some("native_name"));
+            assert!(call.subagent_session_info.is_some());
+
+            let clear = acp_v2::ToolCallUpdate::new(id.clone())
+                .title(MaybeUndefined::Null)
+                .kind(MaybeUndefined::Null)
+                .status(MaybeUndefined::Null)
+                .content(MaybeUndefined::Null)
+                .locations(MaybeUndefined::Null)
+                .raw_input(None)
+                .raw_output(None)
+                .meta(MaybeUndefined::Null);
+            assert_eq!(clear.raw_input, MaybeUndefined::Null);
+            assert_eq!(clear.raw_output, MaybeUndefined::Null);
+            thread
+                .update_tool_call(clear, cx)
+                .expect("explicit null clears reported fields");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert!(call.title.is_none());
+            assert!(call.name.is_none());
             assert!(call.structured_content.is_empty());
             assert!(call.locations.is_empty());
-            assert_eq!(call.raw_input, Some(serde_json::Value::Null));
-            assert_eq!(call.raw_output, Some(serde_json::Value::Null));
-            assert_eq!(call.name.as_deref(), Some("native_name"));
+            assert!(call.raw_input.is_none());
+            assert!(call.raw_output.is_none());
+            assert!(call.meta.is_none());
+            assert!(call.subagent_session_info.is_none());
+            assert!(call.tool_name.is_none());
+            assert_eq!(call.reported_kind, None);
+            assert_eq!(call.reported_status, None);
+            assert_eq!(call.kind(), &acp_v2::ToolKind::Other);
+            assert_eq!(call.status(), ToolCallStatus::Pending);
+            assert_eq!(call.label.read(cx).source(), "Tool call");
 
             let missing_id = acp_v2::ToolCallId::new("missing-native");
             thread
-                .update_tool_call(
-                    NativeToolCallUpdate::new(
-                        missing_id.clone(),
-                        NativeToolCallUpdateFields::new().title("Not an upsert"),
-                    ),
-                    cx,
-                )
-                .expect("unknown update creates the existing failed placeholder");
-            let (_, missing) = thread.tool_call(&missing_id).expect("placeholder");
-            assert_eq!(missing.status(), ToolCallStatus::Failed);
-            assert_eq!(missing.title.as_deref(), Some("Tool call not found"));
+                .update_tool_call(acp_v2::ToolCallUpdate::new(missing_id.clone()), cx)
+                .expect("unknown v2 update upserts without a title");
+            let (_, missing) = thread.tool_call(&missing_id).expect("new tool");
+            assert_eq!(missing.title, None);
+            assert_eq!(missing.reported_kind, None);
+            assert_eq!(missing.reported_status, None);
+            assert_eq!(missing.kind(), &acp_v2::ToolKind::Other);
+            assert_eq!(missing.status(), ToolCallStatus::Pending);
+            assert_eq!(missing.label.read(cx).source(), "Tool call");
+            assert_eq!(thread.entries().len(), 2);
         });
     }
 
@@ -13541,27 +13543,29 @@ mod tests {
     ) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
-        let lower = cx.new(|cx| {
-            ::terminal::TerminalBuilder::new_display_only(
-                ::terminal::terminal_settings::CursorShape::default(),
-                ::terminal::terminal_settings::AlternateScroll::On,
-                None,
-                0,
-                cx.background_executor(),
-                PathStyle::local(),
-            )
-            .subscribe(cx)
+        cx.executor().allow_parking();
+        cx.update(|cx| cx.set_global(::terminal::HeadlessTerminal(true)));
+        let terminal = thread
+            .update(cx, |thread, cx| {
+                thread.create_terminal(
+                    "echo native-output".into(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    None,
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("real client process");
+        let terminal_id = terminal.read_with(cx, |terminal, _| terminal.id().clone());
+        let lower = terminal.read_with(cx, |terminal, _| terminal.inner().clone());
+        let process_exit = terminal.read_with(cx, |terminal, _| {
+            assert!(terminal.is_process_backed());
+            terminal.wait_for_exit().expect("client process exit")
         });
         thread.update(cx, |thread, cx| {
-            let terminal_id = acp_v1::TerminalId::new("native-process");
-            let terminal = thread.register_terminal_created(
-                terminal_id,
-                "native command".into(),
-                None,
-                None,
-                lower.clone(),
-                cx,
-            );
             assert!(terminal.read(cx).is_process_backed());
             let inner_meta = acp_v2::Meta::from_iter([("inner".into(), json!({"all": [1, 2]}))]);
             let item_meta = acp_v2::Meta::from_iter([("item".into(), json!({"keep": true}))]);
@@ -13609,23 +13613,20 @@ mod tests {
             let diff = acp_v2::Diff::patch("native patch", Vec::new()).meta(item_meta.clone());
             content.push(acp_v2::ToolCallContent::Diff(diff.clone()));
             content.push(acp_v2::ToolCallContent::Terminal(
-                acp_v2::Terminal::new("native-process").meta(item_meta.clone()),
+                acp_v2::Terminal::new(acp_v2::TerminalId::new(terminal_id.0.clone()))
+                    .meta(item_meta.clone()),
             ));
             let id = acp_v2::ToolCallId::new("native-content");
             thread
-                .upsert_native_tool_call(
-                    NativeToolCall::new(id.clone(), "Native tool").content(content.clone()),
+                .upsert_tool_call_update(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Native tool")
+                        .content(content.clone()),
                     cx,
                 )
                 .expect("all native payloads prepare through v2 conversion");
             thread
-                .update_tool_call(
-                    NativeToolCallUpdate::new(
-                        id.clone(),
-                        NativeToolCallUpdateFields::new().content(content),
-                    ),
-                    cx,
-                )
+                .update_tool_call(acp_v2::ToolCallUpdate::new(id.clone()).content(content), cx)
                 .expect("native content update uses the same conversion");
             let (_, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.structured_content.len(), blocks.len() + 2);
@@ -13658,8 +13659,9 @@ mod tests {
             let missing = acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("missing"));
             assert!(
                 thread
-                    .upsert_native_tool_call(
-                        NativeToolCall::new("missing-content", "Missing")
+                    .upsert_tool_call_update(
+                        acp_v2::ToolCallUpdate::new("missing-content")
+                            .title("Missing")
                             .content(vec![missing.clone()]),
                         cx,
                     )
@@ -13669,12 +13671,9 @@ mod tests {
             assert!(
                 thread
                     .update_tool_call(
-                        NativeToolCallUpdate::new(
-                            id.clone(),
-                            NativeToolCallUpdateFields::new()
-                                .title("Must not mutate")
-                                .content(vec![missing]),
-                        ),
+                        acp_v2::ToolCallUpdate::new(id.clone())
+                            .title("Must not mutate")
+                            .content(vec![missing]),
                         cx,
                     )
                     .is_err()
@@ -13695,8 +13694,9 @@ mod tests {
             let display = acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("agent-display"));
             assert!(
                 thread
-                    .upsert_native_tool_call(
-                        NativeToolCall::new("display-create", "Must not create")
+                    .upsert_tool_call_update(
+                        acp_v2::ToolCallUpdate::new("display-create")
+                            .title("Must not create")
                             .content(vec![display.clone()]),
                         cx,
                     )
@@ -13706,29 +13706,23 @@ mod tests {
             assert!(
                 thread
                     .update_tool_call(
-                        NativeToolCallUpdate::new(
-                            id.clone(),
-                            NativeToolCallUpdateFields::new()
-                                .title("Must not mutate")
-                                .content(vec![display.clone()]),
-                        ),
+                        acp_v2::ToolCallUpdate::new(id.clone())
+                            .title("Must not mutate")
+                            .content(vec![display.clone()]),
                         cx,
                     )
                     .is_err()
             );
             assert!(
                 thread
-                    .request_native_tool_call_authorization(
-                        NativeToolCallUpdate::new(
-                            id.clone(),
-                            NativeToolCallUpdateFields::new()
-                                .title("Must not authorize")
-                                .content(vec![display]),
-                        ),
-                        PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                    .request_tool_call_update_authorization(
+                        acp_v2::ToolCallUpdate::new(id.clone())
+                            .title("Must not authorize")
+                            .content(vec![display]),
+                        PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                             "allow",
                             "Allow",
-                            acp_v1::PermissionOptionKind::AllowOnce,
+                            acp_v2::PermissionOptionKind::AllowOnce,
                         )]),
                         AuthorizationKind::PermissionGrant,
                         cx,
@@ -13742,6 +13736,12 @@ mod tests {
             assert!(thread.pending_permission_requests().next().is_none());
             assert_eq!(thread.terminals.len(), 2);
         });
+        process_exit.await;
+        terminal.read_with(cx, |terminal, _| {
+            let output = terminal.output().expect("completed client process");
+            assert!(output.content.contains("native-output"));
+            assert_eq!(output.exit_status.exit_code, Some(0));
+        });
     }
 
     #[gpui::test]
@@ -13753,22 +13753,23 @@ mod tests {
         let id = acp_v2::ToolCallId::new("native-permission");
         thread.update(cx, |thread, cx| {
             thread
-                .upsert_native_tool_call(
-                    NativeToolCall::new(id.clone(), "Native tool")
+                .upsert_tool_call_update(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Native tool")
                         .status(acp_v2::ToolCallStatus::InProgress),
                     cx,
                 )
                 .expect("native tool");
         });
-        let options = PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+        let options = PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
             "allow",
             "Allow",
-            acp_v1::PermissionOptionKind::AllowOnce,
+            acp_v2::PermissionOptionKind::AllowOnce,
         )]);
         let (old_owner, old_response) = thread
             .update(cx, |thread, cx| {
-                thread.request_native_tool_call_authorization_with_id(
-                    NativeToolCallUpdate::new(id.clone(), NativeToolCallUpdateFields::new()),
+                thread.request_tool_call_update_authorization_with_id(
+                    acp_v2::ToolCallUpdate::new(id.clone()),
                     options.clone(),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -13777,11 +13778,9 @@ mod tests {
             .expect("first request");
         let (new_owner, response) = thread
             .update(cx, |thread, cx| {
-                thread.request_native_tool_call_authorization_with_id(
-                    NativeToolCallUpdate::new(
-                        id.clone(),
-                        NativeToolCallUpdateFields::new().status(acp_v2::ToolCallStatus::Completed),
-                    ),
+                thread.request_tool_call_update_authorization_with_id(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .status(acp_v2::ToolCallStatus::Completed),
                     options,
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -13804,14 +13803,14 @@ mod tests {
             );
             assert_eq!(
                 call.permission_status(),
-                Some(acp_v1::ToolCallStatus::InProgress)
+                Some(acp_v2::ToolCallStatus::InProgress)
             );
             thread.cancel_permission_request(old_owner, cx);
             thread.authorize_permission_request(
                 old_owner,
                 SelectedPermissionOutcome::new(
                     "allow".into(),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -13823,7 +13822,7 @@ mod tests {
                 new_owner,
                 SelectedPermissionOutcome::new(
                     "allow".into(),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -13834,6 +13833,8 @@ mod tests {
                 Some(acp_v2::ToolCallStatus::Completed)
             );
             assert!(call.authorization_id().is_none());
+            assert!(thread.permission_request(new_owner).is_none());
+            assert!(thread.pending_permission_requests().next().is_none());
         });
         assert!(matches!(
             response.await,
@@ -13846,28 +13847,32 @@ mod tests {
         init_test(cx);
         let thread = new_test_thread(cx).await;
         let id = acp_v2::ToolCallId::new("native-permission");
-        let options = PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+        let options = PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
             "allow",
             "Allow",
-            acp_v1::PermissionOptionKind::AllowOnce,
+            acp_v2::PermissionOptionKind::AllowOnce,
         )]);
         let (owner, response) = thread
             .update(cx, |thread, cx| {
-                thread.request_native_tool_call_authorization_with_id(
-                    NativeToolCallUpdate::new(
-                        id.clone(),
-                        NativeToolCallUpdateFields::new().title("Native tool"),
-                    ),
+                thread.request_tool_call_update_authorization_with_id(
+                    acp_v2::ToolCallUpdate::new(id.clone()),
                     options.clone(),
                     AuthorizationKind::PermissionGrant,
                     cx,
                 )
             })
-            .expect("request creates native tool with creation defaults");
+            .expect("ID-only request creates native tool with client fallback defaults");
         thread.update(cx, |thread, cx| {
             let (_, call) = thread.tool_call(&id).expect("tool");
-            assert_eq!(call.reported_kind, Some(acp_v2::ToolKind::Other));
-            assert_eq!(call.reported_status, Some(acp_v2::ToolCallStatus::Pending));
+            assert_eq!(call.title, None);
+            assert_eq!(call.reported_kind, None);
+            assert_eq!(call.reported_status, None);
+            assert_eq!(call.kind(), &acp_v2::ToolKind::Other);
+            assert_eq!(
+                call.permission_status(),
+                Some(acp_v2::ToolCallStatus::Pending)
+            );
+            assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
             thread.cancel_permission_request(owner, cx);
         });
         assert!(matches!(
@@ -13877,15 +13882,15 @@ mod tests {
         thread.read_with(cx, |thread, _| {
             let (_, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.status(), ToolCallStatus::Canceled);
+            assert!(call.authorization_id().is_none());
+            assert!(thread.permission_request(owner).is_none());
+            assert!(thread.pending_permission_requests().next().is_none());
         });
         let response = thread
             .update(cx, |thread, cx| {
-                thread.request_native_tool_call_authorization(
-                    NativeToolCallUpdate::new(
-                        id.clone(),
-                        NativeToolCallUpdateFields::new()
-                            .status(acp_v2::ToolCallStatus::InProgress),
-                    ),
+                thread.request_tool_call_update_authorization(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .status(acp_v2::ToolCallStatus::InProgress),
                     options.clone(),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -13895,13 +13900,13 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(
                 thread.tool_call(&id).expect("tool").1.permission_status(),
-                Some(acp_v1::ToolCallStatus::InProgress)
+                Some(acp_v2::ToolCallStatus::InProgress)
             );
             thread.authorize_tool_call(
                 id.clone(),
                 SelectedPermissionOutcome::new(
                     "allow".into(),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -13914,10 +13919,10 @@ mod tests {
             response.await,
             RequestPermissionOutcome::Selected(_)
         ));
-        let response = thread
+        let (owner, response) = thread
             .update(cx, |thread, cx| {
-                thread.request_native_tool_call_authorization(
-                    NativeToolCallUpdate::new(id.clone(), NativeToolCallUpdateFields::new()),
+                thread.request_tool_call_update_authorization_with_id(
+                    acp_v2::ToolCallUpdate::new(id.clone()),
                     options,
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -13927,21 +13932,27 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .update_tool_call(
-                    NativeToolCallUpdate::new(
-                        id.clone(),
-                        NativeToolCallUpdateFields::new()
-                            .status(acp_v2::ToolCallStatus::Completed)
-                            .content(vec![acp_v2::ToolCallContent::Terminal(
-                                acp_v2::Terminal::new("missing"),
-                            )]),
-                    ),
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Must not mutate")
+                        .status(acp_v2::ToolCallStatus::Completed)
+                        .content(vec![acp_v2::ToolCallContent::Terminal(
+                            acp_v2::Terminal::new("missing"),
+                        )]),
                     cx,
                 )
                 .expect_err("missing terminal must not be fabricated");
             let (_, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.status(), ToolCallStatus::Completed);
+            assert_eq!(
+                call.reported_status,
+                Some(acp_v2::ToolCallStatus::Completed)
+            );
+            assert!(call.title.is_none());
+            assert!(call.structured_content.is_empty());
             assert!(call.authorization_id().is_none());
+            assert!(thread.permission_request(owner).is_none());
             assert!(thread.permission_request_for_tool(&id).is_none());
+            assert!(thread.pending_permission_requests().next().is_none());
             assert!(thread.terminals.is_empty());
         });
         assert!(matches!(
@@ -14395,10 +14406,10 @@ mod tests {
                         .status(acp_v1::ToolCallStatus::Completed)
                         .meta(tool_meta.clone())
                         .into(),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                         "allow",
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -14553,10 +14564,10 @@ mod tests {
                 thread.request_tool_call_authorization(
                     acp_v1::ToolCall::new(acp_v1::ToolCallId::new(id.0.clone()), "Authorize")
                         .into(),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                         "allow",
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -14628,10 +14639,10 @@ mod tests {
                         acp_v1::ToolCallId::new(id.0.clone()),
                         acp_v1::ToolCallUpdateFields::new(),
                     ),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                         "allow",
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -14724,9 +14735,9 @@ mod tests {
                     .expect("initial tool");
             });
             let option_kind = if kind == AuthorizationKind::ActionChoice {
-                acp_v1::PermissionOptionKind::RejectOnce
+                acp_v2::PermissionOptionKind::RejectOnce
             } else {
-                acp_v1::PermissionOptionKind::AllowOnce
+                acp_v2::PermissionOptionKind::AllowOnce
             };
             let permission = thread
                 .update(cx, |thread, cx| {
@@ -14735,10 +14746,10 @@ mod tests {
                             acp_v1::ToolCallId::new(id.0.clone()),
                             acp_v1::ToolCallUpdateFields::new().status(incoming),
                         ),
-                        PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                             "selected",
                             "Choose",
-                            option_kind,
+                            option_kind.clone(),
                         )]),
                         kind,
                         cx,
@@ -14751,7 +14762,7 @@ mod tests {
                 let (_, call) = thread.tool_call(&id).expect("waiting tool");
                 assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
                 assert_eq!(call.reported_status.as_ref(), Some(&reported));
-                assert_eq!(call.permission_status(), Some(initial));
+                assert_eq!(call.permission_status(), tool_status_from_v1(initial));
                 thread.authorize_tool_call(
                     id.clone(),
                     SelectedPermissionOutcome::new("selected".into(), option_kind),
@@ -15823,10 +15834,10 @@ mod tests {
                         .raw_input(json!({"original": true}))
                         .raw_output(json!("original raw"))
                         .into(),
-                        PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                             "allow",
                             "Allow",
-                            acp_v1::PermissionOptionKind::AllowOnce,
+                            acp_v2::PermissionOptionKind::AllowOnce,
                         )]),
                         AuthorizationKind::PermissionGrant,
                         cx,
@@ -15869,7 +15880,7 @@ mod tests {
                 };
                 assert!(result.is_err(), "unknown terminal must fail conversion");
                 let (_, call) = thread.tool_call(&id).expect("tool must remain");
-                assert_eq!(call.permission_status(), Some(status));
+                assert_eq!(call.permission_status(), tool_status_from_v1(status));
                 assert_eq!(call.label, label);
                 assert_eq!(call.label.read(cx).source(), "Original title");
                 assert_eq!(call.kind(), &acp_v2::ToolKind::Read);
@@ -15893,7 +15904,7 @@ mod tests {
                         id.clone(),
                         SelectedPermissionOutcome::new(
                             "allow".into(),
-                            acp_v1::PermissionOptionKind::AllowOnce,
+                            acp_v2::PermissionOptionKind::AllowOnce,
                         ),
                         cx,
                     );
@@ -15952,7 +15963,7 @@ mod tests {
             .unwrap();
 
         let tool_call_id = acp_v2::ToolCallId::new("toolu_01duplicate");
-        let allow_option_id = acp_v1::PermissionOptionId::new("allow");
+        let allow_option_id = acp_v2::PermissionOptionId::new("allow");
         let permission_task = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
@@ -15964,10 +15975,10 @@ mod tests {
                     .status(acp_v1::ToolCallStatus::Pending)
                     .content(vec!["original content".into()])
                     .into(),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                         allow_option_id.clone(),
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -16035,7 +16046,7 @@ mod tests {
 
         let selected_outcome = SelectedPermissionOutcome::new(
             allow_option_id.clone(),
-            acp_v1::PermissionOptionKind::AllowOnce,
+            acp_v2::PermissionOptionKind::AllowOnce,
         );
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(tool_call_id.clone(), selected_outcome, cx);
@@ -16051,7 +16062,7 @@ mod tests {
         match permission_task.await {
             RequestPermissionOutcome::Selected(outcome) => {
                 assert_eq!(outcome.option_id, allow_option_id);
-                assert_eq!(outcome.option_kind, acp_v1::PermissionOptionKind::AllowOnce);
+                assert_eq!(outcome.option_kind, acp_v2::PermissionOptionKind::AllowOnce);
             }
             RequestPermissionOutcome::Cancelled
             | RequestPermissionOutcome::InterruptedByFollowUp => {
@@ -16110,10 +16121,10 @@ mod tests {
                     .kind(acp_v1::ToolKind::Execute)
                     .status(acp_v1::ToolCallStatus::Pending)
                     .into(),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
-                        acp_v1::PermissionOptionId::new("allow"),
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                        acp_v2::PermissionOptionId::new("allow"),
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -16141,7 +16152,7 @@ mod tests {
             assert_eq!(tool_call.status(), ToolCallStatus::WaitingForConfirmation);
             assert_eq!(
                 tool_call.permission_status(),
-                Some(acp_v1::ToolCallStatus::InProgress)
+                Some(acp_v2::ToolCallStatus::InProgress)
             );
         });
 
@@ -16149,8 +16160,8 @@ mod tests {
             thread.authorize_tool_call(
                 tool_call_id.clone(),
                 SelectedPermissionOutcome::new(
-                    acp_v1::PermissionOptionId::new("allow"),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionId::new("allow"),
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -16165,8 +16176,8 @@ mod tests {
 
         match permission_task.await {
             RequestPermissionOutcome::Selected(outcome) => {
-                assert_eq!(outcome.option_id, acp_v1::PermissionOptionId::new("allow"));
-                assert_eq!(outcome.option_kind, acp_v1::PermissionOptionKind::AllowOnce);
+                assert_eq!(outcome.option_id, acp_v2::PermissionOptionId::new("allow"));
+                assert_eq!(outcome.option_kind, acp_v2::PermissionOptionKind::AllowOnce);
             }
             RequestPermissionOutcome::Cancelled
             | RequestPermissionOutcome::InterruptedByFollowUp => {
@@ -16218,10 +16229,10 @@ mod tests {
                     .kind(acp_v1::ToolKind::Execute)
                     .status(acp_v1::ToolCallStatus::Pending)
                     .into(),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
-                        acp_v1::PermissionOptionId::new("allow"),
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                        acp_v2::PermissionOptionId::new("allow"),
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -16237,7 +16248,7 @@ mod tests {
             assert_eq!(tool_call.status(), ToolCallStatus::WaitingForConfirmation);
             assert_eq!(
                 tool_call.permission_status(),
-                Some(acp_v1::ToolCallStatus::InProgress)
+                Some(acp_v2::ToolCallStatus::InProgress)
             );
         });
 
@@ -16245,8 +16256,8 @@ mod tests {
             thread.authorize_tool_call(
                 tool_call_id.clone(),
                 SelectedPermissionOutcome::new(
-                    acp_v1::PermissionOptionId::new("allow"),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionId::new("allow"),
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -16254,8 +16265,8 @@ mod tests {
 
         match permission_task.await {
             RequestPermissionOutcome::Selected(outcome) => {
-                assert_eq!(outcome.option_id, acp_v1::PermissionOptionId::new("allow"));
-                assert_eq!(outcome.option_kind, acp_v1::PermissionOptionKind::AllowOnce);
+                assert_eq!(outcome.option_id, acp_v2::PermissionOptionId::new("allow"));
+                assert_eq!(outcome.option_kind, acp_v2::PermissionOptionKind::AllowOnce);
             }
             RequestPermissionOutcome::Cancelled
             | RequestPermissionOutcome::InterruptedByFollowUp => {
@@ -16291,10 +16302,10 @@ mod tests {
                     .kind(acp_v1::ToolKind::Execute)
                     .status(acp_v1::ToolCallStatus::Pending)
                     .into(),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
-                        acp_v1::PermissionOptionId::new("allow"),
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                        acp_v2::PermissionOptionId::new("allow"),
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -16349,10 +16360,10 @@ mod tests {
                     .kind(acp_v1::ToolKind::Execute)
                     .status(acp_v1::ToolCallStatus::Pending)
                     .into(),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
-                        acp_v1::PermissionOptionId::new("allow"),
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                        acp_v2::PermissionOptionId::new("allow"),
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -20904,8 +20915,8 @@ mod tests {
             thread.authorize_tool_call(
                 second_id,
                 SelectedPermissionOutcome::new(
-                    acp_v1::PermissionOptionId::new("reject"),
-                    acp_v1::PermissionOptionKind::RejectOnce,
+                    acp_v2::PermissionOptionId::new("reject"),
+                    acp_v2::PermissionOptionKind::RejectOnce,
                 ),
                 cx,
             );
@@ -20913,7 +20924,7 @@ mod tests {
         assert!(matches!(
             second_permission.await,
             RequestPermissionOutcome::Selected(outcome)
-                if outcome.option_kind == acp_v1::PermissionOptionKind::RejectOnce
+                if outcome.option_kind == acp_v2::PermissionOptionKind::RejectOnce
         ));
         cx.run_until_parked();
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -20937,8 +20948,8 @@ mod tests {
             thread.authorize_tool_call(
                 first_id,
                 SelectedPermissionOutcome::new(
-                    acp_v1::PermissionOptionId::new("allow"),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionId::new("allow"),
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -20946,7 +20957,7 @@ mod tests {
         assert!(matches!(
             first_permission.await,
             RequestPermissionOutcome::Selected(outcome)
-                if outcome.option_kind == acp_v1::PermissionOptionKind::AllowOnce
+                if outcome.option_kind == acp_v2::PermissionOptionKind::AllowOnce
         ));
         cx.run_until_parked();
         assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
@@ -21035,8 +21046,8 @@ mod tests {
             thread.authorize_tool_call(
                 tool_call_id,
                 SelectedPermissionOutcome::new(
-                    acp_v1::PermissionOptionId::new("allow"),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionId::new("allow"),
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -21260,8 +21271,8 @@ mod tests {
             thread.authorize_tool_call(
                 tool_call_id,
                 SelectedPermissionOutcome::new(
-                    acp_v1::PermissionOptionId::new("allow"),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionId::new("allow"),
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -21613,10 +21624,10 @@ mod tests {
                                 acp_v1::Terminal::new("missing"),
                             )]),
                     ),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                         "new-choice",
                         "New choice",
-                        acp_v1::PermissionOptionKind::RejectOnce,
+                        acp_v2::PermissionOptionKind::RejectOnce,
                     )]),
                     AuthorizationKind::ActionChoice,
                     cx,
@@ -21785,7 +21796,7 @@ mod tests {
                 first_id,
                 SelectedPermissionOutcome::new(
                     "allow".into(),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -21857,7 +21868,7 @@ mod tests {
                 old_id,
                 SelectedPermissionOutcome::new(
                     "reject".into(),
-                    acp_v1::PermissionOptionKind::RejectOnce,
+                    acp_v2::PermissionOptionKind::RejectOnce,
                 ),
                 cx,
             );
@@ -21926,7 +21937,7 @@ mod tests {
                 new_id,
                 SelectedPermissionOutcome::new(
                     "allow".into(),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -21935,7 +21946,7 @@ mod tests {
             new_response.await,
             RequestPermissionOutcome::Selected(outcome)
                 if outcome.option_id == "allow".into()
-                    && outcome.option_kind == acp_v1::PermissionOptionKind::AllowOnce
+                    && outcome.option_kind == acp_v2::PermissionOptionKind::AllowOnce
         ));
         thread.read_with(cx, |thread, _| {
             assert!(thread.permission_request(new_id).is_none());
@@ -21964,34 +21975,34 @@ mod tests {
             (
                 AuthorizationKind::PermissionGrant,
                 "allow",
-                acp_v1::PermissionOptionKind::AllowOnce,
-                acp_v1::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
                 ToolCallStatus::InProgress,
             ),
             (
                 AuthorizationKind::PermissionGrant,
                 "reject",
-                acp_v1::PermissionOptionKind::RejectOnce,
-                acp_v1::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
                 ToolCallStatus::Rejected,
             ),
             (
                 AuthorizationKind::ActionChoice,
                 "reject",
-                acp_v1::PermissionOptionKind::RejectOnce,
-                acp_v1::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
                 ToolCallStatus::InProgress,
             ),
         ] {
-            let allow = acp_v1::PermissionOption::new(
+            let allow = acp_v2::PermissionOption::new(
                 "allow",
                 "Allow",
-                acp_v1::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
             );
-            let reject = acp_v1::PermissionOption::new(
+            let reject = acp_v2::PermissionOption::new(
                 "reject",
                 "Reject",
-                acp_v1::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
             );
             let choice = PermissionOptionChoice {
                 allow: allow.clone(),
@@ -22018,7 +22029,7 @@ mod tests {
             ] {
                 let (mut selected_outcome, expected_patterns) = match &options {
                     PermissionOptions::Flat(_) => (
-                        SelectedPermissionOutcome::new(option_id.into(), offered_kind),
+                        SelectedPermissionOutcome::new(option_id.into(), offered_kind.clone()),
                         None,
                     ),
                     PermissionOptions::Dropdown(choices) => (
@@ -22035,7 +22046,7 @@ mod tests {
                         Some(vec!["^git status$".to_owned()]),
                     ),
                 };
-                selected_outcome.option_kind = spoofed_kind;
+                selected_outcome.option_kind = spoofed_kind.clone();
                 let thread = new_test_thread(cx).await;
                 let (events, _subscription) = track_permission_events(&thread, cx);
                 let tool_id = acp_v2::ToolCallId::new("choice");
@@ -22056,7 +22067,7 @@ mod tests {
                 thread.update(cx, |thread, cx| {
                     thread.authorize_permission_request(
                         request_id,
-                        SelectedPermissionOutcome::new("not-offered".into(), spoofed_kind),
+                        SelectedPermissionOutcome::new("not-offered".into(), spoofed_kind.clone()),
                         cx,
                     );
                     let request = thread
@@ -22094,6 +22105,63 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_unknown_permission_kind_keeps_authorization_pending(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let tool_call_id = acp_v2::ToolCallId::new("unknown-permission-kind");
+        let option_id = acp_v2::PermissionOptionId::new("future-choice");
+        let option_kind = acp_v2::PermissionOptionKind::Other("_future_choice".into());
+        let (request_id, mut response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_tool_call_authorization_with_id(
+                    acp_v1::ToolCall::new(
+                        acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+                        "Choose",
+                    )
+                    .into(),
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                        option_id.clone(),
+                        "Future choice",
+                        option_kind.clone(),
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+                .expect("permission request")
+        });
+        thread.update(cx, |thread, cx| {
+            thread.authorize_permission_request(
+                request_id,
+                SelectedPermissionOutcome::new(
+                    option_id.clone(),
+                    acp_v2::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+            let request = thread
+                .permission_request(request_id)
+                .expect("unknown choice stays pending");
+            let option = request
+                .legacy_options()
+                .and_then(|options| options.option_for_id(&option_id))
+                .expect("offered option");
+            assert_eq!(option.kind, option_kind);
+            assert!(Arc::ptr_eq(&option.option_id.0, &option_id.0));
+            let (_, call) = thread.tool_call(&tool_call_id).expect("waiting tool");
+            assert_eq!(call.authorization_id(), Some(request_id));
+            assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
+        });
+        assert!((&mut response).now_or_never().is_none());
+        thread.update(cx, |thread, cx| {
+            thread.cancel_permission_request(request_id, cx);
+        });
+        assert!(matches!(
+            response.await,
+            RequestPermissionOutcome::Cancelled
+        ));
     }
 
     #[gpui::test]
@@ -22162,7 +22230,7 @@ mod tests {
                     removed_id,
                     SelectedPermissionOutcome::new(
                         "reject".into(),
-                        acp_v1::PermissionOptionKind::RejectOnce,
+                        acp_v2::PermissionOptionKind::RejectOnce,
                     ),
                     cx,
                 );
@@ -22449,7 +22517,7 @@ mod tests {
                 tool_id.clone(),
                 SelectedPermissionOutcome::new(
                     "allow".into(),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -22928,15 +22996,15 @@ mod tests {
                     )
                     .into(),
                     PermissionOptions::Flat(vec![
-                        acp_v1::PermissionOption::new(
-                            acp_v1::PermissionOptionId::new("allow"),
+                        acp_v2::PermissionOption::new(
+                            acp_v2::PermissionOptionId::new("allow"),
                             "Allow",
-                            acp_v1::PermissionOptionKind::AllowOnce,
+                            acp_v2::PermissionOptionKind::AllowOnce,
                         ),
-                        acp_v1::PermissionOption::new(
-                            acp_v1::PermissionOptionId::new("reject"),
+                        acp_v2::PermissionOption::new(
+                            acp_v2::PermissionOptionId::new("reject"),
                             "Reject",
-                            acp_v1::PermissionOptionKind::RejectOnce,
+                            acp_v2::PermissionOptionKind::RejectOnce,
                         ),
                     ]),
                     AuthorizationKind::PermissionGrant,
@@ -23128,7 +23196,7 @@ mod tests {
                     .expect("tool call should remain present")
                     .1
                     .permission_status(),
-                Some(acp_v1::ToolCallStatus::Completed)
+                Some(acp_v2::ToolCallStatus::Completed)
             );
             assert!(!thread.is_waiting_for_confirmation());
             assert!(thread.permission_request(permission_id).is_none());

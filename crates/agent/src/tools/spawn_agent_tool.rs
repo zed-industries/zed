@@ -1,4 +1,4 @@
-use acp_thread::{NativeToolCallUpdateFields, SUBAGENT_SESSION_INFO_META_KEY, SubagentSessionInfo};
+use acp_thread::{SUBAGENT_SESSION_INFO_META_KEY, SubagentSessionInfo};
 use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
@@ -203,13 +203,12 @@ impl AgentTool for SpawnAgentTool {
                 };
 
                 event_stream.subagent_spawned(subagent.id());
-                event_stream.update_fields_with_meta(
-                    NativeToolCallUpdateFields::new(),
-                    Some(acp_v2::Meta::from_iter([(
+                event_stream.update_fields(|update| {
+                    update.meta(acp_v2::Meta::from_iter([(
                         SUBAGENT_SESSION_INFO_META_KEY.into(),
                         serde_json::json!(&session_info),
-                    )])),
-                );
+                    )]))
+                });
 
                 Ok((subagent, session_info))
             })?;
@@ -256,10 +255,13 @@ impl AgentTool for SpawnAgentTool {
                     )
                 }
             };
-            event_stream.update_fields_with_meta(
-                NativeToolCallUpdateFields::new().content(vec![output.into()]),
-                meta,
-            );
+            event_stream.update_fields(|update| {
+                let update = update.content(vec![output.into()]);
+                match meta {
+                    Some(meta) => update.meta(meta),
+                    None => update,
+                }
+            });
             result
         })
     }
@@ -290,10 +292,13 @@ impl AgentTool for SpawnAgentTool {
                 serde_json::json!(&session_info),
             )])
         });
-        event_stream.update_fields_with_meta(
-            NativeToolCallUpdateFields::new().content(vec![content]),
-            meta,
-        );
+        event_stream.update_fields(|update| {
+            let update = update.content(vec![content]);
+            match meta {
+                Some(meta) => update.meta(meta),
+                None => update,
+            }
+        });
 
         Ok(())
     }

@@ -1,4 +1,3 @@
-use acp_thread::NativeToolCallUpdateFields;
 use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
@@ -983,18 +982,15 @@ async fn run_terminal_tool(
     });
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
-    let fields =
-        NativeToolCallUpdateFields::new().content(vec![acp_v2::ToolCallContent::Terminal(
+    event_stream.update_fields(|update| {
+        let update = update.content(vec![acp_v2::ToolCallContent::Terminal(
             acp_v2::Terminal::new(acp_v2::TerminalId::new(terminal_id.0)),
         )]);
-    if let Some(reason) = &sandbox_not_applied {
-        event_stream.update_fields_with_meta(
-            fields,
-            Some(acp_thread::meta_with_sandbox_not_applied(reason)),
-        );
-    } else {
-        event_stream.update_fields(fields);
-    }
+        match &sandbox_not_applied {
+            Some(reason) => update.meta(acp_thread::meta_with_sandbox_not_applied(reason)),
+            None => update,
+        }
+    });
 
     let timeout = input.timeout_ms.map(Duration::from_millis);
 
@@ -2182,7 +2178,7 @@ mod tests {
             !matches!(
                 rx.try_recv(),
                 Ok(Ok(crate::ThreadEvent::ToolCallUpdate(
-                    acp_thread::ToolCallUpdate::NativeFields(_)
+                    acp_thread::ToolCallUpdate::ProtocolFields(_)
                 )))
             ),
             "invalid command should not emit a terminal card update"
@@ -2238,7 +2234,7 @@ mod tests {
         let update = rx.expect_update_fields().await;
         let terminal_reference = update
             .content
-            .as_ref()
+            .value()
             .and_then(|content| {
                 content.iter().find_map(|content| match content {
                     acp_v2::ToolCallContent::Terminal(terminal) => Some(terminal),
@@ -2375,7 +2371,7 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
                     .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
@@ -2443,7 +2439,7 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
                     .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
@@ -2857,7 +2853,7 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
                     .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
@@ -2997,7 +2993,7 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
                     .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
@@ -3075,7 +3071,7 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
                     .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
@@ -3307,9 +3303,10 @@ mod tests {
         let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(input), event_stream, cx));
 
         let authorization = receiver.expect_authorization().await;
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
-                .expect("legacy allow_fs_write should request sandbox authorization details");
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization.tool_call.meta.clone().take(),
+        )
+        .expect("legacy allow_fs_write should request sandbox authorization details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
         assert!(details.allow_fs_write_all);
@@ -3325,33 +3322,37 @@ mod tests {
                 (
                     option.option_id.0.as_ref(),
                     option.name.as_ref(),
-                    option.kind,
+                    option.kind.clone(),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             options,
             vec![
-                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow",
+                    "Allow once",
+                    acp_v2::PermissionOptionKind::AllowOnce
+                ),
                 (
                     "allow_thread",
                     "Allow for this thread",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
                 (
                     "allow_always",
                     "Allow always",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
-                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+                ("deny", "Deny", acp_v2::PermissionOptionKind::RejectOnce),
             ]
         );
 
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("deny"),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .expect("authorization response should send");
 
@@ -3403,10 +3404,11 @@ mod tests {
         let authorization = receiver.expect_authorization().await;
         // The sandbox approval deliberately leaves the tool-call title untouched
         // so the card keeps showing the command being approved.
-        assert_eq!(authorization.tool_call.fields.title, None);
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
-                .expect("unsandboxed should request sandbox authorization details");
+        assert!(authorization.tool_call.title.is_undefined());
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization.tool_call.meta.clone().take(),
+        )
+        .expect("unsandboxed should request sandbox authorization details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
         assert!(!details.allow_fs_write_all);
@@ -3422,33 +3424,37 @@ mod tests {
                 (
                     option.option_id.0.as_ref(),
                     option.name.as_ref(),
-                    option.kind,
+                    option.kind.clone(),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             options,
             vec![
-                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow",
+                    "Allow once",
+                    acp_v2::PermissionOptionKind::AllowOnce
+                ),
                 (
                     "allow_thread",
                     "Allow for this thread",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
                 (
                     "allow_always",
                     "Allow always",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
-                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+                ("deny", "Deny", acp_v2::PermissionOptionKind::RejectOnce),
             ]
         );
 
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("deny"),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .expect("authorization response should send");
 
@@ -3520,8 +3526,8 @@ mod tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("allow_always"),
-                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionId::new("allow_always"),
+                acp_v2::PermissionOptionKind::AllowAlways,
             ))
             .expect("authorization response should send");
         task.await.expect("granted command should run");
@@ -3558,9 +3564,10 @@ mod tests {
             cx.update(|cx| tool2.run(crate::ToolInput::resolved(resolved2), event_stream2, cx));
 
         let authorization2 = receiver2.expect_authorization().await;
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization2.tool_call.meta)
-                .expect("the identical request should prompt for sandbox authorization again");
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization2.tool_call.meta.clone().take(),
+        )
+        .expect("the identical request should prompt for sandbox authorization again");
         assert!(
             details
                 .write_paths
@@ -3573,8 +3580,8 @@ mod tests {
         authorization2
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("deny"),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .expect("authorization response should send");
         let result = task2

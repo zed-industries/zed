@@ -1,5 +1,5 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use acp_thread::{MentionUri, NativeToolCallUpdateFields};
+use acp_thread::MentionUri;
 use agent_client_protocol::schema::v2 as acp;
 use anyhow::{Result, anyhow};
 use futures::FutureExt as _;
@@ -144,11 +144,11 @@ impl AgentTool for FindPathTool {
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
 
             event_stream.update_fields(
-                NativeToolCallUpdateFields::new()
+                |update| update
                     .title(if paginated_matches.is_empty() {
-                        "No matches".into()
+                        "No matches".to_string()
                     } else if paginated_matches.len() == 1 {
-                        "1 match".into()
+                        "1 match".to_string()
                     } else {
                         format!("{} matches", paginated_matches.len())
                     })
