@@ -4647,7 +4647,7 @@ pub(crate) mod tests {
                 )),
                 cx,
             );
-            connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
+            connection.end_turn(session_id, acp_v2::StopReason::EndTurn);
         });
 
         cx.run_until_parked();
@@ -5267,7 +5267,7 @@ pub(crate) mod tests {
             let first_response = if responses_are_errors {
                 Err(anyhow!("stale prompt failed"))
             } else {
-                Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+                Ok(acp_thread::TurnCompletion::new(acp_v2::StopReason::EndTurn))
             };
             finish_first
                 .send(first_response)
@@ -5293,7 +5293,7 @@ pub(crate) mod tests {
             let second_response = if responses_are_errors {
                 Err(anyhow!("current prompt failed"))
             } else {
-                Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+                Ok(acp_thread::TurnCompletion::new(acp_v2::StopReason::EndTurn))
             };
             finish_second
                 .send(second_response)
@@ -5418,7 +5418,7 @@ pub(crate) mod tests {
 
         // When this generation completes, the queued message should be picked
         // up automatically (regression test for the "frozen queue" bug).
-        connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
+        connection.end_turn(session_id, acp_v2::StopReason::EndTurn);
         cx.run_until_parked();
 
         let queue_len = active_thread(&conversation_view, cx)
@@ -5915,8 +5915,10 @@ pub(crate) mod tests {
             &self,
             _params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+        ) -> Task<gpui::Result<acp_thread::TurnCompletion>> {
+            Task::ready(Ok(acp_thread::TurnCompletion::new(
+                acp_v2::StopReason::EndTurn,
+            )))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
@@ -7687,7 +7689,7 @@ pub(crate) mod tests {
             assert_thread_list_item_count_matches_entries(view, cx);
         });
 
-        connection.end_turn(session_id.clone(), acp_v1::StopReason::EndTurn);
+        connection.end_turn(session_id.clone(), acp_v2::StopReason::EndTurn);
         cx.run_until_parked();
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert_thread_list_item_count_matches_entries(view, cx);
@@ -7777,7 +7779,7 @@ pub(crate) mod tests {
             assert_thread_list_item_count_matches_entries(view, cx);
             assert!(view.thread.read(cx).plan().is_none_or(Plan::is_empty));
         });
-        connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
+        connection.end_turn(session_id, acp_v2::StopReason::EndTurn);
         cx.run_until_parked();
     }
 
@@ -8269,8 +8271,10 @@ pub(crate) mod tests {
             &self,
             _params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+        ) -> Task<gpui::Result<acp_thread::TurnCompletion>> {
+            Task::ready(Ok(acp_thread::TurnCompletion::new(
+                acp_v2::StopReason::EndTurn,
+            )))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
@@ -8400,8 +8404,10 @@ pub(crate) mod tests {
             &self,
             _params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+        ) -> Task<gpui::Result<acp_thread::TurnCompletion>> {
+            Task::ready(Ok(acp_thread::TurnCompletion::new(
+                acp_v2::StopReason::EndTurn,
+            )))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
@@ -8512,8 +8518,10 @@ pub(crate) mod tests {
             &self,
             _params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+        ) -> Task<gpui::Result<acp_thread::TurnCompletion>> {
+            Task::ready(Ok(acp_thread::TurnCompletion::new(
+                acp_v2::StopReason::EndTurn,
+            )))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
@@ -8584,8 +8592,10 @@ pub(crate) mod tests {
             &self,
             _params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+        ) -> Task<gpui::Result<acp_thread::TurnCompletion>> {
+            Task::ready(Ok(acp_thread::TurnCompletion::new(
+                acp_v2::StopReason::EndTurn,
+            )))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
@@ -8736,7 +8746,7 @@ pub(crate) mod tests {
             &self,
             _params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
+        ) -> Task<gpui::Result<acp_thread::TurnCompletion>> {
             unimplemented!()
         }
 
@@ -8805,8 +8815,10 @@ pub(crate) mod tests {
             &self,
             _params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Refusal)))
+        ) -> Task<gpui::Result<acp_thread::TurnCompletion>> {
+            Task::ready(Ok(acp_thread::TurnCompletion::new(
+                acp_v2::StopReason::Refusal,
+            )))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {
@@ -8920,8 +8932,10 @@ pub(crate) mod tests {
             &self,
             _params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+        ) -> Task<gpui::Result<acp_thread::TurnCompletion>> {
+            Task::ready(Ok(acp_thread::TurnCompletion::new(
+                acp_v2::StopReason::EndTurn,
+            )))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
@@ -12820,7 +12834,7 @@ pub(crate) mod tests {
             let prompt = thread.update(cx, |thread, cx| thread.send_raw("original", cx));
             cx.run_until_parked();
             let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-            connection.end_turn(session_id.clone(), acp_v1::StopReason::EndTurn);
+            connection.end_turn(session_id.clone(), acp_v2::StopReason::EndTurn);
             prompt.await.expect("initial prompt should finish");
             cx.run_until_parked();
 
@@ -12885,7 +12899,7 @@ pub(crate) mod tests {
             let resent =
                 thread.read_with(cx, |thread, _| thread.status() == ThreadStatus::Generating);
             if resent {
-                connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
+                connection.end_turn(session_id, acp_v2::StopReason::EndTurn);
                 cx.run_until_parked();
             }
             assert!(!resent, "regeneration must not submit a read-only fallback");
@@ -13073,7 +13087,7 @@ pub(crate) mod tests {
                 )),
                 cx,
             );
-            connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
+            connection.end_turn(session_id, acp_v2::StopReason::EndTurn);
         });
 
         conversation_view.read_with(cx, |view, cx| {
@@ -13400,7 +13414,7 @@ pub(crate) mod tests {
                 )),
                 cx,
             );
-            connection.end_turn(session_id.clone(), acp_v1::StopReason::EndTurn);
+            connection.end_turn(session_id.clone(), acp_v2::StopReason::EndTurn);
         });
 
         cx.run_until_parked();
@@ -15261,7 +15275,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         cx.update(|_, _cx| {
-            connection.end_turn(session_id, acp_v1::StopReason::MaxTokens);
+            connection.end_turn(session_id, acp_v2::StopReason::MaxTokens);
         });
 
         cx.run_until_parked();
@@ -18056,8 +18070,10 @@ pub(crate) mod tests {
             &self,
             _params: acp_v2::PromptRequest,
             _cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+        ) -> Task<gpui::Result<acp_thread::TurnCompletion>> {
+            Task::ready(Ok(acp_thread::TurnCompletion::new(
+                acp_v2::StopReason::EndTurn,
+            )))
         }
 
         fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}

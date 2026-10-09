@@ -32,6 +32,7 @@ pub use tools::*;
 use acp_thread::{
     AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
     AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
+    TurnCompletion,
 };
 use agent_client_protocol::schema::v1 as acp_v1;
 use agent_client_protocol::schema::v2 as acp_v2;
@@ -1960,7 +1961,7 @@ impl NativeAgent {
         arguments: HashMap<String, String>,
         original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<TurnCompletion>> {
         let Some(state) = self.session_project_state(&session_id) else {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
@@ -2066,7 +2067,7 @@ impl NativeAgent {
         client_user_message_id: ClientUserMessageId,
         session_id: acp_v2::SessionId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<TurnCompletion>> {
         cx.spawn(async move |this, cx| {
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
                 let session = this
@@ -2114,7 +2115,7 @@ impl NativeAgent {
         skill: Skill,
         original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<TurnCompletion>> {
         let Some(state) = self.session_project_state(&session_id) else {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
@@ -2276,7 +2277,7 @@ impl NativeAgentConnection {
         cx: &mut App,
         f: impl 'static
         + FnOnce(Entity<Thread>, &mut App) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<TurnCompletion>> {
         let Some((thread, acp_thread)) = self.0.update(cx, |agent, _cx| {
             let session = agent.sessions.get(&session_id)?;
             Some((session.thread.clone(), session.acp_thread.clone()))
@@ -2298,7 +2299,7 @@ impl NativeAgentConnection {
         acp_thread: WeakEntity<AcpThread>,
         connection: Option<NativeAgentConnection>,
         cx: &App,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<TurnCompletion>> {
         cx.spawn(async move |cx| {
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = events.next().await {
@@ -2452,7 +2453,7 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return legacy_native_completion(stop_reason);
+                                return Ok(TurnCompletion::new(stop_reason));
                             }
                         }
                     }
@@ -2464,29 +2465,9 @@ impl NativeAgentConnection {
             }
 
             log::debug!("Response stream completed");
-            anyhow::Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+            anyhow::Ok(TurnCompletion::new(acp_v2::StopReason::EndTurn))
         })
     }
-}
-
-fn legacy_native_completion(stop_reason: acp_v2::StopReason) -> Result<acp_v1::PromptResponse> {
-    // Native events are version-neutral, but the completion-based connection API
-    // still returns a v1 response. This is not a v2 acceptance receipt.
-    let stop_reason = match stop_reason {
-        acp_v2::StopReason::EndTurn => acp_v1::StopReason::EndTurn,
-        acp_v2::StopReason::MaxTokens => acp_v1::StopReason::MaxTokens,
-        acp_v2::StopReason::MaxTurnRequests => acp_v1::StopReason::MaxTurnRequests,
-        acp_v2::StopReason::Refusal => acp_v1::StopReason::Refusal,
-        acp_v2::StopReason::Cancelled => acp_v1::StopReason::Cancelled,
-        acp_v2::StopReason::Error(reason) => {
-            return Err(match reason.error {
-                Some(error) => anyhow::Error::new(*error),
-                None => anyhow!("Native agent stopped with an error"),
-            });
-        }
-        _ => anyhow::bail!("Native agent returned an unsupported stop reason"),
-    };
-    Ok(acp_v1::PromptResponse::new(stop_reason))
 }
 
 struct Command<'a> {
@@ -2871,11 +2852,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .try_for_each(UserMessageContent::validate_content_block)
     }
 
-    fn prompt(
-        &self,
-        params: acp_v2::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    fn prompt(&self, params: acp_v2::PromptRequest, cx: &mut App) -> Task<Result<TurnCompletion>> {
         acp_thread::AgentSessionClientUserMessageIds::prompt(
             self,
             acp_thread::AgentSessionClientUserMessageIds::new_id(self),
@@ -2960,7 +2937,7 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
         client_user_message_id: acp_thread::ClientUserMessageId,
         params: acp_v2::PromptRequest,
         cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<TurnCompletion>> {
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
@@ -3247,7 +3224,7 @@ struct NativeAgentSessionRetry {
 }
 
 impl acp_thread::AgentSessionRetry for NativeAgentSessionRetry {
-    fn run(&self, cx: &mut App) -> Task<Result<acp_v1::PromptResponse>> {
+    fn run(&self, cx: &mut App) -> Task<Result<TurnCompletion>> {
         self.connection
             .run_turn(self.session_id.clone(), cx, |thread, cx| {
                 thread.update(cx, |thread, cx| thread.resume(cx))
@@ -3639,16 +3616,17 @@ impl SubagentHandle for NativeSubagentHandle {
             };
             let discard_partial_output = matches!(
                 &response,
-                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) if response.stop_reason == acp_v1::StopReason::Cancelled
-                    || response.stop_reason == acp_v1::StopReason::Refusal
+                Ok(Some(acp_thread::SubmissionResponse::Completed(completion))) if completion.stop_reason == acp_v2::StopReason::Cancelled
+                    || completion.stop_reason == acp_v2::StopReason::Refusal
             );
             let result = match response {
-                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => match response.stop_reason {
-                    acp_v1::StopReason::Cancelled => Err(anyhow!("User canceled")),
-                    acp_v1::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
-                    acp_v1::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
-                    acp_v1::StopReason::Refusal => Err(anyhow!("The agent refused to process that prompt. Try again.")),
-                    _ => thread.read_with(cx, |thread, _cx| {
+                Ok(Some(acp_thread::SubmissionResponse::Completed(completion))) => match (completion.error(), completion.stop_reason) {
+                    (Some(error), _) => Err(error),
+                    (None, acp_v2::StopReason::Cancelled) => Err(anyhow!("User canceled")),
+                    (None, acp_v2::StopReason::MaxTokens) => Err(anyhow!("The agent reached the maximum number of tokens.")),
+                    (None, acp_v2::StopReason::MaxTurnRequests) => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
+                    (None, acp_v2::StopReason::Refusal) => Err(anyhow!("The agent refused to process that prompt. Try again.")),
+                    (None, _) => thread.read_with(cx, |thread, _cx| {
                         thread
                             .last_message()
                             .and_then(|message| {
@@ -3986,37 +3964,71 @@ mod internal_tests {
     use settings::{LanguageModelProviderSetting, SettingsStore};
     use util::{path, rel_path::rel_path};
 
-    #[test]
-    fn native_stop_reasons_preserve_legacy_completions() -> Result<()> {
-        for (native, legacy) in [
-            (acp_v2::StopReason::EndTurn, acp_v1::StopReason::EndTurn),
-            (acp_v2::StopReason::MaxTokens, acp_v1::StopReason::MaxTokens),
-            (
-                acp_v2::StopReason::MaxTurnRequests,
-                acp_v1::StopReason::MaxTurnRequests,
-            ),
-            (acp_v2::StopReason::Refusal, acp_v1::StopReason::Refusal),
-            (acp_v2::StopReason::Cancelled, acp_v1::StopReason::Cancelled),
-        ] {
-            assert_eq!(legacy_native_completion(native)?.stop_reason, legacy);
-        }
-        assert!(
-            legacy_native_completion(acp_v2::StopReason::Other(acp_v2::OtherStopReason::new(
-                "_future",
-                Default::default(),
-            )))
-            .is_err(),
-            "an unsupported reason must not masquerade as successful completion"
-        );
-        let error = legacy_native_completion(acp_v2::ErrorStopReason::new().into())
-            .expect_err("an error without details is not successful completion");
-        assert_eq!(error.to_string(), "Native agent stopped with an error");
+    #[gpui::test]
+    async fn test_native_completions_preserve_structured_stop_reasons(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_connection, _agent, _project, acp_thread) = setup_native_agent_session(cx).await;
         let details = acp_v2::Error::auth_required().data(json!({"hint": "sign in"}));
-        let error =
-            legacy_native_completion(acp_v2::ErrorStopReason::new().error(details.clone()).into())
-                .expect_err("reported error details propagate");
-        assert_eq!(error.downcast_ref::<acp_v2::Error>(), Some(&details));
-        Ok(())
+        for stop_reason in [
+            acp_v2::StopReason::Other(acp_v2::OtherStopReason::new(
+                "_future",
+                [("details".into(), json!({"nested": ["retained", 42]}))].into(),
+            )),
+            acp_v2::ErrorStopReason::new().into(),
+            acp_v2::ErrorStopReason::new().error(details.clone()).into(),
+        ] {
+            let (sender, events) = mpsc::unbounded();
+            sender
+                .unbounded_send(Ok(ThreadEvent::Stop(stop_reason.clone())))
+                .expect("stop event should reach the bridge");
+            drop(sender);
+            let completion = cx
+                .update(|cx| {
+                    NativeAgentConnection::handle_thread_events(
+                        events,
+                        acp_thread.downgrade(),
+                        None,
+                        cx,
+                    )
+                })
+                .await
+                .expect("stop reasons should remain completion payloads");
+            assert_eq!(
+                completion.error().is_some(),
+                matches!(&stop_reason, acp_v2::StopReason::Error(_)),
+                "an error without details must not be successful completion"
+            );
+            if let acp_v2::StopReason::Error(reason) = &stop_reason
+                && let Some(details) = &reason.error
+            {
+                assert_eq!(
+                    completion
+                        .error()
+                        .expect("reported error details propagate")
+                        .downcast_ref::<acp_v2::Error>(),
+                    Some(details.as_ref())
+                );
+            }
+            assert_eq!(completion.stop_reason, stop_reason);
+            assert!(completion.usage.is_none());
+            assert!(completion.meta.is_none());
+        }
+
+        let (sender, events) = mpsc::unbounded();
+        drop(sender);
+        let completion = cx
+            .update(|cx| {
+                NativeAgentConnection::handle_thread_events(
+                    events,
+                    acp_thread.downgrade(),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("stream EOF should complete the turn");
+        assert_eq!(completion.stop_reason, acp_v2::StopReason::EndTurn);
+        assert!(completion.error().is_none());
     }
 
     #[gpui::test]
@@ -4886,7 +4898,7 @@ mod internal_tests {
                 .expect("canceled compaction events should be bridged");
             assert_eq!(
                 response.stop_reason,
-                acp_v1::StopReason::Cancelled,
+                acp_v2::StopReason::Cancelled,
                 "{scenario}"
             );
 

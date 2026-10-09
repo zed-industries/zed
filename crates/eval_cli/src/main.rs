@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 
 use acp_thread::AgentConnection as _;
 use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore};
-use agent_client_protocol::schema::{v1 as acp, v2 as acp_v2};
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::{Context, Result};
 use clap::Parser;
 use feature_flags::FeatureFlagAppExt as _;
@@ -843,9 +843,11 @@ async fn run_agent(
 
     let outcome = select_biased! {
         result = send_future.fuse() => match result {
-            Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => {
+            Ok(Some(acp_thread::SubmissionResponse::Completed(response))) => {
                 eprintln!("[eval-cli] stopped: {:?}", response.stop_reason);
-                if response.stop_reason == acp::StopReason::MaxTokens {
+                if let Some(error) = response.error() {
+                    Err(error).context("agent run failed")
+                } else if response.stop_reason == acp_v2::StopReason::MaxTokens {
                     Err(anyhow::anyhow!("Model hit maximum token limit"))
                 } else {
                     Ok(AgentOutcome::Completed)

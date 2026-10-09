@@ -1,4 +1,4 @@
-use crate::{AcpThread, ElicitationStore};
+use crate::{AcpThread, ElicitationStore, TurnCompletion};
 use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -206,13 +206,9 @@ pub trait AgentConnection {
         Ok(())
     }
 
-    /// This completion-based path retains a legacy response; receipt transports
+    /// This path returns turn completion; receipt transports
     /// acknowledge acceptance separately through `receipt_submissions`.
-    fn prompt(
-        &self,
-        params: acp_v2::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>>;
+    fn prompt(&self, params: acp_v2::PromptRequest, cx: &mut App) -> Task<Result<TurnCompletion>>;
 
     fn retry(
         &self,
@@ -305,7 +301,7 @@ pub trait AgentSessionClientUserMessageIds {
         client_user_message_id: ClientUserMessageId,
         params: acp_v2::PromptRequest,
         cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>>;
+    ) -> Task<Result<TurnCompletion>>;
 }
 
 /// A session-bound prompt transport whose response acknowledges acceptance, not completion.
@@ -319,7 +315,7 @@ pub trait ReceiptSessionSubmissions {
 }
 
 pub trait AgentSessionRetry {
-    fn run(&self, cx: &mut App) -> Task<Result<acp_v1::PromptResponse>>;
+    fn run(&self, cx: &mut App) -> Task<Result<TurnCompletion>>;
 }
 
 pub trait AgentSessionSetTitle {
@@ -857,7 +853,7 @@ mod test_support {
         sessions: Arc<Mutex<HashMap<acp_v2::SessionId, Session>>>,
         permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp_v1::SessionUpdate>>>,
-        next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
+        next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<TurnCompletion>>>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
@@ -875,7 +871,7 @@ mod test_support {
 
     struct Session {
         thread: WeakEntity<AcpThread>,
-        response_tx: Option<oneshot::Sender<acp_v1::StopReason>>,
+        response_tx: Option<oneshot::Sender<acp_v2::StopReason>>,
     }
 
     impl Default for StubAgentConnection {
@@ -915,9 +911,7 @@ mod test_support {
             *self.next_prompt_updates.lock() = updates;
         }
 
-        pub fn defer_next_prompt_response(
-            &self,
-        ) -> oneshot::Sender<Result<acp_v1::PromptResponse>> {
+        pub fn defer_next_prompt_response(&self) -> oneshot::Sender<Result<TurnCompletion>> {
             let (sender, receiver) = oneshot::channel();
             assert!(self.next_prompt_response.lock().replace(receiver).is_none());
             sender
@@ -1058,7 +1052,7 @@ mod test_support {
                 .unwrap();
         }
 
-        pub fn end_turn(&self, session_id: acp_v2::SessionId, stop_reason: acp_v1::StopReason) {
+        pub fn end_turn(&self, session_id: acp_v2::SessionId, stop_reason: acp_v2::StopReason) {
             self.sessions
                 .lock()
                 .get_mut(&session_id)
@@ -1142,7 +1136,7 @@ mod test_support {
             &self,
             params: acp_v2::PromptRequest,
             cx: &mut App,
-        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
+        ) -> Task<gpui::Result<TurnCompletion>> {
             let session_id = params.session_id.clone();
             if let Err(error) = crate::content::prompt_to_v1(params) {
                 return Task::ready(Err(error));
@@ -1160,7 +1154,7 @@ mod test_support {
                 response_tx.replace(tx);
                 cx.spawn(async move |_| {
                     let stop_reason = rx.await?;
-                    Ok(acp_v1::PromptResponse::new(stop_reason))
+                    Ok(TurnCompletion::new(stop_reason))
                 })
             } else {
                 for update in self.next_prompt_updates.lock().drain(..) {
@@ -1199,7 +1193,7 @@ mod test_support {
 
                 cx.spawn(async move |_| {
                     try_join_all(tasks).await?;
-                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+                    Ok(TurnCompletion::new(acp_v2::StopReason::EndTurn))
                 })
             }
         }
@@ -1246,7 +1240,7 @@ mod test_support {
                 .response_tx
                 .take()
             {
-                end_turn_tx.send(acp_v1::StopReason::Cancelled).unwrap();
+                end_turn_tx.send(acp_v2::StopReason::Cancelled).unwrap();
             }
         }
 
@@ -1301,7 +1295,7 @@ mod test_support {
             _client_user_message_id: ClientUserMessageId,
             params: acp_v2::PromptRequest,
             cx: &mut App,
-        ) -> Task<Result<acp_v1::PromptResponse>> {
+        ) -> Task<Result<TurnCompletion>> {
             self.connection.prompt(params, cx)
         }
     }
@@ -1334,8 +1328,8 @@ mod test_support {
     struct StubAgentSessionRetry;
 
     impl AgentSessionRetry for StubAgentSessionRetry {
-        fn run(&self, _cx: &mut App) -> Task<Result<acp_v1::PromptResponse>> {
-            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+        fn run(&self, _cx: &mut App) -> Task<Result<TurnCompletion>> {
+            Task::ready(Ok(TurnCompletion::new(acp_v2::StopReason::EndTurn)))
         }
     }
 

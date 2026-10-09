@@ -2115,7 +2115,7 @@ impl ThreadView {
                     return;
                 }
                 match res {
-                    Ok(Some(SubmissionResponse::LegacyCompleted(_))) => {
+                    Ok(Some(SubmissionResponse::Completed(_))) => {
                         this.current_submission.take();
                         this.should_be_following = this
                             .workspace
@@ -2343,7 +2343,7 @@ impl ThreadView {
                 }
                 match result {
                     Err(error) => this.handle_thread_error(error, cx),
-                    Ok(Some(SubmissionResponse::LegacyCompleted(_))) => {
+                    Ok(Some(SubmissionResponse::Completed(_))) => {
                         this.current_submission = None;
                     }
                     Ok(Some(SubmissionResponse::Accepted(_)) | None) => {}
