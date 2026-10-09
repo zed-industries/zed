@@ -249,7 +249,12 @@ fn fim_stop_tokens(prompt_format: EditPredictionPromptFormat) -> &'static [&'sta
             "<|code_suffix|>",
             "<|code_middle|>",
         ],
-        _ => &["<|endoftext|>", "<fim_prefix>", "<fim_middle>", "<fim_suffix>"],
+        _ => &[
+            "<|endoftext|>",
+            "<fim_prefix>",
+            "<fim_middle>",
+            "<fim_suffix>",
+        ],
     }
 }
 
