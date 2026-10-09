@@ -603,6 +603,83 @@ async fn test_rateable_predictions_release_single_file_worktree(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_current_prediction_releases_single_file_worktree(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let (project, buffer, worktree) = open_external_buffer(cx).await;
+    let position = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 3)));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        ep_store.refresh_prediction_from_buffer(
+            project.clone(),
+            buffer.clone(),
+            position,
+            Duration::ZERO,
+            EditPredictionRequestTrigger::Explicit,
+            cx,
+        );
+    });
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    let response = model_response(
+        &request,
+        indoc! {"
+            --- a/external.md
+            +++ b/external.md
+            @@ ... @@
+             one
+            -
+            +two
+             three
+        "},
+    );
+    let request_id = response.request_id.clone();
+    respond_tx.send(response).unwrap();
+    cx.run_until_parked();
+    ep_store.update(cx, |ep_store, cx| {
+        assert_eq!(
+            ep_store
+                .prediction_at(&buffer, None, &project, cx)
+                .map(|prediction| prediction.id.to_string()),
+            Some(request_id.clone()),
+        );
+        ep_store.did_show_current_prediction(
+            &project,
+            edit_prediction_types::SuggestionDisplayType::GhostText,
+            cx,
+        );
+    });
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+    requests.settled.next().await.unwrap();
+
+    let weak_buffer = buffer.downgrade();
+    cx.update(|_| drop(buffer));
+    cx.run_until_parked();
+    weak_buffer.assert_released();
+    worktree.assert_released();
+
+    cx.executor().advance_clock(REJECT_REQUEST_DEBOUNCE);
+    cx.run_until_parked();
+    let (rejection, _) = requests.reject.next().await.unwrap();
+    assert_eq!(
+        rejection
+            .rejections
+            .iter()
+            .map(|rejection| (
+                rejection.request_id.as_str(),
+                rejection.reason,
+                rejection.was_shown
+            ))
+            .collect::<Vec<_>>(),
+        [(
+            request_id.as_str(),
+            EditPredictionRejectReason::Discarded,
+            true
+        )],
+    );
+}
+
+#[gpui::test]
 async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContext) {
     let (ep_store, _requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
@@ -3211,7 +3288,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         cursor_position: None,
         editable_range: None,
         edit_preview,
-        buffer: buffer.clone(),
+        buffer: buffer.downgrade(),
         snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
         id: EditPredictionId("the-id".into()),
         inputs: EditPredictionInputs::V2(Zeta2PromptInput {

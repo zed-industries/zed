@@ -519,10 +519,10 @@ struct CurrentEditPrediction {
 
 impl CurrentEditPrediction {
     fn should_replace_prediction(&self, old_prediction: &Self, cx: &App) -> bool {
-        let Some(new_edits) = self
-            .prediction
-            .interpolate(&self.prediction.buffer.read(cx))
-        else {
+        let Some(buffer) = self.prediction.buffer.upgrade() else {
+            return false;
+        };
+        let Some(new_edits) = self.prediction.interpolate(&buffer.read(cx)) else {
             return false;
         };
 
@@ -530,10 +530,7 @@ impl CurrentEditPrediction {
             return true;
         }
 
-        let Some(old_edits) = old_prediction
-            .prediction
-            .interpolate(&old_prediction.prediction.buffer.read(cx))
-        else {
+        let Some(old_edits) = old_prediction.prediction.interpolate(&buffer.read(cx)) else {
             return true;
         };
 
@@ -1668,6 +1665,19 @@ impl EditPredictionStore {
                             }) {
                                 project_state.finalize_last_event(cx);
                             }
+                            let released_prediction = project_state
+                                .current_prediction
+                                .take_if(|current| current.prediction.targets_buffer(buffer));
+                            if let Some(released_prediction) = released_prediction {
+                                ep_store.reject_prediction(
+                                    released_prediction.prediction.id,
+                                    EditPredictionRejectReason::Discarded,
+                                    released_prediction.was_shown,
+                                    released_prediction.prediction.model_version,
+                                    Some(released_prediction.e2e_latency),
+                                    cx,
+                                );
+                            }
                         }),
                     ],
                 })
@@ -1864,13 +1874,9 @@ impl EditPredictionStore {
             return;
         };
 
-        self.report_changes_for_buffer(
-            &current_prediction.prediction.buffer,
-            project,
-            true,
-            true,
-            cx,
-        );
+        if let Some(buffer) = current_prediction.prediction.buffer.upgrade() {
+            self.report_changes_for_buffer(&buffer, project, true, true, cx);
+        }
 
         // can't hold &mut project_state ref across report_changes_for_buffer_call
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
