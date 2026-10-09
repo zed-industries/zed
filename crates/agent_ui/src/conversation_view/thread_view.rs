@@ -4,7 +4,7 @@ use crate::{
     open_abs_path_at_point, project_path_for_file_link,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::schema::v2 as acp_v2;
 use std::{cell::RefCell, path::Path};
 
 use acp_thread::{
@@ -2965,7 +2965,7 @@ impl ThreadView {
         if self.pending_allow_blocked_by_confusables(cx) {
             return;
         }
-        self.authorize_pending_tool_call(acp_v1::PermissionOptionKind::AllowAlways, window, cx);
+        self.authorize_pending_tool_call(acp_v2::PermissionOptionKind::AllowAlways, window, cx);
     }
 
     pub fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
@@ -3002,7 +3002,7 @@ impl ThreadView {
 
     pub fn authorize_pending_tool_call(
         &mut self,
-        kind: acp_v1::PermissionOptionKind,
+        kind: acp_v2::PermissionOptionKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
@@ -3238,13 +3238,13 @@ impl ThreadView {
         ) else {
             return;
         };
-        let option_id = acp_v1::PermissionOptionId::new(action.option_id.clone());
+        let option_id = acp_v2::PermissionOptionId::new(action.option_id.clone());
         let option_kind = match action.option_kind.as_str() {
-            "AllowOnce" => acp_v1::PermissionOptionKind::AllowOnce,
-            "AllowAlways" => acp_v1::PermissionOptionKind::AllowAlways,
-            "RejectOnce" => acp_v1::PermissionOptionKind::RejectOnce,
-            "RejectAlways" => acp_v1::PermissionOptionKind::RejectAlways,
-            _ => acp_v1::PermissionOptionKind::AllowOnce,
+            "AllowOnce" => acp_v2::PermissionOptionKind::AllowOnce,
+            "AllowAlways" => acp_v2::PermissionOptionKind::AllowAlways,
+            "RejectOnce" => acp_v2::PermissionOptionKind::RejectOnce,
+            "RejectAlways" => acp_v2::PermissionOptionKind::RejectAlways,
+            _ => return,
         };
 
         self.authorize_permission_request(
@@ -10471,14 +10471,14 @@ impl ThreadView {
         &self,
         session_id: acp_v2::SessionId,
         is_first: bool,
-        options: &[acp_v1::PermissionOption],
+        options: &[acp_v2::PermissionOption],
         entry_ix: usize,
         request_id: PermissionRequestId,
         focus_handle: &FocusHandle,
         allow_disabled: bool,
         cx: &Context<Self>,
     ) -> Div {
-        let mut seen_kinds: ArrayVec<acp_v1::PermissionOptionKind, 3, u8> = ArrayVec::new();
+        let mut seen_kinds: ArrayVec<acp_v2::PermissionOptionKind, 3, u8> = ArrayVec::new();
 
         div()
             .p_1()
@@ -10505,14 +10505,14 @@ impl ThreadView {
                                 None,
                             )
                         } else {
-                            match option.kind {
-                                acp_v1::PermissionOptionKind::AllowOnce => (
+                            match &option.kind {
+                                acp_v2::PermissionOptionKind::AllowOnce => (
                                     Icon::new(IconName::Check)
                                         .size(IconSize::XSmall)
                                         .color(Color::Success),
                                     Some(&AllowOnce as &dyn Action),
                                 ),
-                                acp_v1::PermissionOptionKind::AllowAlways => (
+                                acp_v2::PermissionOptionKind::AllowAlways => (
                                     Icon::new(IconName::CheckDouble)
                                         .size(IconSize::XSmall)
                                         .color(Color::Success),
@@ -10524,13 +10524,13 @@ impl ThreadView {
                                         Some(&AllowAlways as &dyn Action)
                                     },
                                 ),
-                                acp_v1::PermissionOptionKind::RejectOnce => (
+                                acp_v2::PermissionOptionKind::RejectOnce => (
                                     Icon::new(IconName::Close)
                                         .size(IconSize::XSmall)
                                         .color(Color::Error),
                                     Some(&RejectOnce as &dyn Action),
                                 ),
-                                acp_v1::PermissionOptionKind::RejectAlways | _ => (
+                                acp_v2::PermissionOptionKind::RejectAlways | _ => (
                                     Icon::new(IconName::Close)
                                         .size(IconSize::XSmall)
                                         .color(Color::Error),
@@ -10543,8 +10543,8 @@ impl ThreadView {
                         // warning is unacknowledged; "deny"/"retry" stay enabled.
                         let is_allow = matches!(
                             option.kind,
-                            acp_v1::PermissionOptionKind::AllowOnce
-                                | acp_v1::PermissionOptionKind::AllowAlways
+                            acp_v2::PermissionOptionKind::AllowOnce
+                                | acp_v2::PermissionOptionKind::AllowAlways
                         ) && !is_retry;
                         let disabled = allow_disabled && is_allow;
 
@@ -10558,7 +10558,7 @@ impl ThreadView {
                             return this;
                         }
 
-                        seen_kinds.push(option.kind).unwrap();
+                        seen_kinds.push(option.kind.clone()).unwrap();
 
                         this.key_binding(
                             KeyBinding::for_action_in(action, focus_handle, cx)
@@ -10568,13 +10568,16 @@ impl ThreadView {
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener({
                         let option_id = option.option_id.clone();
-                        let option_kind = option.kind;
+                        let option_kind = option.kind.clone();
                         let session_id = session_id.clone();
                         move |this, _, window, cx| {
                             this.authorize_permission_request(
                                 session_id.clone(),
                                 request_id,
-                                SelectedPermissionOutcome::new(option_id.clone(), option_kind),
+                                SelectedPermissionOutcome::new(
+                                    option_id.clone(),
+                                    option_kind.clone(),
+                                ),
                                 window,
                                 cx,
                             );
