@@ -39074,6 +39074,79 @@ async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut 
 }
 
 #[gpui::test]
+async fn test_restart_language_server_action_after_stop(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state("fn main() {}ˇ");
+    let project = cx.update_editor(|editor, _, _| editor.project.clone().unwrap());
+    let lsp_store = cx.read(|cx| project.read(cx).lsp_store());
+    let server_name = cx.lsp.server.name();
+    let mut server_id = cx.lsp.server.server_id();
+    let (shutdown_sender, mut shutdown_receiver) = mpsc::unbounded();
+    let mut fake_servers = cx.read(|cx| {
+        project.read(cx).languages().register_fake_lsp_server(
+            server_name,
+            lsp::ServerCapabilities::default(),
+            Some(Box::new(move |fake_server| {
+                let shutdown_sender = shutdown_sender.clone();
+                fake_server.set_request_handler::<lsp::request::Shutdown, _, _>(move |_, _| {
+                    let (reply_sender, reply_receiver) = oneshot::channel::<()>();
+                    shutdown_sender.unbounded_send(reply_sender).unwrap();
+                    async move {
+                        reply_receiver.await?;
+                        Ok(())
+                    }
+                });
+            })),
+        )
+    });
+
+    for stop_all in [false, true] {
+        if stop_all {
+            cx.update(|_, cx| {
+                lsp_store.update(cx, |lsp_store, cx| lsp_store.stop_all_language_servers(cx));
+            });
+            shutdown_receiver.next().await.unwrap().send(()).unwrap();
+        } else {
+            cx.dispatch_action(StopLanguageServer);
+        }
+        cx.run_until_parked();
+        cx.read(|cx| assert_eq!(lsp_store.read(cx).language_server_statuses().count(), 0));
+
+        cx.dispatch_action(RestartLanguageServer);
+        cx.run_until_parked();
+        cx.read(|cx| assert_eq!(lsp_store.read(cx).language_server_statuses().count(), 1));
+        let mut restarted_server = fake_servers.next().await.unwrap();
+        assert_ne!(restarted_server.server.server_id(), server_id);
+        server_id = restarted_server.server.server_id();
+        let document = restarted_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document;
+        assert_eq!(document.uri, cx.buffer_lsp_url);
+        assert_eq!(document.text, "fn main() {}");
+    }
+
+    let mut events = cx.events(&project);
+    cx.dispatch_action(RestartLanguageServer);
+    let reply_sender = shutdown_receiver.next().await.unwrap();
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| lsp_store.stop_all_language_servers(cx));
+    });
+    reply_sender.send(()).unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| assert_eq!(lsp_store.read(cx).language_server_statuses().count(), 0));
+    assert!(fake_servers.next().now_or_never().is_none());
+    let removed_servers = std::iter::from_fn(|| events.next().now_or_never().flatten())
+        .filter_map(|event| match event {
+            project::Event::LanguageServerRemoved(id) => Some(id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(removed_servers, vec![server_id]);
+}
+
+#[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let capabilities = lsp::ServerCapabilities {
