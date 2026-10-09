@@ -632,7 +632,7 @@ struct TextLayoutInner {
 
 pub(crate) struct TextMeasure {
     text: SharedString,
-    runs: Vec<TextRun>,
+    runs: TextRuns,
     text_style: TextStyle,
     font_size: Pixels,
     line_height: Pixels,
@@ -642,11 +642,29 @@ pub(crate) struct TextMeasure {
     element_state: TextLayout,
 }
 
+enum TextRuns {
+    FromStyle,
+    Explicit(Vec<TextRun>),
+}
+
 impl TextMeasure {
+    fn runs_equal(&self, previous: &Self) -> bool {
+        match (&self.runs, &previous.runs) {
+            (TextRuns::FromStyle, TextRuns::FromStyle) => true,
+            (TextRuns::Explicit(runs), TextRuns::Explicit(previous_runs)) => runs == previous_runs,
+            (TextRuns::FromStyle, TextRuns::Explicit(runs)) => {
+                runs.as_slice() == [self.text_style.to_run(self.text.len())]
+            }
+            (TextRuns::Explicit(runs), TextRuns::FromStyle) => {
+                runs.as_slice() == [previous.text_style.to_run(previous.text.len())]
+            }
+        }
+    }
+
     pub(crate) fn carry_from(&self, previous: &Self) -> bool {
         if self.text != previous.text
-            || self.runs != previous.runs
             || self.text_style != previous.text_style
+            || !self.runs_equal(previous)
             || self.font_size != previous.font_size
             || self.line_height != previous.line_height
             || self.rem_size != previous.rem_size
@@ -763,11 +781,7 @@ impl TextLayout {
                 .to_pixels(font_size.into(), window.rem_size()),
         );
 
-        let runs = if let Some(runs) = runs {
-            runs
-        } else {
-            vec![text_style.to_run(text.len())]
-        };
+        let runs = runs.map_or(TextRuns::FromStyle, TextRuns::Explicit);
         TextMeasure {
             text,
             runs,
@@ -843,6 +857,14 @@ impl TextMeasure {
             return size;
         }
 
+        let default_run;
+        let runs = match runs {
+            TextRuns::FromStyle => {
+                default_run = text_style.to_run(text.len());
+                std::slice::from_ref(&default_run)
+            }
+            TextRuns::Explicit(runs) => runs.as_slice(),
+        };
         let (text, runs) = if let Some(truncate_width) = truncate_width {
             if let Some(max_lines) = text_style.line_clamp
                 && let Some(wrap_width) = wrap_width
@@ -870,7 +892,7 @@ impl TextMeasure {
                 // whenever the honestly-shaped text fits; the shaping result
                 // comes from the line layout cache when the same text was
                 // already measured untruncated this frame.
-                (text.clone(), Cow::Borrowed(runs.as_slice()))
+                (text.clone(), Cow::Borrowed(runs))
             } else {
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 line_wrapper.truncate_line(
@@ -882,7 +904,7 @@ impl TextMeasure {
                 )
             }
         } else {
-            (text.clone(), Cow::Borrowed(runs.as_slice()))
+            (text.clone(), Cow::Borrowed(runs))
         };
         let len = text.len();
 
@@ -1467,6 +1489,86 @@ mod tests {
     use crate::AppContext as _;
 
     #[gpui::test]
+    fn text_run_storage_preserves_layout_and_descriptor_carry(cx: &mut crate::TestAppContext) {
+        eprintln!(
+            "TextMeasure={} StyledText={}",
+            std::mem::size_of::<TextMeasure>(),
+            std::mem::size_of::<StyledText>()
+        );
+        cx.add_empty_window().update(|window, cx| {
+            let text: SharedString = "one two three four".into();
+            let default_run = window.text_style().to_run(text.len());
+            let mut changed_run = default_run.clone();
+            changed_run.color = crate::red();
+            let mut first_run = default_run.clone();
+            first_run.len = 4;
+            let mut second_run = changed_run.clone();
+            second_run.len = text.len() - first_run.len;
+            let variants = [
+                None,
+                Some(vec![default_run.clone()]),
+                Some(vec![changed_run]),
+                Some(vec![first_run, second_run]),
+            ];
+            let available = Size {
+                width: crate::AvailableSpace::Definite(crate::px(50.0)),
+                height: crate::AvailableSpace::MaxContent,
+            };
+            let scope = crate::window::ElementIdStack::default();
+            for previous_runs in &variants {
+                for next_runs in &variants {
+                    let mut engine = crate::TaffyLayoutEngine::new();
+                    engine.enable_cache();
+                    let previous = TextLayout::default();
+                    engine.set_request_scope(&scope);
+                    let id = engine.request_text_layout(previous.measurement(
+                        text.clone(),
+                        previous_runs.clone(),
+                        window,
+                    ));
+                    engine.compute_layout(id, available, window, cx);
+                    let (identity, dirty) = engine.text_context_identity_and_dirty(id);
+                    assert!(!dirty);
+                    engine.clear();
+                    let next = TextLayout::default();
+                    let measure = next.measurement(text.clone(), next_runs.clone(), window);
+                    let previous_effective = previous_runs
+                        .clone()
+                        .unwrap_or_else(|| vec![default_run.clone()]);
+                    let next_effective = next_runs
+                        .clone()
+                        .unwrap_or_else(|| vec![default_run.clone()]);
+                    let changed = previous_effective != next_effective;
+                    let reference = TextLayout::default();
+                    let expected_size = reference
+                        .measurement(text.clone(), Some(next_effective), window)
+                        .measure(
+                            Size::default(),
+                            available,
+                            Some(taffy::RunMode::PerformLayout),
+                            window,
+                            cx,
+                        );
+                    engine.set_request_scope(&scope);
+                    let next_id = engine.request_text_layout(measure);
+                    assert_eq!(id, next_id);
+                    assert_eq!(
+                        engine.text_context_identity_and_dirty(next_id),
+                        (identity, changed)
+                    );
+                    assert_eq!(next.0.borrow().is_none(), changed);
+                    engine.compute_layout(next_id, available, window, cx);
+                    assert_eq!(next.wrapped_text(), reference.wrapped_text());
+                    assert_eq!(
+                        next.0.borrow().as_ref().expect("measured state").size,
+                        Some(expected_size)
+                    );
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
     fn text_context_reuses_allocation_and_invalidates_changed_descriptors(
         cx: &mut crate::TestAppContext,
     ) {
@@ -1512,7 +1614,11 @@ mod tests {
                     match change {
                         0 => {}
                         1 => measure.text = "ONE two three four".into(),
-                        2 => measure.runs[0].len -= 1,
+                        2 => {
+                            let mut run = measure.text_style.to_run(measure.text.len());
+                            run.len -= 1;
+                            measure.runs = TextRuns::Explicit(vec![run]);
+                        }
                         3 => measure.text_style.font_family = "different font".into(),
                         4 => measure.text_style.white_space = WhiteSpace::Nowrap,
                         5 => measure.text_style.line_clamp = Some(1),
@@ -2022,7 +2128,11 @@ mod tests {
                 let mut measure = fresh.measurement(text.clone(), None, window);
                 match change {
                     0 => measure.text = "ONE two three four five six seven eight".into(),
-                    1 => measure.runs[0].len -= 1,
+                    1 => {
+                        let mut run = measure.text_style.to_run(measure.text.len());
+                        run.len -= 1;
+                        measure.runs = TextRuns::Explicit(vec![run]);
+                    }
                     2 => measure.text_style.font_family = "different font".into(),
                     3 => measure.text_style.white_space = WhiteSpace::Nowrap,
                     4 => measure.text_style.line_clamp = Some(1),
