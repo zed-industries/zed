@@ -4172,6 +4172,7 @@ impl Editor {
 
         self.update_hovered_link(
             position_map.point_for_position(mouse_position),
+            position_map.inlay_hint_glyph_for_position(mouse_position),
             Some(mouse_position),
             &position_map.snapshot,
             modifiers,
@@ -7425,13 +7426,9 @@ impl Editor {
         }
         let buffer = self.buffer.read(cx).snapshot(cx);
 
-        let mut new_selections = Vec::new();
-        let mut edits = Vec::new();
-
+        let mut selections = Vec::new();
         for selection in self.selections.all_adjusted(&self.display_snapshot(cx)) {
-            let selection_is_empty = selection.is_empty();
-
-            let (start, end) = if selection_is_empty {
+            let (start, end) = if selection.is_empty() {
                 let (word_range, _) = buffer.surrounding_word(selection.start, None);
                 (word_range.start, word_range.end)
             } else {
@@ -7440,20 +7437,48 @@ impl Editor {
                     buffer.point_to_offset(selection.end),
                 )
             };
+            selections.push(Selection {
+                id: selection.id,
+                start,
+                end,
+                reversed: selection.reversed,
+                goal: SelectionGoal::None,
+            });
+        }
 
-            let old_text = buffer.text_for_range(start..end).collect::<String>();
+        // Expanding cursors to words can make selections overlap, e.g. several
+        // cursors in one word. Overlapping edits would be applied once per
+        // selection and duplicate the text, so transform each merged range once.
+        selections.sort_by_key(|selection| selection.start);
+        let mut merged_selections: Vec<Selection<MultiBufferOffset>> = Vec::new();
+        for selection in selections {
+            if let Some(previous) = merged_selections.last_mut()
+                && selection.start < previous.end
+            {
+                previous.end = cmp::max(previous.end, selection.end);
+            } else {
+                merged_selections.push(selection);
+            }
+        }
+
+        let mut new_selections = Vec::new();
+        let mut edits = Vec::new();
+        for selection in merged_selections {
+            let old_text = buffer
+                .text_for_range(selection.start..selection.end)
+                .collect::<String>();
             let new_text = callback(&old_text);
 
             new_selections.push(Selection {
-                start: buffer.anchor_before(start),
-                end: buffer.anchor_after(end),
+                start: buffer.anchor_before(selection.start),
+                end: buffer.anchor_after(selection.end),
                 goal: SelectionGoal::None,
                 id: selection.id,
                 reversed: selection.reversed,
             });
 
             if new_text != old_text {
-                edits.push((start..end, new_text));
+                edits.push((selection.start..selection.end, new_text));
             }
         }
 
@@ -8844,6 +8869,7 @@ impl Editor {
         let blocks = self
             .display_map
             .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
+        self.inlay_hint_visibility_changed(cx);
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
@@ -8888,6 +8914,7 @@ impl Editor {
         self.display_map.update(cx, |display_map, cx| {
             display_map.remove_blocks(block_ids, cx)
         });
+        self.inlay_hint_visibility_changed(cx);
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
@@ -10098,6 +10125,7 @@ impl Editor {
                     self.detect_buffer_language(buffer_id, cx);
                 }
 
+                self.inlay_hint_visibility_changed(cx);
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
 
@@ -10129,6 +10157,7 @@ impl Editor {
                 self.register_visible_buffers(cx);
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                self.inlay_hint_visibility_changed(cx);
                 self.refresh_runnables(None, window, cx);
                 self.bracket_fetched_tree_sitter_chunks
                     .retain(|range, _| range.start.buffer_id != buffer_id);
@@ -10164,6 +10193,7 @@ impl Editor {
                 self.display_map.update(cx, |display_map, cx| {
                     display_map.unfold_buffers(removed_buffer_ids.iter().copied(), cx);
                 });
+                self.inlay_hint_visibility_changed(cx);
 
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::BuffersRemoved {
@@ -10174,6 +10204,7 @@ impl Editor {
                 self.display_map.update(cx, |map, cx| {
                     map.unfold_buffers(buffer_ids.iter().copied(), cx)
                 });
+                self.inlay_hint_visibility_changed(cx);
                 cx.emit(EditorEvent::BuffersEdited {
                     buffer_ids: buffer_ids.clone(),
                 });
@@ -10243,6 +10274,7 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.inlay_hint_visibility_changed(cx);
         cx.notify();
     }
 

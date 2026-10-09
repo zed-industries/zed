@@ -1,7 +1,7 @@
 use super::*;
 use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use agent_settings::AgentSettings;
 use agent_ui::{
     ThreadId,
@@ -604,18 +604,18 @@ fn request_test_tool_authorization(
 ) {
     let tool_call_id = acp::ToolCallId::new(tool_call_id);
     let label = format!("Tool {tool_call_id}");
-    let option_id = acp::PermissionOptionId::new(option_id);
+    let option_id = acp_v1::PermissionOptionId::new(option_id);
     let _authorization_task = cx.update(|_, cx| {
         thread.update(cx, |thread, cx| {
             thread
                 .request_tool_call_authorization(
-                    acp::ToolCall::new(tool_call_id, label)
-                        .kind(acp::ToolKind::Edit)
+                    acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id.0), label)
+                        .kind(acp_v1::ToolKind::Edit)
                         .into(),
-                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
                         option_id,
                         "Allow",
-                        acp::PermissionOptionKind::AllowOnce,
+                        acp_v1::PermissionOptionKind::AllowOnce,
                     )]),
                     acp_thread::AuthorizationKind::PermissionGrant,
                     cx,
@@ -708,6 +708,33 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
+async fn test_sidebar_background_with_transparent_panel(cx: &mut TestAppContext) {
+    let (_, project) = init_multi_project_test(&["/my-project"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    for panel_alpha in [0.0, 0.4] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
+        let background = cx.update(|_, cx| {
+            let colors = cx.theme().colors();
+            colors.background.blend(colors.panel_background)
+        });
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(400.), px(240.)),
+            |_, _| sidebar.clone().into_any_element(),
+        );
+
+        cx.update(|window, _| {
+            let quads = window.painted_quads();
+            let sidebar_background = quads.first().expect("Sidebar should paint its background");
+            assert_eq!(sidebar_background.background.as_solid(), Some(background));
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));
@@ -716,8 +743,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
     save_n_test_threads(1, &project, cx).await;
 
-    for (query, surface_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
-        set_sidebar_test_surface_alpha(surface_alpha, cx);
+    for (query, panel_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
         type_in_search(&sidebar, query, cx);
         let row_bounds = sidebar.read_with(cx, |sidebar, _| {
             sidebar
@@ -779,8 +806,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
                 .bounds
                 .map(|value| px(value.as_f32() / window.scale_factor()))
         });
-        for surface_alpha in [1.0, 0.0, 0.2] {
-            set_sidebar_test_surface_alpha(surface_alpha, cx);
+        for panel_alpha in [1.0, 0.0, 0.2] {
+            set_sidebar_test_panel_alpha(panel_alpha, cx);
             assert_sidebar_action_hover(selector, row_bounds, cx);
         }
     }
@@ -4412,15 +4439,17 @@ async fn test_parallel_threads_shown_with_live_status(cx: &mut TestAppContext) {
     cx.update(|_, cx| {
         connection.send_update(
             session_id_a.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                "working...".into(),
+            )),
             cx,
         );
     });
     cx.run_until_parked();
 
     // Open thread B (idle, default response) — thread A goes to background.
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -4453,8 +4482,8 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let connection = StubAgentConnection::new().with_supports_load_session(true);
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -4517,7 +4546,7 @@ async fn test_background_thread_completion_triggers_notification(cx: &mut TestAp
     cx.update(|_, cx| {
         connection_a.send_update(
             session_id_a.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("chunk".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new("chunk".into())),
             cx,
         );
     });
@@ -4542,7 +4571,7 @@ async fn test_background_thread_completion_triggers_notification(cx: &mut TestAp
     );
 
     // Complete thread A's turn (transition Running → Completed).
-    connection_a.end_turn(session_id_a.clone(), acp::StopReason::EndTurn);
+    connection_a.end_turn(session_id_a.clone(), acp_v1::StopReason::EndTurn);
     cx.run_until_parked();
 
     // The completed background thread shows a notification indicator.
@@ -5662,8 +5691,8 @@ async fn test_thread_title_update_propagates_to_sidebar(cx: &mut TestAppContext)
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Hi there!".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Hi there!".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -5716,8 +5745,8 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Hi there!".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Hi there!".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -5845,8 +5874,8 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Hi there!".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Hi there!".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -5963,8 +5992,8 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
 
     // Save a thread so it appears in the list.
     let connection_a = StubAgentConnection::new();
-    connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection_a.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel_a, connection_a, cx);
     send_message(&panel_a, cx);
@@ -6032,8 +6061,8 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     });
 
     let connection_b = StubAgentConnection::new();
-    connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Thread B".into()),
+    connection_b.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Thread B".into()),
     )]);
     open_thread_with_connection(&panel_b, connection_b, cx);
     send_message(&panel_b, cx);
@@ -6086,8 +6115,8 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     });
 
     let connection_b2 = StubAgentConnection::new();
-    connection_b2.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new(DEFAULT_THREAD_TITLE.into()),
+    connection_b2.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new(DEFAULT_THREAD_TITLE.into()),
     )]);
     open_thread_with_connection(&panel_b, connection_b2, cx);
     send_message(&panel_b, cx);
@@ -6176,8 +6205,8 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
 
     // Start a thread and send a message so it has history.
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -6652,8 +6681,8 @@ async fn test_sending_message_from_draft_promotes_in_place(cx: &mut TestAppConte
     cx.run_until_parked();
 
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("ok".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("ok".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     let draft_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
@@ -6707,8 +6736,8 @@ async fn test_cmd_n_shows_new_thread_entry(cx: &mut TestAppContext) {
 
     // Create a non-empty thread (has messages).
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -6830,8 +6859,8 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
 
     // Create a non-empty thread in the worktree workspace.
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&worktree_panel, connection, cx);
     send_message(&worktree_panel, cx);
@@ -6955,8 +6984,8 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
     // Give the main panel a real thread we can park the draft behind
     // later. Send a message to promote the draft→real thread.
     let real_connection = StubAgentConnection::new();
-    real_connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("done".into()),
+    real_connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&main_panel, real_connection, cx);
     agent_ui::test_support::send_message(&main_panel, cx);
@@ -7636,7 +7665,9 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
     cx.update(|_, cx| {
         connection.send_update(
             session_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                "working...".into(),
+            )),
             cx,
         );
     });
@@ -7723,7 +7754,9 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
     cx.update(|_, cx| {
         connection.send_update(
             session_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                "working...".into(),
+            )),
             cx,
         );
     });
@@ -7734,7 +7767,7 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
         vec!["v [project]", "  Hello {wt-feature-a} * (running)",]
     );
 
-    connection.end_turn(session_id, acp::StopReason::EndTurn);
+    connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
     cx.run_until_parked();
 
     assert_eq!(
@@ -8865,7 +8898,9 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
     cx.update(|_, cx| {
         connection.send_update(
             thread2_session_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                "working...".into(),
+            )),
             cx,
         );
     });
@@ -9943,8 +9978,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // Thread C (oldest), Thread B, Thread A (newest) — by created_at.
     // We send messages in each so they also get last_message_sent_or_queued timestamps.
     let connection_c = StubAgentConnection::new();
-    connection_c.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done C".into()),
+    connection_c.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done C".into()),
     )]);
     open_thread_with_connection(&panel, connection_c, cx);
     send_message(&panel, cx);
@@ -9961,8 +9996,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     );
 
     let connection_b = StubAgentConnection::new();
-    connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done B".into()),
+    connection_b.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done B".into()),
     )]);
     open_thread_with_connection(&panel, connection_b, cx);
     send_message(&panel, cx);
@@ -9979,8 +10014,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     );
 
     let connection_a = StubAgentConnection::new();
-    connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done A".into()),
+    connection_a.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done A".into()),
     )]);
     open_thread_with_connection(&panel, connection_a, cx);
     send_message(&panel, cx);
@@ -10290,8 +10325,8 @@ async fn test_archive_thread_drops_retained_conversation_view(cx: &mut TestAppCo
     cx.run_until_parked();
 
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -10365,8 +10400,8 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
 
     // Create a thread in project-a (non-active — project-b is active).
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel_a, connection, cx);
     agent_ui::test_support::send_message(&panel_a, cx);
@@ -10392,8 +10427,8 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     // Create a thread in project-b (the active workspace) and verify it
     // becomes the active entry.
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel_b, connection, cx);
     agent_ui::test_support::send_message(&panel_b, cx);
@@ -10438,8 +10473,8 @@ async fn test_unarchive_only_shows_restored_thread(cx: &mut TestAppContext) {
 
     // Create a thread and send a message so it's a real thread.
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Hello".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Hello".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel, connection, cx);
     agent_ui::test_support::send_message(&panel, cx);
@@ -10763,8 +10798,8 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
 
     // Create a thread and send a message so it's no longer a draft.
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel, connection, cx);
     agent_ui::test_support::send_message(&panel, cx);
@@ -10973,8 +11008,8 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
     cx.run_until_parked();
 
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel_b, connection, cx);
     agent_ui::test_support::send_message(&panel_b, cx);
@@ -11104,8 +11139,8 @@ async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(cx: &mut 
     cx.run_until_parked();
 
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel, connection, cx);
     agent_ui::test_support::send_message(&panel, cx);
@@ -11218,8 +11253,8 @@ async fn test_switch_to_workspace_with_archived_thread_shows_no_active_entry(
 
     // Create a thread in project-a's panel (currently non-active).
     let connection = acp_thread::StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     agent_ui::test_support::open_thread_with_connection(&panel_a, connection, cx);
     agent_ui::test_support::send_message(&panel_a, cx);
@@ -11414,7 +11449,7 @@ async fn test_archive_last_thread_on_linked_worktree_does_not_create_new_thread_
     cx.update(|_, cx| {
         connection.send_update(
             worktree_thread_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("done".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new("done".into())),
             cx,
         );
     });
@@ -11583,7 +11618,7 @@ async fn test_archive_last_thread_on_linked_worktree_with_no_siblings_leaves_gro
     cx.update(|_, cx| {
         connection.send_update(
             worktree_thread_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("done".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new("done".into())),
             cx,
         );
     });
@@ -11885,7 +11920,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
     cx.update(|_, cx| {
         connection.send_update(
             worktree_thread_id.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("done".into())),
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new("done".into())),
             cx,
         );
     });
@@ -12505,8 +12540,8 @@ async fn test_startup_successful_restoration_no_spurious_draft(cx: &mut TestAppC
 
     // Create and send a message to make a real thread.
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel, connection, cx);
     send_message(&panel, cx);
@@ -12536,8 +12571,8 @@ async fn test_project_header_click_restores_last_viewed(cx: &mut TestAppContext)
 
     // Create two threads in project-a.
     let conn1 = StubAgentConnection::new();
-    conn1.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    conn1.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel_a, conn1, cx);
     send_message(&panel_a, cx);
@@ -12545,8 +12580,8 @@ async fn test_project_header_click_restores_last_viewed(cx: &mut TestAppContext)
     save_test_thread_metadata(&thread_a1, &project_a, cx).await;
 
     let conn2 = StubAgentConnection::new();
-    conn2.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new("Done".into()),
+    conn2.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+        acp_v1::ContentChunk::new("Done".into()),
     )]);
     open_thread_with_connection(&panel_a, conn2, cx);
     send_message(&panel_a, cx);
@@ -13302,7 +13337,7 @@ mod property_test {
                     cx.update(|_, cx| {
                         connection.send_update(
                             session_id.clone(),
-                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
                                 "Done".into(),
                             )),
                             cx,
@@ -15824,11 +15859,12 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
     );
 }
 
-fn set_sidebar_test_surface_alpha(alpha: f32, cx: &mut VisualTestContext) {
+fn set_sidebar_test_panel_alpha(alpha: f32, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         let mut theme = cx.theme().as_ref().clone();
         theme.styles.colors.background = Hsla::from(gpui::rgb(0xdcdcdd));
-        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
+        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xff00ff));
+        theme.styles.colors.panel_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
         theme.styles.colors.element_background = Hsla::from(gpui::rgb(0xebebec));
         theme.styles.colors.ghost_element_hover = Hsla::from(gpui::rgb(0xdfdfe0));
         theme::GlobalTheme::update_theme(cx, Arc::new(theme));

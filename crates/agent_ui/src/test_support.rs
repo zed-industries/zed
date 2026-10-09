@@ -1,5 +1,5 @@
 use acp_thread::{AgentConnection, StubAgentConnection};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
@@ -67,8 +67,8 @@ where
 impl StubAgentServer<StubAgentConnection> {
     pub fn default_response() -> Self {
         let conn = StubAgentConnection::new();
-        conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk::new("Default response".into()),
+        conn.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+            acp_v1::ContentChunk::new("Default response".into()),
         )]);
         Self::new(conn)
     }

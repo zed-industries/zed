@@ -2819,10 +2819,26 @@ impl Element for MarkdownElement {
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
                                     // This is a parent container that we can position the copy button inside.
-                                    let parent_container =
-                                        div().group("code_block").relative().w_full();
+                                    let mut parent_container = div()
+                                        .group("code_block")
+                                        .relative()
+                                        .w_full()
+                                        .when(scroll_handle.is_some(), |this| this.rounded_lg());
 
-                                    let mut parent_container: AnyDiv = if let Some(scroll_handle) =
+                                    if let CodeBlockRenderer::Default { border: true, .. } =
+                                        &self.code_block_renderer
+                                    {
+                                        parent_container = parent_container
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border_variant);
+                                    }
+
+                                    // Styles must be final before `custom_scrollbars`, which reads the
+                                    // corner radii and borders to round the scrollbar track.
+                                    parent_container.style().refine(&self.style.code_block);
+
+                                    let parent_container: AnyDiv = if let Some(scroll_handle) =
                                         scroll_handle.as_ref()
                                     {
                                         let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
@@ -2834,24 +2850,18 @@ impl Element for MarkdownElement {
                                             )
                                             .notify_content();
 
+                                        let mut parent_container = parent_container
+                                            .custom_scrollbars(scrollbars, window, cx);
+                                        // Keep the code block's padding over the space reserved for the scrollbar track.
                                         parent_container
-                                            .rounded_lg()
-                                            .custom_scrollbars(scrollbars, window, cx)
-                                            .into()
+                                            .style()
+                                            .padding
+                                            .refine(&self.style.code_block.padding);
+                                        parent_container.into()
                                     } else {
                                         parent_container.into()
                                     };
 
-                                    if let CodeBlockRenderer::Default { border: true, .. } =
-                                        &self.code_block_renderer
-                                    {
-                                        parent_container = parent_container
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(cx.theme().colors().border_variant);
-                                    }
-
-                                    parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
                                     let code_block = div()
@@ -3960,6 +3970,7 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
+        let text_align = self.text_style().text_align;
         let table_cell_alignment = self
             .table
             .in_cell
@@ -3978,7 +3989,14 @@ impl MarkdownElementBuilder {
                         _ => el.justify_start(),
                     }
                 }
-                None => el.items_start(),
+                None => {
+                    let el = el.items_start();
+                    match text_align {
+                        TextAlign::Left => el.justify_start(),
+                        TextAlign::Center => el.justify_center(),
+                        TextAlign::Right => el.justify_end(),
+                    }
+                }
             }
         });
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
@@ -4900,6 +4918,7 @@ impl RenderedText {
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
         let mut fallback_line: Option<&Rc<RenderedLine>> = None;
+        let mut gap_source_index: Option<usize> = None;
 
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
@@ -4918,10 +4937,16 @@ impl RenderedText {
             if position.y > line_bounds.bottom() {
                 if let Some(next_line) = lines.peek()
                     && position.y < next_line.layout.bounds().top()
+                    && gap_source_index.is_none()
                 {
-                    return Err(line.source_end);
+                    // A later table cell may contain the position, so defer the gap fallback.
+                    gap_source_index = Some(line.source_end);
                 }
             }
+        }
+
+        if let Some(source_index) = gap_source_index {
+            return Err(source_index);
         }
 
         // Fall back to Y-coordinate matched line
@@ -6169,6 +6194,210 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_wrapped_table_links_hit_testing(cx: &mut TestAppContext) {
+        for width in [240., 360., 1200.] {
+            let rendered = render_markdown_at_width(WRAPPED_LINK_TABLE, px(width), cx);
+            assert_eq!(rendered.links.len(), 2);
+
+            let first_link = rendered.links.first().expect("table should contain links");
+            let link_bounds = rendered.bounds_for_source_range(first_link.source_range.clone());
+            if width < 1200. {
+                assert!(link_bounds.len() > 1, "link should wrap at {width}px");
+                let number_bounds = rendered
+                    .lines
+                    .iter()
+                    .find(|line| line.layout.text().as_str() == "1")
+                    .expect("first row should contain a number")
+                    .layout
+                    .bounds();
+                assert!(
+                    link_bounds.first().expect("link should have bounds").top()
+                        < number_bounds.top(),
+                    "wrapped link should start above the centered number"
+                );
+            } else {
+                assert_eq!(link_bounds.len(), 1);
+            }
+            assert_link_hit_testing(&rendered);
+        }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_table_link_column_positions_and_alignment(cx: &mut TestAppContext) {
+        for alignment in ["---", ":---", ":---:", "---:"] {
+            for column_count in 1..=3 {
+                for link_column in 0..column_count {
+                    let source =
+                        wrapped_link_table_with_columns(column_count, link_column, alignment);
+                    let rendered = render_markdown_at_width(&source, px(240.), cx);
+                    assert_eq!(rendered.links.len(), 2);
+                    for link in rendered.links.iter() {
+                        assert!(
+                            rendered
+                                .bounds_for_source_range(link.source_range.clone())
+                                .len()
+                                > 1,
+                            "link should wrap: alignment={alignment}, source={source}"
+                        );
+                    }
+                    assert_link_hit_testing(&rendered);
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_table_link_unicode_and_surrounding_text(cx: &mut TestAppContext) {
+        for alignment in ["---", ":---", ":---:", "---:"] {
+            for (cell, surrounding_words) in [
+                (
+                    "[https://zed.dev/docs/über/条件/🙂/markdown/preview/tables/wrapped-links](https://zed.dev/docs/markdown/unicode)",
+                    None,
+                ),
+                (
+                    "before [https://zed.dev/docs/markdown/preview/tables/wrapped-link-hit-testing-and-selection](https://zed.dev/docs/markdown/links) after",
+                    Some(["before", "after"]),
+                ),
+            ] {
+                let source = format!("| # | Link |\n| --- | {alignment} |\n| 1 | {cell} |\n");
+                let (view, cx) = open_link_interaction_test_window(&source, cx);
+                let rendered = view
+                    .read_with(cx, |view, _| view.rendered_text.borrow().clone())
+                    .expect("table should be rendered");
+                assert_eq!(rendered.links.len(), 1);
+                let link = rendered.links.first().expect("cell should contain a link");
+                assert!(
+                    rendered
+                        .bounds_for_source_range(link.source_range.clone())
+                        .len()
+                        > 1,
+                    "link should wrap: alignment={alignment}, source={source}"
+                );
+                assert_link_hit_testing(&rendered);
+                assert_link_mouse_interactions(&view, &rendered, cx);
+
+                if let Some(surrounding_words) = surrounding_words {
+                    let positions = surrounding_words.map(|word| {
+                        let start = source.find(word).expect("cell should contain plain text");
+                        rendered
+                            .bounds_for_source_range(start..start + word.len())
+                            .into_iter()
+                            .next()
+                            .expect("plain text should have bounds")
+                            .center()
+                    });
+                    assert_non_link_mouse_interactions(&view, &rendered, positions, cx);
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_table_link_hover_click_and_resize(cx: &mut TestAppContext) {
+        let source = format!("Before\n\n{WRAPPED_LINK_TABLE}\nAfter");
+        let (view, cx) = open_link_interaction_test_window(&source, cx);
+        let rendered_text = view.read_with(cx, |view, _| view.rendered_text.clone());
+
+        for width in [1200., 240., 360., 1200.] {
+            *rendered_text.borrow_mut() = None;
+            cx.simulate_resize(size(px(width), px(1600.)));
+            cx.run_until_parked();
+            let rendered = rendered_text
+                .borrow()
+                .clone()
+                .expect("markdown should be rendered again after resizing");
+            assert_eq!(rendered.links.len(), 2);
+            let first_link = rendered.links.first().expect("table should contain links");
+            let row_count = rendered
+                .bounds_for_source_range(first_link.source_range.clone())
+                .len();
+            if width < 1200. {
+                assert!(row_count > 1);
+            } else {
+                assert_eq!(row_count, 1);
+            }
+            assert_link_mouse_interactions(&view, &rendered, cx);
+
+            let before_bounds = rendered
+                .bounds_for_source_range(0.."Before".len())
+                .into_iter()
+                .next()
+                .expect("paragraph should have bounds");
+            let number_start = source.find("| 1 |").expect("table should contain row 1") + 2;
+            let number_bounds = rendered
+                .bounds_for_source_range(number_start..number_start + 1)
+                .into_iter()
+                .next()
+                .expect("number should have bounds");
+            let header_bounds = rendered
+                .lines
+                .iter()
+                .find(|line| line.layout.text().as_str() == "#")
+                .expect("table should have a header")
+                .layout
+                .bounds();
+            assert!(before_bounds.bottom() < header_bounds.top());
+            let gap_position = point(
+                before_bounds.center().x,
+                (before_bounds.bottom() + header_bounds.top()) / 2.,
+            );
+            assert_non_link_mouse_interactions(
+                &view,
+                &rendered,
+                [before_bounds.center(), number_bounds.center(), gap_position],
+                cx,
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_hit_testing_outside_text_preserves_source_indices(cx: &mut TestAppContext) {
+        let empty = render_markdown("", cx);
+        assert_eq!(
+            empty.source_index_for_position(point(px(0.), px(0.))),
+            Err(0)
+        );
+
+        let rendered = render_markdown("First\n\nSecond", cx);
+        let mut lines = rendered.lines.iter();
+        let first = lines.next().expect("first paragraph should be rendered");
+        let second = lines.next().expect("second paragraph should be rendered");
+        let first_bounds = first.layout.bounds();
+        let second_bounds = second.layout.bounds();
+        assert!(first_bounds.bottom() < second_bounds.top());
+        for (position, source_index) in [
+            (
+                point(first_bounds.center().x, first_bounds.top() - px(1.)),
+                0,
+            ),
+            (
+                point(first_bounds.left() - px(1.), first_bounds.center().y),
+                0,
+            ),
+            (
+                point(first_bounds.right() + px(1.), first_bounds.center().y),
+                5,
+            ),
+            (
+                point(
+                    first_bounds.center().x,
+                    (first_bounds.bottom() + second_bounds.top()) / 2.,
+                ),
+                5,
+            ),
+            (
+                point(second_bounds.center().x, second_bounds.bottom() + px(1.)),
+                13,
+            ),
+        ] {
+            assert_eq!(
+                rendered.source_index_for_position(position),
+                Err(source_index)
+            );
+        }
+    }
+
+    #[gpui::test]
     fn test_table_columns_are_sized_to_their_content(cx: &mut TestAppContext) {
         fn cells(row: &str) -> impl Iterator<Item = &str> {
             row.trim().trim_matches('|').split('|')
@@ -6391,6 +6620,96 @@ mod tests {
             "images in a paragraph should stay top-aligned"
         );
         assert!(icon.left() < tall_image.left());
+    }
+
+    fn leading_image_and_container_bounds(
+        source: &'static str,
+        cx: &mut TestAppContext,
+    ) -> (Bounds<Pixels>, Bounds<Pixels>) {
+        let mut cx = render_image_layout(source, cx);
+        let image = cx
+            .debug_bounds("markdown_image_0")
+            .expect("image should be rendered");
+        let container = cx
+            .debug_bounds("inner")
+            .expect("markdown container should be rendered");
+        (image, container)
+    }
+
+    #[gpui::test]
+    fn test_images_in_html_blocks_follow_text_align(cx: &mut TestAppContext) {
+        for (source, expected_alignment) in [
+            (r#"<p><img src="icon.png"></p>"#, TextAlign::Left),
+            (
+                r#"<p align="center"><img src="icon.png"></p>"#,
+                TextAlign::Center,
+            ),
+            (
+                r#"<p align="right"><img src="icon.png"></p>"#,
+                TextAlign::Right,
+            ),
+            (
+                r#"<p style="text-align: center"><a href="https://zed.dev"><img src="icon.png"></a></p>"#,
+                TextAlign::Center,
+            ),
+        ] {
+            let (image, container) = leading_image_and_container_bounds(source, cx);
+            let left_gap = image.left() - container.left();
+            let right_gap = container.right() - image.right();
+            let aligned = match expected_alignment {
+                TextAlign::Left => left_gap < px(1.) && right_gap > px(100.),
+                TextAlign::Center => (left_gap - right_gap).abs() <= px(1.5) && left_gap > px(100.),
+                TextAlign::Right => right_gap < px(1.) && left_gap > px(100.),
+            };
+            assert!(
+                aligned,
+                "image in {source:?} should be {expected_alignment:?} aligned: \
+                 left gap {left_gap:?}, right gap {right_gap:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_wide_images_shrink_to_fit_container(cx: &mut TestAppContext) {
+        for source in [
+            "![](wide.png)",
+            r#"<p align="center"><img src="wide.png"></p>"#,
+        ] {
+            let (image, container) = leading_image_and_container_bounds(source, cx);
+            assert!(
+                image.left() >= container.left() && image.right() <= container.right(),
+                "image in {source:?} should not overflow its container: \
+                 image {image:?}, container {container:?}"
+            );
+            // The wrapper is clamped to the container even when the image inside it overflows,
+            // so check that the 10px tall image was scaled down along with its width.
+            assert!(
+                image.size.height < px(10.),
+                "image in {source:?} should scale down proportionally: image {image:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_image_alt_text() {
+        let alt_text = |markdown: &str| {
+            let events = parse_markdown_with_options(markdown, false, false, false).events;
+            let image_start = events
+                .iter()
+                .position(|(_, event)| {
+                    matches!(event, MarkdownEvent::Start(MarkdownTag::Image { .. }))
+                })
+                .expect("markdown should contain an image");
+            collect_image_alt_text(&events[image_start..], markdown)
+        };
+
+        assert_eq!(alt_text("![Zed logo](logo.png)"), Some("Zed logo".into()));
+        assert_eq!(alt_text("![Zed *logo*](logo.png)"), Some("Zed logo".into()));
+        assert_eq!(
+            alt_text("![logo](logo.png) trailing text"),
+            Some("logo".into())
+        );
+        assert_eq!(alt_text("![](logo.png) trailing text"), None);
     }
 
     #[test]
@@ -7893,6 +8212,219 @@ mod tests {
         );
     }
 
+    const WRAPPED_LINK_TABLE: &str = indoc::indoc! {r#"
+        | # | Link |
+        | --- | --- |
+        | 1 | [https://zed.dev/docs/markdown/preview/tables/wrapped-link-hit-testing-and-selection](https://zed.dev/docs/markdown/preview/tables/wrapped-link-hit-testing-and-selection) |
+        | 2 | [https://zed.dev/docs/editor/appearance/themes/configuring-editor-colors](https://zed.dev/docs/editor/appearance/themes/configuring-editor-colors) |
+    "#};
+
+    fn wrapped_link_table_with_columns(
+        column_count: usize,
+        link_column: usize,
+        alignment: &str,
+    ) -> String {
+        let mut headers = vec!["Value"; column_count];
+        *headers
+            .get_mut(link_column)
+            .expect("link column should exist") = "Link";
+        let mut source = format!(
+            "Before\n\n| {} |\n| {} |\n",
+            headers.join(" | "),
+            vec![alignment; column_count].join(" | ")
+        );
+        for (number, url) in [
+            (
+                "1",
+                "https://zed.dev/docs/markdown/preview/tables/wrapped-link-hit-testing-and-selection",
+            ),
+            (
+                "2",
+                "https://zed.dev/docs/editor/appearance/themes/configuring-editor-colors",
+            ),
+        ] {
+            let mut cells = vec![number.to_string(); column_count];
+            *cells
+                .get_mut(link_column)
+                .expect("link column should exist") = format!("[{url}]({url})");
+            source.push_str(&format!("| {} |\n", cells.join(" | ")));
+        }
+        source.push_str("\nAfter");
+        source
+    }
+
+    fn link_bounds_for_visual_rows(
+        rendered: &RenderedText,
+        link: &RenderedLink,
+    ) -> Vec<Bounds<Pixels>> {
+        let bounds = rendered.bounds_for_source_range(link.source_range.clone());
+        assert!(!bounds.is_empty(), "link should have bounds: {link:?}");
+        let mut row_tops = Vec::new();
+        for line in rendered.lines.iter() {
+            for (rendered_index, character) in line.layout.text().char_indices() {
+                let source_index = line.source_index_for_rendered_index(rendered_index);
+                if link.source_range.contains(&source_index) {
+                    // GPUI assigns wrap boundary indices to the preceding row, so use character ends.
+                    let position = line
+                        .layout
+                        .position_for_index(rendered_index + character.len_utf8())
+                        .expect("link character should have a layout position");
+                    if row_tops.last() != Some(&position.y) {
+                        row_tops.push(position.y);
+                    }
+                }
+            }
+        }
+        assert_eq!(bounds.len(), row_tops.len(), "missing link rows: {link:?}");
+        for (bounds, row_top) in bounds.iter().zip(row_tops) {
+            assert!(
+                (bounds.top() - row_top).abs() < px(0.01),
+                "bounds should cover every visual link row: {link:?}"
+            );
+        }
+        bounds
+    }
+
+    fn assert_link_hit_testing(rendered: &RenderedText) {
+        assert!(!rendered.links.is_empty(), "markdown should contain links");
+        for link in rendered.links.iter() {
+            for bounds in link_bounds_for_visual_rows(rendered, link) {
+                let position = bounds.center();
+                let source_index = rendered
+                    .source_index_for_position(position)
+                    .expect("position inside a link should hit text");
+                assert_eq!(
+                    rendered.link_for_source_index(source_index),
+                    Some(link),
+                    "wrong link at {position:?}"
+                );
+            }
+        }
+    }
+
+    fn assert_link_mouse_interactions(
+        view: &Entity<LinkInteractionTestView>,
+        rendered: &RenderedText,
+        cx: &mut VisualTestContext,
+    ) {
+        assert!(!rendered.links.is_empty(), "markdown should contain links");
+        let markdown = view.read_with(cx, |view, _| view.markdown.clone());
+        let hovered_urls = view.read_with(cx, |view, _| view.hovered_urls.clone());
+        let opened_urls = view.read_with(cx, |view, _| view.opened_urls.clone());
+        let viewport =
+            cx.update(|window, _| Bounds::new(point(px(0.), px(0.)), window.viewport_size()));
+        for link in rendered.links.iter() {
+            for bounds in link_bounds_for_visual_rows(rendered, link) {
+                let position = bounds.center();
+                assert!(
+                    viewport.contains(&position),
+                    "link should be visible at {position:?}"
+                );
+                hovered_urls.borrow_mut().clear();
+                opened_urls.borrow_mut().clear();
+                markdown.read_with(cx, |markdown, _| assert!(markdown.pressed_link.is_none()));
+                cx.simulate_mouse_move(position, None, Modifiers::default());
+                assert_eq!(
+                    hovered_urls.borrow().as_slice(),
+                    &[Some(link.destination_url.clone())],
+                    "mouse move should report this link exactly once at {position:?}"
+                );
+                assert!(opened_urls.borrow().is_empty());
+                cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+                assert!(opened_urls.borrow().is_empty());
+                markdown.read_with(cx, |markdown, _| {
+                    assert_eq!(markdown.pressed_link.as_ref(), Some(link));
+                });
+                cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
+                assert_eq!(
+                    opened_urls.borrow().as_slice(),
+                    std::slice::from_ref(&link.destination_url),
+                    "click should open this link exactly once at {position:?}"
+                );
+                markdown.read_with(cx, |markdown, _| assert!(markdown.pressed_link.is_none()));
+            }
+        }
+    }
+
+    fn assert_non_link_mouse_interactions(
+        view: &Entity<LinkInteractionTestView>,
+        rendered: &RenderedText,
+        positions: impl IntoIterator<Item = Point<Pixels>>,
+        cx: &mut VisualTestContext,
+    ) {
+        let hovered_urls = view.read_with(cx, |view, _| view.hovered_urls.clone());
+        let opened_urls = view.read_with(cx, |view, _| view.opened_urls.clone());
+        let viewport =
+            cx.update(|window, _| Bounds::new(point(px(0.), px(0.)), window.viewport_size()));
+        let mut checked_position_count = 0;
+        for position in positions {
+            checked_position_count += 1;
+            assert!(
+                viewport.contains(&position),
+                "non-link position should be visible at {position:?}"
+            );
+            assert!(
+                rendered
+                    .source_index_for_position(position)
+                    .ok()
+                    .and_then(|source_index| rendered.link_for_source_index(source_index))
+                    .is_none(),
+                "position should not hit a link: {position:?}"
+            );
+            hovered_urls.borrow_mut().clear();
+            opened_urls.borrow_mut().clear();
+            cx.simulate_mouse_move(position, None, Modifiers::default());
+            assert_eq!(hovered_urls.borrow().as_slice(), &[None]);
+            assert!(opened_urls.borrow().is_empty());
+            cx.simulate_click(position, Modifiers::default());
+            assert!(opened_urls.borrow().is_empty());
+        }
+        assert!(
+            checked_position_count > 0,
+            "non-link positions should be tested"
+        );
+    }
+
+    struct LinkInteractionTestView {
+        markdown: Entity<Markdown>,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+        hovered_urls: Rc<RefCell<Vec<Option<SharedString>>>>,
+        opened_urls: Rc<RefCell<Vec<SharedString>>>,
+    }
+
+    impl Render for LinkInteractionTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let hovered_urls = self.hovered_urls.clone();
+            let opened_urls = self.opened_urls.clone();
+            div().size_full().child(CapturingMarkdownElement {
+                markdown_element: MarkdownElement::new(
+                    self.markdown.clone(),
+                    MarkdownStyle::default(),
+                )
+                .on_url_hover(move |url, _, _| hovered_urls.borrow_mut().push(url))
+                .on_url_click(move |url, _, _| opened_urls.borrow_mut().push(url)),
+                rendered_text: self.rendered_text.clone(),
+            })
+        }
+    }
+
+    fn open_link_interaction_test_window<'a>(
+        source: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<LinkInteractionTestView>, &'a mut VisualTestContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new(source.to_string().into(), None, None, cx));
+        let (view, cx) = cx.add_window_view(move |_, _| LinkInteractionTestView {
+            markdown,
+            rendered_text: Rc::new(RefCell::new(None)),
+            hovered_urls: Rc::new(RefCell::new(Vec::new())),
+            opened_urls: Rc::new(RefCell::new(Vec::new())),
+        });
+        cx.simulate_resize(size(px(240.), px(1600.)));
+        cx.run_until_parked();
+        (view, cx)
+    }
+
     struct TestWindow;
 
     impl Render for TestWindow {
@@ -8179,19 +8711,21 @@ mod tests {
         markdown: Entity<Markdown>,
         icon: Arc<RenderImage>,
         tall_image: Arc<RenderImage>,
+        wide_image: Arc<RenderImage>,
     }
 
     impl Render for ImageLayoutView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let icon = self.icon.clone();
             let tall_image = self.tall_image.clone();
+            let wide_image = self.wide_image.clone();
             div().size_full().child(
                 MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
                     .image_resolver(move |dest_url, _| {
-                        let image = if dest_url == "tall.png" {
-                            tall_image.clone()
-                        } else {
-                            icon.clone()
+                        let image = match dest_url {
+                            "tall.png" => tall_image.clone(),
+                            "wide.png" => wide_image.clone(),
+                            _ => icon.clone(),
                         };
                         Some(ImageSource::Render(image))
                     }),
@@ -8216,12 +8750,28 @@ mod tests {
             br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="80"></svg>"#,
             cx,
         );
+        let wide_image = render_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="10"></svg>"#,
+            cx,
+        );
         let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
-            let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+            let markdown = cx.new(|cx| {
+                Markdown::new_with_options(
+                    source.into(),
+                    None,
+                    None,
+                    MarkdownOptions {
+                        parse_html: true,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            });
             ImageLayoutView {
                 markdown,
                 icon,
                 tall_image,
+                wide_image,
             }
         });
         cx.run_until_parked();

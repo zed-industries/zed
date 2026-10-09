@@ -143,7 +143,7 @@ impl std::error::Error for NoModelConfiguredError {}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubagentContext {
     /// ID of the parent thread
-    pub parent_thread_id: acp::SessionId,
+    pub parent_thread_id: acp_v2::SessionId,
 
     /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
     pub depth: u8,
@@ -769,7 +769,7 @@ pub trait TerminalHandle {
 
 pub trait SubagentHandle {
     /// The session ID of this subagent thread
-    fn id(&self) -> acp::SessionId;
+    fn id(&self) -> acp_v2::SessionId;
     /// The current number of entries in the thread.
     /// Useful for knowing where the next turn will begin
     fn num_entries(&self, cx: &App) -> usize;
@@ -797,7 +797,7 @@ pub trait ThreadEnvironment {
 
     fn resume_subagent(
         &self,
-        _session_id: acp::SessionId,
+        _session_id: acp_v2::SessionId,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         Err(anyhow::anyhow!(
@@ -907,11 +907,11 @@ pub enum ThreadEvent {
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
     ToolCallAuthorizationResolved {
-        tool_call_id: acp::ToolCallId,
+        tool_call_id: acp_v2::ToolCallId,
         outcome: acp_thread::SelectedPermissionOutcome,
     },
     Elicitation(ElicitationRequest),
-    SubagentSpawned(acp::SessionId),
+    SubagentSpawned(acp_v2::SessionId),
     Retry(acp_thread::RetryStatus),
     ContextCompaction(acp_thread::ContextCompaction),
     ContextCompactionUpdate(acp_thread::ContextCompactionUpdate),
@@ -1270,8 +1270,25 @@ impl From<&ThreadModel> for Option<DbLanguageModel> {
     }
 }
 
+/// The parts of `to_db` that are worth saving while a message streams. Token
+/// usage and scroll position are left out because they can change on every
+/// streamed chunk or scroll, and some fields never change after creation.
+#[derive(PartialEq)]
+pub(crate) struct StreamingSaveKey {
+    message_count: usize,
+    title: Option<SharedString>,
+    summary: Option<SharedString>,
+    model: Option<DbLanguageModel>,
+    profile_id: AgentProfileId,
+    speed: Option<Speed>,
+    thinking_enabled: bool,
+    thinking_effort: Option<String>,
+    sandboxed_terminal_temp_dir: Option<PathBuf>,
+    sandbox_grants: crate::db::DbSandboxGrants,
+}
+
 pub struct Thread {
-    id: acp::SessionId,
+    id: acp_v2::SessionId,
     prompt_id: PromptId,
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
@@ -1428,7 +1445,7 @@ impl Thread {
                 .map_or(ThreadModel::Unset, ThreadModel::Unresolved),
         };
         Self {
-            id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
+            id: acp_v2::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
             updated_at: Utc::now(),
             title: None,
@@ -1514,7 +1531,7 @@ impl Thread {
         self.model = ThreadModel::Ready(model);
     }
 
-    pub fn id(&self) -> &acp::SessionId {
+    pub fn id(&self) -> &acp_v2::SessionId {
         &self.id
     }
 
@@ -1656,10 +1673,13 @@ impl Thread {
             stream
                 .sender
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
-                    acp::ToolCall::new(tool_call_id.clone(), tool_use.name.to_string())
-                        .name(tool_use.name.to_string())
-                        .status(status)
-                        .raw_input(tool_use.input.to_display_json()),
+                    acp::ToolCall::new(
+                        acp::ToolCallId::new(tool_call_id.0.clone()),
+                        tool_use.name.to_string(),
+                    )
+                    .name(tool_use.name.to_string())
+                    .status(status)
+                    .raw_input(tool_use.input.to_display_json()),
                 )))
                 .ok();
             let mut fields = acp::ToolCallUpdateFields::new()
@@ -1763,7 +1783,7 @@ impl Thread {
     }
 
     pub fn from_db(
-        id: acp::SessionId,
+        id: acp_v2::SessionId,
         db_thread: DbThread,
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
@@ -1925,6 +1945,8 @@ impl Thread {
         crate::sandboxing::sandbox_worktree_writable_paths(self.project.read(cx), cx)
     }
 
+    /// A field added here must also go in `StreamingSaveKey`, unless saving it
+    /// can wait until the response finishes streaming.
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         let mut thread = DbThread {
@@ -1957,6 +1979,25 @@ impl Thread {
             thread.initial_project_snapshot = initial_project_snapshot;
             thread
         })
+    }
+
+    pub(crate) fn is_streaming_message(&self) -> bool {
+        self.pending_message.is_some()
+    }
+
+    pub(crate) fn streaming_save_key(&self) -> StreamingSaveKey {
+        StreamingSaveKey {
+            message_count: self.messages.len(),
+            title: self.title.clone(),
+            summary: self.summary.clone(),
+            model: (&self.model).into(),
+            profile_id: self.profile_id.clone(),
+            speed: self.speed,
+            thinking_enabled: self.thinking_enabled,
+            thinking_effort: self.thinking_effort.clone(),
+            sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
+            sandbox_grants: self.sandbox_grants.borrow().to_db(),
+        }
     }
 
     /// Create a snapshot of the current project state including git information and unsaved buffers.
@@ -4079,6 +4120,9 @@ impl Thread {
         };
 
         if message.content.is_empty() {
+            // Saves are skipped while a message streams, so notify to save
+            // anything that changed meanwhile, like token usage.
+            cx.notify();
             return;
         }
 
@@ -4332,7 +4376,7 @@ impl Thread {
 
     pub(crate) fn unregister_running_subagent(
         &mut self,
-        subagent_session_id: &acp::SessionId,
+        subagent_session_id: &acp_v2::SessionId,
         cx: &App,
     ) {
         self.running_subagents.retain(|s| {
@@ -4342,7 +4386,7 @@ impl Thread {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn running_subagent_ids(&self, cx: &App) -> Vec<acp::SessionId> {
+    pub fn running_subagent_ids(&self, cx: &App) -> Vec<acp_v2::SessionId> {
         self.running_subagents
             .iter()
             .filter_map(|s| s.upgrade().map(|s| s.read(cx).id().clone()))
@@ -4353,7 +4397,7 @@ impl Thread {
         self.subagent_context.is_some()
     }
 
-    pub fn parent_thread_id(&self) -> Option<acp::SessionId> {
+    pub fn parent_thread_id(&self) -> Option<acp_v2::SessionId> {
         self.subagent_context
             .as_ref()
             .map(|c| c.parent_thread_id.clone())
@@ -4993,7 +5037,7 @@ fn retained_user_request_messages_before(
 }
 
 pub fn build_thread_title_request(
-    thread_id: &acp::SessionId,
+    thread_id: &acp_v2::SessionId,
     messages: &[Arc<Message>],
     temperature: Option<f32>,
 ) -> LanguageModelRequest {
@@ -5407,10 +5451,10 @@ where
 pub(crate) fn scoped_tool_call_id(
     message_ix: usize,
     tool_use_id: &LanguageModelToolUseId,
-) -> acp::ToolCallId {
+) -> acp_v2::ToolCallId {
     // `message_ix` is non-zero-padded decimal, so the `:` delimiter is always
     // unambiguous -- this would break if the index were zero-padded.
-    acp::ToolCallId::new(format!("{message_ix}:{tool_use_id}"))
+    acp_v2::ToolCallId::new(format!("{message_ix}:{tool_use_id}"))
 }
 
 #[derive(Clone)]
@@ -5447,7 +5491,7 @@ impl ThreadEventStream {
 
     fn send_tool_call(
         &self,
-        id: &acp::ToolCallId,
+        id: &acp_v2::ToolCallId,
         tool_name: &str,
         title: SharedString,
         kind: acp::ToolKind,
@@ -5465,13 +5509,13 @@ impl ThreadEventStream {
     }
 
     fn initial_tool_call(
-        id: &acp::ToolCallId,
+        id: &acp_v2::ToolCallId,
         tool_name: &str,
         title: String,
         kind: acp::ToolKind,
         input: serde_json::Value,
     ) -> acp::ToolCall {
-        acp::ToolCall::new(id.clone(), title)
+        acp::ToolCall::new(acp::ToolCallId::new(id.0.clone()), title)
             .name(tool_name)
             .kind(kind)
             .raw_input(input)
@@ -5479,13 +5523,13 @@ impl ThreadEventStream {
 
     fn update_tool_call_fields(
         &self,
-        tool_call_id: &acp::ToolCallId,
+        tool_call_id: &acp_v2::ToolCallId,
         fields: acp::ToolCallUpdateFields,
         meta: Option<acp::Meta>,
     ) {
         self.sender
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp::ToolCallUpdate::new(tool_call_id.clone(), fields)
+                acp::ToolCallUpdate::new(acp::ToolCallId::new(tool_call_id.0.clone()), fields)
                     .meta(meta)
                     .into(),
             )))
@@ -5494,7 +5538,7 @@ impl ThreadEventStream {
 
     fn resolve_tool_call_authorization(
         &self,
-        tool_call_id: &acp::ToolCallId,
+        tool_call_id: &acp_v2::ToolCallId,
         outcome: acp_thread::SelectedPermissionOutcome,
     ) {
         self.sender
@@ -5525,7 +5569,8 @@ impl ThreadEventStream {
                     id,
                     status,
                     error: None,
-                    summary: Vec::new(),
+                    summary: acp_thread::MessageContent::default(),
+                    meta: None,
                 },
             )))
             .ok();
@@ -5612,7 +5657,7 @@ pub struct ToolCallEventStream {
     tool_use_id: LanguageModelToolUseId,
     /// The ACP-facing id for this tool call (see [`scoped_tool_call_id`]).
     /// Distinct from `tool_use_id`, which is the raw, provider-issued id.
-    tool_call_id: acp::ToolCallId,
+    tool_call_id: acp_v2::ToolCallId,
     stream: ThreadEventStream,
     fs: Option<Arc<dyn Fs>>,
     cancellation_rx: watch::Receiver<bool>,
@@ -5647,7 +5692,7 @@ impl ToolCallEventStream {
         // of silently passing.
         let stream = ToolCallEventStream::new(
             "test_id".into(),
-            acp::ToolCallId::new("0:test_id"),
+            acp_v2::ToolCallId::new("0:test_id"),
             ThreadEventStream::new(events_tx),
             None,
             cancellation_rx,
@@ -5668,7 +5713,7 @@ impl ToolCallEventStream {
         // of silently passing.
         let stream = ToolCallEventStream::new(
             "test_id".into(),
-            acp::ToolCallId::new("0:test_id"),
+            acp_v2::ToolCallId::new("0:test_id"),
             ThreadEventStream::new(events_tx),
             None,
             cancellation_rx,
@@ -5691,7 +5736,7 @@ impl ToolCallEventStream {
 
     fn new(
         tool_use_id: LanguageModelToolUseId,
-        tool_call_id: acp::ToolCallId,
+        tool_call_id: acp_v2::ToolCallId,
         stream: ThreadEventStream,
         fs: Option<Arc<dyn Fs>>,
         cancellation_rx: watch::Receiver<bool>,
@@ -5757,7 +5802,7 @@ impl ToolCallEventStream {
     }
 
     /// The ACP-facing id for this tool call (see [`scoped_tool_call_id`]).
-    pub fn tool_call_id(&self) -> &acp::ToolCallId {
+    pub fn tool_call_id(&self) -> &acp_v2::ToolCallId {
         &self.tool_call_id
     }
 
@@ -5793,7 +5838,7 @@ impl ToolCallEventStream {
             .ok();
     }
 
-    pub fn subagent_spawned(&self, id: acp::SessionId) {
+    pub fn subagent_spawned(&self, id: acp_v2::SessionId) {
         self.stream
             .sender
             .unbounded_send(Ok(ThreadEvent::SubagentSpawned(id)))
@@ -5999,7 +6044,7 @@ impl ToolCallEventStream {
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
                             tool_call: acp::ToolCallUpdate::new(
-                                tool_call_id.clone(),
+                                acp::ToolCallId::new(tool_call_id.0.clone()),
                                 // Leave the title untouched so the card keeps
                                 // showing the command (matching the fallback flow).
                                 acp::ToolCallUpdateFields::new(),
@@ -6119,7 +6164,7 @@ impl ToolCallEventStream {
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
                             tool_call: acp::ToolCallUpdate::new(
-                                tool_call_id,
+                                acp::ToolCallId::new(tool_call_id.0),
                                 // Leave the title untouched so the card keeps
                                 // showing the command (matching the escalation
                                 // flow).
@@ -6397,7 +6442,7 @@ impl ToolCallEventStream {
                             // they're approving to run unsandboxed. The reason is
                             // surfaced separately by the fallback details / warning.
                             tool_call: acp::ToolCallUpdate::new(
-                                tool_call_id.clone(),
+                                acp::ToolCallId::new(tool_call_id.0.clone()),
                                 acp::ToolCallUpdateFields::new(),
                             )
                             .meta(
@@ -6505,7 +6550,10 @@ impl ToolCallEventStream {
                     .sender
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
-                            tool_call: acp::ToolCallUpdate::new(tool_call_id.clone(), fields),
+                            tool_call: acp::ToolCallUpdate::new(
+                                acp::ToolCallId::new(tool_call_id.0.clone()),
+                                fields,
+                            ),
                             options,
                             response: response_tx,
                             context: None,
@@ -6539,7 +6587,7 @@ impl ToolCallEventStream {
         cx: &mut App,
     ) -> Task<Result<acp_v2::CreateElicitationResponse>> {
         let stream = self.stream.clone();
-        let tool_call_id = acp_v2::ToolCallId::new(self.tool_call_id.0.clone());
+        let tool_call_id = self.tool_call_id.clone();
         cx.spawn(async move |_cx| {
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) =
@@ -6615,7 +6663,7 @@ impl ToolCallEventStream {
                     .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                         ToolCallAuthorization {
                             tool_call: acp::ToolCallUpdate::new(
-                                tool_call_id.clone(),
+                                acp::ToolCallId::new(tool_call_id.0.clone()),
                                 acp::ToolCallUpdateFields::new().title(title),
                             ),
                             options,
@@ -6844,7 +6892,7 @@ impl ToolCallEventStreamReceiver {
 
     pub async fn expect_authorization_resolved(
         &mut self,
-    ) -> (acp::ToolCallId, acp_thread::SelectedPermissionOutcome) {
+    ) -> (acp_v2::ToolCallId, acp_thread::SelectedPermissionOutcome) {
         let event = self.0.next().await;
         if let Some(Ok(ThreadEvent::ToolCallAuthorizationResolved {
             tool_call_id,
@@ -6998,6 +7046,63 @@ mod tests {
     use serde_json::json;
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
+
+    #[gpui::test]
+    async fn test_tool_call_events_preserve_opaque_id_storage() {
+        let storage: Arc<str> = Arc::from("  call/雪:\"quoted\"\\opaque  ");
+        let tool_call_id = acp_v2::ToolCallId::new(storage.clone());
+        let (sender, mut receiver) = mpsc::unbounded();
+        let stream = ThreadEventStream::new(sender);
+
+        stream.send_tool_call(
+            &tool_call_id,
+            "test_tool",
+            "Test tool".into(),
+            acp::ToolKind::Other,
+            json!({}),
+        );
+        let ThreadEvent::ToolCall(tool_call) = receiver
+            .next()
+            .await
+            .expect("tool call event exists")
+            .expect("tool call event succeeded")
+        else {
+            panic!("expected v1 tool call payload");
+        };
+        assert_eq!(tool_call.tool_call_id.0.as_ref(), storage.as_ref());
+        assert!(Arc::ptr_eq(&tool_call.tool_call_id.0, &storage));
+
+        stream.update_tool_call_fields(&tool_call_id, acp::ToolCallUpdateFields::new(), None);
+        let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
+            receiver
+                .next()
+                .await
+                .expect("update event exists")
+                .expect("update event succeeded")
+        else {
+            panic!("expected v1 tool call update payload");
+        };
+        assert_eq!(update.tool_call_id.0.as_ref(), storage.as_ref());
+        assert!(Arc::ptr_eq(&update.tool_call_id.0, &storage));
+
+        stream.resolve_tool_call_authorization(
+            &tool_call_id,
+            acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+        );
+        let ThreadEvent::ToolCallAuthorizationResolved { tool_call_id, .. } = receiver
+            .next()
+            .await
+            .expect("authorization resolution exists")
+            .expect("authorization resolution succeeded")
+        else {
+            panic!("expected shared authorization resolution");
+        };
+        assert_eq!(tool_call_id.0.as_ref(), storage.as_ref());
+        assert!(Arc::ptr_eq(&tool_call_id.0, &storage));
+    }
 
     #[test]
     fn compaction_capacity_respects_prompt_and_combined_limits() {
@@ -7334,7 +7439,7 @@ mod tests {
         ];
 
         let request =
-            build_thread_title_request(&acp::SessionId::new("thread-id"), &messages, Some(0.2));
+            build_thread_title_request(&acp_v2::SessionId::new("thread-id"), &messages, Some(0.2));
 
         assert_eq!(request.thread_id.as_deref(), Some("thread-id"));
         assert_eq!(request.intent, Some(CompletionIntent::ThreadSummarization));
@@ -8706,11 +8811,15 @@ mod tests {
 
         let authorization = receiver.expect_authorization().await;
         assert_eq!(
-            &authorization.tool_call.tool_call_id,
-            event_stream.tool_call_id(),
+            &authorization.tool_call.tool_call_id.0,
+            &event_stream.tool_call_id().0,
             "the warning prompt must reference the scoped ACP tool-call id, \
              not the raw provider id"
         );
+        assert!(Arc::ptr_eq(
+            &authorization.tool_call.tool_call_id.0,
+            &event_stream.tool_call_id().0,
+        ));
         let details =
             acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
                 .expect("warning authorization should include sandbox details");
