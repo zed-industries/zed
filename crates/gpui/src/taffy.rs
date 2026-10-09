@@ -86,6 +86,18 @@ impl TaffyLayoutEngine {
         self.cache.is_some()
     }
 
+    #[cfg(test)]
+    pub(crate) fn text_context_identity_and_dirty(
+        &self,
+        id: LayoutId,
+    ) -> (Option<*const crate::elements::TextMeasure>, bool) {
+        let identity = match self.taffy.get_node_context(id.0) {
+            Some(NodeContext::Text(measure)) => Some(&**measure as *const _),
+            _ => None,
+        };
+        (identity, self.taffy.dirty(id.0).expect(EXPECT_MESSAGE))
+    }
+
     pub(crate) fn set_request_scope(&mut self, stack: &crate::window::ElementIdStack) {
         let Some(cache) = self.cache.as_mut() else {
             return;
@@ -155,12 +167,7 @@ impl TaffyLayoutEngine {
         self.computed_layouts.clear();
     }
 
-    fn request_node(
-        &mut self,
-        style: taffy::Style,
-        children: &[LayoutId],
-        context: Option<NodeContext>,
-    ) -> LayoutId {
+    fn claim_node(&mut self, style: taffy::Style, children: &[LayoutId]) -> LayoutId {
         let scope = self.cache.as_mut().map(|cache| {
             let (hash, index) = cache
                 .request_scope
@@ -188,25 +195,6 @@ impl TaffyLayoutEngine {
                     .set_children(id.0, LayoutId::to_taffy_slice(children))
                     .expect(EXPECT_MESSAGE);
             }
-            let carry_text = match (&context, self.taffy.get_node_context(id.0)) {
-                (Some(NodeContext::Text(current)), Some(NodeContext::Text(previous))) => {
-                    current.carry_from(previous)
-                }
-                _ => false,
-            };
-            if carry_text {
-                *self.taffy.get_node_context_mut(id.0).expect(EXPECT_MESSAGE) =
-                    context.expect(EXPECT_MESSAGE);
-            } else if context.is_some() || self.taffy.get_node_context(id.0).is_some() {
-                if let Some(NodeContext::Text(measure)) = &context {
-                    measure.reset();
-                }
-                // Opaque measurements can observe arbitrary external state.
-                // Replacing the callback must invalidate every cached constraint.
-                self.taffy
-                    .set_node_context(id.0, context)
-                    .expect(EXPECT_MESSAGE);
-            }
             id
         } else {
             let id = self.taffy.new_leaf(style).expect(EXPECT_MESSAGE);
@@ -216,18 +204,27 @@ impl TaffyLayoutEngine {
                     .set_children(id, LayoutId::to_taffy_slice(children))
                     .expect(EXPECT_MESSAGE);
             }
-            if context.is_some() {
-                if let Some(NodeContext::Text(measure)) = &context {
-                    measure.reset();
-                }
-                self.taffy
-                    .set_node_context(id, context)
-                    .expect(EXPECT_MESSAGE);
-            }
             LayoutId(id)
         };
         if let Some(scope) = scope {
             *scope = Some(id);
+        }
+        id
+    }
+
+    fn request_node(
+        &mut self,
+        style: taffy::Style,
+        children: &[LayoutId],
+        context: Option<NodeContext>,
+    ) -> LayoutId {
+        let id = self.claim_node(style, children);
+        if context.is_some() || self.taffy.get_node_context(id.0).is_some() {
+            // Opaque measurements can observe arbitrary external state.
+            // Replacing the callback must invalidate every cached constraint.
+            self.taffy
+                .set_node_context(id.0, context)
+                .expect(EXPECT_MESSAGE);
         }
         id
     }
@@ -290,12 +287,29 @@ impl TaffyLayoutEngine {
         measure: crate::elements::TextMeasure,
     ) -> LayoutId {
         let style = text_layout_style();
-        let context = NodeContext::Text(Box::new(measure));
         if self.cache.is_some() {
-            self.request_node(style, &[], Some(context))
+            let id = self.claim_node(style, &[]);
+            if let Some(NodeContext::Text(previous)) = self.taffy.get_node_context_mut(id.0) {
+                let carried = measure.carry_from(previous);
+                if !carried {
+                    measure.reset();
+                }
+                // Keep the authoritative allocation, not the old descriptor.
+                // In-place replacement bypasses the setter's invalidation.
+                **previous = measure;
+                if !carried {
+                    self.taffy.mark_dirty(id.0).expect(EXPECT_MESSAGE);
+                }
+            } else {
+                measure.reset();
+                self.taffy
+                    .set_node_context(id.0, Some(NodeContext::Text(Box::new(measure))))
+                    .expect(EXPECT_MESSAGE);
+            }
+            id
         } else {
             self.taffy
-                .new_leaf_with_context(style, context)
+                .new_leaf_with_context(style, NodeContext::Text(Box::new(measure)))
                 .expect(EXPECT_MESSAGE)
                 .into()
         }

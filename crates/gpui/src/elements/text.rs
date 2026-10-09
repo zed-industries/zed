@@ -1466,6 +1466,160 @@ mod tests {
     use super::*;
     use crate::AppContext as _;
 
+    #[gpui::test]
+    fn text_context_reuses_allocation_and_invalidates_changed_descriptors(
+        cx: &mut crate::TestAppContext,
+    ) {
+        cx.add_empty_window().update(|window, cx| {
+            let text: SharedString = "one two three four".into();
+            let available = Size {
+                width: crate::AvailableSpace::Definite(crate::px(50.0)),
+                height: crate::AvailableSpace::MaxContent,
+            };
+            let scope = crate::window::ElementIdStack::default();
+            for shared in [false, true] {
+                for change in 0..12 {
+                    let mut engine = crate::TaffyLayoutEngine::new();
+                    engine.enable_cache();
+                    let previous = TextLayout::default();
+                    engine.set_request_scope(&scope);
+                    let id = engine.request_text_layout(previous.measurement(
+                        text.clone(),
+                        None,
+                        window,
+                    ));
+                    engine.compute_layout(id, available, window, cx);
+                    let old_text = previous.wrapped_text();
+                    let old_bounds = Bounds::default();
+                    previous.prepaint(old_bounds, &text);
+                    let previous = shared.then_some(previous);
+                    let (identity, dirty) = engine.text_context_identity_and_dirty(id);
+                    assert!(identity.is_some());
+                    assert!(!dirty);
+                    engine.clear();
+
+                    let fresh = TextLayout::default();
+                    let mut measure = fresh.measurement(text.clone(), None, window);
+                    // Seed a populated destination to prove rejection resets it,
+                    // rather than merely relying on fresh elements being empty.
+                    measure.measure(
+                        Size::default(),
+                        available,
+                        Some(taffy::RunMode::PerformLayout),
+                        window,
+                        cx,
+                    );
+                    match change {
+                        0 => {}
+                        1 => measure.text = "ONE two three four".into(),
+                        2 => measure.runs[0].len -= 1,
+                        3 => measure.text_style.font_family = "different font".into(),
+                        4 => measure.text_style.white_space = WhiteSpace::Nowrap,
+                        5 => measure.text_style.line_clamp = Some(1),
+                        6 => {
+                            measure.text_style.text_overflow =
+                                Some(TextOverflow::Truncate("…".into()))
+                        }
+                        7 => measure.font_size += crate::px(1.0),
+                        8 => measure.line_height += crate::px(1.0),
+                        9 => measure.rem_size += crate::px(1.0),
+                        10 => measure.scale_factor += 0.25,
+                        11 => measure.font_generation += 1,
+                        _ => unreachable!(),
+                    }
+                    engine.set_request_scope(&scope);
+                    let next = engine.request_text_layout(measure);
+                    assert_eq!(next, id);
+                    assert_eq!(
+                        engine.text_context_identity_and_dirty(next),
+                        (identity, change != 0),
+                        "change {change}, shared {shared}"
+                    );
+                    if change == 0 {
+                        assert_eq!(fresh.wrapped_text(), old_text);
+                        assert_eq!(
+                            fresh.0.borrow().as_ref().expect("carried state").bounds,
+                            None
+                        );
+                        engine.compute_layout(next, available, window, cx);
+                        assert_eq!(fresh.wrapped_text(), old_text);
+                    } else {
+                        assert!(fresh.0.borrow().is_none());
+                    }
+                    if let Some(previous) = previous {
+                        assert_eq!(previous.wrapped_text(), old_text);
+                        assert_eq!(
+                            previous.0.borrow().as_ref().expect("old state").bounds,
+                            Some(old_bounds)
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn text_context_transitions_retire_custom_captures(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            let mut engine = crate::TaffyLayoutEngine::new();
+            engine.enable_cache();
+            let scope = crate::window::ElementIdStack::default();
+            let available = Size {
+                width: crate::AvailableSpace::MaxContent,
+                height: crate::AvailableSpace::MaxContent,
+            };
+            let text: SharedString = "text".into();
+            let layout = TextLayout::default();
+            engine.set_request_scope(&scope);
+            let id = engine.request_text_layout(layout.measurement(text.clone(), None, window));
+            engine.compute_layout(id, available, window, cx);
+            let old_text = layout.wrapped_text();
+            engine.clear();
+
+            let capture = Rc::new(());
+            let weak = Rc::downgrade(&capture);
+            engine.set_request_scope(&scope);
+            let custom = engine.request_measured_layout(
+                crate::Style::default(),
+                crate::px(16.0),
+                1.0,
+                move |_, _, _, _| {
+                    assert_eq!(Rc::strong_count(&capture), 1);
+                    crate::size(crate::px(37.0), crate::px(19.0))
+                },
+            );
+            assert_eq!(custom, id);
+            assert_eq!(engine.text_context_identity_and_dirty(id), (None, true));
+            engine.compute_layout(id, available, window, cx);
+            assert!(weak.upgrade().is_some());
+            engine.clear();
+            assert!(weak.upgrade().is_none());
+
+            let fresh = TextLayout::default();
+            engine.set_request_scope(&scope);
+            assert_eq!(
+                engine.request_text_layout(fresh.measurement(text, None, window)),
+                id
+            );
+            assert!(engine.text_context_identity_and_dirty(id).0.is_some());
+            assert!(engine.text_context_identity_and_dirty(id).1);
+            assert!(fresh.0.borrow().is_none());
+            engine.compute_layout(id, available, window, cx);
+            assert_eq!(fresh.wrapped_text(), old_text);
+            engine.clear();
+
+            engine.set_request_scope(&scope);
+            assert_eq!(
+                engine.request_layout(crate::Style::default(), crate::px(16.0), 1.0, &[]),
+                id
+            );
+            assert_eq!(engine.text_context_identity_and_dirty(id), (None, true));
+            engine.compute_layout(id, available, window, cx);
+            assert_eq!(engine.layout_bounds(id, 1.0).size, Size::default());
+            assert_eq!(layout.wrapped_text(), old_text);
+        });
+    }
+
     #[test]
     fn text_measurement_cache_guard() {
         let size = crate::size(crate::px(100.), crate::px(40.));
