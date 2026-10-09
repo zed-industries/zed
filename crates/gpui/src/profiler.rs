@@ -876,33 +876,49 @@ pub struct ViewTiming {
 #[cfg(feature = "profiler")]
 pub const FRAME_BUDGET_FLOOR: Duration = Duration::from_nanos(8_333_333);
 
+/// The work a frame can take before it counts as late when its display's
+/// refresh interval is unknown: one refresh at 60 Hz, the most common rate,
+/// so frames on faster displays may be judged leniently but none too strictly.
+#[cfg(feature = "profiler")]
+pub const UNKNOWN_REFRESH_FRAME_BUDGET: Duration = Duration::from_nanos(16_666_667);
+
 #[cfg(feature = "profiler")]
 impl FrameTiming {
-    /// The main-thread time from the later of the frame's signal and its first
-    /// invalidation until it was submitted at `submitted_at`. Waiting for the
-    /// platform's frame signal isn't work, however late it fires. `None`
-    /// without a frame signal.
-    pub fn work(&self, submitted_at: Instant) -> Option<Duration> {
+    /// When the frame's work began: the later of its signal and its first
+    /// invalidation, since waiting for the platform's frame signal isn't work,
+    /// however late it fires. `None` without a frame signal.
+    pub fn work_start(&self) -> Option<Instant> {
         let signal_at = self.signal_at?;
         // A frame signal can fire while the main thread is busy and only be
         // handled after the window became dirty; time before then isn't the
         // frame's.
-        let start = self
-            .dirty_at
-            .map_or(signal_at, |dirty_at| dirty_at.max(signal_at));
-        Some(submitted_at.saturating_duration_since(start))
+        Some(
+            self.dirty_at
+                .map_or(signal_at, |dirty_at| dirty_at.max(signal_at)),
+        )
+    }
+
+    /// The main-thread time from [`FrameTiming::work_start`] until the frame
+    /// was submitted at `submitted_at`: the start of its submission, which may
+    /// consist mostly of waiting for the display to free a buffer.
+    pub fn work(&self, submitted_at: Instant) -> Option<Duration> {
+        Some(submitted_at.saturating_duration_since(self.work_start()?))
     }
 
     /// Whether the frame's work, submitted at `submitted_at`, exceeded
-    /// [`FrameTiming::budget`], when both are known.
+    /// [`FrameTiming::budget`], when its work is known.
     pub fn is_late(&self, submitted_at: Instant) -> Option<bool> {
-        Some(self.work(submitted_at)? > self.budget()?)
+        Some(self.work(submitted_at)? > self.budget())
     }
 
     /// The work a frame can take before it counts as late: one refresh
-    /// interval, but no less than [`FRAME_BUDGET_FLOOR`].
-    pub fn budget(&self) -> Option<Duration> {
-        Some(self.refresh_interval?.max(FRAME_BUDGET_FLOOR))
+    /// interval, but no less than [`FRAME_BUDGET_FLOOR`], or
+    /// [`UNKNOWN_REFRESH_FRAME_BUDGET`] when the interval is unknown.
+    pub fn budget(&self) -> Duration {
+        self.refresh_interval
+            .map_or(UNKNOWN_REFRESH_FRAME_BUDGET, |interval| {
+                interval.max(FRAME_BUDGET_FLOOR)
+            })
     }
 
     /// How many refreshes the frame missed when submitted at `submitted_at`:
@@ -948,13 +964,6 @@ impl PresentTiming {
     pub fn present_duration(&self) -> Duration {
         self.present_end.duration_since(self.present_start)
     }
-
-    /// When the frame's work ended: the start of the submission, since the
-    /// submission may consist mostly of waiting for the display to free a
-    /// buffer to draw into.
-    pub fn submitted_at(&self) -> Instant {
-        self.present_start
-    }
 }
 
 /// A frame event observed by the profiler.
@@ -999,68 +1008,96 @@ pub const FRAME_DURATION_BUCKETS_MS: [u64; 9] = [4, 8, 16, 33, 50, 100, 250, 500
 #[cfg(feature = "profiler")]
 pub const FRAME_WORK_BUCKETS_PERCENT: [u64; 7] = [25, 50, 75, 100, 150, 200, 400];
 
-/// Counts per [`FRAME_DURATION_BUCKETS_MS`] bucket, plus the final unbounded
-/// one.
+/// Counts `histogram`'s values above the previous bound and up to and
+/// including each of `upper_bounds`, plus a final count of the values above
+/// the last bound.
 #[cfg(feature = "profiler")]
-pub type FrameDurationBuckets = [u64; FRAME_DURATION_BUCKETS_MS.len() + 1];
-
-/// Counts per [`FRAME_WORK_BUCKETS_PERCENT`] bucket, plus the final unbounded
-/// one.
-#[cfg(feature = "profiler")]
-pub type FrameWorkBuckets = [u64; FRAME_WORK_BUCKETS_PERCENT.len() + 1];
+pub fn histogram_bucket_counts(
+    histogram: &Histogram<u64>,
+    upper_bounds: impl IntoIterator<Item = u64>,
+) -> Vec<u64> {
+    let mut counted = 0;
+    let mut counts: Vec<u64> = upper_bounds
+        .into_iter()
+        .map(|bound| {
+            // Cumulative counts, since adjacent bounds can share a histogram
+            // bucket.
+            let cumulative = histogram.count_between(0, bound);
+            let count = cumulative.saturating_sub(counted);
+            counted = counted.max(cumulative);
+            count
+        })
+        .collect();
+    counts.push(histogram.len().saturating_sub(counted));
+    counts
+}
 
 /// Statistics for the frames a window drew and presented while its display had
 /// one refresh interval.
 ///
-/// A frame's work is [`FrameTiming::work`], up to when it was submitted
-/// ([`PresentTiming::submitted_at`]). A frame is on time when its work fit
-/// within [`FrameTiming::budget`].
+/// A frame is on time when its [`FrameTiming::work`] fit within
+/// [`FrameTiming::budget`].
 #[cfg(feature = "profiler")]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct RefreshIntervalFrames {
     /// The display's refresh interval, or `None` when the platform doesn't
     /// report it. Frame pacing is only measured for known intervals.
     pub refresh_interval: Option<Duration>,
     /// Frames drawn, whether or not they were presented.
     pub frames_drawn: u64,
-    /// Draw durations, bucketed by [`FRAME_DURATION_BUCKETS_MS`].
-    pub draw_duration: FrameDurationBuckets,
+    /// Draw durations, in nanoseconds.
+    pub draw_duration: Histogram<u64>,
     /// Presented frames whose work fit within [`FrameTiming::budget`].
     pub frames_on_time: u64,
     /// Presented frames whose work exceeded [`FrameTiming::budget`].
     pub frames_late: u64,
-    /// Refreshes that on-time and late frames missed in total.
+    /// Refreshes that on-time and late frames missed in total, when the
+    /// refresh interval is known.
     pub missed_refreshes: u64,
-    /// Presented frames without a refresh interval or frame signal to measure
-    /// their work from.
+    /// Presented frames without a frame signal to measure their work from.
     pub frames_unmeasured: u64,
-    /// Work of on-time and late frames, bucketed by
-    /// [`FRAME_WORK_BUCKETS_PERCENT`].
-    pub work: FrameWorkBuckets,
+    /// Work of on-time and late frames, in nanoseconds.
+    pub work: Histogram<u64>,
     /// Of `frames_on_time`, the frames that responded to input.
     pub input_frames_on_time: u64,
     /// Of `frames_late`, the frames that responded to input.
     pub input_frames_late: u64,
-    /// Work of on-time and late frames that responded to input, bucketed by
-    /// [`FRAME_WORK_BUCKETS_PERCENT`].
-    pub input_work: FrameWorkBuckets,
+    /// Work of on-time and late frames that responded to input, in
+    /// nanoseconds.
+    pub input_work: Histogram<u64>,
 }
 
 #[cfg(feature = "profiler")]
 impl RefreshIntervalFrames {
-    fn new(refresh_interval: Option<Duration>) -> Self {
+    fn new(refresh_interval: Option<Duration>, empty_histogram: &Histogram<u64>) -> Self {
         Self {
             refresh_interval,
-            ..Self::default()
+            frames_drawn: 0,
+            draw_duration: empty_histogram.clone(),
+            frames_on_time: 0,
+            frames_late: 0,
+            missed_refreshes: 0,
+            frames_unmeasured: 0,
+            work: empty_histogram.clone(),
+            input_frames_on_time: 0,
+            input_frames_late: 0,
+            input_work: empty_histogram.clone(),
         }
     }
 
     /// The frames recorded since `earlier`, a previous snapshot of the same
     /// statistics.
     pub fn since(&self, earlier: &Self) -> Self {
-        fn subtract<const N: usize>(current: &[u64; N], earlier: &[u64; N]) -> [u64; N] {
-            std::array::from_fn(|index| current[index].saturating_sub(earlier[index]))
-        }
+        let subtract = |current: &Histogram<u64>, earlier: &Histogram<u64>| {
+            let mut delta = current.clone();
+            match delta.subtract(earlier) {
+                Ok(()) => delta,
+                Err(error) => {
+                    log::error!("failed to subtract frame histograms: {error}");
+                    current.clone()
+                }
+            }
+        };
         Self {
             refresh_interval: self.refresh_interval,
             frames_drawn: self.frames_drawn.saturating_sub(earlier.frames_drawn),
@@ -1090,58 +1127,34 @@ impl RefreshIntervalFrames {
         presentation: &PresentTiming,
         responded_to_input: bool,
     ) {
-        let Some(refresh_interval) = self.refresh_interval else {
+        let submitted_at = presentation.present_start;
+        let (Some(work), Some(is_late)) = (frame.work(submitted_at), frame.is_late(submitted_at))
+        else {
             self.frames_unmeasured += 1;
             return;
         };
-        let submitted_at = presentation.submitted_at();
-        match (
-            frame.work(submitted_at),
-            frame.missed_refreshes(submitted_at),
-            frame.is_late(submitted_at),
-        ) {
-            (Some(work), Some(missed_refreshes), Some(is_late)) => {
-                let bucket = percent_bucket(work, refresh_interval);
-                self.work[bucket] += 1;
-                if responded_to_input {
-                    self.input_work[bucket] += 1;
-                }
-                self.missed_refreshes += missed_refreshes;
-                if is_late {
-                    self.frames_late += 1;
-                    self.input_frames_late += u64::from(responded_to_input);
-                } else {
-                    self.frames_on_time += 1;
-                    self.input_frames_on_time += u64::from(responded_to_input);
-                }
-            }
-            _ => self.frames_unmeasured += 1,
+        record_duration(&mut self.work, work);
+        if responded_to_input {
+            record_duration(&mut self.input_work, work);
+        }
+        self.missed_refreshes += frame.missed_refreshes(submitted_at).unwrap_or(0);
+        if is_late {
+            self.frames_late += 1;
+            self.input_frames_late += u64::from(responded_to_input);
+        } else {
+            self.frames_on_time += 1;
+            self.input_frames_on_time += u64::from(responded_to_input);
         }
     }
 }
 
+/// Records `duration` in nanoseconds, growing the histogram as needed.
 #[cfg(feature = "profiler")]
-fn percent_bucket(duration: Duration, refresh_interval: Duration) -> usize {
-    bucket_index(
-        &FRAME_WORK_BUCKETS_PERCENT,
-        duration.as_nanos() * 100 / refresh_interval.as_nanos(),
-    )
-}
-
-#[cfg(feature = "profiler")]
-fn duration_bucket(duration: Duration) -> usize {
-    bucket_index(
-        &FRAME_DURATION_BUCKETS_MS,
-        duration.as_nanos().div_ceil(1_000_000),
-    )
-}
-
-#[cfg(feature = "profiler")]
-fn bucket_index(upper_bounds: &[u64], value: u128) -> usize {
-    upper_bounds
-        .iter()
-        .position(|bound| value <= u128::from(*bound))
-        .unwrap_or(upper_bounds.len())
+fn record_duration(histogram: &mut Histogram<u64>, duration: Duration) {
+    let nanos = u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
+    if let Err(error) = histogram.record(nanos) {
+        log::error!("failed to record frame duration: {error}");
+    }
 }
 
 /// A point-in-time snapshot of the input-latency histograms for a window,
@@ -1193,6 +1206,9 @@ pub struct WindowProfiler {
     refresh_interval: Option<Duration>,
     frame_signal_at: Option<Instant>,
     by_refresh_interval: Vec<RefreshIntervalFrames>,
+    /// Cloned for each new refresh interval's histograms, since creating one
+    /// can fail.
+    empty_histogram: Histogram<u64>,
     draw_phases: DrawPhases,
     /// For each view phase in progress, the time spent in views nested
     /// inside it so far.
@@ -1231,6 +1247,8 @@ impl WindowProfiler {
             refresh_interval: None,
             frame_signal_at: None,
             by_refresh_interval: Vec::new(),
+            empty_histogram: Histogram::new(3)
+                .map_err(|error| anyhow::anyhow!("Failed to create frame histogram: {error}"))?,
             draw_phases: DrawPhases::default(),
             nested_view_time: SmallVec::new(),
         };
@@ -1450,8 +1468,10 @@ impl WindowProfiler {
         {
             Some(index) => index,
             None => {
-                self.by_refresh_interval
-                    .push(RefreshIntervalFrames::new(refresh_interval));
+                self.by_refresh_interval.push(RefreshIntervalFrames::new(
+                    refresh_interval,
+                    &self.empty_histogram,
+                ));
                 self.by_refresh_interval.len() - 1
             }
         };
@@ -1535,7 +1555,7 @@ impl WindowProfiler {
         self.record_draw_duration(timing.draw_duration());
         let frames = self.frames_for(timing.refresh_interval);
         frames.frames_drawn += 1;
-        frames.draw_duration[duration_bucket(timing.draw_duration())] += 1;
+        record_duration(&mut frames.draw_duration, timing.draw_duration());
         self.pending_frame = Some(timing);
         record_frame_event(FrameEvent::Draw(timing));
         journal::record_draw(timing);
@@ -1807,6 +1827,13 @@ mod tests {
                 .cloned()
                 .expect("frames for the refresh interval")
         };
+        let work_buckets = |work: &Histogram<u64>, refresh_interval: Duration| {
+            histogram_bucket_counts(
+                work,
+                FRAME_WORK_BUCKETS_PERCENT
+                    .map(|percent| (refresh_interval * percent as u32 / 100).as_nanos() as u64),
+            )
+        };
         let sixty = frames_for(Some(sixty_hertz));
         assert_eq!(sixty.frames_drawn, 4);
         assert_eq!(sixty.frames_on_time, 2);
@@ -1814,10 +1841,16 @@ mod tests {
         // 40 ms of work at 16.7 ms per refresh.
         assert_eq!(sixty.missed_refreshes, 2);
         assert_eq!(sixty.frames_unmeasured, 1);
-        assert_eq!(sixty.work, [2, 0, 0, 0, 0, 0, 1, 0]);
+        assert_eq!(
+            work_buckets(&sixty.work, sixty_hertz),
+            [2, 0, 0, 0, 0, 0, 1, 0]
+        );
         assert_eq!(sixty.input_frames_on_time, 1);
         assert_eq!(sixty.input_frames_late, 1);
-        assert_eq!(sixty.input_work, [1, 0, 0, 0, 0, 0, 1, 0]);
+        assert_eq!(
+            work_buckets(&sixty.input_work, sixty_hertz),
+            [1, 0, 0, 0, 0, 0, 1, 0]
+        );
 
         let one_hundred_twenty = frames_for(Some(one_hundred_twenty_hertz));
         assert_eq!(one_hundred_twenty.frames_late, 1);
@@ -1830,14 +1863,22 @@ mod tests {
         // 6 ms of work misses 2 refreshes at 2.78 ms each, and 9 ms misses 3.
         assert_eq!(three_hundred_sixty.missed_refreshes, 5);
 
+        // Judged against the 60 Hz budget, without missed refreshes.
         let unknown = frames_for(None);
         assert_eq!(unknown.frames_drawn, 1);
-        assert_eq!(unknown.frames_unmeasured, 1);
-        assert_eq!(unknown.work, FrameWorkBuckets::default());
+        assert_eq!(unknown.frames_on_time, 1);
+        assert_eq!(unknown.missed_refreshes, 0);
 
         let later = profiler.frame_duration_snapshot();
         let delta = later.by_refresh_interval[0].since(&snapshot.by_refresh_interval[0]);
-        assert_eq!(delta, RefreshIntervalFrames::new(Some(sixty_hertz)));
+        assert_eq!(
+            delta.frames_drawn + delta.frames_on_time + delta.frames_late,
+            0
+        );
+        assert_eq!(
+            delta.draw_duration.len() + delta.work.len() + delta.input_work.len(),
+            0
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use collections::{HashMap, HashSet};
 use gpui::{
     App, FRAME_DURATION_BUCKETS_MS, FRAME_WORK_BUCKETS_PERCENT, Global, InputLatencySnapshot,
-    RefreshIntervalFrames, Window, WindowId, actions,
+    RefreshIntervalFrames, Window, WindowId, actions, histogram_bucket_counts,
 };
 use hdrhistogram::Histogram;
 use std::{
@@ -146,29 +146,24 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
 
     state.previous.insert(window_id, (now, current));
 
-    let frames_sub4 = count_frames_in_range(&delta_latency, 0, MS4_NS);
-    let frames_4to8 = count_frames_in_range(&delta_latency, MS4_NS, MS8_NS);
-    let frames_8to16 = count_frames_in_range(&delta_latency, MS8_NS, MS16_NS);
-    let frames_16to33 = count_frames_in_range(&delta_latency, MS16_NS, MS33_NS);
-    let frames_33to100 = count_frames_in_range(&delta_latency, MS33_NS, MS100_NS);
-    // frames > 100 ms are implicitly total_frames - (sub4 + 4to8 + 8to16 + 16to33 + 33to100)
-
-    let frames_with_1_event = count_frames_in_range(&delta_coalesce, 1, 2);
-    let frames_with_2_events = count_frames_in_range(&delta_coalesce, 2, 3);
-    let frames_with_3_events = count_frames_in_range(&delta_coalesce, 3, 4);
-    // frames with 4+ events are implicitly total_frames - (1 + 2 + 3)
+    // Frames over 100 ms, or with 4+ events, are implied by total_frames.
+    let latency_counts =
+        histogram_bucket_counts(&delta_latency, [MS4_NS, MS8_NS, MS16_NS, MS33_NS, MS100_NS]);
+    let coalesce_counts = histogram_bucket_counts(&delta_coalesce, [1, 2, 3]);
+    let latency = |index: usize| latency_counts.get(index).copied().unwrap_or_default();
+    let coalesce = |index: usize| coalesce_counts.get(index).copied().unwrap_or_default();
 
     telemetry::event!(
         "Latency Report",
-        frames_sub4 = frames_sub4,
-        frames_4to8 = frames_4to8,
-        frames_8to16 = frames_8to16,
-        frames_16to33 = frames_16to33,
-        frames_33to100 = frames_33to100,
+        frames_sub4 = latency(0),
+        frames_4to8 = latency(1),
+        frames_8to16 = latency(2),
+        frames_16to33 = latency(3),
+        frames_33to100 = latency(4),
         total_frames = total_frames,
-        frames_with_1_event = frames_with_1_event,
-        frames_with_2_events = frames_with_2_events,
-        frames_with_3_events = frames_with_3_events,
+        frames_with_1_event = coalesce(0),
+        frames_with_2_events = coalesce(1),
+        frames_with_3_events = coalesce(2),
         report_window_seconds = report_window_seconds,
         measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
     );
@@ -287,23 +282,35 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
                 gpui::profiler::hang::MEASUREMENT_VERSION.into(),
             ),
         ]);
-        insert_buckets(
-            &mut properties,
-            "work_pct",
-            &FRAME_WORK_BUCKETS_PERCENT,
-            &frames.work,
+        // Work buckets are relative to the refresh interval, so frames on
+        // displays with an unknown interval have none.
+        if let Some(refresh_interval) = frames.refresh_interval {
+            let work_bounds = FRAME_WORK_BUCKETS_PERCENT.map(|percent| {
+                u64::try_from(refresh_interval.as_nanos() * u128::from(percent) / 100)
+                    .unwrap_or(u64::MAX)
+            });
+            for (prefix, work) in [
+                ("work_pct", &frames.work),
+                ("input_work_pct", &frames.input_work),
+            ] {
+                let counts = histogram_bucket_counts(work, work_bounds);
+                insert_buckets(
+                    &mut properties,
+                    prefix,
+                    &FRAME_WORK_BUCKETS_PERCENT,
+                    &counts,
+                );
+            }
+        }
+        let draw_counts = histogram_bucket_counts(
+            &frames.draw_duration,
+            FRAME_DURATION_BUCKETS_MS.map(|milliseconds| milliseconds * 1_000_000),
         );
         insert_buckets(
             &mut properties,
             "draw_ms",
             &FRAME_DURATION_BUCKETS_MS,
-            &frames.draw_duration,
-        );
-        insert_buckets(
-            &mut properties,
-            "input_work_pct",
-            &FRAME_WORK_BUCKETS_PERCENT,
-            &frames.input_work,
+            &draw_counts,
         );
         telemetry::send_event(telemetry::Event {
             event_type: "Frame Duration Report".to_string(),
@@ -353,14 +360,6 @@ fn open_window_ids(cx: &App) -> HashSet<WindowId> {
         .into_iter()
         .map(|window| window.window_id())
         .collect()
-}
-
-fn count_frames_in_range(histogram: &Histogram<u64>, low_ns: u64, high_ns: u64) -> u64 {
-    histogram
-        .iter_recorded()
-        .filter(|v| v.value_iterated_to() >= low_ns && v.value_iterated_to() < high_ns)
-        .map(|v| v.count_at_value())
-        .sum()
 }
 
 fn format_report(data: &InputLatencyReportData) -> String {

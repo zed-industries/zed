@@ -67,19 +67,16 @@ pub fn hang_threshold() -> Duration {
     }
 }
 
-/// Total foreground spend within one interval that counts as a hang, for
-/// frames on displays whose refresh interval is unknown. Elsewhere a frame
-/// counts as a hang when its work exceeds one refresh interval or one refresh
-/// at 120 Hz, whichever is longer.
+/// Duration at which a single piece of foreground work counts as blocking
+/// work when no frame's work was measured (see [`HangTrigger::BlockingWork`]).
 pub fn frame_budget() -> Duration {
     if cfg!(debug_assertions) {
         // Unoptimized builds routinely spend more than a release frame budget
-        // on ordinary frames; keep dev builds from reporting constantly.
+        // on ordinary work; keep dev builds from reporting constantly.
         Duration::from_millis(100)
     } else {
-        // At least one dropped frame on any display. Generous while budget
-        // incidents are plentiful; lower it as they get fixed.
-        Duration::from_millis(24)
+        // Long enough to delay a frame even at 60 Hz.
+        gpui::profiler::UNKNOWN_REFRESH_FRAME_BUDGET
     }
 }
 
@@ -176,19 +173,19 @@ fn serialize_incidents(startup: Instant, poll: HangMonitorPoll) -> Vec<Serialize
 struct Reporter {
     last_send: Instant,
     pending: Vec<SerializedHangIncident>,
-    threshold_incidents: u64,
-    budget_incidents: u64,
+    incident_counts: IncidentCounts,
     /// Every incident's stall, bucketed by [`STALL_BUCKETS_MS`]; `pending`
     /// keeps only the largest incidents.
     stall_buckets: StallBuckets,
     stall_max_ms: u64,
     /// See [`gpui::profiler::hang::HangDetector::take_active_time`].
     active_time: Duration,
-    active_threshold_incidents: u64,
-    active_budget_incidents: u64,
     contributor_totals: HashMap<String, ContributorTotal>,
     contributors_untracked: u64,
 }
+
+/// Incidents and those during active use, by trigger.
+type IncidentCounts = HashMap<HangTrigger, (u64, u64)>;
 
 /// One contributor's share of every incident since the last send.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -224,13 +221,10 @@ impl Reporter {
         Self {
             last_send: Instant::now(),
             pending: Vec::new(),
-            threshold_incidents: 0,
-            budget_incidents: 0,
+            incident_counts: IncidentCounts::new(),
             stall_buckets: StallBuckets::default(),
             stall_max_ms: 0,
             active_time: Duration::ZERO,
-            active_threshold_incidents: 0,
-            active_budget_incidents: 0,
             contributor_totals: HashMap::new(),
             contributors_untracked: 0,
         }
@@ -266,16 +260,9 @@ impl Reporter {
     }
 
     fn add(&mut self, incident: SerializedHangIncident) {
-        match incident.trigger {
-            HangTrigger::Threshold => {
-                self.threshold_incidents += 1;
-                self.active_threshold_incidents += u64::from(incident.during_active_use);
-            }
-            HangTrigger::Budget => {
-                self.budget_incidents += 1;
-                self.active_budget_incidents += u64::from(incident.during_active_use);
-            }
-        }
+        let (count, active_count) = self.incident_counts.entry(incident.trigger).or_default();
+        *count += 1;
+        *active_count += u64::from(incident.during_active_use);
         let stall_ms = incident.stall_ms.max(0.0).ceil() as u64;
         let bucket = STALL_BUCKETS_MS
             .iter()
@@ -297,8 +284,6 @@ impl Reporter {
         self.last_send = now;
         let mut incidents = std::mem::take(&mut self.pending);
         incidents.sort_by(|first, second| second.stall_ms.total_cmp(&first.stall_ms));
-        let threshold_incidents = std::mem::take(&mut self.threshold_incidents);
-        let budget_incidents = std::mem::take(&mut self.budget_incidents);
         let mut contributor_totals = std::mem::take(&mut self.contributor_totals)
             .into_values()
             .collect::<Vec<_>>();
@@ -314,15 +299,11 @@ impl Reporter {
         }
         let event = HangIncidentsEvent {
             incidents,
-            total_incidents: threshold_incidents + budget_incidents,
-            threshold_incidents,
-            budget_incidents,
+            incident_counts: std::mem::take(&mut self.incident_counts),
             stall_buckets: std::mem::take(&mut self.stall_buckets),
             stall_max_ms: std::mem::take(&mut self.stall_max_ms),
             report_window_seconds,
             active_seconds: std::mem::take(&mut self.active_time).as_secs(),
-            active_threshold_incidents: std::mem::take(&mut self.active_threshold_incidents),
-            active_budget_incidents: std::mem::take(&mut self.active_budget_incidents),
             contributor_totals,
             contributor_totals_elided,
         };
@@ -332,10 +313,9 @@ impl Reporter {
 
 struct HangIncidentsEvent {
     incidents: Vec<SerializedHangIncident>,
-    /// Predates the threshold/budget split; existing queries key on it.
-    total_incidents: u64,
-    threshold_incidents: u64,
-    budget_incidents: u64,
+    /// Reported as `total_incidents`, `{trigger}_incidents`, and
+    /// `active_{trigger}_incidents` (those during active use).
+    incident_counts: IncidentCounts,
     stall_buckets: StallBuckets,
     stall_max_ms: u64,
     report_window_seconds: u64,
@@ -343,10 +323,6 @@ struct HangIncidentsEvent {
     /// app (within a minute of a key press, click, or scroll), for rates such
     /// as hangs per active hour.
     active_seconds: u64,
-    /// Of `threshold_incidents`, those during active use.
-    active_threshold_incidents: u64,
-    /// Of `budget_incidents`, those during active use.
-    active_budget_incidents: u64,
     /// Contributors summed across every incident, not only the reported ones,
     /// longest total first.
     contributor_totals: Vec<ContributorTotal>,
@@ -358,26 +334,12 @@ impl HangIncidentsEvent {
     fn into_flexible_event(self) -> FlexibleEvent {
         let mut event_properties = HashMap::from([
             ("incidents".to_string(), to_value(&self.incidents)),
-            ("total_incidents".to_string(), self.total_incidents.into()),
-            (
-                "threshold_incidents".to_string(),
-                self.threshold_incidents.into(),
-            ),
-            ("budget_incidents".to_string(), self.budget_incidents.into()),
             ("stall_max_ms".to_string(), self.stall_max_ms.into()),
             (
                 "report_window_seconds".to_string(),
                 self.report_window_seconds.into(),
             ),
             ("active_seconds".to_string(), self.active_seconds.into()),
-            (
-                "active_threshold_incidents".to_string(),
-                self.active_threshold_incidents.into(),
-            ),
-            (
-                "active_budget_incidents".to_string(),
-                self.active_budget_incidents.into(),
-            ),
             (
                 "contributor_totals".to_string(),
                 serde_json::to_value(&self.contributor_totals).unwrap_or_else(|error| {
@@ -394,6 +356,20 @@ impl HangIncidentsEvent {
                 MEASUREMENT_VERSION.into(),
             ),
         ]);
+        let mut total_incidents = 0;
+        for trigger in HangTrigger::ALL {
+            let (count, active_count) = self
+                .incident_counts
+                .get(&trigger)
+                .copied()
+                .unwrap_or_default();
+            total_incidents += count;
+            let name = trigger.as_str();
+            event_properties.insert(format!("{name}_incidents"), count.into());
+            event_properties.insert(format!("active_{name}_incidents"), active_count.into());
+        }
+        // Predates the split by trigger; existing queries key on it.
+        event_properties.insert("total_incidents".to_string(), total_incidents.into());
         for (index, count) in self.stall_buckets.iter().enumerate() {
             let name = match STALL_BUCKETS_MS.get(index) {
                 Some(bound) => format!("stall_ms_le_{bound}"),
@@ -509,7 +485,8 @@ mod tests {
         for (trigger, during_active_use) in [
             (HangTrigger::Threshold, true),
             (HangTrigger::Threshold, false),
-            (HangTrigger::Budget, true),
+            (HangTrigger::LateFrame, true),
+            (HangTrigger::BlockingWork, false),
         ] {
             let mut incident = serialized_incident(120.0);
             incident.trigger = trigger;
@@ -517,10 +494,14 @@ mod tests {
             reporter.add(incident);
         }
         let event = reporter.take_event();
-        assert_eq!(event.threshold_incidents, 2);
-        assert_eq!(event.active_threshold_incidents, 1);
-        assert_eq!(event.budget_incidents, 1);
-        assert_eq!(event.active_budget_incidents, 1);
+        assert_eq!(
+            event.incident_counts,
+            HashMap::from([
+                (HangTrigger::Threshold, (2, 1)),
+                (HangTrigger::LateFrame, (1, 1)),
+                (HangTrigger::BlockingWork, (1, 0)),
+            ])
+        );
     }
 
     #[test]
@@ -529,7 +510,7 @@ mod tests {
         for stall_ms in 0..12 {
             let mut incident = serialized_incident(f64::from(stall_ms));
             if stall_ms % 2 == 0 {
-                incident.trigger = HangTrigger::Budget;
+                incident.trigger = HangTrigger::LateFrame;
             }
             reporter.add(incident);
         }
@@ -541,9 +522,13 @@ mod tests {
             .map(|incident| incident.stall_ms)
             .collect::<Vec<_>>();
 
-        assert_eq!(event.total_incidents, 12);
-        assert_eq!(event.threshold_incidents, 6);
-        assert_eq!(event.budget_incidents, 6);
+        assert_eq!(
+            event.incident_counts,
+            HashMap::from([
+                (HangTrigger::Threshold, (6, 0)),
+                (HangTrigger::LateFrame, (6, 0)),
+            ])
+        );
         assert_eq!(event.stall_buckets, [12, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(event.stall_max_ms, 11);
         assert_eq!(
@@ -559,22 +544,21 @@ mod tests {
         reporter.take_event();
 
         let mut incident = serialized_incident(20.9);
-        incident.trigger = HangTrigger::Budget;
+        incident.trigger = HangTrigger::LateFrame;
         reporter.add(incident);
         let event = reporter.take_event();
 
-        assert_eq!(event.total_incidents, 1);
-        assert_eq!(event.threshold_incidents, 0);
-        assert_eq!(event.budget_incidents, 1);
+        assert_eq!(
+            event.incident_counts,
+            HashMap::from([(HangTrigger::LateFrame, (1, 0))])
+        );
         assert_eq!(event.incidents[0].stall_ms, 20.9);
         assert_eq!(event.stall_buckets, [1, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(event.stall_max_ms, 21);
 
         let empty = reporter.take_event();
         assert!(empty.incidents.is_empty());
-        assert_eq!(empty.total_incidents, 0);
-        assert_eq!(empty.threshold_incidents, 0);
-        assert_eq!(empty.budget_incidents, 0);
+        assert!(empty.incident_counts.is_empty());
         assert_eq!(empty.stall_buckets, StallBuckets::default());
         assert_eq!(empty.stall_max_ms, 0);
     }
@@ -595,7 +579,8 @@ mod tests {
                 "incidents": [],
                 "total_incidents": 0,
                 "threshold_incidents": 0,
-                "budget_incidents": 0,
+                "late_frame_incidents": 0,
+                "blocking_work_incidents": 0,
                 "stall_max_ms": 0,
                 "stall_ms_le_50": 0,
                 "stall_ms_le_100": 0,
@@ -609,7 +594,8 @@ mod tests {
                 "report_window_seconds": report_window_seconds,
                 "active_seconds": 0,
                 "active_threshold_incidents": 0,
-                "active_budget_incidents": 0,
+                "active_late_frame_incidents": 0,
+                "active_blocking_work_incidents": 0,
                 "contributor_totals": [],
                 "contributor_totals_elided": 0,
                 "measurement_version": 3
@@ -621,15 +607,15 @@ mod tests {
     fn hang_incidents_event_uses_expected_wire_shape() {
         let event = HangIncidentsEvent {
             incidents: vec![serialized_incident(125.0)],
-            total_incidents: 3,
-            threshold_incidents: 2,
-            budget_incidents: 1,
+            incident_counts: HashMap::from([
+                (HangTrigger::Threshold, (2, 1)),
+                (HangTrigger::LateFrame, (1, 1)),
+                (HangTrigger::BlockingWork, (1, 0)),
+            ]),
             stall_buckets: [1, 0, 2, 0, 0, 0, 0, 0, 0],
             stall_max_ms: 125,
             report_window_seconds: 1800,
             active_seconds: 900,
-            active_threshold_incidents: 1,
-            active_budget_incidents: 1,
             contributor_totals: vec![ContributorTotal {
                 name: "action:editor::Paste".to_string(),
                 incidents: 2,
@@ -662,9 +648,10 @@ mod tests {
                     "contributors": [],
                     "contributors_elided": 0
                 }],
-                "total_incidents": 3,
+                "total_incidents": 4,
                 "threshold_incidents": 2,
-                "budget_incidents": 1,
+                "late_frame_incidents": 1,
+                "blocking_work_incidents": 1,
                 "stall_max_ms": 125,
                 "stall_ms_le_50": 1,
                 "stall_ms_le_100": 0,
@@ -678,7 +665,8 @@ mod tests {
                 "report_window_seconds": 1800,
                 "active_seconds": 900,
                 "active_threshold_incidents": 1,
-                "active_budget_incidents": 1,
+                "active_late_frame_incidents": 1,
+                "active_blocking_work_incidents": 0,
                 "contributor_totals": [{
                     "name": "action:editor::Paste",
                     "incidents": 2,

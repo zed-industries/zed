@@ -44,7 +44,7 @@ impl AnyView {
     /// [Context::notify] was called on the backing entity since it was rendered
     /// (or [Window::refresh] is called, which ignores caching).
     pub fn cached(self, style: StyleRefinement) -> ViewElement<AnyView> {
-        ViewElement::new(self).cached(style)
+        self.into_element().cached(style)
     }
 
     /// Convert this to a weak handle.
@@ -96,10 +96,6 @@ impl View for AnyView {
         Some(self.entity.entity_id())
     }
 
-    fn view_type_name(&self) -> &'static str {
-        self.view_type_name
-    }
-
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         (self.render)(&self, window, cx)
     }
@@ -109,7 +105,7 @@ impl<V: 'static + Render> IntoElement for Entity<V> {
     type Element = ViewElement<Entity<V>>;
 
     fn into_element(self) -> Self::Element {
-        ViewElement::new(self)
+        ViewElement::with_type_name(self, type_name::<V>())
     }
 
     #[inline(never)]
@@ -122,7 +118,8 @@ impl IntoElement for AnyView {
     type Element = ViewElement<AnyView>;
 
     fn into_element(self) -> Self::Element {
-        ViewElement::new(self)
+        let view_type_name = self.view_type_name;
+        ViewElement::with_type_name(self, view_type_name)
     }
 }
 
@@ -213,13 +210,6 @@ pub trait View: 'static + Sized {
 
     /// Render this view into an element tree, consuming `self`.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
-
-    /// The name of the type that renders this view, which profiling
-    /// attributes the view's draw time to.
-    #[doc(hidden)]
-    fn view_type_name(&self) -> &'static str {
-        type_name::<Self>()
-    }
 }
 
 /// A stateless component (`RenderOnce`) is a `View` with no identity.
@@ -240,10 +230,6 @@ impl<T: Render> View for Entity<T> {
         Some(Entity::entity_id(self))
     }
 
-    fn view_type_name(&self) -> &'static str {
-        type_name::<T>()
-    }
-
     #[inline]
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         self.update(cx, |this, cx| {
@@ -262,7 +248,7 @@ impl<T: Render> Entity<T> {
     /// uncached case.
     #[track_caller]
     pub fn cached(self, style: StyleRefinement) -> ViewElement<Entity<T>> {
-        ViewElement::new(self).cached(style)
+        ViewElement::with_type_name(self, type_name::<T>()).cached(style)
     }
 }
 
@@ -283,12 +269,20 @@ impl<V: View> ViewElement<V> {
     /// Wrap a [`View`] as an element.
     #[track_caller]
     pub fn new(view: V) -> Self {
+        Self::with_type_name(view, type_name::<V>())
+    }
+
+    /// Wraps a view whose draw time profiling attributes to `view_type_name`,
+    /// such as an entity's type rather than [`Entity`]'s.
+    #[track_caller]
+    #[cfg_attr(not(feature = "profiler"), expect(unused_variables))]
+    pub(crate) fn with_type_name(view: V, view_type_name: &'static str) -> Self {
         let entity_id = view.entity_id();
         ViewElement {
             entity_id,
             cached_style: None,
             #[cfg(feature = "profiler")]
-            view_type_name: view.view_type_name(),
+            view_type_name,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),

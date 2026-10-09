@@ -12,9 +12,9 @@ use super::{HangDetector, HangIncident};
 pub struct HangMonitorConfig {
     /// Duration at which a single piece of foreground work counts as a hang.
     pub threshold: Duration,
-    /// Total foreground spend within one interval that counts as a hang,
-    /// for frames on displays whose refresh interval is unknown. Elsewhere a
-    /// frame counts as a hang when it's late (see `FrameTiming::is_late`).
+    /// Duration at which a single piece of foreground work counts as
+    /// blocking work in an interval without a measured frame (see
+    /// [`super::HangTrigger::BlockingWork`]).
     pub frame_budget: Duration,
     /// How often the monitor thread drains the journal.
     pub interval: Duration,
