@@ -992,6 +992,8 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
         supports_tools: model.supports_tool_use(),
         supports_images: model.supports_images(),
         supports_thinking: model.supports_thinking(),
+        // Astra and Fable 5.1 always reason, so only offer effort levels.
+        supports_disabling_thinking: reasoning_model.is_none(),
         refusal_fallback_model_id: model
             .id()
             .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
@@ -3513,7 +3515,9 @@ mod tests {
             )?;
             assert_eq!(serde_json::to_value(request.thinking)?, expected_thinking);
             assert_eq!(request.temperature, None);
+            assert!(!converse_language_model(&model).supports_disabling_thinking);
         }
+        assert!(converse_language_model(&ConverseModel::ClaudeOpus4_8).supports_disabling_thinking);
         Ok(())
     }
 
