@@ -1736,6 +1736,10 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().moved = Some(callback);
     }
 
+    // A GPUI display on X11 is an X screen, which spans every monitor, and a
+    // window never changes screen.
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
         self.0.callbacks.borrow_mut().should_close = Some(callback);
     }

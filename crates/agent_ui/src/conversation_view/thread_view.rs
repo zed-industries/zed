@@ -1277,9 +1277,7 @@ impl ThreadView {
         else {
             return false;
         };
-        !self.is_subagent()
-            && thread.supports_truncate(cx)
-            && message.client_id.is_some()
+        thread.can_rewind_to(message.client_id.as_ref(), cx)
             && message
                 .content
                 .source_blocks()
@@ -3430,6 +3428,11 @@ impl ThreadView {
     pub fn restore_checkpoint(&mut self, client_id: &ClientUserMessageId, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| {
+                telemetry::event!(
+                    "Agent Checkpoint Restored",
+                    agent = thread.connection().telemetry_id(),
+                    session = thread.session_id().clone(),
+                );
                 thread.restore_checkpoint(client_id.clone(), cx)
             })
             .detach_and_log_err(cx);
@@ -4520,7 +4523,7 @@ impl ThreadView {
         let is_compacting = compaction.is_in_progress();
         let summary = &compaction.summary;
         let error = compaction.error.clone();
-        let has_details = !summary.is_empty() || error.is_some();
+        let has_details = summary.blocks().len() > 0 || error.is_some();
         let is_expanded = self
             .entry_view_state
             .read(cx)
@@ -4584,23 +4587,18 @@ impl ThreadView {
                     .when_some(details, |this, (summary, error)| {
                         this.border_color(self.tool_card_border_color(cx))
                             .bg(cx.theme().colors().editor_background.opacity(0.2))
-                            .when(!summary.is_empty(), |this| {
+                            .when(summary.blocks().len() > 0, |this| {
                                 this.child(
                                     v_flex()
                                         .id(("compaction-summary", entry_ix))
                                         .p_2()
                                         .gap_2()
                                         .text_ui(cx)
-                                        .children(summary.iter().enumerate().map(
+                                        .children(summary.blocks().enumerate().map(
                                             |(content_ix, content)| {
                                                 self.render_output_content_block(
-                                                    entry_ix,
-                                                    content_ix,
-                                                    content.as_view(),
-                                                    None,
-                                                    true,
-                                                    window,
-                                                    cx,
+                                                    entry_ix, content_ix, content, None, true,
+                                                    window, cx,
                                                 )
                                             },
                                         )),
@@ -6783,9 +6781,10 @@ impl ThreadView {
                     .is_some_and(|checkpoint| checkpoint.show);
 
                 let is_subagent = self.is_subagent();
-                let can_restore_checkpoint = self.thread.read(cx).supports_truncate(cx)
-                    && message.client_id.is_some()
-                    && !is_subagent;
+                let can_restore_checkpoint = self
+                    .thread
+                    .read(cx)
+                    .can_rewind_to(message.client_id.as_ref(), cx);
                 let source_is_representable = message
                     .content
                     .source_blocks()
