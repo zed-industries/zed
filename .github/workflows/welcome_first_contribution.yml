@@ -1,0 +1,72 @@
+# Welcome first-time contributors with a short summary of CONTRIBUTING.md, once
+# per author, when the 'first contribution' label is added to their PR.
+
+name: Welcome First Contribution
+
+on:
+  # zizmor: ignore[dangerous-triggers]
+  # Fork PRs must be supported, but this workflow only reads event metadata and
+  # checks out scripts from the trusted default branch; it never executes PR code.
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to welcome (must have the 'first contribution' label)"
+        required: true
+        type: number
+      dry-run:
+        description: "Print the comment instead of posting it"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  welcome:
+    if: >-
+      github.repository == 'zed-industries/zed' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.label.name == 'first contribution')
+    # Per author, so two PRs labeled at once can't both be welcomed. Job-level,
+    # so runs for other labels don't take the pending slot.
+    concurrency:
+      group: welcome-first-contribution-${{ github.event.pull_request.user.login || inputs.pr_number }}
+      cancel-in-progress: false
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 5
+
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+          repositories: zed
+          permission-issues: write
+          permission-pull-requests: read
+
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          sparse-checkout: |
+            script/github-welcome-first-contribution.py
+            script/github_helpers.py
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Post welcome comment
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        run: python script/github-welcome-first-contribution.py "$PR_NUMBER" ${{ inputs.dry-run && '--dry-run' || '' }}

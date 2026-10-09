@@ -17,6 +17,7 @@ on:
       - "Maintainer Edits Nudge"
       - "PR Board Meta Fields Refresh"
       - "PR Issue Labeler"
+      - "Welcome First Contribution"
       - "Guild Assignment Status"
       - "Guild Stale Assignments"
       - "Guild Weekly Shipped"
