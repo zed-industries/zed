@@ -6055,7 +6055,7 @@ exit 7
         let thread = cx
             .update(|cx| {
                 connection.clone().load_session(
-                    acp::SessionId::new("after-abandonment"),
+                    acp_v2::SessionId::new("after-abandonment"),
                     project,
                     PathList::new(&[std::path::Path::new("/a")]),
                     None,
@@ -6066,7 +6066,7 @@ exit 7
             .expect("abandonment must not end the connection");
         assert_eq!(
             thread.read_with(cx, |thread, _| thread.session_id().clone()),
-            acp::SessionId::new("after-abandonment")
+            acp_v2::SessionId::new("after-abandonment")
         );
     }
 
@@ -6158,7 +6158,7 @@ exit 7
         let thread = cx
             .update(|cx| {
                 connection.clone().load_session(
-                    acp::SessionId::new("after-rejection"),
+                    acp_v2::SessionId::new("after-rejection"),
                     project,
                     PathList::new(&[std::path::Path::new("/a")]),
                     None,
@@ -6169,7 +6169,7 @@ exit 7
             .expect("rejection must not end or block the connection");
         assert_eq!(
             thread.read_with(cx, |thread, _| thread.session_id().clone()),
-            acp::SessionId::new("after-rejection")
+            acp_v2::SessionId::new("after-rejection")
         );
     }
 
