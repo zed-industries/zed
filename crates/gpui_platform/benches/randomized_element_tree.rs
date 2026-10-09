@@ -663,7 +663,7 @@ fn installed_font_panel_counts() -> Vec<usize> {
 #[gpui::bench(inputs = installed_font_panel_counts(), input_name = "panels", group = "TextPanels/installed font two updates", fps = 120)]
 fn installed_font_panel_updates(panel_count: &usize, cx: &mut BenchAppContext) {
     let font = gpui::font("Noto Sans Mono");
-    let text_system = cx.text_system();
+    let text_system = cx.read(|cx| cx.text_system().clone());
     assert!(
         text_system
             .all_font_names()
