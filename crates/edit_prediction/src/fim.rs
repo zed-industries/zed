@@ -97,21 +97,30 @@ pub fn request_prediction(
         let cursor_in_editable = cursor_offset_in_excerpt.saturating_sub(editable_range.start);
         let prefix = editable_text[..cursor_in_editable].to_string();
         let suffix = editable_text[cursor_in_editable..].to_string();
-        let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
-        let stop_tokens = get_fim_stop_tokens();
-
-        let max_tokens = settings.max_output_tokens;
-
-        let (response_text, request_id) = open_ai_compatible::send_custom_server_request(
-            provider,
-            &settings,
-            prompt,
-            max_tokens,
-            stop_tokens,
-            api_key,
-            &http_client,
-        )
-        .await?;
+        let (response_text, request_id) =
+            if let Some(api) = qwen_api(provider, prompt_format, &settings.api_url) {
+                open_ai_compatible::send_qwen_server_request(
+                    api,
+                    &settings,
+                    &prefix,
+                    &suffix,
+                    api_key,
+                    &http_client,
+                )
+                .await?
+            } else {
+                let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
+                open_ai_compatible::send_custom_server_request(
+                    provider,
+                    &settings,
+                    prompt,
+                    settings.max_output_tokens,
+                    get_fim_stop_tokens(),
+                    api_key,
+                    &http_client,
+                )
+                .await?
+            };
 
         let response_received_at = Instant::now();
 
@@ -165,6 +174,20 @@ pub fn request_prediction(
     })
 }
 
+fn qwen_api(
+    provider: settings::EditPredictionProvider,
+    prompt_format: EditPredictionPromptFormat,
+    api_url: &str,
+) -> Option<crate::qwen::Api> {
+    if provider == settings::EditPredictionProvider::OpenAiCompatibleApi
+        && prompt_format == EditPredictionPromptFormat::Qwen
+    {
+        crate::qwen::Api::from_url(api_url)
+    } else {
+        None
+    }
+}
+
 /// Infers the FIM prompt format from an Ollama/OpenAI-compatible model name.
 /// Returns `None` if the model isn't a known FIM-capable model.
 pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
@@ -179,7 +202,8 @@ pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
         "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
         "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
         "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
-        "qwen2.5-coder" | "qwen-coder" | "qwen" => EditPredictionPromptFormat::Qwen,
+        "qwen2.5-coder" | "qwen-coder" | "qwen" | "qwen3-coder" => EditPredictionPromptFormat::Qwen,
+        model_base if model_base.starts_with("qwen3-coder-") => EditPredictionPromptFormat::Qwen,
         "codegemma" => EditPredictionPromptFormat::CodeGemma,
         "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
         "glm" | "glm-4" | "glm-4.5" => EditPredictionPromptFormat::Glm,
@@ -243,6 +267,7 @@ fn clean_fim_completion(response: &str) -> String {
 
     let end_tokens = [
         "<|endoftext|>",
+        "<|im_end|>",
         "<|file_separator|>",
         "<|fim_pad|>",
         "<|fim_prefix|>",
@@ -270,6 +295,80 @@ fn clean_fim_completion(response: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qwen_partial_mode_is_only_used_for_message_endpoints_and_the_qwen_format() {
+        use settings::EditPredictionProvider::{Ollama, OpenAiCompatibleApi};
+        let chat_url = "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions";
+        let native_url =
+            "https://maas.qianwenaiapi.com/api/v1/services/aigc/text-generation/generation";
+        assert_eq!(
+            qwen_api(
+                OpenAiCompatibleApi,
+                EditPredictionPromptFormat::Qwen,
+                chat_url
+            ),
+            Some(crate::qwen::Api::Chat)
+        );
+        assert_eq!(
+            qwen_api(
+                OpenAiCompatibleApi,
+                EditPredictionPromptFormat::Qwen,
+                native_url
+            ),
+            Some(crate::qwen::Api::Native)
+        );
+        assert_eq!(
+            qwen_api(Ollama, EditPredictionPromptFormat::Qwen, chat_url),
+            None
+        );
+        assert_eq!(
+            qwen_api(
+                OpenAiCompatibleApi,
+                EditPredictionPromptFormat::CodeGemma,
+                chat_url
+            ),
+            None
+        );
+        assert_eq!(
+            qwen_api(
+                OpenAiCompatibleApi,
+                EditPredictionPromptFormat::Qwen,
+                "http://localhost:8080/v1/completions"
+            ),
+            None
+        );
+        assert_eq!(
+            format_fim_prompt(EditPredictionPromptFormat::Qwen, "before", "after"),
+            "<|fim_prefix|>before<|fim_suffix|>after<|fim_middle|>"
+        );
+    }
+
+    #[test]
+    fn infer_prompt_format_matches_qwen3_coder_models() {
+        for model in [
+            "qwen3-coder",
+            "qwen3-coder:30b",
+            "qwen3-coder-plus",
+            "qwen3-coder-flash",
+            "qwen3-coder-plus-2025-09-23",
+        ] {
+            assert_eq!(
+                infer_prompt_format(model),
+                Some(EditPredictionPromptFormat::Qwen),
+                "{model}"
+            );
+        }
+        assert_eq!(infer_prompt_format("qwen3:8b"), None);
+    }
+
+    #[test]
+    fn cleans_qwen_end_tokens_without_trimming_code_whitespace() {
+        assert_eq!(
+            clean_fim_completion("    return n\n<|im_end|>extra"),
+            "    return n\n"
+        );
+    }
 
     #[test]
     fn infer_prompt_format_matches_known_model_families() {
