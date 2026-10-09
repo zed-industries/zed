@@ -12,6 +12,7 @@ workspace = true
 crate-type = ["cdylib"]
 path = "src/explorer_command_injector.rs"
 doctest = false
+test = false
 
 [features]
 default = ["nightly"]
@@ -20,8 +21,6 @@ preview = []
 nightly = []
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
+windows = { workspace = true, features = ["Win32_Globalization", "Win32_System_SystemServices"] }
 windows-core.workspace = true
 windows-registry.workspace = true
-
-[dependencies]

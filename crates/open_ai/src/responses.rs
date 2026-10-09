@@ -1351,6 +1351,32 @@ mod tests {
     }
 
     #[test]
+    fn completion_event_decodes_priority_and_fast_service_tiers() -> anyhow::Result<()> {
+        for response_service_tier in ["priority", "fast"] {
+            let event: StreamEvent = serde_json::from_value(json!({
+                "type": "response.completed",
+                "response": {
+                    "service_tier": response_service_tier,
+                    "usage": {
+                        "input_tokens": 21,
+                        "output_tokens": 13,
+                        "total_tokens": 34
+                    }
+                }
+            }))?;
+            let StreamEvent::Completed { response } = event else {
+                panic!("expected completion event for {response_service_tier}");
+            };
+            assert_eq!(response.service_tier, Some(ServiceTier::Priority));
+            let usage = response.usage.expect("completion includes usage");
+            assert_eq!(usage.input_tokens, Some(21));
+            assert_eq!(usage.output_tokens, Some(13));
+            assert_eq!(usage.total_tokens, Some(34));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn compact_response_reports_http_send_errors() {
         let http_client =
             FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
