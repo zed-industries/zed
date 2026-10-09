@@ -1525,7 +1525,8 @@ impl ThreadView {
             Some(
                 acp_v2::StopReason::MaxTokens
                 | acp_v2::StopReason::MaxTurnRequests
-                | acp_v2::StopReason::Refusal,
+                | acp_v2::StopReason::Refusal
+                | acp_v2::StopReason::Error(_),
             ) => "failure",
             _ => "unknown",
         }
@@ -13742,12 +13743,19 @@ mod tests {
         use acp_v2::StopReason::*;
         for (reason, expected) in [
             (None, "unknown"),
-            (Some(Other("_custom".into())), "unknown"),
+            (
+                Some(Other(acp_v2::OtherStopReason::new(
+                    "_custom",
+                    Default::default(),
+                ))),
+                "unknown",
+            ),
             (Some(EndTurn), "success"),
             (Some(Cancelled), "cancelled"),
             (Some(Refusal), "failure"),
             (Some(MaxTokens), "failure"),
             (Some(MaxTurnRequests), "failure"),
+            (Some(Error(acp_v2::ErrorStopReason::new())), "failure"),
         ] {
             assert_eq!(
                 ThreadView::activity_completion_status(reason.as_ref()),
