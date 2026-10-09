@@ -647,8 +647,7 @@ mod tests {
     };
 
     use crate::profiler::{
-        ActionTiming, FrameOpportunity, FrameTiming, PresentTiming, TaskTiming, ViewPhase,
-        YieldTime,
+        ActionTiming, FrameTiming, PresentTiming, TaskTiming, ViewPhase, YieldTime,
     };
 
     use super::super::journal::{
@@ -811,7 +810,7 @@ mod tests {
         };
         let frame = FrameTiming {
             refresh_interval: None,
-            opportunity: FrameOpportunity::Unmeasured,
+            signal_at: None,
             window_id,
             dirty_at: Some(at(100)),
             invalidations: 3,
@@ -1126,7 +1125,7 @@ mod tests {
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame: FrameTiming {
                     refresh_interval: None,
-                    opportunity: FrameOpportunity::Unmeasured,
+                    signal_at: None,
                     window_id,
                     dirty_at: Some(at(0)),
                     invalidations: 1,
@@ -1215,7 +1214,7 @@ mod tests {
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame: FrameTiming {
                     refresh_interval: None,
-                    opportunity: FrameOpportunity::Unmeasured,
+                    signal_at: None,
                     window_id,
                     dirty_at: Some(at(0)),
                     invalidations: 1,
@@ -1307,59 +1306,59 @@ mod tests {
     }
 
     /// With a known refresh interval, a frame is a budget hang when its work,
-    /// from its opportunity to its submission, exceeded one refresh interval or
+    /// from its frame signal to its submission, exceeded one refresh interval or
     /// the 120 Hz floor, whichever is longer.
     #[test]
     fn late_frames_are_budget_hangs() {
         let startup = scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xB0D6E7);
-        let detect =
-            |refresh_interval: Duration, opportunity: FrameOpportunity, submitted_ms: u64| {
-                let snapshot = FrameSnapshot {
-                    interval_start: at(0),
-                    boundary: IntervalBoundary::Presented(PresentedFrame {
-                        frame: FrameTiming {
-                            window_id,
-                            dirty_at: Some(at(0)),
-                            invalidations: 1,
-                            draw_start: at(1),
-                            draw_end: at(submitted_ms - 1),
-                            refresh_interval: Some(refresh_interval),
-                            opportunity,
-                            phases: Default::default(),
-                        },
-                        presentation: PresentTiming {
-                            window_id,
-                            present_start: at(submitted_ms),
-                            // Time spent inside the submission doesn't make
-                            // the frame late.
-                            present_end: at(submitted_ms + 50),
-                            animation_interval: None,
-                        },
-                    }),
-                    events: vec![
-                        task_poll_event(at(1), at(6)),
-                        task_poll_event(at(10), at(15)),
-                    ],
-                    small_polls: Vec::new(),
-                    dropped_events: 0,
-                    journal_discontinuous: false,
-                };
-                HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
+        let detect = |refresh_interval: Duration,
+                      signal_at: Option<scheduler::Instant>,
+                      submitted_ms: u64| {
+            let snapshot = FrameSnapshot {
+                interval_start: at(0),
+                boundary: IntervalBoundary::Presented(PresentedFrame {
+                    frame: FrameTiming {
+                        window_id,
+                        dirty_at: Some(at(0)),
+                        invalidations: 1,
+                        draw_start: at(1),
+                        draw_end: at(submitted_ms - 1),
+                        refresh_interval: Some(refresh_interval),
+                        signal_at,
+                        phases: Default::default(),
+                    },
+                    presentation: PresentTiming {
+                        window_id,
+                        present_start: at(submitted_ms),
+                        // Time spent inside the submission doesn't make
+                        // the frame late.
+                        present_end: at(submitted_ms + 50),
+                        animation_interval: None,
+                    },
+                }),
+                events: vec![
+                    task_poll_event(at(1), at(6)),
+                    task_poll_event(at(10), at(15)),
+                ],
+                small_polls: Vec::new(),
+                dropped_events: 0,
+                journal_discontinuous: false,
             };
+            HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
+        };
 
         let sixty_hertz = Duration::from_secs(1) / 60;
-        let incident = detect(sixty_hertz, FrameOpportunity::At(at(0)), 25)
-            .expect("work exceeded one refresh");
+        let incident = detect(sixty_hertz, Some(at(0)), 25).expect("work exceeded one refresh");
         assert_eq!(incident.trigger, HangTrigger::Budget);
         assert_eq!(incident.contributors.len(), 2);
-        assert!(detect(sixty_hertz, FrameOpportunity::At(at(0)), 16).is_none());
-        assert!(detect(sixty_hertz, FrameOpportunity::Unmeasured, 25).is_none());
+        assert!(detect(sixty_hertz, Some(at(0)), 16).is_none());
+        assert!(detect(sixty_hertz, None, 25).is_none());
 
         let three_hundred_sixty_hertz = Duration::from_secs(1) / 360;
-        assert!(detect(three_hundred_sixty_hertz, FrameOpportunity::At(at(0)), 8).is_none());
-        assert!(detect(three_hundred_sixty_hertz, FrameOpportunity::At(at(0)), 9).is_some());
+        assert!(detect(three_hundred_sixty_hertz, Some(at(0)), 8).is_none());
+        assert!(detect(three_hundred_sixty_hertz, Some(at(0)), 9).is_some());
     }
 
     /// Contributors serialize in start order with their nesting depth: an
@@ -1384,7 +1383,7 @@ mod tests {
                 }),
                 ForegroundEvent::Draw(FrameTiming {
                     refresh_interval: None,
-                    opportunity: FrameOpportunity::Unmeasured,
+                    signal_at: None,
                     window_id,
                     dirty_at: Some(at(0)),
                     invalidations: 1,
@@ -1430,7 +1429,7 @@ mod tests {
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame: FrameTiming {
                     refresh_interval: None,
-                    opportunity: FrameOpportunity::Unmeasured,
+                    signal_at: None,
                     window_id,
                     dirty_at: Some(at(0)),
                     invalidations: 1,
@@ -1513,7 +1512,7 @@ mod tests {
                         draw_start: interval_end,
                         draw_end: interval_end,
                         refresh_interval: None,
-                        opportunity: FrameOpportunity::Unmeasured,
+                        signal_at: None,
                         phases: Default::default(),
                     },
                     presentation: PresentTiming {
@@ -1876,7 +1875,7 @@ mod tests {
     fn frame(window_id: WindowId, draw_end: scheduler::Instant) -> FrameTiming {
         FrameTiming {
             refresh_interval: None,
-            opportunity: FrameOpportunity::Unmeasured,
+            signal_at: None,
             window_id,
             dirty_at: Some(draw_end - Duration::from_millis(2)),
             invalidations: 1,

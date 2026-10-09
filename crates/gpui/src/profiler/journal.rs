@@ -1513,10 +1513,7 @@ mod tests {
     use scheduler::SpawnTime;
 
     use super::*;
-    use crate::{
-        WindowId,
-        profiler::{FrameOpportunity, YieldTime},
-    };
+    use crate::{WindowId, profiler::YieldTime};
 
     #[test]
     fn platform_signals_are_journaled_without_sealing_or_occupying_time() {
@@ -1684,7 +1681,7 @@ mod tests {
 
         let frame = FrameTiming {
             refresh_interval: None,
-            opportunity: FrameOpportunity::Unmeasured,
+            signal_at: None,
             window_id,
             dirty_at: Some(start),
             invalidations: 1,
@@ -1866,7 +1863,7 @@ mod tests {
         };
         let frame = FrameTiming {
             refresh_interval: None,
-            opportunity: FrameOpportunity::Unmeasured,
+            signal_at: None,
             window_id: WindowId::from(1),
             dirty_at: Some(input.start),
             invalidations: 1,
@@ -3502,7 +3499,7 @@ mod tests {
     fn frame_timing(window_id: WindowId, dirty_at: Instant, draw_end: Instant) -> FrameTiming {
         FrameTiming {
             refresh_interval: None,
-            opportunity: FrameOpportunity::Unmeasured,
+            signal_at: None,
             window_id,
             dirty_at: Some(dirty_at),
             invalidations: 1,

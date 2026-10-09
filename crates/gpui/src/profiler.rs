@@ -800,9 +800,9 @@ pub struct FrameTiming {
     /// The refresh interval of the window's display when the frame was drawn,
     /// or `None` when the platform doesn't report it.
     pub refresh_interval: Option<Duration>,
-    /// When the frame could first be worked on, for judging whether it was on
-    /// time.
-    pub opportunity: FrameOpportunity,
+    /// When the platform's frame signal for this frame fired, or `None` when
+    /// the platform doesn't report it. Coalesced signals report the first.
+    pub signal_at: Option<Instant>,
     /// How long each phase of the draw took.
     pub phases: DrawPhases,
 }
@@ -869,37 +869,6 @@ pub struct ViewTiming {
     pub self_duration: Duration,
 }
 
-/// When a frame could first be worked on, for judging whether it was on time.
-#[cfg(feature = "profiler")]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum FrameOpportunity {
-    /// The later of when the frame became needed and when the platform offered
-    /// a frame. Waiting for the platform's next frame isn't work, but
-    /// everything the main thread does after this is.
-    At(Instant),
-    /// There's no platform frame time or refresh interval to measure from.
-    Unmeasured,
-}
-
-#[cfg(feature = "profiler")]
-impl FrameOpportunity {
-    /// Determines a frame's opportunity from when it became needed and when
-    /// the platform offered it. However late the platform offered the frame,
-    /// only the main thread's time after the offer counts.
-    pub fn new(
-        refresh_interval: Option<Duration>,
-        dirty_at: Option<Instant>,
-        signal_at: Option<Instant>,
-    ) -> Self {
-        let (Some(_), Some(signal_at)) = (refresh_interval, signal_at) else {
-            return Self::Unmeasured;
-        };
-        // An offer can fire while the main thread is busy and only be handled
-        // after the window became dirty; time before then isn't the frame's.
-        Self::At(dirty_at.map_or(signal_at, |dirty_at| dirty_at.max(signal_at)))
-    }
-}
-
 /// The least work a frame can take before it counts as late: one refresh
 /// at 120 Hz. Frames rarely fit a single refresh on faster displays yet, so
 /// judging them by it would count nearly every frame as late and hide
@@ -909,13 +878,19 @@ pub const FRAME_BUDGET_FLOOR: Duration = Duration::from_nanos(8_333_333);
 
 #[cfg(feature = "profiler")]
 impl FrameTiming {
-    /// The main-thread time from the frame's opportunity until it was
-    /// submitted at `submitted_at`, when the opportunity was measured.
+    /// The main-thread time from the later of the frame's signal and its first
+    /// invalidation until it was submitted at `submitted_at`. Waiting for the
+    /// platform's frame signal isn't work, however late it fires. `None`
+    /// without a frame signal.
     pub fn work(&self, submitted_at: Instant) -> Option<Duration> {
-        match self.opportunity {
-            FrameOpportunity::At(at) => Some(submitted_at.saturating_duration_since(at)),
-            FrameOpportunity::Unmeasured => None,
-        }
+        let signal_at = self.signal_at?;
+        // A frame signal can fire while the main thread is busy and only be
+        // handled after the window became dirty; time before then isn't the
+        // frame's.
+        let start = self
+            .dirty_at
+            .map_or(signal_at, |dirty_at| dirty_at.max(signal_at));
+        Some(submitted_at.saturating_duration_since(start))
     }
 
     /// Whether the frame's work, submitted at `submitted_at`, exceeded
@@ -1035,8 +1010,7 @@ pub type FrameWorkBuckets = [u64; FRAME_WORK_BUCKETS_PERCENT.len() + 1];
 /// Statistics for the frames a window drew and presented while its display had
 /// one refresh interval.
 ///
-/// A frame's work is the main-thread time from its
-/// [`FrameOpportunity`] until it was submitted
+/// A frame's work is [`FrameTiming::work`], up to when it was submitted
 /// ([`PresentTiming::submitted_at`]). A frame is on time when its work fit
 /// within [`FrameTiming::budget`].
 #[cfg(feature = "profiler")]
@@ -1055,7 +1029,8 @@ pub struct RefreshIntervalFrames {
     pub frames_late: u64,
     /// Refreshes that on-time and late frames missed in total.
     pub missed_refreshes: u64,
-    /// Presented frames whose opportunity was [`FrameOpportunity::Unmeasured`].
+    /// Presented frames without a refresh interval or frame signal to measure
+    /// their work from.
     pub frames_unmeasured: u64,
     /// Work of on-time and late frames, bucketed by
     /// [`FRAME_WORK_BUCKETS_PERCENT`].
@@ -1340,8 +1315,8 @@ impl WindowProfiler {
         journal::end_foreground_turn();
     }
 
-    /// Records when the platform offered the frame the next draw will produce.
-    /// Coalesced requests report their first offer.
+    /// Records when the frame signal for the frame the next draw will produce
+    /// fired. Coalesced signals report the first.
     pub fn record_frame_signal(&mut self, signal_at: Option<Instant>) {
         self.frame_signal_at = signal_at;
     }
@@ -1416,7 +1391,7 @@ impl WindowProfiler {
             draw_start,
             draw_end,
             refresh_interval: self.refresh_interval,
-            opportunity: FrameOpportunity::new(self.refresh_interval, dirty_at, signal_at),
+            signal_at,
             phases: std::mem::take(&mut self.draw_phases),
         };
         let draw_duration = frame_timing.draw_duration();
@@ -1697,39 +1672,33 @@ mod tests {
     }
 
     #[test]
-    fn frame_work_is_measured_from_the_frame_opportunity() {
+    fn frame_work_starts_at_the_later_of_signal_and_invalidation() {
         let refresh = Duration::from_millis(10);
         let start = Instant::now();
         let at = |ms| start + Duration::from_millis(ms);
-        let opportunity = |dirty: Option<u64>, signal: Option<u64>| {
-            FrameOpportunity::new(Some(refresh), dirty.map(at), signal.map(at))
-        };
-
-        // Waiting for the platform's next frame isn't work, however long it
-        // took to offer one.
-        assert_eq!(opportunity(Some(0), Some(8)), FrameOpportunity::At(at(8)));
-        assert_eq!(opportunity(Some(0), Some(40)), FrameOpportunity::At(at(40)));
-        // A frame needed after the platform offered one is measured from when
-        // it was needed.
-        assert_eq!(opportunity(Some(5), Some(0)), FrameOpportunity::At(at(5)));
-        // Animation frames have no invalidation to wait for.
-        assert_eq!(opportunity(None, Some(0)), FrameOpportunity::At(at(0)));
-        assert_eq!(opportunity(Some(0), None), FrameOpportunity::Unmeasured);
-        assert_eq!(
-            FrameOpportunity::new(None, Some(at(0)), Some(at(1))),
-            FrameOpportunity::Unmeasured
-        );
-
-        let frame = FrameTiming {
+        let frame_with = |dirty: Option<u64>, signal: Option<u64>| FrameTiming {
             window_id: WindowId::from(1),
-            dirty_at: Some(at(0)),
+            dirty_at: dirty.map(at),
             invalidations: 1,
             draw_start: at(1),
             draw_end: at(2),
             refresh_interval: Some(refresh),
-            opportunity: FrameOpportunity::At(at(0)),
+            signal_at: signal.map(at),
             phases: Default::default(),
         };
+        let work = |dirty, signal| frame_with(dirty, signal).work(at(50));
+
+        // Waiting for the frame signal isn't work, however late it fires.
+        assert_eq!(work(Some(0), Some(8)), Some(Duration::from_millis(42)));
+        assert_eq!(work(Some(0), Some(40)), Some(Duration::from_millis(10)));
+        // A frame needed after its signal fired is measured from when it was
+        // needed.
+        assert_eq!(work(Some(5), Some(0)), Some(Duration::from_millis(45)));
+        // Animation frames have no invalidation to wait for.
+        assert_eq!(work(None, Some(0)), Some(Duration::from_millis(50)));
+        assert_eq!(work(Some(0), None), None);
+
+        let frame = frame_with(Some(0), Some(0));
         for (submitted_ms, missed) in [(7, 0), (10, 0), (20, 1), (25, 2)] {
             assert_eq!(frame.missed_refreshes(at(submitted_ms)), Some(missed));
         }
@@ -1771,8 +1740,7 @@ mod tests {
                 present_start_ms: 5,
                 responded_to_input: false,
             },
-            // Offered late by the platform: only the 2 ms after the offer
-            // count.
+            // A late frame signal: only the 2 ms after it count.
             Frame {
                 refresh_interval: Some(sixty_hertz),
                 signal_ms: Some(40),
@@ -1814,11 +1782,7 @@ mod tests {
                 draw_start: at(0),
                 draw_end: at(1),
                 refresh_interval: frame.refresh_interval,
-                opportunity: FrameOpportunity::new(
-                    frame.refresh_interval,
-                    Some(at(0)),
-                    frame.signal_ms.map(at),
-                ),
+                signal_at: frame.signal_ms.map(at),
                 phases: Default::default(),
             });
             if frame.responded_to_input {
@@ -2211,7 +2175,7 @@ mod tests {
             draw_start: draw_end - Duration::from_millis(2),
             draw_end,
             refresh_interval: None,
-            opportunity: FrameOpportunity::Unmeasured,
+            signal_at: None,
             phases: Default::default(),
         });
     }
