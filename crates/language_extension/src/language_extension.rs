@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
 use gpui::{App, Entity, WeakEntity};
-use language::{LanguageName, LanguageRegistration, LanguageRegistry};
+use language::{ExtensionLanguagesUpdate, LanguageName, LanguageRegistration, LanguageRegistry};
 use project::LspStore;
 
 #[derive(Clone)]
@@ -50,17 +50,11 @@ impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
         registrations: Vec<LanguageRegistration>,
-    ) -> Vec<bool> {
+    ) -> ExtensionLanguagesUpdate {
         self.language_registry.update_extension_languages(
             languages_to_remove,
             grammars_to_remove,
             registrations,
         )
-    }
-
-    fn is_language_registered(&self, language: &LanguageName) -> bool {
-        self.language_registry
-            .available_language_for_name(language.0.as_ref())
-            .is_some()
     }
 }

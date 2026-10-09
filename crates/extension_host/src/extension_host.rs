@@ -1504,65 +1504,72 @@ impl ExtensionStore {
         }
 
         self.proxy.register_grammars(grammars_to_add);
-        let languages_readded = languages_to_readd
-            .iter()
-            .map(|(name, _)| name.clone())
-            .collect::<Vec<_>>();
         let languages_to_add = new_index
             .languages
             .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
-            .map(|(name, entry)| (name.clone(), entry.clone()))
-            .chain(languages_to_readd)
+            .chain(languages_to_readd.iter().map(|(name, entry)| (name, entry)))
+            .map(|(name, entry)| {
+                let mut language_path = self.installed_dir.clone();
+                language_path.extend([Path::new(entry.extension.as_ref()), entry.path.as_path()]);
+                (name, entry, language_path)
+            })
             .collect::<Vec<_>>();
-        let mut semantic_token_rules_paths: Vec<(LanguageName, PathBuf)> = Vec::new();
-        let mut registrations = Vec::new();
-        for (language_name, language) in languages_to_add {
-            let mut language_path = self.installed_dir.clone();
-            language_path.extend([
-                Path::new(language.extension.as_ref()),
-                language.path.as_path(),
-            ]);
-            let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
-
-            registrations.push(language::LanguageRegistration {
-                name: language_name.clone(),
-                grammar_name: language.grammar.clone(),
-                matcher: language.matcher.clone(),
-                hidden: language.hidden,
-                load: Arc::new({
-                    let fs = self.fs.clone();
-                    let query_files = language.query_files;
-                    move || {
-                        let fs = fs.clone();
+        let registrations = languages_to_add
+            .iter()
+            .map(
+                |(name, entry, language_path)| language::LanguageRegistration {
+                    name: (*name).clone(),
+                    grammar_name: entry.grammar.clone(),
+                    matcher: entry.matcher.clone(),
+                    hidden: entry.hidden,
+                    load: Arc::new({
+                        let fs = self.fs.clone();
                         let language_path = language_path.clone();
-                        async move { load_plugin_language(fs, &language_path, query_files).await }
-                            .boxed()
-                    }
-                }),
-            });
-
-            semantic_token_rules_paths.push((language_name, rules_path));
-        }
-        let registered = self
+                        let query_files = entry.query_files;
+                        move || {
+                            let fs = fs.clone();
+                            let language_path = language_path.clone();
+                            async move {
+                                    load_plugin_language(fs, &language_path, query_files).await
+                                }
+                                .boxed()
+                        }
+                    }),
+                },
+            )
+            .collect();
+        let update = self
             .proxy
             .update_languages(&languages_to_remove, &[], registrations);
-        semantic_token_rules_paths = semantic_token_rules_paths
+        debug_assert_eq!(update.registrations().len(), languages_to_add.len());
+        let readded_statuses = update.registrations().iter().skip(
+            languages_to_add
+                .len()
+                .saturating_sub(languages_to_readd.len()),
+        );
+        let semantic_token_rules_paths = languages_to_add
             .into_iter()
-            .zip(registered)
-            .filter_map(|(path, registered)| registered.then_some(path))
-            .collect();
-        let semantic_token_rules_to_remove = languages_to_remove
-            .iter()
-            .filter(|language| {
-                !self.proxy.is_language_registered(language)
-                    || semantic_token_rules_paths
-                        .iter()
-                        .any(|(name, _)| name == *language)
+            .zip(update.registrations())
+            .filter(|(_, status)| status.is_registered())
+            .map(|((name, _, mut rules_path), _)| {
+                rules_path.push(SemanticTokenRules::FILE_NAME);
+                (name.clone(), rules_path)
             })
-            .chain(languages_readded.iter())
             .collect::<Vec<_>>();
-        if !semantic_token_rules_to_remove.is_empty() {
+        // Rejected re-additions are shadowed by a native language whose rules must survive.
+        let mut semantic_token_rules_to_remove = update
+            .removed()
+            .iter()
+            .chain(
+                languages_to_readd
+                    .iter()
+                    .zip(readded_statuses)
+                    .filter(|(_, status)| status.is_registered())
+                    .map(|((name, _), _)| name),
+            )
+            .peekable();
+        if semantic_token_rules_to_remove.peek().is_some() {
             SettingsStore::update_global(cx, |store, cx| {
                 for language in semantic_token_rules_to_remove {
                     store.remove_language_semantic_token_rules(language.as_ref(), cx);

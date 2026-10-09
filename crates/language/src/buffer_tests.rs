@@ -554,6 +554,127 @@ async fn test_extension_grammar_cannot_shadow_native_grammar(cx: &mut TestAppCon
     );
 }
 
+fn extension_language_registration(name: &'static str, path_suffix: &str) -> LanguageRegistration {
+    let config = LanguageConfig {
+        name: LanguageName::new_static(name),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec![path_suffix.into()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    };
+    LanguageRegistration {
+        name: config.name.clone(),
+        grammar_name: None,
+        matcher: config.matcher.clone(),
+        hidden: false,
+        load: Arc::new(move || {
+            let config = config.clone();
+            async move {
+                Ok(LoadedLanguage {
+                    config,
+                    queries: LanguageQueries::default(),
+                    context_provider: None,
+                    toolchain_provider: None,
+                    manifest_name: None,
+                })
+            }
+            .boxed()
+        }),
+    }
+}
+
+#[gpui::test]
+async fn test_update_extension_languages_replaces_loaded_language(cx: &mut TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    registry.update_extension_languages(
+        &[],
+        &[],
+        vec![extension_language_registration("TheLanguage", "old")],
+    );
+    let old_language = registry.language_for_name("TheLanguage").await.unwrap();
+
+    let update = registry.update_extension_languages(
+        &[LanguageName::new_static("TheLanguage")],
+        &[],
+        vec![extension_language_registration("TheLanguage", "new")],
+    );
+    assert_eq!(update.removed(), [LanguageName::new_static("TheLanguage")]);
+    assert_eq!(
+        update.registrations(),
+        [LanguageRegistrationStatus::Registered]
+    );
+
+    let new_language = registry.language_for_name("TheLanguage").await.unwrap();
+    assert!(!Arc::ptr_eq(&old_language, &new_language));
+    assert_eq!(
+        new_language.config.matcher.path_suffixes,
+        vec!["new".to_string()],
+        "removing and re-registering a loaded language in one update must evict the old one"
+    );
+}
+
+#[gpui::test]
+async fn test_update_extension_languages_rejects_native_names(cx: &mut TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["native".into()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+    let version = registry.version();
+    let reload_count = registry.reload_count();
+
+    let update = registry.update_extension_languages(
+        &[],
+        &[],
+        vec![extension_language_registration("TheLanguage", "extension")],
+    );
+    assert!(update.removed().is_empty());
+    assert_eq!(
+        update.registrations(),
+        [LanguageRegistrationStatus::Rejected]
+    );
+    assert_eq!(registry.version(), version);
+    assert_eq!(registry.reload_count(), reload_count);
+
+    let language = registry.language_for_name("TheLanguage").await.unwrap();
+    assert_eq!(
+        language.config.matcher.path_suffixes,
+        vec!["native".to_string()]
+    );
+}
+
+#[gpui::test]
+fn test_update_extension_languages_notifies_once(cx: &mut TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let reload_count = registry.reload_count();
+
+    let update = registry.update_extension_languages(
+        &[],
+        &[],
+        vec![
+            extension_language_registration("First", "first"),
+            extension_language_registration("Second", "second"),
+            extension_language_registration("Third", "third"),
+        ],
+    );
+    assert_eq!(
+        update.registrations(),
+        [LanguageRegistrationStatus::Registered; 3]
+    );
+    assert_eq!(registry.reload_count(), reload_count + 1);
+
+    let version = registry.version();
+    let update = registry.update_extension_languages(&[], &[], Vec::new());
+    assert!(update.removed().is_empty() && update.registrations().is_empty());
+    assert_eq!(registry.version(), version);
+    assert_eq!(registry.reload_count(), reload_count + 1);
+}
+
 fn file(path: &str) -> Arc<dyn File> {
     Arc::new(TestFile {
         path: Arc::from(rel_path(path)),
