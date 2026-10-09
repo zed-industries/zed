@@ -998,7 +998,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn location(&self, ix: usize) -> Option<(acp_v1::ToolCallLocation, AgentLocation)> {
+    pub fn location(&self, ix: usize) -> Option<(ToolCallLocation, AgentLocation)> {
         if let AgentThreadEntry::ToolCall(ToolCall {
             locations,
             resolved_locations,
@@ -1015,6 +1015,44 @@ impl AgentThreadEntry {
     }
 }
 
+/// Native tools can supply relative paths, unlike v2 protocol locations.
+/// Keep the raw path here; resolved editor locations are a separate projection.
+#[derive(Clone, Debug, Eq)]
+pub struct ToolCallLocation {
+    pub path: PathBuf,
+    pub line: Option<u32>,
+    pub meta: Option<acp_v2::Meta>,
+}
+
+impl PartialEq for ToolCallLocation {
+    fn eq(&self, other: &Self) -> bool {
+        // Path equality compares components, hiding changes to the raw spelling.
+        self.path.as_os_str() == other.path.as_os_str()
+            && self.line == other.line
+            && self.meta == other.meta
+    }
+}
+
+impl From<acp_v1::ToolCallLocation> for ToolCallLocation {
+    fn from(location: acp_v1::ToolCallLocation) -> Self {
+        Self {
+            path: location.path,
+            line: location.line,
+            meta: location.meta,
+        }
+    }
+}
+
+impl From<acp_v2::ToolCallLocation> for ToolCallLocation {
+    fn from(location: acp_v2::ToolCallLocation) -> Self {
+        Self {
+            path: location.path.0,
+            line: location.line,
+            meta: location.meta,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ToolCall {
     pub id: acp_v2::ToolCallId,
@@ -1027,7 +1065,7 @@ pub struct ToolCall {
     structured_content: Vec<ToolCallContent>,
     local_status: Option<ToolCallStatus>,
     authorization: Option<PermissionRequestId>,
-    pub locations: Vec<acp_v1::ToolCallLocation>,
+    pub locations: Vec<ToolCallLocation>,
     pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
     pub raw_input_markdown: Option<Entity<Markdown>>,
@@ -1103,7 +1141,7 @@ struct ToolCallPatch {
     kind: MaybeUndefined<acp_v2::ToolKind>,
     status: MaybeUndefined<acp_v2::ToolCallStatus>,
     content: MaybeUndefined<ToolContentPatch>,
-    locations: MaybeUndefined<Vec<acp_v1::ToolCallLocation>>,
+    locations: MaybeUndefined<Vec<ToolCallLocation>>,
     raw_input: MaybeUndefined<serde_json::Value>,
     raw_output: MaybeUndefined<serde_json::Value>,
     meta: ToolMetadataPatch,
@@ -1169,7 +1207,11 @@ impl ToolCallPatch {
             kind: legacy_tool_field(fields.kind.and_then(tool_kind_from_v1)),
             status: legacy_tool_field(fields.status.and_then(tool_status_from_v1)),
             content: legacy_tool_field(fields.content.map(ToolContentPatch::Legacy)),
-            locations: legacy_tool_field(fields.locations),
+            locations: legacy_tool_field(
+                fields
+                    .locations
+                    .map(|locations| locations.into_iter().map(Into::into).collect()),
+            ),
             raw_input: legacy_tool_field(fields.raw_input),
             raw_output: legacy_tool_field(fields.raw_output),
             meta: ToolMetadataPatch::Legacy(meta),
@@ -1183,17 +1225,9 @@ impl ToolCallPatch {
             kind: update.kind,
             status: update.status,
             content: update.content.map_value(ToolContentPatch::Protocol),
-            // Unlike v2 AbsolutePath, this also preserves relative native paths.
-            locations: update.locations.map_value(|locations| {
-                locations
-                    .into_iter()
-                    .map(|location| {
-                        acp_v1::ToolCallLocation::new(location.path.0)
-                            .line(location.line)
-                            .meta(location.meta)
-                    })
-                    .collect()
-            }),
+            locations: update
+                .locations
+                .map_value(|locations| locations.into_iter().map(Into::into).collect()),
             raw_input: update.raw_input,
             raw_output: update.raw_output,
             meta: ToolMetadataPatch::Protocol(update.meta),
@@ -1685,7 +1719,7 @@ impl ToolCall {
     }
 
     async fn resolve_location(
-        location: acp_v1::ToolCallLocation,
+        location: ToolCallLocation,
         project: WeakEntity<Project>,
         cx: &mut AsyncApp,
     ) -> Option<ResolvedLocation> {
@@ -14042,6 +14076,232 @@ mod tests {
                 assert_eq!(thread.tool_call(&id).expect("tool").1.local_status, None);
             });
         }
+    }
+
+    #[test]
+    fn test_tool_location_conversions_preserve_raw_paths_and_item_metadata() {
+        let meta = acp_v2::Meta::from_iter([("location".into(), json!({"nested": [1, 2]}))]);
+        for path in [
+            PathBuf::from("src//./../file.rs"),
+            PathBuf::from(path!("/project//./../file.rs")),
+        ] {
+            let location = ToolCallLocation::from(
+                acp_v1::ToolCallLocation::new(path.clone())
+                    .line(7)
+                    .meta(meta.clone()),
+            );
+            assert_eq!(location.path.as_os_str(), path.as_os_str());
+            assert_eq!(location.line, Some(7));
+            assert_eq!(location.meta.as_ref(), Some(&meta));
+        }
+
+        let path = PathBuf::from(path!("/project//./../file.rs"));
+        let location = ToolCallLocation::from(
+            acp_v2::ToolCallLocation::new(acp_v2::AbsolutePath::new(path.clone()))
+                .line(7)
+                .meta(meta.clone()),
+        );
+        assert_eq!(location.path.as_os_str(), path.as_os_str());
+        assert_eq!(location.line, Some(7));
+        assert_eq!(location.meta.as_ref(), Some(&meta));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+
+            let path = PathBuf::from(std::ffi::OsString::from_vec(b"src//./\xff.rs".to_vec()));
+            let location = ToolCallLocation::from(
+                acp_v1::ToolCallLocation::new(path.clone())
+                    .line(7)
+                    .meta(meta.clone()),
+            );
+            assert_eq!(location.path.as_os_str(), path.as_os_str());
+            assert_eq!(location.line, Some(7));
+            assert_eq!(location.meta.as_ref(), Some(&meta));
+        }
+    }
+
+    #[test]
+    fn test_tool_location_equality_preserves_raw_path_spelling() {
+        let location = ToolCallLocation {
+            path: PathBuf::from("src/file.rs"),
+            line: Some(7),
+            meta: Some(acp_v2::Meta::from_iter([("location".into(), json!(true))])),
+        };
+        assert_eq!(location, location.clone());
+        for spelling in ["src//file.rs", "src/./file.rs", "src/../src/file.rs"] {
+            let changed = ToolCallLocation {
+                path: PathBuf::from(spelling),
+                ..location.clone()
+            };
+            assert_ne!(location, changed, "{spelling}");
+        }
+        assert_ne!(
+            location,
+            ToolCallLocation {
+                line: None,
+                ..location.clone()
+            }
+        );
+        assert_ne!(
+            location,
+            ToolCallLocation {
+                meta: None,
+                ..location.clone()
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_locations_preserve_item_metadata_and_patch_semantics(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/project"))]), cx)
+            })
+            .await
+            .expect("session");
+        let id = acp_v2::ToolCallId::new("location-migration");
+        let relative = ToolCallLocation {
+            path: PathBuf::from("src//./file.rs"),
+            line: Some(1),
+            meta: Some(acp_v2::Meta::from_iter([("location".into(), json!(true))])),
+        };
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_tool_call(
+                    acp_v1::ToolCall::new("location-migration", "Read").locations(vec![
+                        acp_v1::ToolCallLocation::new(relative.path.clone())
+                            .line(relative.line)
+                            .meta(relative.meta.clone()),
+                    ]),
+                    cx,
+                )
+                .expect("native relative location");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.locations, vec![relative.clone()]);
+            thread
+                .upsert_tool_call_patch(acp_v2::ToolCallUpdate::new("location-migration"), cx)
+                .expect("omitted locations");
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.locations,
+                vec![relative.clone()]
+            );
+        });
+        cx.run_until_parked();
+
+        let absolute = ToolCallLocation {
+            path: PathBuf::from(path!("/project/file.rs")),
+            ..relative.clone()
+        };
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("location-migration").locations(vec![
+                        acp_v2::ToolCallLocation::new(acp_v2::AbsolutePath::new(
+                            absolute.path.clone(),
+                        ))
+                        .line(absolute.line)
+                        .meta(absolute.meta.clone()),
+                    ]),
+                    cx,
+                )
+                .expect("v2 replaces native relative location");
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.locations,
+                vec![absolute.clone()]
+            );
+        });
+        cx.run_until_parked();
+
+        let respelled = ToolCallLocation {
+            path: PathBuf::from(path!("/project//./file.rs")),
+            ..absolute.clone()
+        };
+        assert_eq!(absolute.path, respelled.path);
+        thread.update(cx, |thread, cx| {
+            let (index, call) = thread.tool_call(&id).expect("tool");
+            let (location, _) = thread.entries[index]
+                .location(0)
+                .expect("resolved location");
+            assert_eq!(location, absolute);
+            let resolved_locations = call.resolved_locations.clone();
+            thread
+                .upsert_tool_call_patch(acp_v2::ToolCallUpdate::new("location-migration"), cx)
+                .expect("omission preserves resolved projections");
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.resolved_locations,
+                resolved_locations
+            );
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("location-migration").locations(vec![
+                        acp_v2::ToolCallLocation::new(acp_v2::AbsolutePath::new(
+                            respelled.path.clone(),
+                        ))
+                        .line(respelled.line)
+                        .meta(respelled.meta.clone()),
+                    ]),
+                    cx,
+                )
+                .expect("component-equivalent spelling replaces canonical location");
+            let (index, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.locations, vec![respelled.clone()]);
+            assert!(call.resolved_locations.is_empty());
+            assert!(thread.entries[index].location(0).is_none());
+        });
+        cx.run_until_parked();
+        thread.update(cx, |thread, cx| {
+            let (index, _) = thread.tool_call(&id).expect("tool");
+            let (location, _) = thread.entries[index]
+                .location(0)
+                .expect("refreshed projection");
+            assert_eq!(location, respelled);
+            thread
+                .update_tool_call(
+                    acp_v1::ToolCallUpdate::new(
+                        "location-migration",
+                        acp_v1::ToolCallUpdateFields::new().locations(vec![
+                            acp_v1::ToolCallLocation::new(relative.path.clone())
+                                .line(relative.line)
+                                .meta(relative.meta.clone()),
+                        ]),
+                    ),
+                    cx,
+                )
+                .expect("v1 replaces absolute location with relative location");
+            let (index, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.locations, vec![relative.clone()]);
+            assert!(call.resolved_locations.is_empty());
+            assert!(thread.entries[index].location(0).is_none());
+        });
+        cx.run_until_parked();
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("location-migration")
+                        .locations(None::<Vec<acp_v2::ToolCallLocation>>),
+                    cx,
+                )
+                .expect("explicit null clears locations");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert!(call.locations.is_empty());
+            assert!(call.resolved_locations.is_empty());
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            let (index, call) = thread.tool_call(&id).expect("tool");
+            assert!(call.locations.is_empty());
+            assert!(call.resolved_locations.is_empty());
+            assert!(thread.entries[index].location(0).is_none());
+        });
     }
 
     #[gpui::test]
