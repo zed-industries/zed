@@ -1658,12 +1658,61 @@ impl AgentConnection for AcpConnection {
         let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
-            let response = self
+            let (response_sender, response_received) = futures::channel::oneshot::channel();
+            let (registered, registration_finished) = futures::channel::oneshot::channel();
+            let request = self
                 .connection
-                .send_request(directories.into_new_session_request(mcp_servers))
-                .block_task()
-            .await
-            .map_err(map_acp_error)?;
+                .prepare_request(directories.into_new_session_request(mcp_servers));
+            let cancellation = request.cancellation_handle();
+            request
+                .on_receiving_result({
+                    let connection = self.connection.clone();
+                    let supports_close = self
+                        .agent_capabilities
+                        .session_capabilities
+                        .close
+                        .is_some();
+                    async move |result: Result<acp::NewSessionResponse, acp::Error>| {
+                        let session_id = result
+                            .as_ref()
+                            .ok()
+                            .map(|response| response.session_id.clone());
+                        let registered = response_sender.send(result).is_ok()
+                            && registration_finished.await.is_ok();
+                        if !registered && supports_close {
+                            if let Some(session_id) = session_id {
+                                connection
+                                    .prepare_request(acp::CloseSessionRequest::new(session_id))
+                                    .on_receiving_result(
+                                        async move |result: Result<
+                                            acp::CloseSessionResponse,
+                                            acp::Error,
+                                        >| {
+                                            if let Err(error) = result {
+                                                log::warn!(
+                                                    "ACP abandoned-session close failed with code {}",
+                                                    error.code
+                                                );
+                                            }
+                                            Ok(())
+                                        },
+                                    )
+                                    .log_err();
+                            }
+                        }
+                        Ok(())
+                    }
+                })
+                .map_err(map_acp_error)?;
+            // Early SDK cancellation is not latched, so arm caller-drop cleanup
+            // only after the prepared request's publishing call returns.
+            let _request_guard = util::defer(move || {
+                cancellation.cancel().log_err();
+            });
+            let response = response_received
+                .await
+                .context("ACP new-session response callback was cancelled")?
+                .map_err(map_acp_error)?;
 
             let (modes, config_options) = config_state(response.modes, response.config_options)?;
 
@@ -1749,6 +1798,9 @@ impl AgentConnection for AcpConnection {
                 )
             });
 
+            registered
+                .send(())
+                .map_err(|_| anyhow!("ACP new-session ordering callback ended before registration"))?;
             Ok(thread)
         })
     }
@@ -5190,6 +5242,30 @@ exit 7
         Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
         Task<anyhow::Result<()>>,
     ) {
+        connect_fake_agent_with_new_session_behavior(close_session_gate, agent_sender, None, cx)
+            .await
+    }
+
+    struct NewSessionTestBehavior {
+        received: async_channel::Sender<agent_client_protocol::RequestCancellation>,
+        respond: async_channel::Receiver<Result<acp::NewSessionResponse, acp::Error>>,
+        updates: Vec<acp::SessionUpdate>,
+    }
+
+    async fn connect_fake_agent_with_new_session_behavior(
+        close_session_gate: Option<async_channel::Receiver<()>>,
+        agent_sender: Option<futures::channel::oneshot::Sender<ConnectionTo<Client>>>,
+        new_session_behavior: Option<NewSessionTestBehavior>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Rc<AcpConnection>,
+        Entity<project::Project>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>>,
+        Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
+        Task<anyhow::Result<()>>,
+    ) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
@@ -5206,6 +5282,7 @@ exit 7
         let load_session_gate: Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>> =
             Arc::new(std::sync::Mutex::new(None));
         let close_session_gate = Arc::new(std::sync::Mutex::new(close_session_gate));
+        let new_session_behavior = Arc::new(Mutex::new(new_session_behavior));
 
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
 
@@ -5241,8 +5318,40 @@ exit 7
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_request(
-                async move |_req: acp::NewSessionRequest, responder, _cx| {
-                    responder.respond(acp::NewSessionResponse::new(acp::SessionId::new("unused")))
+                async move |_req: acp::NewSessionRequest, responder, cx| {
+                    let behavior = new_session_behavior
+                        .lock()
+                        .expect("new session behavior")
+                        .take();
+                    if let Some(behavior) = behavior {
+                        let connection = cx.clone();
+                        cx.spawn(async move {
+                            behavior
+                                .received
+                                .send(responder.cancellation())
+                                .await
+                                .expect("notify new request");
+                            let response =
+                                behavior.respond.recv().await.expect("release new response");
+                            let session_id = response
+                                .as_ref()
+                                .ok()
+                                .map(|response| response.session_id.clone());
+                            responder.respond_with_result(response)?;
+                            if let Some(session_id) = session_id {
+                                for update in behavior.updates {
+                                    connection.send_notification(acp::SessionNotification::new(
+                                        session_id.clone(),
+                                        update,
+                                    ))?;
+                                }
+                            }
+                            Ok(())
+                        })
+                    } else {
+                        responder
+                            .respond(acp::NewSessionResponse::new(acp::SessionId::new("unused")))
+                    }
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -5834,6 +5943,273 @@ exit 7
             .await
             .expect("connection completion cleanup");
         assert!(receiver.next().now_or_never().is_none());
+    }
+
+    #[gpui::test]
+    async fn new_session_registers_before_immediate_update(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, _, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: vec![acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new("First update immediately after creation".into()),
+                    )],
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project,
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        request_received.recv().await.expect("new-session request");
+
+        let (acknowledgment, mut barrier_received) = futures::channel::oneshot::channel();
+        let barrier: ForegroundWork = Box::new(ForegroundBarrier { acknowledgment });
+        assert!(connection.dispatch_tx.unbounded_send(barrier).is_ok());
+        respond
+            .try_send(Ok(acp::NewSessionResponse::new(acp::SessionId::new(
+                "unused",
+            ))))
+            .expect("release response and first update");
+        let executor = cx.executor();
+        let dispatcher = executor
+            .dispatcher()
+            .as_test()
+            .expect("deterministic test dispatcher");
+        let mut background_drained = false;
+        for _ in 0..1000 {
+            if !dispatcher.tick(true) {
+                background_drained = true;
+                break;
+            }
+        }
+        assert!(background_drained, "SDK dispatch must quiesce");
+        assert!(connection.sessions.borrow().is_empty());
+        assert!(
+            barrier_received
+                .try_recv()
+                .expect("queued barrier")
+                .is_none()
+        );
+
+        cx.run_until_parked();
+        let thread = creation.await.expect("new session");
+        assert!(
+            thread
+                .read_with(cx, |thread, cx| thread.to_markdown(cx))
+                .contains("First update immediately after creation"),
+            "the first update must not be dropped before session registration"
+        );
+    }
+
+    #[gpui::test]
+    async fn abandoned_new_session_closes_late_response(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, close_count, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: Vec::new(),
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project.clone(),
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        let cancellation = request_received.recv().await.expect("new-session request");
+        drop(creation);
+        cx.run_until_parked();
+        assert!(
+            cancellation.is_cancelled(),
+            "caller drop must cancel the RPC"
+        );
+        assert!(connection.sessions.borrow().is_empty());
+        assert_eq!(close_count.load(Ordering::SeqCst), 0);
+
+        respond
+            .try_send(Ok(acp::NewSessionResponse::new(acp::SessionId::new(
+                "unused",
+            ))))
+            .expect("release late response");
+        cx.run_until_parked();
+        assert!(connection.sessions.borrow().is_empty());
+        assert_eq!(close_count.load(Ordering::SeqCst), 1);
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    acp::SessionId::new("after-abandonment"),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("abandonment must not end the connection");
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.session_id().clone()),
+            acp::SessionId::new("after-abandonment")
+        );
+    }
+
+    #[gpui::test]
+    async fn abandoned_new_session_releases_registration_barrier(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, close_count, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: Vec::new(),
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project,
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        request_received.recv().await.expect("new-session request");
+        respond
+            .try_send(Ok(acp::NewSessionResponse::new(acp::SessionId::new(
+                "unused",
+            ))))
+            .expect("release response");
+        let executor = cx.executor();
+        let dispatcher = executor
+            .dispatcher()
+            .as_test()
+            .expect("deterministic test dispatcher");
+        let mut background_drained = false;
+        for _ in 0..1000 {
+            if !dispatcher.tick(true) {
+                background_drained = true;
+                break;
+            }
+        }
+        assert!(
+            background_drained,
+            "ordered response must await foreground setup"
+        );
+        assert!(connection.sessions.borrow().is_empty());
+        drop(creation);
+        cx.run_until_parked();
+        assert_eq!(close_count.load(Ordering::SeqCst), 1);
+        assert!(connection.sessions.borrow().is_empty());
+    }
+
+    #[gpui::test]
+    async fn new_session_rejection_releases_ordered_dispatch(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, close_count, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: Vec::new(),
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project.clone(),
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        request_received.recv().await.expect("new-session request");
+        let rejection = acp::Error::invalid_params();
+        respond
+            .try_send(Err(rejection.clone()))
+            .expect("reject session creation");
+        let error = creation.await.expect_err("creation must reject");
+        assert_eq!(error.downcast_ref::<acp::Error>(), Some(&rejection));
+        cx.run_until_parked();
+        assert!(connection.sessions.borrow().is_empty());
+        assert_eq!(close_count.load(Ordering::SeqCst), 0);
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    acp::SessionId::new("after-rejection"),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("rejection must not end or block the connection");
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.session_id().clone()),
+            acp::SessionId::new("after-rejection")
+        );
+    }
+
+    #[gpui::test]
+    async fn new_session_eof_releases_ordered_dispatch(cx: &mut gpui::TestAppContext) {
+        let (received, request_received) = async_channel::bounded(1);
+        let (_respond, response_released) = async_channel::bounded(1);
+        let (connection, project, _, close_count, _, _, keep_agent_alive) =
+            connect_fake_agent_with_new_session_behavior(
+                None,
+                None,
+                Some(NewSessionTestBehavior {
+                    received,
+                    respond: response_released,
+                    updates: Vec::new(),
+                }),
+                cx,
+            )
+            .await;
+        let creation = cx.update(|cx| {
+            connection.clone().new_session(
+                project,
+                PathList::new(&[std::path::Path::new("/a")]),
+                cx,
+            )
+        });
+        request_received.recv().await.expect("new-session request");
+        drop(keep_agent_alive);
+        cx.run_until_parked();
+        assert!(creation.await.is_err(), "EOF must fail session creation");
+        cx.run_until_parked();
+        assert!(connection.connection.is_incoming_closed());
+        assert!(connection.sessions.borrow().is_empty());
+        assert_eq!(close_count.load(Ordering::SeqCst), 0);
+        let (acknowledgment, barrier_received) = futures::channel::oneshot::channel();
+        let barrier: ForegroundWork = Box::new(ForegroundBarrier { acknowledgment });
+        assert!(connection.dispatch_tx.unbounded_send(barrier).is_ok());
+        barrier_received
+            .await
+            .expect("foreground dispatch after EOF");
     }
 
     #[gpui::test]
