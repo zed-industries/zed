@@ -187,7 +187,10 @@ async fn send_fim_request(
                 settings,
                 format_fim_prompt(prompt_format, prefix, suffix),
                 settings.max_output_tokens,
-                get_fim_stop_tokens(),
+                fim_stop_tokens(prompt_format)
+                    .iter()
+                    .map(|token| token.to_string())
+                    .collect(),
                 api_key,
                 http_client,
             )
@@ -253,23 +256,40 @@ fn format_fim_prompt(
     }
 }
 
-fn get_fim_stop_tokens() -> Vec<String> {
-    vec![
-        "<|endoftext|>".to_string(),
-        "<|file_separator|>".to_string(),
-        "<|fim_pad|>".to_string(),
-        "<|fim_prefix|>".to_string(),
-        "<|fim_middle|>".to_string(),
-        "<|fim_suffix|>".to_string(),
-        "<fim_prefix>".to_string(),
-        "<fim_middle>".to_string(),
-        "<fim_suffix>".to_string(),
-        "<PRE>".to_string(),
-        "<SUF>".to_string(),
-        "<MID>".to_string(),
-        "[PREFIX]".to_string(),
-        "[SUFFIX]".to_string(),
-    ]
+// OpenAI-compatible servers such as vLLM reject requests with more than 4 stop
+// sequences, so each format may only list up to 4 tokens.
+fn fim_stop_tokens(prompt_format: EditPredictionPromptFormat) -> &'static [&'static str] {
+    match prompt_format {
+        EditPredictionPromptFormat::CodeLlama => &["<PRE>", "<SUF>", "<MID>"],
+        EditPredictionPromptFormat::DeepseekCoder => {
+            &["<｜fim▁begin｜>", "<｜fim▁hole｜>", "<｜fim▁end｜>"]
+        }
+        EditPredictionPromptFormat::Qwen => &[
+            "<|endoftext|>",
+            "<|fim_prefix|>",
+            "<|fim_middle|>",
+            "<|fim_suffix|>",
+        ],
+        EditPredictionPromptFormat::CodeGemma => &[
+            "<|file_separator|>",
+            "<|fim_prefix|>",
+            "<|fim_middle|>",
+            "<|fim_suffix|>",
+        ],
+        EditPredictionPromptFormat::Codestral => &["[PREFIX]", "[SUFFIX]"],
+        EditPredictionPromptFormat::Glm => &[
+            "<|endoftext|>",
+            "<|code_prefix|>",
+            "<|code_suffix|>",
+            "<|code_middle|>",
+        ],
+        _ => &[
+            "<|endoftext|>",
+            "<fim_prefix>",
+            "<fim_middle>",
+            "<fim_suffix>",
+        ],
+    }
 }
 
 fn clean_fim_completion(response: &str) -> String {
@@ -359,6 +379,14 @@ mod tests {
                         let body: Value = serde_json::from_str(&body)?;
                         assert_eq!(body["prompt"], expected_prompt, "{format:?}");
                         assert!(body.get("messages").is_none(), "{format:?}");
+                        assert!(
+                            body["stop"]
+                                .as_array()
+                                .context("Expected the request's stop-sequence array")?
+                                .len()
+                                <= 4,
+                            "{format:?}"
+                        );
                         Ok(http_client::Response::builder().status(200).body(json!({
                         "id": "raw-request", "object": "text_completion", "created": 0,
                         "model": "test-completion-model",
@@ -544,6 +572,46 @@ mod tests {
                 "    return n\n",
                 "{token}"
             );
+        }
+    }
+
+    const FIM_PROMPT_FORMATS: [EditPredictionPromptFormat; 7] = [
+        EditPredictionPromptFormat::CodeLlama,
+        EditPredictionPromptFormat::StarCoder,
+        EditPredictionPromptFormat::DeepseekCoder,
+        EditPredictionPromptFormat::Qwen,
+        EditPredictionPromptFormat::CodeGemma,
+        EditPredictionPromptFormat::Codestral,
+        EditPredictionPromptFormat::Glm,
+    ];
+
+    #[test]
+    fn fim_stop_tokens_respect_openai_stop_limit() {
+        for format in FIM_PROMPT_FORMATS {
+            let stop_tokens = fim_stop_tokens(format);
+            assert!(!stop_tokens.is_empty(), "{format:?} has no stop tokens");
+            assert!(
+                stop_tokens.len() <= 4,
+                "{format:?} has {} stop tokens, but OpenAI allows at most 4",
+                stop_tokens.len()
+            );
+        }
+    }
+
+    #[test]
+    fn fim_stop_tokens_match_prompt_markers() {
+        let end_of_text_tokens = ["<|endoftext|>", "<|file_separator|>"];
+        for format in FIM_PROMPT_FORMATS {
+            let prompt = format_fim_prompt(format, "a", "b");
+            for token in fim_stop_tokens(format) {
+                if end_of_text_tokens.contains(token) {
+                    continue;
+                }
+                assert!(
+                    prompt.contains(token),
+                    "stop token {token:?} for {format:?} does not appear in prompt {prompt:?}"
+                );
+            }
         }
     }
 

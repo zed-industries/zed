@@ -29,14 +29,16 @@ use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecogni
 use crate::interactive::TouchEvent;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2_core_foundation::CFRetained;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2_core_video::CVPixelBuffer;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
@@ -1275,7 +1277,7 @@ pub struct Window {
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "profiler")]
-    window_profiler: profiler::WindowProfiler,
+    pub(crate) window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
     touch_gestures: TouchGestureRecognizer,
     touch_prediction_enabled: bool,
@@ -1884,6 +1886,10 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
+                                #[cfg(feature = "profiler")]
+                                window
+                                    .window_profiler
+                                    .record_frame_signal(request_frame_options.signal_at);
                                 if force_render {
                                     // Bypass cached view reuse so we don't replay stale
                                     // atlas tile references after a GPU device recovery.
@@ -3559,6 +3565,8 @@ impl Window {
 
         #[cfg(feature = "profiler")]
         {
+            self.window_profiler
+                .set_refresh_interval(self.refresh_interval(cx));
             let draw_duration = self
                 .window_profiler
                 .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
@@ -3689,8 +3697,12 @@ impl Window {
         // stretches to fill the viewport unless explicitly sized, window roots
         // fill the window when their size is `auto`.
         let scale_factor = self.scale_factor();
+        #[cfg(feature = "profiler")]
+        let request_layout_start = Instant::now();
         let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
         let root_layout_id = root_element.request_layout(self, cx);
+        #[cfg(feature = "profiler")]
+        let prepaint_start = Instant::now();
         self.layout_engine
             .as_mut()
             .unwrap()
@@ -3728,6 +3740,8 @@ impl Window {
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
+        #[cfg(feature = "profiler")]
+        let paint_start = Instant::now();
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
@@ -3746,6 +3760,14 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+
+        #[cfg(feature = "profiler")]
+        self.window_profiler
+            .record_draw_phases(profiler::DrawPhases {
+                request_layout: prepaint_start.duration_since(request_layout_start),
+                prepaint: paint_start.duration_since(prepaint_start),
+                paint: Instant::now().duration_since(paint_start),
+            });
 
         // a11y may have been activated/deactivated halfway through the frame
         let a11y_active_start_of_frame = self.a11y.is_active();
@@ -5130,7 +5152,11 @@ impl Window {
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
+    pub fn paint_surface(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        image_buffer: CFRetained<CVPixelBuffer>,
+    ) {
         use crate::PaintSurface;
 
         self.invalidator.debug_assert_paint();
