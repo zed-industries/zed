@@ -616,6 +616,30 @@ struct TextPanelRoot {
     font_family: gpui::SharedString,
 }
 
+impl TextPanelRoot {
+    fn new(
+        panel_count: usize,
+        font_family: &'static str,
+        root_renders: &Rc<Cell<usize>>,
+        panel_renders: &Rc<Cell<usize>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            panels: (0..panel_count)
+                .map(|index| {
+                    cx.new(|_| TextPanel {
+                        index,
+                        value: 0,
+                        renders: panel_renders.clone(),
+                    })
+                })
+                .collect(),
+            renders: root_renders.clone(),
+            font_family: font_family.into(),
+        }
+    }
+}
+
 impl Render for TextPanelRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.renders.set(self.renders.get() + 1);
@@ -693,18 +717,8 @@ fn measure_text_panel_updates(
     let root_renders = Rc::new(Cell::new(0));
     let panel_renders = Rc::new(Cell::new(0));
     let root = window.update(|window, cx| {
-        window.replace_root(cx, |_, cx| TextPanelRoot {
-            panels: (0..panel_count)
-                .map(|index| {
-                    cx.new(|_| TextPanel {
-                        index,
-                        value: 0,
-                        renders: panel_renders.clone(),
-                    })
-                })
-                .collect(),
-            renders: root_renders.clone(),
-            font_family: font_family.into(),
+        window.replace_root(cx, |_, cx| {
+            TextPanelRoot::new(panel_count, font_family, &root_renders, &panel_renders, cx)
         })
     });
     cx.run_until_idle();
@@ -783,6 +797,202 @@ fn snapshot_glyphs(window: &Window) -> Vec<String> {
         .collect()
 }
 
+struct FirstPopulatedFrame {
+    window: gpui::AsyncWindowContext,
+    root: Entity<TextPanelRoot>,
+    panel_count: usize,
+    root_renders: Rc<Cell<usize>>,
+    panel_renders: Rc<Cell<usize>>,
+    expected_frames: usize,
+}
+
+impl FirstPopulatedFrame {
+    fn attach(
+        window: &mut Window,
+        cx: &mut gpui::App,
+        panel_count: usize,
+        root_renders: Rc<Cell<usize>>,
+        panel_renders: Rc<Cell<usize>>,
+    ) -> Self {
+        let root = window.replace_root(cx, |_, cx| {
+            TextPanelRoot::new(
+                panel_count,
+                "Noto Sans Mono",
+                &root_renders,
+                &panel_renders,
+                cx,
+            )
+        });
+        Self {
+            window: window.to_async(cx),
+            root,
+            panel_count,
+            root_renders,
+            panel_renders,
+            expected_frames: 1,
+        }
+    }
+
+    fn validate(&mut self) {
+        assert_eq!(self.root_renders.get(), self.expected_frames);
+        assert_eq!(
+            self.panel_renders.get(),
+            self.panel_count * self.expected_frames
+        );
+        self.window
+            .update(|window, cx| {
+                let root = self.root.read(cx);
+                assert_eq!(root.panels.len(), self.panel_count);
+                assert!(root.panels.iter().all(|panel| panel.read(cx).value == 0));
+                let scene = window.rendered_scene();
+                assert!(
+                    scene.monochrome_sprites.len()
+                        + scene.subpixel_sprites.len()
+                        + scene.polychrome_sprites.len()
+                        > 0,
+                    "the first populated frame must paint glyphs"
+                );
+            })
+            .expect("first populated window must remain open");
+    }
+}
+
+impl Drop for FirstPopulatedFrame {
+    fn drop(&mut self) {
+        // Criterion drops the task output after stopping measurement. Keep the
+        // root and window alive until then, including validation and teardown.
+        self.validate();
+        self.window
+            .update(|window, _| window.remove_window())
+            .expect("remove first populated window");
+    }
+}
+
+thread_local! {
+    static DESCRIBED_FIRST_POPULATED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
+fn first_populated_panel_counts() -> Vec<usize> {
+    for variable in ["GPUI_RETAINED_DISPATCH", "GPUI_VIEW_RETENTION"] {
+        assert!(
+            std::env::var_os(variable).is_none(),
+            "first populated fresh-rendering measurements require {variable} unset"
+        );
+    }
+    installed_font_panel_counts()
+}
+
+#[gpui::bench(inputs = first_populated_panel_counts(), input_name = "panels", group = "TextPanels/first populated installed font", fps = 120)]
+fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
+    let panel_count = *panel_count;
+    let font = gpui::font("Noto Sans Mono");
+    let text_system = cx.read(|cx| cx.text_system().clone());
+    assert!(
+        text_system
+            .all_font_names()
+            .iter()
+            .any(|family| family == font.family.as_ref()),
+        "the first populated comparison requires Noto Sans Mono"
+    );
+    let font_id = text_system.resolve_font(&font);
+    assert_eq!(
+        text_system.get_font_for_id(font_id).map(|font| font.family),
+        Some(font.family),
+        "the first populated font must resolve without falling back"
+    );
+
+    let describe = DESCRIBED_FIRST_POPULATED.with(|described| {
+        let mut described = described.borrow_mut();
+        if described.contains(&panel_count) {
+            false
+        } else {
+            described.push(panel_count);
+            true
+        }
+    });
+    if describe {
+        // Sample before validation snapshots/logging allocate. Font resolution
+        // above is intentionally shared setup, not window-held memory.
+        let before_window = bench_metrics::allocation_stats();
+        let mut window = cx.add_empty_window();
+        let before_population = bench_metrics::allocation_stats();
+        let mut populated = window.update(|window, cx| {
+            FirstPopulatedFrame::attach(
+                window,
+                cx,
+                panel_count,
+                Rc::new(Cell::new(0)),
+                Rc::new(Cell::new(0)),
+            )
+        });
+        cx.run_until_idle();
+        let after_population = bench_metrics::allocation_stats();
+        populated.validate();
+        window.update(|window, _| {
+            let scene = window.rendered_scene();
+            eprintln!(
+                "first populated panels: {panel_count}, family Noto Sans Mono, viewport {:?}, quads {}, glyphs {}, root renders {}, panel renders {}; GPUI_RETAINED_DISPATCH={:?}, GPUI_VIEW_RETENTION={:?}; requested GPUI_LAYOUT_CACHE={:?} (actual mode unverified)",
+                window.viewport_size(),
+                scene.quads.len(),
+                scene.monochrome_sprites.len() + scene.subpixel_sprites.len() + scene.polychrome_sprites.len(),
+                populated.root_renders.get(),
+                populated.panel_renders.get(),
+                std::env::var_os("GPUI_RETAINED_DISPATCH"),
+                std::env::var_os("GPUI_VIEW_RETENTION"),
+                std::env::var_os("GPUI_LAYOUT_CACHE"),
+            );
+        });
+        match before_window.zip(before_population).zip(after_population) {
+            Some(((before, empty), after)) => eprintln!(
+                "first populated setup live heap: before window {} B, empty window {} B, populated {} B; window+setup delta {} B, population delta {} B (process-wide estimates, not exclusive window ownership)",
+                before.live_bytes(),
+                empty.live_bytes(),
+                after.live_bytes(),
+                after.live_bytes() - before.live_bytes(),
+                after.live_bytes() - empty.live_bytes(),
+            ),
+            None => eprintln!("first populated setup live heap: allocator statistics unavailable"),
+        }
+        let initial = window.update(|window, _| snapshot_glyphs(window));
+        window.update(|window, _| window.refresh());
+        cx.run_until_idle();
+        populated.expected_frames = 2;
+        assert_eq!(populated.root_renders.get(), 2);
+        assert_eq!(populated.panel_renders.get(), panel_count * 2);
+        assert_eq!(
+            initial,
+            window.update(|window, _| snapshot_glyphs(window)),
+            "first populated glyph output must match a full redraw"
+        );
+        drop(populated);
+        cx.run_until_idle();
+    }
+
+    cx.bench_batched_task(
+        |cx| {
+            (
+                cx.add_empty_window(),
+                Rc::new(Cell::new(0)),
+                Rc::new(Cell::new(0)),
+            )
+        },
+        |(window, root_renders, panel_renders), _| {
+            let populated = window.update(|window, cx| {
+                FirstPopulatedFrame::attach(
+                    window,
+                    cx,
+                    panel_count,
+                    root_renders.clone(),
+                    panel_renders.clone(),
+                )
+            });
+            // bench_batched_task delivers pending production frame callbacks
+            // before polling this ready task, so layout through present is timed.
+            gpui::Task::ready(populated)
+        },
+    );
+}
+
 // Frames take 0.4 to 2.5 ms, so a 1 s measurement is already hundreds to thousands of
 // frames; Criterion's 3 s warm-up and 5 s measurement per id would make the suite take
 // most of an hour. Pass `ITERATIONS=6`, `--warm-up-time` or `--measurement-time` for a
@@ -803,6 +1013,7 @@ gpui::bench_group!(
     changing_share,
     text_panel_updates,
     installed_font_panel_updates,
+    first_populated_text_panels,
     family_summary
 );
 gpui::bench_main!(benches);
