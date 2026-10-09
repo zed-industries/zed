@@ -33,6 +33,7 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 /// derive `old_text` or `new_text` from that output, strip this prefix and keep only what
 /// comes after the tab, preserving the original indentation (tabs and spaces) exactly.
 /// Never include any part of the line number prefix in `old_text` or `new_text`.
+/// Never include truncation markers like `... [line truncated; use grep or terminal for full line]` in `old_text` or `new_text`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.
@@ -3239,5 +3240,34 @@ mod tests {
                 });
             });
         });
+    }
+    #[gpui::test]
+    async fn test_edit_file_rejects_truncation_marker(cx: &mut TestAppContext) {
+        let (tool, _project, _action_log, _fs, _thread) = setup_test(
+            cx,
+            json!({
+                "file.txt": "normal content"
+            }),
+        )
+        .await;
+
+        let (event_stream, _) = ToolCallEventStream::test();
+        let input = EditFileToolInput {
+            path: PathBuf::from("root/file.txt"),
+            edits: vec![Edit {
+                old_text: format!("prefix {}", crate::tools::read_file_tool::LINE_TRUNCATION_MARKER),
+                new_text: "replacement".to_string(),
+            }],
+        };
+
+        let result = cx
+            .update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx))
+            .await;
+
+        let error = result.unwrap_err();
+        assert!(
+            error.to_string().contains("Cannot apply edit containing truncation marker"),
+            "expected error to reject truncation marker, got: {error:?}"
+        );
     }
 }
