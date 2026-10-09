@@ -3625,11 +3625,10 @@ async fn test_rejected_readded_language_keeps_native_semantic_token_rules(cx: &m
         ..LanguageConfig::default()
     });
     cx.update(|cx| {
-        cx.update_global::<SettingsStore, _>(|store, cx| {
+        cx.update_global::<SettingsStore, _>(|store, _cx| {
             store.set_language_semantic_token_rules(
                 "Shared".into(),
                 settings::SemanticTokenRules::default(),
-                cx,
             );
         });
     });
