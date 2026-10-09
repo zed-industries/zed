@@ -1570,7 +1570,7 @@ impl ExtensionStore {
             )
             .peekable();
         if semantic_token_rules_to_remove.peek().is_some() {
-            SettingsStore::update_global(cx, |store, cx| {
+            SettingsStore::update_global(cx, |store, _cx| {
                 for language in semantic_token_rules_to_remove {
                     store.remove_language_semantic_token_rules(language.as_ref());
                 }
