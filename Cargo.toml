@@ -870,7 +870,7 @@ swash = "0.2.6"
 syn = { version = "2.0", default-features = false, features = ["proc-macro"] }
 sys-locale = "0.3.1"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
-taffy = { version = "=0.13.0", default-features = false }
+taffy = { version = "=0.14.0", default-features = false }
 tempfile = "3.20.0"
 tendril = "0.5"
 thiserror = "2.0.12"

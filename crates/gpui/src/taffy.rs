@@ -236,32 +236,43 @@ impl TaffyLayoutEngine {
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |known_dimensions, available_space, _id, node_context, _style| {
-                    let Some(node_context) = node_context else {
-                        return taffy::geometry::Size::default();
-                    };
+                |inputs, _id, node_context, style| {
+                    taffy::compute_leaf_layout(
+                        inputs,
+                        style,
+                        |_, _| 0.0,
+                        |known_dimensions, available_space| {
+                            let Some(node_context) = node_context else {
+                                return taffy::geometry::Size::default();
+                            };
 
-                    let known_dimensions = Size {
-                        width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
-                        height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
-                    };
+                            let known_dimensions = Size {
+                                width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
+                                height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
+                            };
 
-                    let available_space: Size<AvailableSpace> = available_space.into();
-                    let untransform = |ev: AvailableSpace| match ev {
-                        AvailableSpace::Definite(pixels) => {
-                            AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
-                        }
-                        AvailableSpace::MinContent => AvailableSpace::MinContent,
-                        AvailableSpace::MaxContent => AvailableSpace::MaxContent,
-                    };
-                    let available_space = size(
-                        untransform(available_space.width),
-                        untransform(available_space.height),
-                    );
+                            let available_space: Size<AvailableSpace> = available_space.into();
+                            let untransform = |ev: AvailableSpace| match ev {
+                                AvailableSpace::Definite(pixels) => {
+                                    AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
+                                }
+                                AvailableSpace::MinContent => AvailableSpace::MinContent,
+                                AvailableSpace::MaxContent => AvailableSpace::MaxContent,
+                            };
+                            let available_space = size(
+                                untransform(available_space.width),
+                                untransform(available_space.height),
+                            );
 
-                    let measured_size: Size<Pixels> =
-                        (node_context.measure)(known_dimensions, available_space, window, cx);
-                    snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
+                            let measured_size: Size<Pixels> = (node_context.measure)(
+                                known_dimensions,
+                                available_space,
+                                window,
+                                cx,
+                            );
+                            snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
+                        },
+                    )
                 },
             )
             .expect(EXPECT_MESSAGE);
@@ -745,6 +756,91 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn unmeasured_leaf_preserves_box_styles(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            window.set_scale_factor(2.0);
+            let mut engine = TaffyLayoutEngine::new();
+            for (min_width, max_width, aspect_ratio, expected_size) in [
+                (
+                    Length::Auto,
+                    Length::Auto,
+                    None,
+                    size(Pixels(10.0), Pixels(10.0)),
+                ),
+                (
+                    Pixels(40.0).into(),
+                    Length::Auto,
+                    Some(2.0),
+                    size(Pixels(40.0), Pixels(20.0)),
+                ),
+                (
+                    Length::Auto,
+                    Pixels(6.0).into(),
+                    None,
+                    size(Pixels(10.0), Pixels(10.0)),
+                ),
+            ] {
+                let mut style = Style::default();
+                style.padding = Edges::all(Pixels(4.0).into());
+                style.border_widths = Edges::all(Pixels(1.0).into());
+                style.min_size.width = min_width;
+                style.max_size.width = max_width;
+                style.aspect_ratio = aspect_ratio;
+                let id = engine.request_layout(style, Pixels(16.0), 2.0, &[]);
+                engine.compute_layout(
+                    id,
+                    size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+                    window,
+                    cx,
+                );
+                assert_eq!(engine.layout_bounds(id, 2.0).size, expected_size);
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn measured_leaf_preserves_logical_units_and_ceil_snapping(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            window.set_scale_factor(2.0);
+            let mut engine = TaffyLayoutEngine::new();
+            for (width, expected_available_width, expected_width) in [
+                (Length::Auto, AvailableSpace::MaxContent, Pixels(20.5)),
+                (
+                    Pixels(30.0).into(),
+                    AvailableSpace::Definite(Pixels(20.0)),
+                    Pixels(30.0),
+                ),
+            ] {
+                let mut style = Style::default();
+                style.size.width = width;
+                style.padding = Edges::all(Pixels(4.0).into());
+                style.border_widths = Edges::all(Pixels(1.0).into());
+                let measured = std::rc::Rc::new(std::cell::Cell::new(false));
+                let id = engine.request_measured_layout(style, Pixels(16.0), 2.0, {
+                    let measured = measured.clone();
+                    move |_, available_space, _, _| {
+                        measured.set(true);
+                        assert_eq!(available_space.width, expected_available_width);
+                        assert_eq!(available_space.height, AvailableSpace::MaxContent);
+                        size(Pixels(10.2), Pixels(20.2))
+                    }
+                });
+                engine.compute_layout(
+                    id,
+                    size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+                    window,
+                    cx,
+                );
+                assert!(measured.get());
+                assert_eq!(
+                    engine.layout_bounds(id, 2.0).size,
+                    size(expected_width, Pixels(30.5))
+                );
+            }
+        });
+    }
 
     #[test]
     fn border_widths_to_taffy_use_stroke_snapping() {
