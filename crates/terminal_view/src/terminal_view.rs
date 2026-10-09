@@ -2395,6 +2395,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn center_terminal_is_a_navigation_target(cx: &mut TestAppContext) {
+        let (project, workspace, window_handle) = init_test_with_window(cx).await;
+        let (pane, _first_terminal, first_terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, false, cx);
+        let (_, _second_terminal, second_terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, false, cx);
+
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        cx.run_until_parked();
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let active_item_id =
+            pane.read_with(cx, |pane, _| pane.active_item().map(|item| item.item_id()));
+        assert_eq!(
+            active_item_id,
+            Some(first_terminal_view.entity_id()),
+            "Back should return to the previously active center terminal"
+        );
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_forward(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let active_item_id =
+            pane.read_with(cx, |pane, _| pane.active_item().map(|item| item.item_id()));
+        assert_eq!(
+            active_item_id,
+            Some(second_terminal_view.entity_id()),
+            "Forward should return to the second terminal"
+        );
+    }
+
+    #[gpui::test]
     async fn edit_menu_copy_and_paste_are_available_when_terminal_is_focused(
         cx: &mut TestAppContext,
     ) {
