@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let fs = Arc::new(RealFs::new(None, gpui_platform::background_executor()));
+    let fs = RealFs::new(None, gpui_platform::background_executor());
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(&engine)?;
 
@@ -456,6 +456,14 @@ enum ExtensionManifestValidationError {
         as these are currently unsupported"
     )]
     LanguageModelProvidersUnsupported,
+    #[error(
+        "language server `{language_server}` lists `{language}` in `opt_in_languages`, \
+        but `{language}` is not listed in its `languages`"
+    )]
+    OptInLanguageNotInLanguages {
+        language_server: String,
+        language: String,
+    },
 }
 
 fn validate_extension_manifest(
@@ -508,6 +516,18 @@ fn validate_extension_manifest(
 
     if !manifest.language_model_providers.is_empty() {
         return Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported);
+    }
+
+    for (language_server, entry) in &manifest.language_servers {
+        let languages = entry.languages().into_iter().collect::<BTreeSet<_>>();
+        if let Some(language) = entry.opt_in_languages().difference(&languages).next() {
+            return Err(
+                ExtensionManifestValidationError::OptInLanguageNotInLanguages {
+                    language_server: language_server.to_string(),
+                    language: language.to_string(),
+                },
+            );
+        }
     }
 
     Ok(())
@@ -894,6 +914,41 @@ mod tests {
         assert_eq!(
             validate_extension_manifest(&manifest),
             Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_opt_in_languages() {
+        let manifest_with_language_server = |language_server: &str| -> ExtensionManifest {
+            let language_server = toml::from_str(language_server).unwrap();
+            ExtensionManifest {
+                language_servers: BTreeMap::from_iter([("my-server".into(), language_server)]),
+                ..valid_manifest()
+            }
+        };
+
+        let manifest = manifest_with_language_server(
+            r#"
+            languages = ["Julia", "Markdown"]
+            opt_in_languages = ["Julia"]
+            "#,
+        );
+        assert_eq!(validate_extension_manifest(&manifest), Ok(()));
+
+        let manifest = manifest_with_language_server(
+            r#"
+            languages = ["Markdown"]
+            opt_in_languages = ["Julia"]
+            "#,
+        );
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(
+                ExtensionManifestValidationError::OptInLanguageNotInLanguages {
+                    language_server: "my-server".to_string(),
+                    language: "Julia".to_string(),
+                }
+            ),
         );
     }
 
