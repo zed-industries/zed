@@ -41,4 +41,4 @@ objc2-quartz-core = { workspace = true, features = ["CADisplayLink"] }
 objc2-core-foundation = { workspace = true, default-features = true }
 parking_lot.workspace = true
 raw-window-handle.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v5"] }

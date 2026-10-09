@@ -8,9 +8,12 @@ use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight, NSApplication,
-        NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular, NSControl as _,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSVisualEffectState, NSVisualEffectView,
-        NSWindow,
+        NSApplicationActivationPolicy,
+        NSApplicationActivationPolicy::{
+            NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
+        },
+        NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSVisualEffectState,
+        NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -22,11 +25,12 @@ use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
-    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    ForegroundExecutor, KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowKind,
-    WindowParams, popup::PopupNotSupportedError,
+    Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
+    CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
+    OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task,
+    ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
+    popup::PopupNotSupportedError,
 };
 use gpui_apple::{
     keychain,
@@ -152,6 +156,11 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
+                sel!(onScreenParametersChange:),
+                on_screen_parameters_change as extern "C" fn(&mut Object, Sel, id),
+            );
+
+            decl.add_method(
                 sel!(onSystemSleep:),
                 on_system_sleep as extern "C" fn(&mut Object, Sel, id),
             );
@@ -174,11 +183,14 @@ pub(crate) struct MacPlatformState {
     text_system: Arc<dyn PlatformTextSystem>,
     renderer_context: renderer::Context,
     headless: bool,
+    activation_policy: ActivationPolicy,
+    application_created: bool,
     general_pasteboard: Pasteboard,
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     thermal_observer: Option<ThermalObserver>,
+    on_displays_changed: Option<Box<dyn FnMut()>>,
     on_system_sleep: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
     system_power_observers_registered: bool,
@@ -195,6 +207,22 @@ pub(crate) struct MacPlatformState {
     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
     cursor_visible: Arc<AtomicBool>,
     system_notifications: crate::system_notifications::SystemNotificationState,
+}
+
+/// The activation policy that stands for a windowing mode: an app is headless while it has no
+/// Dock icon or menu bar.
+fn activation_policy_for(request: &WindowingRequest) -> ActivationPolicy {
+    match request {
+        WindowingRequest::Headless => ActivationPolicy::Accessory,
+        WindowingRequest::Windowed(_) => ActivationPolicy::Regular,
+    }
+}
+
+fn native_activation_policy(policy: ActivationPolicy) -> NSApplicationActivationPolicy {
+    match policy {
+        ActivationPolicy::Regular => NSApplicationActivationPolicyRegular,
+        ActivationPolicy::Accessory => NSApplicationActivationPolicyAccessory,
+    }
 }
 
 impl MacPlatform {
@@ -220,6 +248,8 @@ impl MacPlatform {
 
         let state = Mutex::new(MacPlatformState {
             headless,
+            activation_policy: ActivationPolicy::Regular,
+            application_created: false,
             text_system,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
@@ -237,6 +267,7 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             thermal_observer: None,
+            on_displays_changed: None,
             on_system_sleep: None,
             on_system_wake: None,
             system_power_observers_registered: false,
@@ -530,6 +561,18 @@ impl Platform for MacPlatform {
 
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
+            // An accessory app must not register in the Dock during launch, so its
+            // policy has to precede the run loop. `Regular` is applied in
+            // `did_finish_launching` instead: setting it this early leaves the menu
+            // bar of an unbundled app launched from a terminal unclickable.
+            let policy = {
+                let mut state = self.0.lock();
+                state.application_created = true;
+                state.activation_policy
+            };
+            if policy == ActivationPolicy::Accessory {
+                app.setActivationPolicy_(native_activation_policy(policy));
+            }
             let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
             app.setDelegate_(app_delegate);
 
@@ -544,6 +587,7 @@ impl Platform for MacPlatform {
             (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
             (*NSWindow::delegate(app)).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
         }
+        self.0.lock().application_created = false;
     }
 
     fn quit(&self) {
@@ -621,6 +665,48 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_activation_policy(&self, policy: ActivationPolicy) {
+        let mut state = self.0.lock();
+        state.activation_policy = policy;
+        let should_apply = state.application_created && !state.headless;
+        drop(state);
+        if should_apply {
+            unsafe {
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                app.setActivationPolicy_(native_activation_policy(policy));
+            }
+        }
+    }
+
+    fn set_initial_windowing(&self, request: WindowingRequest) {
+        self.set_activation_policy(activation_policy_for(&request));
+    }
+
+    fn request_windowing(&self, request: WindowingRequest) -> Task<Result<()>> {
+        let state = self.0.lock();
+        if state.headless {
+            return Task::ready(Err(anyhow!(
+                "a platform created headless has no application to switch windowing modes"
+            )));
+        }
+        let policy = activation_policy_for(&request);
+        if state.activation_policy == policy {
+            return Task::ready(Err(match request {
+                WindowingRequest::Headless => anyhow!("already headless"),
+                WindowingRequest::Windowed(_) => anyhow!("already windowed"),
+            }));
+        }
+        drop(state);
+        self.set_activation_policy(policy);
+        Task::ready(Ok(()))
+    }
+
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        let state = self.0.lock();
+        (!state.headless && state.activation_policy == ActivationPolicy::Regular)
+            .then(GraphicalEnvironment::detect)
+    }
+
     fn hide(&self) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -650,6 +736,10 @@ impl Platform for MacPlatform {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_displays_changed = Some(callback);
     }
 
     #[cfg(feature = "screen-capture")]
@@ -1215,7 +1305,8 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
-        app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+        let policy = get_mac_platform(this).0.lock().activation_policy;
+        app.setActivationPolicy_(native_activation_policy(policy));
 
         let notification_center: *mut Object =
             msg_send![class!(NSNotificationCenter), defaultCenter];
@@ -1223,6 +1314,14 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let _: () = msg_send![notification_center, addObserver: this as id
             selector: sel!(onKeyboardLayoutChange:)
             name: name
+            object: nil
+        ];
+
+        // Posted when a display is connected, disconnected, rearranged, or
+        // changes mode, which includes its refresh rate.
+        let _: () = msg_send![notification_center, addObserver: this as id
+            selector: sel!(onScreenParametersChange:)
+            name: ns_string("NSApplicationDidChangeScreenParametersNotification")
             object: nil
         ];
 
@@ -1302,6 +1401,30 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
             .lock()
             .on_keyboard_layout_change
             .get_or_insert(callback);
+    }
+}
+
+extern "C" fn on_screen_parameters_change(this: &mut Object, _: Sel, _: id) {
+    // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell,
+    // as NSNotificationCenter delivers this notification synchronously and it may fire while
+    // the App is already borrowed (same pattern as quit() above).
+    let platform = unsafe { get_mac_platform(this) };
+    let platform_ptr = platform as *const MacPlatform as *mut c_void;
+    unsafe {
+        DispatchQueue::main().exec_async_f(platform_ptr, on_screen_parameters_change);
+    }
+
+    extern "C" fn on_screen_parameters_change(context: *mut c_void) {
+        let platform = unsafe { &*(context as *const MacPlatform) };
+        let callback = platform.0.lock().on_displays_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            platform
+                .0
+                .lock()
+                .on_displays_changed
+                .get_or_insert(callback);
+        }
     }
 }
 

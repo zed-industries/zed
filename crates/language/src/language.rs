@@ -38,7 +38,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AsyncApp, Entity, EntityId};
+use gpui::{App, AsyncApp, Entity, EntityId, SharedString};
 use http_client::HttpClient;
 
 pub use language_core::{
@@ -175,9 +175,12 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             soft_wrap: Some(SoftWrap::EditorWidth),
             autoclose_before: ")]}".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["txt".to_owned()],
+                path_suffixes: vec![SharedString::new_static("txt")],
                 first_line_pattern: None,
-                modeline_aliases: vec!["text".to_owned(), "txt".to_owned()],
+                modeline_aliases: vec![
+                    SharedString::new_static("text"),
+                    SharedString::new_static("txt"),
+                ],
             })
             .into(),
             brackets: BracketPairConfig {
@@ -374,6 +377,12 @@ impl CachedLspAdapter {
 
     pub fn name(&self) -> LanguageServerName {
         self.adapter.name()
+    }
+
+    /// Returns whether the language server only starts for the given language
+    /// when it is explicitly listed in the `language_servers` setting.
+    pub fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.adapter.is_opt_in_for(language)
     }
 
     pub async fn get_language_server_command(
@@ -656,6 +665,13 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         HashMap::default()
     }
 
+    /// Whether the `...` wildcard in the `language_servers` setting excludes this
+    /// language server for the given language, so that it only starts when
+    /// listed explicitly.
+    fn is_opt_in_for(&self, _language: &LanguageName) -> bool {
+        false
+    }
+
     /// Support custom initialize params.
     fn prepare_initialize_params(
         &self,
@@ -923,6 +939,7 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
     pub language_server_binary: LanguageServerBinary,
+    pub opt_in_languages: HashSet<LanguageName>,
 
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
@@ -1208,7 +1225,7 @@ impl Language {
         }
     }
 
-    pub fn path_suffixes(&self) -> &[String] {
+    pub fn path_suffixes(&self) -> &[SharedString] {
         &self.config.matcher.path_suffixes
     }
 
@@ -1263,7 +1280,7 @@ pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> Highl
 }
 
 impl LanguageScope {
-    pub fn path_suffixes(&self) -> &[String] {
+    pub fn path_suffixes(&self) -> &[SharedString] {
         self.language.path_suffixes()
     }
 
@@ -1453,7 +1470,7 @@ pub(crate) fn parse_text(grammar: &Grammar, text: &Rope, old_tree: Option<Tree>)
             .parse_with_options(
                 &mut move |offset, _| {
                     chunks.seek(offset);
-                    chunks.next().unwrap_or("").as_bytes()
+                    chunks.peek_bytes().unwrap_or_default()
                 },
                 old_tree.as_ref(),
                 None,
@@ -1550,6 +1567,7 @@ impl Default for FakeLspAdapter {
                 arguments: vec![],
                 env: Default::default(),
             },
+            opt_in_languages: HashSet::default(),
             label_for_completion: None,
         }
     }
@@ -1650,6 +1668,10 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<CodeLabel> {
         let label_for_completion = self.label_for_completion.as_ref()?;
         label_for_completion(item, language)
+    }
+
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.opt_in_languages.contains(language)
     }
 
     fn is_extension(&self) -> bool {

@@ -8,10 +8,14 @@
 //! - Touch-based input instead of mouse
 //! - System keyboard handling differs significantly
 
-use super::application::IosApplicationState;
+use super::{CallbackSlot, application::IosApplicationState};
 use super::{IosDisplay, IosWindow};
 use anyhow::anyhow;
-use futures::channel::oneshot;
+use block2::RcBlock;
+use futures::{
+    StreamExt,
+    channel::{mpsc, oneshot},
+};
 use gpui::{
     Action, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem, CursorStyle,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform,
@@ -22,10 +26,15 @@ use gpui_apple::{
     AppleDispatcher, keychain,
     thermal::{self, ThermalObserver},
 };
-use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained};
-use objc2_foundation::{NSBundle, NSDictionary, NSString, NSURL};
+use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained, runtime::ProtocolObject};
+use objc2_foundation::{
+    NSBundle, NSDictionary, NSNotification, NSNotificationCenter, NSObjectProtocol, NSString, NSURL,
+};
+#[allow(deprecated)] // Match UIScreen enumeration, including displays without a connected scene.
+use objc2_ui_kit::{UIScreenDidConnectNotification, UIScreenDidDisconnectNotification};
 use objc2_ui_kit::{
-    UIApplication, UIPasteboard, UITraitEnvironment, UIUserInterfaceStyle, UIViewController,
+    UIApplication, UIPasteboard, UIScreenModeDidChangeNotification, UITraitEnvironment,
+    UIUserInterfaceStyle, UIViewController,
 };
 use std::{
     cell::RefCell,
@@ -42,6 +51,9 @@ pub(crate) struct IosPlatformState {
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
     thermal_observer: RefCell<Option<ThermalObserver>>,
+    display_observers: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
+    display_task: RefCell<Option<Task<()>>>,
+    displays_changed_callback: CallbackSlot<Box<dyn FnMut()>>,
 }
 
 impl Default for IosPlatform {
@@ -56,13 +68,46 @@ impl IosPlatform {
 
         let text_system: Arc<dyn PlatformTextSystem> = Arc::new(gpui_apple::AppleTextSystem::new());
 
-        Self(Rc::new(IosPlatformState {
+        let state = Rc::new(IosPlatformState {
             application: IosApplicationState::default(),
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system,
             thermal_observer: RefCell::new(None),
-        }))
+            display_observers: RefCell::new(Vec::new()),
+            display_task: RefCell::new(None),
+            displays_changed_callback: CallbackSlot::default(),
+        });
+        let (sender, mut receiver) = mpsc::unbounded();
+        let block = RcBlock::new(move |_: std::ptr::NonNull<NSNotification>| {
+            if sender.unbounded_send(()).is_err() {
+                log::debug!("display observer stopped before notification delivery");
+            }
+        });
+        // UIKit may deliver these synchronously. Defer entering GPUI until the
+        // current native callback has unwound, as with thermal notifications.
+        #[allow(deprecated)] // Screen enumeration is independent of our single connected scene.
+        unsafe {
+            for name in [
+                UIScreenDidConnectNotification,
+                UIScreenDidDisconnectNotification,
+                UIScreenModeDidChangeNotification,
+            ] {
+                let observer = NSNotificationCenter::defaultCenter()
+                    .addObserverForName_object_queue_usingBlock(Some(name), None, None, &block);
+                state.display_observers.borrow_mut().push(observer);
+            }
+        }
+        let weak_state = Rc::downgrade(&state);
+        let task = state.foreground_executor.spawn(async move {
+            while receiver.next().await.is_some() {
+                if let Some(state) = weak_state.upgrade() {
+                    state.displays_changed_callback.with(|callback| callback());
+                }
+            }
+        });
+        state.display_task.replace(Some(task));
+        Self(state)
     }
 
     fn root_view_controller(&self) -> Option<Retained<UIViewController>> {
@@ -135,6 +180,10 @@ impl PlatformKeyboardLayout for IosKeyboardLayout {
 }
 
 impl Platform for IosPlatform {
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.displays_changed_callback.set(callback);
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.0.background_executor.clone()
     }
@@ -416,6 +465,14 @@ impl Platform for IosPlatform {
 
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
         Rc::new(DummyKeyboardMapper)
+    }
+}
+
+impl Drop for IosPlatformState {
+    fn drop(&mut self) {
+        for observer in self.display_observers.get_mut().drain(..) {
+            unsafe { NSNotificationCenter::defaultCenter().removeObserver(observer.as_ref()) };
+        }
     }
 }
 

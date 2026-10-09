@@ -1,6 +1,7 @@
 use super::*;
 use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentSettings;
 use agent_ui::{
     ThreadId,
@@ -707,6 +708,33 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
+async fn test_sidebar_background_with_transparent_panel(cx: &mut TestAppContext) {
+    let (_, project) = init_multi_project_test(&["/my-project"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    for panel_alpha in [0.0, 0.4] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
+        let background = cx.update(|_, cx| {
+            let colors = cx.theme().colors();
+            colors.background.blend(colors.panel_background)
+        });
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(400.), px(240.)),
+            |_, _| sidebar.clone().into_any_element(),
+        );
+
+        cx.update(|window, _| {
+            let quads = window.painted_quads();
+            let sidebar_background = quads.first().expect("Sidebar should paint its background");
+            assert_eq!(sidebar_background.background.as_solid(), Some(background));
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));
@@ -715,8 +743,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
     let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
     save_n_test_threads(1, &project, cx).await;
 
-    for (query, surface_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
-        set_sidebar_test_surface_alpha(surface_alpha, cx);
+    for (query, panel_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
+        set_sidebar_test_panel_alpha(panel_alpha, cx);
         type_in_search(&sidebar, query, cx);
         let row_bounds = sidebar.read_with(cx, |sidebar, _| {
             sidebar
@@ -778,8 +806,8 @@ async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
                 .bounds
                 .map(|value| px(value.as_f32() / window.scale_factor()))
         });
-        for surface_alpha in [1.0, 0.0, 0.2] {
-            set_sidebar_test_surface_alpha(surface_alpha, cx);
+        for panel_alpha in [1.0, 0.0, 0.2] {
+            set_sidebar_test_panel_alpha(panel_alpha, cx);
             assert_sidebar_action_hover(selector, row_bounds, cx);
         }
     }
@@ -2952,7 +2980,7 @@ async fn test_terminal_close_event_keeps_linked_worktree_workspace_with_live_edi
     assert!(
         matches!(
             live_blocks.as_deref(),
-            Some([acp::ContentBlock::Text(text)]) if text.text == "keep this draft"
+            Some([acp_v2::ContentBlock::Text(text)]) if text.text == "keep this draft"
         ),
         "edited draft should still be readable from the panel after opening the terminal"
     );
@@ -3110,7 +3138,7 @@ async fn test_archive_selected_draft_archives_linked_worktree_after_last_draft(
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             first_draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "first draft",
             ))],
             cx,
@@ -3121,7 +3149,7 @@ async fn test_archive_selected_draft_archives_linked_worktree_after_last_draft(
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             second_draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "second draft",
             ))],
             cx,
@@ -3314,7 +3342,7 @@ async fn test_archive_selected_draft_archives_closed_linked_worktree(cx: &mut Te
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "closed draft",
             ))],
             cx,
@@ -14871,7 +14899,7 @@ async fn test_discard_mixed_workspace_draft_closes_only_archived_worktree_items(
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "mixed workspace draft",
             ))],
             cx,
@@ -15823,11 +15851,12 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
     );
 }
 
-fn set_sidebar_test_surface_alpha(alpha: f32, cx: &mut VisualTestContext) {
+fn set_sidebar_test_panel_alpha(alpha: f32, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         let mut theme = cx.theme().as_ref().clone();
         theme.styles.colors.background = Hsla::from(gpui::rgb(0xdcdcdd));
-        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
+        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xff00ff));
+        theme.styles.colors.panel_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
         theme.styles.colors.element_background = Hsla::from(gpui::rgb(0xebebec));
         theme.styles.colors.ghost_element_hover = Hsla::from(gpui::rgb(0xdfdfe0));
         theme::GlobalTheme::update_theme(cx, Arc::new(theme));

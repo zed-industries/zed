@@ -13,10 +13,10 @@ use super::events::*;
 use super::text_input::TextInputView;
 use super::{CallbackSlot, IosDisplay, platform::IosPlatformState};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, GpuSpecs,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size,
-    TextInputConfiguration, TextInputStateChange, TouchEvent, TouchId, TouchPhase,
+    AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, DisplayId, Edges,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    Scene, Size, TextInputConfiguration, TextInputStateChange, TouchEvent, TouchId, TouchPhase,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets,
     WindowParams, WindowVisibility, px, size,
 };
@@ -237,6 +237,8 @@ pub(crate) struct IosWindowState {
     hover_status_callback: CallbackSlot<Box<dyn FnMut(bool)>>,
     /// Callback for resize events
     resize_callback: CallbackSlot<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    display_id: Cell<DisplayId>,
+    display_changed_callback: CallbackSlot<Box<dyn FnMut()>>,
     /// Callback for move events (not applicable on iOS)
     moved_callback: CallbackSlot<Box<dyn FnMut()>>,
     /// Callback for should close
@@ -333,6 +335,8 @@ impl IosWindow {
         let state = IosWindowState {
             platform: Rc::downgrade(platform),
             keyboard_observers: RefCell::default(),
+            display_id: Cell::new(IosDisplay::from_screen(window.screen()).id()),
+            display_changed_callback: CallbackSlot::default(),
             window,
             view_controller,
             view,
@@ -599,7 +603,11 @@ impl IosWindowState {
 
     pub fn handle_layout_change(&self) {
         let view_bounds = self.view.bounds();
-        let scale = self.window.screen().scale();
+        let display = IosDisplay::from_screen(self.window.screen());
+        if self.display_id.replace(display.id()) != display.id() {
+            self.display_changed_callback.with(|callback| callback());
+        }
+        let scale = display.scale() as f64;
 
         let width = view_bounds.size.width as f32;
         let height = view_bounds.size.height as f32;
@@ -717,7 +725,11 @@ impl PlatformWindow for IosWindow {
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(Rc::new(IosDisplay::main()))
+        Some(Rc::new(IosDisplay::from_screen(self.window.screen())))
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.display_changed_callback.set(callback);
     }
 
     fn mouse_position(&self) -> Point<Pixels> {

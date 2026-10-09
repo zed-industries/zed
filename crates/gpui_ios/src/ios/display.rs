@@ -8,6 +8,7 @@ use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, px, size};
 use objc2::{MainThreadMarker, rc::Retained};
 use objc2_core_foundation::CGRect;
 use objc2_ui_kit::UIScreen;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Represents an iOS display (UIScreen).
@@ -21,6 +22,10 @@ unsafe impl Send for IosDisplay {}
 unsafe impl Sync for IosDisplay {}
 
 impl IosDisplay {
+    pub fn from_screen(screen: Retained<UIScreen>) -> Self {
+        Self { screen }
+    }
+
     /// Get the main screen.
     #[allow(deprecated)] // Platform display queries can precede scene creation.
     pub fn main() -> Self {
@@ -54,6 +59,10 @@ impl IosDisplay {
 }
 
 impl PlatformDisplay for IosDisplay {
+    fn refresh_interval(&self) -> Option<Duration> {
+        gpui::refresh_interval_from_hz(self.screen.maximumFramesPerSecond() as f64)
+    }
+
     fn id(&self) -> DisplayId {
         // iOS doesn't have display IDs like macOS, so we use the screen pointer as an ID
         DisplayId::new(Retained::as_ptr(&self.screen) as u64)
