@@ -167,7 +167,7 @@ impl TaffyLayoutEngine {
         self.computed_layouts.clear();
     }
 
-    fn claim_node(&mut self, style: taffy::Style, children: &[LayoutId]) -> LayoutId {
+    fn claim_node(&mut self, style: taffy::Style, children: &[LayoutId]) -> (LayoutId, bool) {
         let scope = self.cache.as_mut().map(|cache| {
             let (hash, index) = cache
                 .request_scope
@@ -209,7 +209,7 @@ impl TaffyLayoutEngine {
         if let Some(scope) = scope {
             *scope = Some(id);
         }
-        id
+        (id, existing.is_some())
     }
 
     fn request_node(
@@ -218,8 +218,8 @@ impl TaffyLayoutEngine {
         children: &[LayoutId],
         context: Option<NodeContext>,
     ) -> LayoutId {
-        let id = self.claim_node(style, children);
-        if context.is_some() || self.taffy.get_node_context(id.0).is_some() {
+        let (id, reused) = self.claim_node(style, children);
+        if context.is_some() || (reused && self.taffy.get_node_context(id.0).is_some()) {
             // Opaque measurements can observe arbitrary external state.
             // Replacing the callback must invalidate every cached constraint.
             self.taffy
@@ -288,8 +288,10 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let style = text_layout_style();
         if self.cache.is_some() {
-            let id = self.claim_node(style, &[]);
-            if let Some(NodeContext::Text(previous)) = self.taffy.get_node_context_mut(id.0) {
+            let (id, reused) = self.claim_node(style, &[]);
+            if reused
+                && let Some(NodeContext::Text(previous)) = self.taffy.get_node_context_mut(id.0)
+            {
                 let carried = measure.carry_from(previous);
                 if !carried {
                     measure.reset();
