@@ -38,7 +38,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AsyncApp, Entity, EntityId};
+use gpui::{App, AsyncApp, Entity, EntityId, SharedString};
 use http_client::HttpClient;
 
 pub use language_core::{
@@ -176,9 +176,12 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             soft_wrap: Some(SoftWrap::EditorWidth),
             autoclose_before: ")]}".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["txt".to_owned()],
+                path_suffixes: vec![SharedString::new_static("txt")],
                 first_line_pattern: None,
-                modeline_aliases: vec!["text".to_owned(), "txt".to_owned()],
+                modeline_aliases: vec![
+                    SharedString::new_static("text"),
+                    SharedString::new_static("txt"),
+                ],
             })
             .into(),
             brackets: BracketPairConfig {
@@ -1242,7 +1245,7 @@ impl Language {
         }
     }
 
-    pub fn path_suffixes(&self) -> &[String] {
+    pub fn path_suffixes(&self) -> &[SharedString] {
         &self.config.matcher.path_suffixes
     }
 
@@ -1297,7 +1300,7 @@ pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> Highl
 }
 
 impl LanguageScope {
-    pub fn path_suffixes(&self) -> &[String] {
+    pub fn path_suffixes(&self) -> &[SharedString] {
         self.language.path_suffixes()
     }
 
@@ -1487,7 +1490,7 @@ pub(crate) fn parse_text(grammar: &Grammar, text: &Rope, old_tree: Option<Tree>)
             .parse_with_options(
                 &mut move |offset, _| {
                     chunks.seek(offset);
-                    chunks.next().unwrap_or("").as_bytes()
+                    chunks.peek_bytes().unwrap_or_default()
                 },
                 old_tree.as_ref(),
                 None,

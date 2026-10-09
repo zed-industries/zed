@@ -14,10 +14,10 @@ use editor::{
     Editor, EditorEvent, EditorSettingsScrollbarProxy, MultiBufferOffset, SelectionEffects,
 };
 use gpui::{
-    Action, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    Global, ImageSource, InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource,
-    RetainAllImageCache, ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity,
-    Window, point, px,
+    Action, AnyElement, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Global, ImageSource, InteractiveElement, IntoElement, IsZero, Pixels, Render,
+    Resource, RetainAllImageCache, ScrollHandle, SharedString, SharedUri, Subscription, Task,
+    WeakEntity, Window, point, px,
 };
 use language::{Buffer, LanguageRegistry};
 use markdown::{
@@ -39,13 +39,17 @@ use util::{
     paths::{PathStyle, PathWithPosition},
     rel_path::RelPath,
 };
-use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
+use workspace::item::{
+    Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem, TabContentParams,
+};
 use workspace::notifications::{NotifyResultExt, NotifyTaskExt};
 use workspace::path_link::{PathMatching, resolve_open_target};
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
-use workspace::{ItemId, Pane, SaveIntent, Workspace, WorkspaceId, delete_unloaded_items};
+use workspace::{
+    ItemId, ItemNavHistory, Pane, SaveIntent, Workspace, WorkspaceId, delete_unloaded_items,
+};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 use crate::markdown_preview_settings::MarkdownPreviewSettings;
@@ -65,6 +69,7 @@ fn reset_persisted_font_size(settings: &mut settings::SettingsContent) {
 
 pub struct MarkdownPreviewView {
     workspace: WeakEntity<Workspace>,
+    self_handle: WeakEntity<Self>,
     active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
     markdown: Entity<Markdown>,
@@ -79,6 +84,7 @@ pub struct MarkdownPreviewView {
     /// Search results depend on the parsed markdown, which lags behind the source while a
     /// background parse is in flight. Tracked so matches can be invalidated once it lands.
     markdown_parse_pending: bool,
+    nav_history: Option<ItemNavHistory>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -191,8 +197,11 @@ impl MarkdownPreviewView {
         .detach();
 
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
-            if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
-                let pane = workspace.active_pane().clone();
+            if let Some(item) = workspace.item_for_action(window, cx)
+                && let Some(editor) = item.act_as::<Editor>(cx)
+                && Self::is_markdown_file(&editor, cx)
+                && let Some(pane) = workspace.pane_for_item_id(item.item_id())
+            {
                 Self::open_preview_in_pane(workspace, editor, pane, window, cx);
             }
         });
@@ -397,6 +406,7 @@ impl MarkdownPreviewView {
                 active_editor: None,
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.clone(),
+                self_handle: cx.weak_entity(),
                 _markdown_subscription: cx.observe(
                     &markdown,
                     |this: &mut Self, markdown: Entity<Markdown>, cx| {
@@ -417,6 +427,7 @@ impl MarkdownPreviewView {
                 hovered_url: None,
                 mode,
                 markdown_parse_pending: false,
+                nav_history: None,
             };
 
             this.set_editor(active_editor, window, cx);
@@ -1023,20 +1034,29 @@ impl MarkdownPreviewView {
 
         window.defer(cx, move |window, cx| {
             workspace.update(cx, |workspace, cx| {
+                let Some(pane) = workspace.pane_for_item_id(preview_id) else {
+                    return;
+                };
                 if !workspace.activate_item(&editor, true, true, window, cx) {
                     // Re-adding the source emits `ItemAdded`; suppress its automatic preview once.
                     cx.global_mut::<SuppressedAutoPreviews>()
                         .0
                         .insert(editor.entity_id());
-                    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                    workspace.add_item(
+                        pane.clone(),
+                        Box::new(editor),
+                        None,
+                        true,
+                        true,
+                        window,
+                        cx,
+                    );
                 }
 
-                if let Some(pane) = workspace.pane_for_item_id(preview_id) {
-                    pane.update(cx, |pane, cx| {
-                        pane.close_item_by_id(preview_id, SaveIntent::Skip, window, cx)
-                    })
-                    .detach_and_log_err(cx);
-                }
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(preview_id, SaveIntent::Skip, window, cx)
+                })
+                .detach_and_log_err(cx);
             });
         });
     }
@@ -1630,6 +1650,25 @@ impl Item for MarkdownPreviewView {
         Some(Icon::new(IconName::FileDoc))
     }
 
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        let preview = self.self_handle.clone();
+        h_flex()
+            .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
+            .on_action(move |action: &CloseAndReturnToEditor, window, cx| {
+                preview
+                    .update(cx, |preview, cx| {
+                        preview.close_and_return_to_editor(action, window, cx);
+                    })
+                    .ok();
+            })
+            .child(
+                Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
+                    .single_line()
+                    .color(params.text_color()),
+            )
+            .into_any_element()
+    }
+
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         self.active_editor
             .as_ref()
@@ -1655,20 +1694,9 @@ impl Item for MarkdownPreviewView {
 
     fn tab_extra_context_menu_actions(
         &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
+        _: &mut Window,
+        _: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn Action>)> {
-        let preview_id = cx.entity_id();
-        // Inactive tabs aren't rendered, so the action can't be dispatched to them.
-        let is_active_in_pane = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| workspace.read(cx).pane_for_item_id(preview_id))
-            .and_then(|pane| pane.read(cx).active_item())
-            .is_some_and(|item| item.item_id() == preview_id);
-        if !is_active_in_pane {
-            return Vec::new();
-        }
         vec![("Show Source".into(), Box::new(CloseAndReturnToEditor))]
     }
 
@@ -1767,6 +1795,54 @@ impl Item for MarkdownPreviewView {
         _: &App,
     ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
+    }
+
+    fn can_split(&self) -> bool {
+        true
+    }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Entity<Self>>>
+    where
+        Self: Sized,
+    {
+        let Some(active_editor) = self.active_editor.as_ref() else {
+            return Task::ready(None);
+        };
+
+        let Some(project) = active_editor.editor.read(cx).project() else {
+            return Task::ready(None);
+        };
+
+        let language_registry = project.read(cx).languages().clone();
+
+        Task::ready(Some(MarkdownPreviewView::new(
+            MarkdownPreviewMode::Default,
+            active_editor.editor.clone(),
+            self.workspace.clone(),
+            language_registry,
+            window,
+            cx,
+        )))
+    }
+
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        self.nav_history = Some(history);
+    }
+
+    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(nav_history) = self.nav_history.as_mut() {
+            nav_history.push::<()>(None, None, cx);
+        }
     }
 }
 
@@ -2230,7 +2306,8 @@ mod tests {
     use fs::FakeFs;
     use gpui::UpdateGlobal as _;
     use gpui::{
-        App, AppContext as _, Entity, Focusable as _, Modifiers, TestAppContext, WindowHandle, px,
+        App, AppContext as _, Entity, Focusable as _, Modifiers, MouseButton, MouseDownEvent,
+        MouseUpEvent, TestAppContext, VisualTestContext, WindowHandle, px,
     };
     use language::{Buffer, DiskState, Point};
     use project::{Project, ProjectPath};
@@ -3173,87 +3250,168 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn tab_context_menu_offers_show_source(cx: &mut TestAppContext) {
-        let (multi_workspace, _editor) =
-            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
-        let preview = open_preview_for_active_editor(cx, &multi_workspace);
-        cx.run_until_parked();
+    async fn double_click_editor_and_preview_tabs(cx: &mut TestAppContext) {
+        let (multi_workspace, _) = open_markdown_file(cx, "note.md", "# Note\n").await;
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        click_tab_menu_target(cx, "TAB-0", MouseButton::Left, 2);
 
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        click_tab_menu_target(cx, "TAB-1", MouseButton::Left, 2);
         multi_workspace
-            .update(cx, |_, window, cx| {
-                let actions = preview.update(cx, |preview, cx| {
-                    preview.tab_extra_context_menu_actions(window, cx)
-                });
-                let [(label, action)] = actions.as_slice() else {
-                    panic!("expected exactly one tab menu action");
-                };
-                assert_eq!(label.as_ref(), "Show Source");
-                assert!(action.as_any().is::<CloseAndReturnToEditor>());
+            .update(cx, |multi_workspace, _, cx| {
+                let pane = multi_workspace.workspace().read(cx).active_pane().read(cx);
+                assert_eq!(pane.active_item().unwrap().item_id(), preview.entity_id());
+                assert_eq!(pane.preview_item_id(), None);
             })
             .unwrap();
     }
 
     #[gpui::test]
-    async fn tab_context_menu_hides_show_source_for_inactive_preview(cx: &mut TestAppContext) {
-        let (multi_workspace, editor) =
-            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
-        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+    async fn tab_context_menu_targets_inactive_items(cx: &mut TestAppContext) {
+        let (project, workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({ "plain.txt": "Plain", "note.md": "# Note", "other.md": "# Other" }),
+            false,
+        )
+        .await;
+        open_project_file(cx, &project, &multi_workspace, "plain.txt", None, true).await;
+        let editor = open_project_file(cx, &project, &multi_workspace, "note.md", None, true)
+            .await
+            .downcast::<Editor>()
+            .unwrap();
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let other_pane = multi_workspace
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.split_pane(pane.clone(), workspace::SplitDirection::Right, window, cx)
+                })
+            })
+            .unwrap();
+        let other_editor = open_project_file(
+            cx,
+            &project,
+            &multi_workspace,
+            "other.md",
+            Some(&other_pane),
+            true,
+        )
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        pane.update_in(cx, |pane, window, cx| {
+            assert_eq!(pane.index_for_item(&editor), Some(1));
+            pane.activate_item(0, false, false, window, cx);
+        });
+        click_tab_menu_target(cx, "TAB-1", MouseButton::Right, 1);
+        click_tab_menu_target(cx, "MENU_ITEM-Open Markdown Preview", MouseButton::Left, 1);
+        cx.run_until_parked();
+        let preview = cx.update(|_, cx| {
+            assert_eq!(workspace.read(cx).active_pane(), &pane);
+            let preview = pane
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<MarkdownPreviewView>()
+                .unwrap();
+            assert_eq!(
+                preview.read(cx).active_editor.as_ref().unwrap().editor,
+                editor
+            );
+            preview
+        });
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.remove_item(editor.entity_id(), false, false, window, cx);
+                assert_eq!(pane.index_for_item(&preview), Some(1));
+                pane.activate_item(0, false, false, window, cx);
+            });
+            workspace.update(cx, |workspace, cx| {
+                assert!(workspace.activate_item(&other_editor, true, true, window, cx));
+            });
+        });
+        click_tab_menu_target(cx, "TAB-1", MouseButton::Right, 1);
+        click_tab_menu_target(cx, "MENU_ITEM-Show Source", MouseButton::Left, 1);
+        cx.run_until_parked();
+        assert_editor_is_active_and_focused(cx, &multi_workspace, &editor);
+        assert_no_markdown_preview_items(cx, &multi_workspace);
+        cx.update(|_, cx| {
+            assert_eq!(
+                workspace.read(cx).pane_for_item_id(editor.entity_id()),
+                Some(pane)
+            );
+            assert_eq!(
+                other_pane.read(cx).active_item().unwrap().item_id(),
+                other_editor.entity_id()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn splitting_preview_clones_into_new_pane(cx: &mut TestAppContext) {
+        let (multi_workspace, _) = open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        let _preview = open_preview_for_active_editor(cx, &multi_workspace);
         cx.run_until_parked();
 
-        multi_workspace
+        let new_pane = multi_workspace
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    assert!(workspace.activate_item(&editor, true, true, window, cx));
-                });
-                let actions = preview.update(cx, |preview, cx| {
-                    preview.tab_extra_context_menu_actions(window, cx)
-                });
-                assert!(actions.is_empty());
+                    workspace.split_and_clone(
+                        workspace.active_pane().clone(),
+                        workspace::SplitDirection::Right,
+                        window,
+                        cx,
+                    )
+                })
             })
+            .unwrap()
+            .await
             .unwrap();
+        cx.run_until_parked();
+
+        new_pane.read_with(cx, |pane, _| {
+            assert!(
+                pane.active_item()
+                    .and_then(|item| item.downcast::<MarkdownPreviewView>())
+                    .is_some(),
+                "splitting a preview should clone it into a new pane"
+            );
+        });
     }
 
     #[gpui::test]
-    async fn tab_context_menu_offers_open_preview_only_for_active_editor(cx: &mut TestAppContext) {
-        let (multi_workspace, editor) =
-            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
-        editor.update(cx, |editor, cx| {
-            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_language(
-                    Some(Arc::new(language::Language::new(
-                        markdown_language_config(),
-                        None,
-                    ))),
-                    cx,
-                );
-            });
-        });
+    async fn go_back_returns_to_preview_after_opening_another_file(cx: &mut TestAppContext) {
+        let (project, workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({ "note.md": "# Note\n", "other.txt": "Other File\n" }),
+            false,
+        )
+        .await;
 
-        multi_workspace
-            .update(cx, |_, window, cx| {
-                let actions = editor.update(cx, |editor, cx| {
-                    editor.tab_extra_context_menu_actions(window, cx)
-                });
-                let [(label, _)] = actions.as_slice() else {
-                    panic!("expected exactly one tab menu action");
-                };
-                assert_eq!(label.as_ref(), "Open Markdown Preview");
+        open_project_file(cx, &project, &multi_workspace, "note.md", None, true).await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        open_project_file(cx, &project, &multi_workspace, "other.txt", None, true).await;
+
+        let go_back = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let pane = workspace.active_pane().downgrade();
+                    workspace.go_back(pane, window, cx)
+                })
             })
             .unwrap();
 
-        open_preview_for_active_editor(cx, &multi_workspace);
+        go_back.await.unwrap();
         cx.run_until_parked();
 
-        multi_workspace
-            .update(cx, |_, window, cx| {
-                let actions = editor.update(cx, |editor, cx| {
-                    editor.tab_extra_context_menu_actions(window, cx)
-                });
-                assert!(actions.is_empty());
-            })
-            .unwrap();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item_as::<MarkdownPreviewView>(cx),
+                Some(preview.clone()),
+                "going back should return to the preview"
+            );
+        });
     }
 
     #[gpui::test]
@@ -4427,7 +4585,7 @@ mod tests {
         language::LanguageConfig {
             name: "Markdown".into(),
             matcher: Arc::new(language::LanguageMatcher {
-                path_suffixes: vec!["md".to_string(), "markdown".to_string()],
+                path_suffixes: vec!["md".into(), "markdown".into()],
                 ..Default::default()
             }),
             ..Default::default()
@@ -4483,6 +4641,32 @@ mod tests {
             let buffer = editor.buffer().read(cx).as_singleton().unwrap();
             buffer.read(cx).file().unwrap().path().clone()
         })
+    }
+
+    fn click_tab_menu_target(
+        cx: &mut VisualTestContext,
+        selector: &'static str,
+        button: MouseButton,
+        click_count: usize,
+    ) {
+        cx.run_until_parked();
+        let position = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("missing click target: {selector}"))
+            .center();
+        cx.simulate_event(MouseDownEvent {
+            position,
+            button,
+            modifiers: Modifiers::default(),
+            click_count,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            position,
+            button,
+            modifiers: Modifiers::default(),
+            click_count,
+        });
     }
 
     fn markdown_fixture_directory(tree: &TempTree) -> PathBuf {

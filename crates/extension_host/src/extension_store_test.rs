@@ -3621,7 +3621,7 @@ async fn test_extension_cannot_shadow_language_registered_outside_extensions(
     language_registry.register_test_language(LanguageConfig {
         name: LanguageName::new("Shared"),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["builtin".to_string()],
+            path_suffixes: vec!["builtin".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
@@ -3698,7 +3698,7 @@ languages = ["languages/shared"]
     language_registry.register_test_language(LanguageConfig {
         name: LanguageName::new("Shared"),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["builtin".to_string()],
+            path_suffixes: vec!["builtin".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
