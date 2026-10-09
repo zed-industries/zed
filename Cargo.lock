@@ -7864,8 +7864,8 @@ name = "hang_telemetry"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "hdrhistogram",
  "log",
+ "serde",
  "serde_json",
  "telemetry_events",
 ]
@@ -8799,6 +8799,8 @@ dependencies = [
  "collections",
  "gpui",
  "hdrhistogram",
+ "serde_json",
+ "sysinfo 0.39.6",
  "telemetry",
 ]
 
