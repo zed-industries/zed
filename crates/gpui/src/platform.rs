@@ -623,11 +623,6 @@ pub trait PlatformDisplay: Debug {
     /// [`Window::refresh_interval`](crate::Window::refresh_interval).
     fn refresh_interval(&self) -> Option<Duration>;
 
-    /// Whether the display can vary its refresh rate below the maximum
-    /// [`Self::refresh_interval`] reports, or `None` when the platform doesn't
-    /// report it.
-    fn supports_variable_refresh_rate(&self) -> Option<bool>;
-
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
     /// This is the usable area where windows can be placed without being obscured.
     /// Defaults to the full display bounds if not overridden.

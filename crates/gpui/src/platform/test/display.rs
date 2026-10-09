@@ -41,8 +41,4 @@ impl PlatformDisplay for TestDisplay {
     fn refresh_interval(&self) -> Option<Duration> {
         self.refresh_interval
     }
-
-    fn supports_variable_refresh_rate(&self) -> Option<bool> {
-        None
-    }
 }

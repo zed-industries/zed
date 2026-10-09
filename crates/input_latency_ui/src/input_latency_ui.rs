@@ -205,9 +205,6 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
     let window_handle = window.window_handle();
     let window_id = window_handle.window_id();
     let gpu = window.gpu_specs();
-    let variable_refresh_rate = window
-        .display(cx)
-        .and_then(|display| display.supports_variable_refresh_rate());
 
     let open_window_ids = open_window_ids(cx);
     let state = cx.default_global::<FrameDurationTelemetryState>();
@@ -249,10 +246,6 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
                         .refresh_interval
                         .map(|interval| (1.0 / interval.as_secs_f64()).round() as u64)
                 ),
-            ),
-            (
-                "variable_refresh_rate".to_string(),
-                serde_json::json!(variable_refresh_rate),
             ),
             ("frames_drawn".to_string(), frames.frames_drawn.into()),
             (

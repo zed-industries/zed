@@ -69,10 +69,6 @@ impl PlatformDisplay for WebDisplay {
         None
     }
 
-    fn supports_variable_refresh_rate(&self) -> Option<bool> {
-        None
-    }
-
     fn id(&self) -> DisplayId {
         self.id
     }
