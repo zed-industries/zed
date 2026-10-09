@@ -2680,8 +2680,7 @@ impl Session {
         expression: String,
         cx: &mut Context<Self>,
     ) -> Task<Option<dap::EvaluateResponse>> {
-        let session = cx.entity();
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |session, cx| {
             let hover_eval_task = session.read_with(cx, |session, _| {
                 session.state.request_dap(EvaluateCommand {
                     expression: expression.clone(),
@@ -2689,7 +2688,7 @@ impl Session {
                     source: None,
                     context: Some(EvaluateArgumentsContext::Hover),
                 })
-            });
+            }).ok()?;
 
             match hover_eval_task.await {
                 Ok(response) => Some(response),
@@ -2705,7 +2704,7 @@ impl Session {
                             source: None,
                             context: Some(EvaluateArgumentsContext::Variables),
                         })
-                    });
+                    }).ok()?;
 
                     variables_eval_task.await.log_err()
                 }
@@ -2727,8 +2726,7 @@ impl Session {
             return Task::ready(Ok(cached_variables));
         }
 
-        let session = cx.entity();
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |session, cx| {
             let request = session.read_with(cx, |session, _| {
                 session.state.request_dap(VariablesCommand {
                     variables_reference,
@@ -2737,7 +2735,7 @@ impl Session {
                     count: None,
                     format: None,
                 })
-            });
+            })?;
 
             let mut variables = request.await?;
 
@@ -2749,7 +2747,7 @@ impl Session {
                     .insert(variables_reference, variables.clone());
                 cx.emit(SessionEvent::Variables);
                 cx.emit(SessionEvent::InvalidateInlineValue);
-            });
+            })?;
 
             Ok(variables)
         })

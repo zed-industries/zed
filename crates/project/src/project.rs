@@ -983,17 +983,22 @@ pub struct DebuggerHoverData {
     pub root: DebuggerHoverVariable,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebuggerHover {
+    pub range: Range<language::Anchor>,
+    pub data: DebuggerHoverData,
+}
+
 #[derive(Debug, Clone)]
 pub struct Hover {
     pub contents: Vec<HoverBlock>,
     pub range: Option<Range<language::Anchor>>,
     pub language: Option<Arc<Language>>,
-    pub debugger_value: Option<DebuggerHoverData>,
 }
 
 impl Hover {
     pub fn is_empty(&self) -> bool {
-        self.contents.iter().all(|block| block.text.is_empty()) && self.debugger_value.is_none()
+        self.contents.iter().all(|block| block.text.is_empty())
     }
 }
 
@@ -4693,49 +4698,50 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Option<Vec<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        let lsp_hover = self
-            .lsp_store
-            .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx));
+        self.lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
+    }
 
-        let debug_hover =
-            self.active_debug_session(cx)
-                .and_then(|(session, active_stack_frame)| {
-                    let buffer_path = BreakpointStore::abs_path_from_buffer(buffer, cx)?;
-                    if buffer_path.as_ref() != active_stack_frame.path.as_ref() {
-                        return None;
-                    }
-
-                    let snapshot = buffer.read(cx).snapshot();
-                    let (expression, range) = hovered_debug_expression(&snapshot, position)?;
-                    let stack_frame_id = active_stack_frame.stack_frame_id;
-                    let session_id = session.read(cx).session_id();
-                    let evaluate = session.update(cx, |session, cx| {
-                        session.evaluate_hover_expression(stack_frame_id, expression.clone(), cx)
-                    });
-
-                    Some((evaluate, range, session_id, expression))
-                });
-
-        match debug_hover {
-            Some((evaluate, range, session_id, expression)) => cx.background_spawn(async move {
-                if let Some(response) = evaluate.await {
-                    let debugger_value = DebuggerHoverData {
-                        session_id,
-                        root: DebuggerHoverVariable::from_evaluate_response(expression, &response),
-                    };
-
-                    return Some(vec![Hover {
-                        contents: Vec::new(),
-                        range: Some(range),
-                        language: None,
-                        debugger_value: Some(debugger_value),
-                    }]);
-                }
-
-                lsp_hover.await
-            }),
-            None => lsp_hover,
+    pub fn debugger_hover<T: ToPointUtf16>(
+        &self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<DebuggerHover>> {
+        let Some((session, active_stack_frame)) = self.active_debug_session(cx) else {
+            return Task::ready(None);
+        };
+        let Some(buffer_path) = BreakpointStore::abs_path_from_buffer(buffer, cx) else {
+            return Task::ready(None);
+        };
+        if buffer_path.as_ref() != active_stack_frame.path.as_ref() {
+            return Task::ready(None);
         }
+
+        let snapshot = buffer.read(cx).snapshot();
+        let position = position.to_point_utf16(buffer.read(cx));
+        let Some((expression, range)) = hovered_debug_expression(&snapshot, position) else {
+            return Task::ready(None);
+        };
+        let session_id = session.read(cx).session_id();
+        let evaluate = session.update(cx, |session, cx| {
+            session.evaluate_hover_expression(
+                active_stack_frame.stack_frame_id,
+                expression.clone(),
+                cx,
+            )
+        });
+
+        cx.background_spawn(async move {
+            let response = evaluate.await?;
+            Some(DebuggerHover {
+                range,
+                data: DebuggerHoverData {
+                    session_id,
+                    root: DebuggerHoverVariable::from_evaluate_response(expression, &response),
+                },
+            })
+        })
     }
 
     pub fn load_debugger_hover_children(
@@ -7134,6 +7140,37 @@ fn hovered_debug_expression(
 ) -> Option<(String, Range<Anchor>)> {
     hovered_debug_variable_expression(snapshot, position)
         .or_else(|| hovered_debug_member_expression(snapshot, position))
+        .or_else(|| hovered_debug_identifier_expression(snapshot, position))
+}
+
+fn hovered_debug_identifier_expression(
+    snapshot: &language::BufferSnapshot,
+    position: PointUtf16,
+) -> Option<(String, Range<Anchor>)> {
+    let offset = snapshot.point_utf16_to_offset(position);
+    let (range, _) = snapshot.surrounding_word(offset, None);
+    if range.is_empty() || !(range.start..range.end).contains(&offset) {
+        return None;
+    }
+    let node = snapshot.syntax_ancestor(offset..offset)?;
+    if node.kind() != "identifier" || node.byte_range() != range {
+        return None;
+    }
+    let expression = snapshot.text_for_range(range.clone()).collect::<String>();
+    if !expression
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_alphabetic() || character == '_')
+        || !expression
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_')
+    {
+        return None;
+    }
+    Some((
+        expression,
+        snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
+    ))
 }
 
 fn hovered_debug_variable_expression(

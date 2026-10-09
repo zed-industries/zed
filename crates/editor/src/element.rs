@@ -4631,7 +4631,7 @@ impl EditorElement {
             })
         };
 
-        let can_place_below = {
+        let can_place_below = || {
             let mut current_y = hovered_point.y + line_height;
             measured_hover_popovers.iter().all(|popover| {
                 let size = popover.size;
@@ -4642,12 +4642,13 @@ impl EditorElement {
             })
         };
 
-        if is_single_debugger_hover
-            && measured_hover_popovers.len() == 1
-            && let Some(popover) = measured_hover_popovers.pop()
-        {
+        if is_single_debugger_hover && measured_hover_popovers.len() == 1 {
+            let fits_below = can_place_below();
+            let Some(popover) = measured_hover_popovers.pop() else {
+                return;
+            };
             let mut popover_origin = stable_debugger_hover_origin.unwrap_or_else(|| {
-                if can_place_below {
+                if fits_below {
                     point(
                         hovered_point.x + popover.horizontal_offset,
                         hovered_point.y + line_height,
@@ -4680,7 +4681,7 @@ impl EditorElement {
         if can_place_above {
             // try placing above hovered point
             place_popovers_above(hovered_point, measured_hover_popovers, window, cx);
-        } else if can_place_below {
+        } else if can_place_below() {
             // try placing below hovered point
             place_popovers_below(
                 hovered_point,

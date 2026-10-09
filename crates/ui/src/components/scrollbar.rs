@@ -26,6 +26,7 @@ const SCROLLBAR_SHOW_DURATION: Duration = Duration::from_millis(50);
 pub const EDITOR_SCROLLBAR_WIDTH: Pixels = ScrollbarStyle::Editor.to_pixels();
 const SCROLLBAR_PADDING: Pixels = px(4.);
 const BORDER_WIDTH: Pixels = px(1.);
+const DEFAULT_MIN_THUMB_SIZE: Pixels = px(25.);
 
 pub mod scrollbars {
     use gpui::{App, Global};
@@ -386,6 +387,7 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     scrollable_handle: Handle<T>,
     visibility: Point<ReservedSpace>,
     style: Option<ScrollbarStyle>,
+    min_thumb_size: Pixels,
     reveal_policy: ScrollbarRevealPolicy,
     track_color: Option<Hsla>,
     border: bool,
@@ -414,6 +416,7 @@ impl Scrollbars {
             tracked_entity: None,
             visibility: show_along.apply_to(Default::default(), ReservedSpace::Thumb),
             style: None,
+            min_thumb_size: DEFAULT_MIN_THUMB_SIZE,
             reveal_policy: ScrollbarRevealPolicy::default(),
             track_color: None,
             border: false,
@@ -458,6 +461,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             track_color,
             border,
             style,
+            min_thumb_size,
             reveal_policy,
             ..
         } = self;
@@ -471,6 +475,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             border,
             get_visibility,
             style,
+            min_thumb_size,
             reveal_policy,
         }
     }
@@ -482,6 +487,11 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
 
     pub fn style(mut self, style: ScrollbarStyle) -> Self {
         self.style = Some(style);
+        self
+    }
+
+    pub fn min_thumb_size(mut self, size: Pixels) -> Self {
+        self.min_thumb_size = size;
         self
     }
 
@@ -652,6 +662,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     reveal_policy: ScrollbarRevealPolicy,
     show_state: VisibilityState,
     style: ScrollbarStyle,
+    min_thumb_size: Pixels,
     mouse_in_parent: bool,
     last_prepaint_state: Option<ScrollbarPrepaintState>,
     _auto_hide_task: Option<Task<()>>,
@@ -678,6 +689,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             show_behavior,
             get_visibility: config.get_visibility,
             style: config.style.unwrap_or_default(),
+            min_thumb_size: config.min_thumb_size,
             reveal_policy: config.reveal_policy,
             show_state: VisibilityState::from_behavior(show_behavior),
             mouse_in_parent: true,
@@ -874,7 +886,6 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
     fn thumb_ranges(
         &self,
     ) -> impl Iterator<Item = (ScrollbarAxis, Range<f32>, ReservedSpace)> + '_ {
-        const MINIMUM_THUMB_SIZE: Pixels = px(25.);
         let max_offset = self.scroll_handle().max_offset();
         let viewport_size = self.scroll_handle().viewport().size;
         let current_offset = self.scroll_handle().offset();
@@ -889,8 +900,8 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
                     return None;
                 }
                 let content_size = viewport_size + max_offset;
-                let visible_percentage = viewport_size / content_size;
-                let thumb_size = MINIMUM_THUMB_SIZE.max(viewport_size * visible_percentage);
+                let thumb_size =
+                    scrollbar_thumb_size(viewport_size, content_size, self.min_thumb_size);
                 if thumb_size > viewport_size {
                     return None;
                 }
@@ -923,6 +934,10 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             cx.notify(entity_id);
         }
     }
+}
+
+fn scrollbar_thumb_size(viewport_size: Pixels, content_size: Pixels, minimum: Pixels) -> Pixels {
+    minimum.max(viewport_size * (viewport_size / content_size))
 }
 
 impl<T: ScrollableHandle> Render for ScrollbarState<T> {
@@ -1671,6 +1686,18 @@ impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
 mod tests {
     use super::*;
     use gpui::point;
+
+    #[test]
+    fn compact_scrollbar_thumb_tracks_the_visible_fraction() {
+        let viewport = px(42.);
+        let content = px(255.);
+        assert_eq!(scrollbar_thumb_size(viewport, content, px(10.)), px(10.));
+        assert_eq!(
+            scrollbar_thumb_size(viewport, content, DEFAULT_MIN_THUMB_SIZE),
+            px(25.)
+        );
+        assert_eq!(scrollbar_thumb_size(px(100.), px(200.), px(10.)), px(50.));
+    }
 
     #[test]
     fn default_reveal_policy_reveals_for_content_changes() {

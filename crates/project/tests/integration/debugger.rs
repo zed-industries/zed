@@ -330,6 +330,9 @@ mod hover {
     const SOURCE: &str = "fn main() {
     let value = 42;
     let x = value + 1;
+    let a = 7;
+    let c = a;
+    // a here is not an expression
     println!(\"{}\", x);
 }
 ";
@@ -512,18 +515,23 @@ mod hover {
         set_active_stack_frame(&project, &session, &buffer, cx);
         let hover_offset = SOURCE.find("value + 1").unwrap();
         let hover_position = buffer.read_with(cx, |buffer, _| hover_offset.to_point_utf16(buffer));
-        let hover = project.update(cx, |project, cx| project.hover(&buffer, hover_position, cx));
+        let lsp_hover =
+            project.update(cx, |project, cx| project.hover(&buffer, hover_position, cx));
+        let debugger_hover = project.update(cx, |project, cx| {
+            project.debugger_hover(&buffer, hover_position, cx)
+        });
         cx.run_until_parked();
-        let hover = futures::FutureExt::now_or_never(hover)
+        let debugger_hover = futures::FutureExt::now_or_never(debugger_hover)
             .expect("debug hover must complete while the LSP request is blocked")
-            .and_then(|mut hovers| hovers.pop())
-            .expect("expected merged hover");
-        let debugger_value = hover
-            .debugger_value
             .expect("expected debugger hover payload");
+        let debugger_value = debugger_hover.data;
 
-        assert!(hover.contents.is_empty());
         release_lsp.send(()).await.unwrap();
+        let lsp_hover = lsp_hover
+            .await
+            .and_then(|mut hovers| hovers.pop())
+            .expect("expected independent LSP hover");
+        assert_eq!(lsp_hover.contents[0].text, "lsp hover");
         assert_eq!(debugger_value.root.name, "value");
         assert_eq!(debugger_value.root.evaluate_name.as_deref(), Some("value"));
         assert_eq!(debugger_value.root.value, "42");
@@ -540,14 +548,12 @@ mod hover {
             ]
         );
         evaluation_succeeds.store(false, Ordering::SeqCst);
-        release_lsp.send(()).await.unwrap();
         let fallback = project
-            .update(cx, |project, cx| project.hover(&buffer, hover_position, cx))
-            .await
-            .and_then(|mut hovers| hovers.pop())
-            .expect("failed debug evaluation should fall back to language hover");
-        assert!(fallback.debugger_value.is_none());
-        assert_eq!(fallback.contents[0].text, "lsp hover");
+            .update(cx, |project, cx| {
+                project.debugger_hover(&buffer, hover_position, cx)
+            })
+            .await;
+        assert!(fallback.is_none());
     }
 
     #[gpui::test]
@@ -615,10 +621,11 @@ mod hover {
         let hover_offset = SOURCE.find("value + 1").unwrap();
         let hover_position = buffer.read_with(cx, |buffer, _| hover_offset.to_point_utf16(buffer));
         let debugger_value = project
-            .update(cx, |project, cx| project.hover(&buffer, hover_position, cx))
+            .update(cx, |project, cx| {
+                project.debugger_hover(&buffer, hover_position, cx)
+            })
             .await
-            .and_then(|mut hovers| hovers.pop())
-            .and_then(|hover| hover.debugger_value)
+            .map(|hover| hover.data)
             .expect("expected debugger hover payload");
 
         let children = project
@@ -651,6 +658,67 @@ mod hover {
             .expect("expected cached child load to succeed");
         assert_eq!(variables_request_count.load(Ordering::SeqCst), 1);
         assert_eq!(cached_children, children);
+    }
+
+    #[gpui::test]
+    async fn test_hover_identifier_on_assignment_rhs(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let project = init_project(executor, cx).await;
+        let session = boot_session(
+            &project,
+            |client| {
+                client.on_request::<Evaluate, _>(|_, args| {
+                    assert_eq!(args.expression, "a");
+                    assert_eq!(args.context, Some(EvaluateArgumentsContext::Hover));
+                    Ok(dap::EvaluateResponse {
+                        result: "7".into(),
+                        type_: Some("i32".into()),
+                        presentation_hint: None,
+                        variables_reference: 0,
+                        named_variables: None,
+                        indexed_variables: None,
+                        memory_reference: None,
+                        value_location_reference: None,
+                    })
+                });
+            },
+            cx,
+        )
+        .await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+        set_active_stack_frame(&project, &session, &buffer, cx);
+
+        let offset = SOURCE.find("c = a;").unwrap() + 4;
+        let position = buffer.read_with(cx, |buffer, _| offset.to_point_utf16(buffer));
+        let hover = project
+            .update(cx, |project, cx| {
+                project.debugger_hover(&buffer, position, cx)
+            })
+            .await
+            .expect("hovering the right-hand identifier should evaluate it");
+        assert_eq!(hover.data.root.name, "a");
+        assert_eq!(hover.data.root.value, "7");
+
+        let comment_offset = SOURCE.find("a here is not").unwrap();
+        let comment_position =
+            buffer.read_with(cx, |buffer, _| comment_offset.to_point_utf16(buffer));
+        assert!(
+            project
+                .update(cx, |project, cx| {
+                    project.debugger_hover(&buffer, comment_position, cx)
+                })
+                .await
+                .is_none(),
+            "comment text is not an evaluatable identifier"
+        );
     }
 }
 

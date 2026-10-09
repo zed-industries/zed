@@ -230,8 +230,8 @@ async fn test_hover_values_after_debugger_stop_when_hover_is_retriggered(
         .debug_bounds("debugger-hover-node-root")
         .expect("expected debugger hover root bounds");
     assert!(
-        root_bounds.size.width >= gpui::px(300.),
-        "expected debugger hover to reserve enough width for its columns, got {:?}",
+        root_bounds.size.width >= gpui::px(280.),
+        "expected a readable hover width after reserving its scrollbar track, got {:?}",
         root_bounds.size.width
     );
     let value_bounds = editor_cx
