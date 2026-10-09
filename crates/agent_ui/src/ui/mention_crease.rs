@@ -369,11 +369,20 @@ fn open_thread(
     let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
         return;
     };
+    let remote_connection = workspace.project().read(cx).remote_connection_options(cx);
 
     // Right now we only support loading threads in the native agent.
     panel.update(cx, |panel, cx| {
-        let thread_id = ThreadMetadataStore::try_global(cx)
-            .and_then(|store| store.read(cx).entry_by_session(&id).map(|m| m.thread_id));
+        let thread_id = ThreadMetadataStore::try_global(cx).and_then(|store| {
+            store
+                .read(cx)
+                .entry_by_session_with_context(
+                    &id,
+                    &agent::ZED_AGENT_ID,
+                    remote_connection.as_ref(),
+                )
+                .map(|metadata| metadata.thread_id)
+        });
         if let Some(thread_id) = thread_id {
             panel.load_agent_thread(
                 Agent::NativeAgent,

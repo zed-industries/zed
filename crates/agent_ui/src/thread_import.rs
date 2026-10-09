@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{path::PathBuf, rc::Rc, time::Duration};
 
-use acp_thread::AgentSessionListRequest;
+use acp_thread::{AgentConnection, AgentSessionListRequest};
 use agent::ThreadStore;
 use agent_client_protocol::schema::v1 as acp;
 use chrono::Utc;
@@ -16,15 +16,15 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use notifications::status_toast::StatusToast;
-use project::{AgentId, AgentRegistryStore, AgentServerStore};
+use project::{AgentId, AgentRegistryStore, AgentServerStore, Project};
 use release_channel::ReleaseChannel;
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionIdentity, RemoteConnectionOptions, remote_connection_identity};
 use ui::{
     Checkbox, CommonAnimationExt, KeyBinding, ListItem, ListItemSpacing, Modal, ModalFooter,
     ModalHeader, Section, Tooltip, prelude::*,
 };
 use util::ResultExt;
-use workspace::{ModalView, MultiWorkspace, Workspace};
+use workspace::{ModalView, MultiWorkspace, PathList, Workspace};
 
 use crate::{
     Agent, AgentPanel,
@@ -235,10 +235,18 @@ impl ThreadImportModal {
             .map(|agent_id| (agent_id, AgentImportStatus::Loading))
             .collect();
 
-        let existing_sessions: HashSet<acp::SessionId> = ThreadMetadataStore::global(cx)
+        let existing_sessions: HashSet<AgentSessionKey> = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
-            .filter_map(|metadata| metadata.session_id.clone())
+            .filter_map(|metadata| {
+                metadata.session_id.as_ref().map(|session_id| {
+                    agent_session_key(
+                        &metadata.agent_id,
+                        session_id,
+                        metadata.remote_connection.as_ref(),
+                    )
+                })
+            })
             .collect();
 
         for agent_id in self.agent_ids() {
@@ -362,10 +370,18 @@ impl ThreadImportModal {
         self.is_importing = true;
         self.last_error = None;
 
-        let existing_sessions: HashSet<acp::SessionId> = ThreadMetadataStore::global(cx)
+        let existing_sessions: HashSet<AgentSessionKey> = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
-            .filter_map(|metadata| metadata.session_id.clone())
+            .filter_map(|metadata| {
+                metadata.session_id.as_ref().map(|session_id| {
+                    agent_session_key(
+                        &metadata.agent_id,
+                        session_id,
+                        metadata.remote_connection.as_ref(),
+                    )
+                })
+            })
             .collect();
 
         let selected_sessions_by_agent = self
@@ -688,7 +704,7 @@ struct AgentSessionFetchStats {
 
 fn fetch_sessions_for_agent(
     agent_id: AgentId,
-    existing_sessions: HashSet<acp::SessionId>,
+    existing_sessions: HashSet<AgentSessionKey>,
     stores: Vec<Entity<AgentConnectionStore>>,
     cx: &mut App,
 ) -> Task<AgentSessionFetchResult> {
@@ -738,7 +754,7 @@ fn fetch_sessions_for_agent(
                 async move |cx| {
                     (
                         agent_id_for_error,
-                        collect_all_sessions(agent_id, remote_connection, list, cx).await,
+                        collect_all_sessions(agent_id, remote_connection, None, list, cx).await,
                     )
                 }
             }));
@@ -794,6 +810,7 @@ fn fetch_sessions_for_agent(
 async fn collect_all_sessions(
     agent_id: AgentId,
     remote_connection: Option<RemoteConnectionOptions>,
+    cwd: Option<PathBuf>,
     list: std::rc::Rc<dyn acp_thread::AgentSessionList>,
     cx: &mut gpui::AsyncApp,
 ) -> anyhow::Result<SessionByAgent> {
@@ -801,6 +818,7 @@ async fn collect_all_sessions(
     let mut cursor: Option<String> = None;
     loop {
         let request = AgentSessionListRequest {
+            cwd: cwd.clone(),
             cursor: cursor.clone(),
             ..Default::default()
         };
@@ -826,19 +844,190 @@ struct SessionByAgent {
     sessions: Vec<acp_thread::AgentSessionInfo>,
 }
 
+pub(crate) fn sync_project_sessions(
+    agent_id: AgentId,
+    connection: Rc<dyn AgentConnection>,
+    project: Entity<Project>,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    let Some(list) = connection.session_list(cx) else {
+        return Task::ready(Ok(()));
+    };
+
+    let (worktree_paths, remote_connection) = {
+        let project = project.read(cx);
+        (
+            project.worktree_paths(cx),
+            project.remote_connection_options(cx),
+        )
+    };
+    let folder_paths = worktree_paths.folder_path_list();
+    let cwd = if folder_paths.paths().len() == 1 {
+        folder_paths.paths().first().cloned()
+    } else {
+        None
+    };
+
+    cx.spawn(async move |cx| {
+        let sessions = collect_all_sessions(agent_id, remote_connection, cwd, list, cx).await?;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let existing_sessions: HashMap<AgentSessionKey, ThreadMetadata> = {
+                let store = store.read(cx);
+                store
+                    .entries()
+                    .filter_map(|metadata| {
+                        metadata.session_id.as_ref().map(|session_id| {
+                            (
+                                agent_session_key(
+                                    &metadata.agent_id,
+                                    session_id,
+                                    metadata.remote_connection.as_ref(),
+                                ),
+                                metadata.clone(),
+                            )
+                        })
+                    })
+                    .collect()
+            };
+            let metadata = reconcile_project_threads(sessions, worktree_paths, existing_sessions);
+            if !metadata.is_empty() {
+                store.update(cx, |store, cx| store.save_all(metadata, cx));
+            }
+        });
+        Ok(())
+    })
+}
+
+pub(crate) fn watch_project_sessions(
+    agent_id: AgentId,
+    connection: Rc<dyn AgentConnection>,
+    project: Entity<Project>,
+    cx: &mut App,
+) -> Task<()> {
+    let Some(updates) = connection.session_list(cx).and_then(|list| list.watch(cx)) else {
+        return Task::ready(());
+    };
+
+    cx.spawn(async move |cx| {
+        while updates.recv().await.is_ok() {
+            cx.update(|cx| {
+                sync_project_sessions(agent_id.clone(), connection.clone(), project.clone(), cx)
+            })
+            .await
+            .log_err();
+        }
+    })
+}
+
+const RECENT_PROJECT_SESSION_COUNT: usize = 5;
+
+fn primary_work_dir(work_dirs: &PathList) -> Option<&PathBuf> {
+    work_dirs.ordered_paths().next()
+}
+
+fn session_matches_project(work_dirs: &PathList, project_paths: &PathList) -> bool {
+    primary_work_dir(work_dirs)
+        .is_some_and(|cwd| project_paths.paths().iter().any(|path| path == cwd))
+}
+
+fn reconcile_project_threads(
+    sessions_for_agent: SessionByAgent,
+    worktree_paths: WorktreePaths,
+    mut existing_sessions: HashMap<AgentSessionKey, ThreadMetadata>,
+) -> Vec<ThreadMetadata> {
+    let folder_paths = worktree_paths.folder_path_list();
+    let mut sessions = sessions_for_agent.sessions;
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
+    let mut new_session_count = 0;
+    let mut threads = Vec::new();
+
+    for session in sessions {
+        let Some(session_work_dirs) = session.work_dirs.as_ref() else {
+            continue;
+        };
+        if !session_matches_project(session_work_dirs, folder_paths) {
+            continue;
+        }
+
+        let key = agent_session_key(
+            &sessions_for_agent.agent_id,
+            &session.session_id,
+            sessions_for_agent.remote_connection.as_ref(),
+        );
+        let existing = existing_sessions.remove(&key);
+
+        if let Some(existing) = existing {
+            let mut metadata = existing.clone();
+            if let Some(title) = session.title {
+                metadata.title = Some(title);
+            }
+            if let Some(updated_at) = session.updated_at
+                && updated_at > metadata.updated_at
+            {
+                metadata.updated_at = updated_at;
+            }
+            if metadata.created_at.is_none() {
+                metadata.created_at = session.created_at;
+            }
+            if !metadata.archived {
+                metadata.worktree_paths = worktree_paths.clone();
+                metadata.remote_connection = sessions_for_agent.remote_connection.clone();
+            }
+            if metadata != existing {
+                threads.push(metadata);
+            }
+            continue;
+        }
+
+        let archived = new_session_count >= RECENT_PROJECT_SESSION_COUNT;
+        new_session_count += 1;
+        threads.push(ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(session.session_id),
+            agent_id: sessions_for_agent.agent_id.clone(),
+            title: session.title,
+            title_override: None,
+            updated_at: session.updated_at.unwrap_or_else(Utc::now),
+            created_at: session.created_at,
+            interacted_at: None,
+            worktree_paths: worktree_paths.clone(),
+            remote_connection: sessions_for_agent.remote_connection.clone(),
+            archived,
+        });
+    }
+
+    threads
+}
+
+type AgentSessionKey = (AgentId, acp::SessionId, Option<RemoteConnectionIdentity>);
+
+fn agent_session_key(
+    agent_id: &AgentId,
+    session_id: &acp::SessionId,
+    remote_connection: Option<&RemoteConnectionOptions>,
+) -> AgentSessionKey {
+    (
+        agent_id.clone(),
+        session_id.clone(),
+        remote_connection.map(remote_connection_identity),
+    )
+}
+
 fn count_importable_threads_by_agent(
     sessions_by_agent: &[SessionByAgent],
-    existing_sessions: &HashSet<acp::SessionId>,
+    existing_sessions: &HashSet<AgentSessionKey>,
 ) -> HashMap<AgentId, usize> {
     let mut counts_by_agent = HashMap::default();
-    let mut seen_sessions_by_agent = HashMap::<AgentId, HashSet<acp::SessionId>>::default();
-
+    let mut seen_sessions = existing_sessions.clone();
     for sessions_for_agent in sessions_by_agent {
-        let seen_sessions = seen_sessions_by_agent
-            .entry(sessions_for_agent.agent_id.clone())
-            .or_insert_with(|| existing_sessions.clone());
         for session in &sessions_for_agent.sessions {
-            if !seen_sessions.insert(session.session_id.clone()) {
+            if !seen_sessions.insert(agent_session_key(
+                &sessions_for_agent.agent_id,
+                &session.session_id,
+                sessions_for_agent.remote_connection.as_ref(),
+            )) {
                 continue;
             }
             if session.work_dirs.is_some() {
@@ -854,7 +1043,7 @@ fn count_importable_threads_by_agent(
 
 fn collect_importable_threads(
     sessions_by_agent: Vec<SessionByAgent>,
-    mut existing_sessions: HashSet<acp::SessionId>,
+    mut existing_sessions: HashSet<AgentSessionKey>,
 ) -> Vec<ThreadMetadata> {
     let mut to_insert = Vec::new();
     for SessionByAgent {
@@ -864,7 +1053,11 @@ fn collect_importable_threads(
     } in sessions_by_agent
     {
         for session in sessions {
-            if !existing_sessions.insert(session.session_id.clone()) {
+            if !existing_sessions.insert(agent_session_key(
+                &agent_id,
+                &session.session_id,
+                remote_connection.as_ref(),
+            )) {
                 continue;
             }
             let Some(folder_paths) = session.work_dirs else {
@@ -899,15 +1092,26 @@ fn import_threads_from_other_channels_in(
 ) {
     let current_channel = ReleaseChannel::global(cx);
 
-    let existing_thread_ids: HashSet<ThreadId> = ThreadMetadataStore::global(cx)
-        .read(cx)
+    let store = ThreadMetadataStore::global(cx);
+    let store = store.read(cx);
+    let existing_thread_ids: HashSet<ThreadId> =
+        store.entries().map(|metadata| metadata.thread_id).collect();
+    let existing_sessions: HashSet<AgentSessionKey> = store
         .entries()
-        .map(|metadata| metadata.thread_id)
+        .filter_map(|metadata| {
+            metadata.session_id.as_ref().map(|session_id| {
+                agent_session_key(
+                    &metadata.agent_id,
+                    session_id,
+                    metadata.remote_connection.as_ref(),
+                )
+            })
+        })
         .collect();
 
     let workspace_handle = cx.weak_entity();
     cx.spawn(async move |_this, cx| {
-        let mut imported_threads = Vec::new();
+        let mut candidates = Vec::new();
 
         for channel in &ReleaseChannel::ALL {
             if *channel == current_channel || *channel == ReleaseChannel::Dev {
@@ -916,10 +1120,7 @@ fn import_threads_from_other_channels_in(
 
             match read_threads_from_channel(&database_dir, *channel) {
                 Ok(threads) => {
-                    let new_threads = threads
-                        .into_iter()
-                        .filter(|thread| !existing_thread_ids.contains(&thread.thread_id));
-                    imported_threads.extend(new_threads);
+                    candidates.extend(threads);
                 }
                 Err(error) => {
                     log::warn!(
@@ -931,11 +1132,58 @@ fn import_threads_from_other_channels_in(
             }
         }
 
-        let imported_count = imported_threads.len();
+        candidates.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
+        let mut seen_thread_ids = existing_thread_ids;
+        let mut seen_sessions = existing_sessions;
+        let mut imported_threads = Vec::new();
+        for thread in candidates {
+            if !seen_thread_ids.insert(thread.thread_id) {
+                continue;
+            }
+            if let Some(session_id) = thread.session_id.as_ref()
+                && !seen_sessions.insert(agent_session_key(
+                    &thread.agent_id,
+                    session_id,
+                    thread.remote_connection.as_ref(),
+                ))
+            {
+                continue;
+            }
+            imported_threads.push(thread);
+        }
 
         cx.update(|cx| {
-            ThreadMetadataStore::global(cx)
-                .update(cx, |store, cx| store.save_all(imported_threads, cx));
+            let store = ThreadMetadataStore::global(cx);
+            let (mut current_thread_ids, mut current_sessions) = {
+                let store = store.read(cx);
+                let thread_ids: HashSet<ThreadId> =
+                    store.entries().map(|metadata| metadata.thread_id).collect();
+                let sessions: HashSet<AgentSessionKey> = store
+                    .entries()
+                    .filter_map(|metadata| {
+                        metadata.session_id.as_ref().map(|session_id| {
+                            agent_session_key(
+                                &metadata.agent_id,
+                                session_id,
+                                metadata.remote_connection.as_ref(),
+                            )
+                        })
+                    })
+                    .collect();
+                (thread_ids, sessions)
+            };
+            imported_threads.retain(|thread| {
+                current_thread_ids.insert(thread.thread_id)
+                    && thread.session_id.as_ref().is_none_or(|session_id| {
+                        current_sessions.insert(agent_session_key(
+                            &thread.agent_id,
+                            session_id,
+                            thread.remote_connection.as_ref(),
+                        ))
+                    })
+            });
+            let imported_count = imported_threads.len();
+            store.update(cx, |store, cx| store.save_all(imported_threads, cx));
 
             show_cross_channel_import_toast(&workspace_handle, imported_count, cx);
         })
@@ -1011,8 +1259,202 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_project_threads_only_includes_matching_project() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let sessions = SessionByAgent {
+            agent_id: AgentId::new("agent-a"),
+            remote_connection: None,
+            sessions: vec![
+                make_session(
+                    "matching",
+                    Some("Matching"),
+                    Some(project_paths),
+                    None,
+                    None,
+                ),
+                make_session(
+                    "other",
+                    Some("Other"),
+                    Some(PathList::new(&[Path::new("/other")])),
+                    None,
+                    None,
+                ),
+            ],
+        };
+
+        let result = reconcile_project_threads(sessions, worktree_paths, HashMap::default());
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].session_id.as_ref().unwrap().0.as_ref(),
+            "matching"
+        );
+        assert!(!result[0].archived);
+    }
+
+    #[test]
+    fn test_reconcile_project_threads_accepts_additional_directories() {
+        let project_paths = PathList::new(&[Path::new("/z-project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let sessions = SessionByAgent {
+            agent_id: AgentId::new("agent-a"),
+            remote_connection: None,
+            sessions: vec![make_session(
+                "with-additional-dir",
+                Some("Thread"),
+                Some(PathList::new(&[
+                    PathBuf::from("/z-project"),
+                    PathBuf::from("/a-shared"),
+                ])),
+                None,
+                None,
+            )],
+        };
+
+        let result = reconcile_project_threads(sessions, worktree_paths, HashMap::default());
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].session_id.as_ref().unwrap().0.as_ref(),
+            "with-additional-dir"
+        );
+    }
+
+    #[test]
+    fn test_reconcile_project_threads_keeps_remote_identity_distinct_from_local() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let agent_id = AgentId::new("agent-a");
+        let session_id = acp::SessionId::new("shared-session");
+        let existing = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(session_id.clone()),
+            agent_id: agent_id.clone(),
+            title: Some("Local mirror".into()),
+            title_override: None,
+            updated_at: Utc::now() - chrono::Duration::minutes(1),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: worktree_paths.clone(),
+            remote_connection: None,
+            archived: true,
+        };
+        let thread_id = existing.thread_id;
+        let remote_connection = RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "example.com".into(),
+            ..Default::default()
+        });
+        let sessions = SessionByAgent {
+            agent_id: agent_id.clone(),
+            remote_connection: Some(remote_connection.clone()),
+            sessions: vec![make_session(
+                "shared-session",
+                Some("Remote session"),
+                Some(project_paths),
+                Some(Utc::now()),
+                None,
+            )],
+        };
+
+        let result = reconcile_project_threads(
+            sessions,
+            worktree_paths,
+            std::iter::once((agent_session_key(&agent_id, &session_id, None), existing)).collect(),
+        );
+
+        assert_eq!(result.len(), 1);
+        assert_ne!(result[0].thread_id, thread_id);
+        assert!(!result[0].archived);
+        assert_eq!(result[0].remote_connection, Some(remote_connection));
+        assert_eq!(result[0].display_title(), "Remote session");
+    }
+
+    #[test]
+    fn test_reconcile_project_threads_archives_older_new_sessions() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let now = Utc::now();
+        let sessions = SessionByAgent {
+            agent_id: AgentId::new("agent-a"),
+            remote_connection: None,
+            sessions: (0..7)
+                .map(|index| {
+                    make_session(
+                        &format!("session-{index}"),
+                        Some("Thread"),
+                        Some(project_paths.clone()),
+                        Some(now - chrono::Duration::minutes(index)),
+                        None,
+                    )
+                })
+                .collect(),
+        };
+
+        let result = reconcile_project_threads(sessions, worktree_paths, HashMap::default());
+
+        assert_eq!(result.len(), 7);
+        assert_eq!(result.iter().filter(|thread| !thread.archived).count(), 5);
+        assert_eq!(result.iter().filter(|thread| thread.archived).count(), 2);
+    }
+
+    #[test]
+    fn test_reconcile_project_threads_preserves_archived_thread() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let agent_id = AgentId::new("agent-a");
+        let session_id = acp::SessionId::new("existing");
+        let existing = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(session_id.clone()),
+            agent_id: agent_id.clone(),
+            title: Some("Old title".into()),
+            title_override: Some("Pinned title".into()),
+            updated_at: Utc::now() - chrono::Duration::minutes(1),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: worktree_paths.clone(),
+            remote_connection: None,
+            archived: true,
+        };
+        let thread_id = existing.thread_id;
+        let original_paths = existing.worktree_paths.clone();
+        let key = agent_session_key(&agent_id, &session_id, None);
+        let sessions = SessionByAgent {
+            agent_id,
+            remote_connection: None,
+            sessions: vec![make_session(
+                "existing",
+                Some("New title"),
+                Some(project_paths),
+                Some(Utc::now()),
+                Some(Utc::now()),
+            )],
+        };
+
+        let result = reconcile_project_threads(
+            sessions,
+            worktree_paths,
+            std::iter::once((key, existing)).collect(),
+        );
+
+        assert_eq!(result.len(), 1);
+        let updated = &result[0];
+        assert_eq!(updated.thread_id, thread_id);
+        assert!(updated.archived);
+        assert_eq!(updated.title.as_deref(), Some("New title"));
+        assert_eq!(updated.title_override.as_deref(), Some("Pinned title"));
+        assert_eq!(updated.worktree_paths, original_paths);
+        assert!(updated.created_at.is_some());
+    }
+
+    #[test]
     fn test_collect_skips_sessions_already_in_existing_set() {
-        let existing = HashSet::from_iter(vec![acp::SessionId::new("existing-1")]);
+        let existing = HashSet::from_iter([agent_session_key(
+            &AgentId::new("agent-a"),
+            &acp::SessionId::new("existing-1"),
+            None,
+        )]);
         let paths = PathList::new(&[Path::new("/project")]);
 
         let sessions_by_agent = vec![SessionByAgent {
@@ -1120,7 +1562,7 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_deduplicates_across_agents() {
+    fn test_collect_keeps_same_session_id_for_different_agents() {
         let existing = HashSet::default();
         let paths = PathList::new(&[Path::new("/project")]);
 
@@ -1151,23 +1593,113 @@ mod tests {
 
         let result = collect_importable_threads(sessions_by_agent, existing);
 
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 2);
         assert_eq!(
-            result[0].session_id.as_ref().unwrap().0.as_ref(),
-            "shared-session"
+            result
+                .iter()
+                .filter(|thread| {
+                    thread.session_id.as_ref().map(|session| session.0.as_ref())
+                        == Some("shared-session")
+                })
+                .count(),
+            2
         );
+    }
+
+    #[test]
+    fn test_collect_keeps_local_and_remote_copies_of_same_session() {
+        let existing = HashSet::default();
+        let paths = PathList::new(&[Path::new("/project")]);
+        let remote_connection = RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "example.com".into(),
+            ..Default::default()
+        });
+
+        let sessions_by_agent = vec![
+            SessionByAgent {
+                agent_id: AgentId::new("agent-a"),
+                remote_connection: None,
+                sessions: vec![make_session(
+                    "shared-session",
+                    Some("Local mirror"),
+                    Some(paths.clone()),
+                    None,
+                    None,
+                )],
+            },
+            SessionByAgent {
+                agent_id: AgentId::new("agent-a"),
+                remote_connection: Some(remote_connection),
+                sessions: vec![make_session(
+                    "shared-session",
+                    Some("Remote session"),
+                    Some(paths),
+                    None,
+                    None,
+                )],
+            },
+        ];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+
+        assert_eq!(result.len(), 2);
         assert_eq!(
-            result[0].agent_id.as_ref(),
-            "agent-a",
-            "first agent encountered should win"
+            result
+                .iter()
+                .filter(|thread| thread.remote_connection.is_some())
+                .count(),
+            1
         );
+    }
+
+    #[test]
+    fn test_collect_keeps_same_session_id_for_different_work_dirs() {
+        let existing = HashSet::default();
+        let local_paths = PathList::new(&[Path::new("/local")]);
+        let remote_paths = PathList::new(&[Path::new("/remote")]);
+        let remote_connection = RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "example.com".into(),
+            ..Default::default()
+        });
+
+        let sessions_by_agent = vec![
+            SessionByAgent {
+                agent_id: AgentId::new("agent-a"),
+                remote_connection: None,
+                sessions: vec![make_session(
+                    "shared-session",
+                    Some("Local"),
+                    Some(local_paths),
+                    None,
+                    None,
+                )],
+            },
+            SessionByAgent {
+                agent_id: AgentId::new("agent-a"),
+                remote_connection: Some(remote_connection),
+                sessions: vec![make_session(
+                    "shared-session",
+                    Some("Remote"),
+                    Some(remote_paths),
+                    None,
+                    None,
+                )],
+            },
+        ];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+
+        assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn test_collect_all_existing_returns_empty() {
         let paths = PathList::new(&[Path::new("/project")]);
-        let existing =
-            HashSet::from_iter(vec![acp::SessionId::new("s1"), acp::SessionId::new("s2")]);
+        let agent_id = AgentId::new("agent-a");
+        let existing = HashSet::from_iter([
+            agent_session_key(&agent_id, &acp::SessionId::new("s1"), None),
+            agent_session_key(&agent_id, &acp::SessionId::new("s2"), None),
+        ]);
 
         let sessions_by_agent = vec![SessionByAgent {
             agent_id: AgentId::new("agent-a"),
@@ -1184,7 +1716,11 @@ mod tests {
 
     #[test]
     fn test_count_importable_threads_by_agent_counts_each_agent_independently() {
-        let existing = HashSet::from_iter(vec![acp::SessionId::new("existing")]);
+        let existing = HashSet::from_iter([agent_session_key(
+            &AgentId::new("agent-a"),
+            &acp::SessionId::new("existing"),
+            None,
+        )]);
         let paths = PathList::new(&[Path::new("/project")]);
         let sessions_by_agent = vec![
             SessionByAgent {
@@ -1238,15 +1774,25 @@ mod tests {
         updated_at: &str,
         archived: bool,
     ) {
-        let thread_id = uuid::Uuid::new_v4();
         let session_id = uuid::Uuid::new_v4().to_string();
+        insert_thread_with_session(connection, title, updated_at, archived, &session_id);
+    }
+
+    fn insert_thread_with_session(
+        connection: &db::sqlez::connection::Connection,
+        title: &str,
+        updated_at: &str,
+        archived: bool,
+        session_id: &str,
+    ) {
+        let thread_id = uuid::Uuid::new_v4();
         connection
             .exec_bound::<(uuid::Uuid, &str, &str, &str, bool)>(
                 "INSERT INTO sidebar_threads \
                  (thread_id, session_id, title, updated_at, archived) \
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             )
-            .unwrap()((thread_id, session_id.as_str(), title, updated_at, archived))
+            .unwrap()((thread_id, session_id, title, updated_at, archived))
         .unwrap();
     }
 
@@ -1367,6 +1913,59 @@ mod tests {
                 .find(|m| m.display_title().as_ref() == "Thread B1")
                 .unwrap();
             assert!(!thread_b1.archived);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_import_threads_from_other_channels_deduplicates_session_identity(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let dir = tempfile::tempdir().unwrap();
+        let database_dir = dir.path().to_path_buf();
+        let (channel_a, channel_b) = foreign_channels(cx);
+        let session_id = uuid::Uuid::new_v4().to_string();
+
+        let db_a = create_channel_db(dir.path(), channel_a);
+        insert_thread_with_session(
+            &db_a,
+            "Thread A",
+            "2025-01-15T10:00:00Z",
+            false,
+            &session_id,
+        );
+        drop(db_a);
+
+        let db_b = create_channel_db(dir.path(), channel_b);
+        insert_thread_with_session(
+            &db_b,
+            "Thread B",
+            "2025-01-15T11:00:00Z",
+            false,
+            &session_id,
+        );
+        drop(db_b);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = project::Project::test(fs, [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace_entity = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let mut visual_context = gpui::VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        workspace_entity.update_in(&mut visual_context, |_workspace, _window, cx| {
+            import_threads_from_other_channels_in(database_dir, cx);
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            assert_eq!(store.read(cx).entries().count(), 1);
         });
     }
 

@@ -7,7 +7,7 @@ use crate::agent_connection_store::AgentConnectionStore;
 use crate::thread_metadata_store::{
     ThreadId, ThreadMetadata, ThreadMetadataStore, worktree_info_from_thread_paths,
 };
-use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
+use crate::{Agent, AgentPanel, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
 use agent_client_protocol::schema::v1 as acp;
@@ -19,8 +19,8 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, App, Context, Decorations, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, ListState, Render, SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
-    list, prelude::*, px,
+    Focusable, ListState, Render, SharedString, Subscription, Task, WeakEntity, Window, list,
+    prelude::*, px,
 };
 use itertools::Itertools as _;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -30,6 +30,7 @@ use picker::{
 };
 use platform_title_bar::apply_title_bar_insets;
 use project::{AgentId, AgentServerStore};
+use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
@@ -731,12 +732,14 @@ impl ThreadsArchiveView {
                                 let agent = thread.agent_id.clone();
                                 let thread_id = thread.thread_id;
                                 let session_id = thread.session_id.clone();
+                                let remote_connection = thread.remote_connection.clone();
                                 cx.listener(move |this, _, _, cx| {
                                     this.preserve_selection_on_next_update = true;
                                     this.delete_thread(
                                         thread_id,
                                         session_id.clone(),
                                         agent.clone(),
+                                        remote_connection.clone(),
                                         cx,
                                     );
                                     cx.stop_propagation();
@@ -807,6 +810,7 @@ impl ThreadsArchiveView {
             thread.thread_id,
             thread.session_id.clone(),
             thread.agent_id.clone(),
+            thread.remote_connection.clone(),
             cx,
         );
     }
@@ -816,45 +820,93 @@ impl ThreadsArchiveView {
         thread_id: ThreadId,
         session_id: Option<acp::SessionId>,
         agent: AgentId,
+        remote_connection: Option<RemoteConnectionOptions>,
         cx: &mut Context<Self>,
     ) {
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.delete(thread_id, cx));
-
-        let agent = Agent::from(agent);
-
-        let Some(agent_connection_store) = self.agent_connection_store.upgrade() else {
-            return;
-        };
-        let fs = <dyn Fs>::global(cx);
-
-        let task = agent_connection_store.update(cx, |store, cx| {
-            store
-                .request_connection(agent.clone(), agent.server(fs, ThreadStore::global(cx)), cx)
-                .read(cx)
-                .wait_for_connection()
+        let connection_store = self.connection_store_for_remote(remote_connection.as_ref(), cx);
+        let connection_task = connection_store.map(|connection_store| {
+            let agent = Agent::from(agent);
+            let fs = <dyn Fs>::global(cx);
+            connection_store.update(cx, |store, cx| {
+                store
+                    .request_connection(
+                        agent.clone(),
+                        agent.server(fs, ThreadStore::global(cx)),
+                        cx,
+                    )
+                    .read(cx)
+                    .wait_for_connection()
+            })
         });
-        cx.spawn(async move |_this, cx| {
-            crate::thread_worktree_archive::cleanup_thread_archived_worktrees(thread_id, cx).await;
+        let workspace = self.workspace.clone();
 
-            let state = task.await?;
-            let task = cx.update(|cx| {
-                if let Some(session_id) = &session_id {
-                    if let Some(list) = state
-                        .connection
-                        .session_list(cx)
-                        .filter(|list| list.supports_delete())
-                    {
-                        list.delete_session(session_id, cx)
-                    } else {
-                        Task::ready(Ok(()))
-                    }
-                } else {
-                    Task::ready(Ok(()))
+        cx.spawn(async move |_this, cx| {
+            let result: anyhow::Result<()> = async {
+                if let Some(session_id) = session_id.as_ref() {
+                    let connection_task = connection_task.ok_or_else(|| {
+                        anyhow::anyhow!("Could not find an open workspace for the thread's host")
+                    })?;
+                    let state = connection_task.await?;
+                    let task = cx.update(|cx| {
+                        state
+                            .connection
+                            .session_list(cx)
+                            .filter(|list| list.supports_delete())
+                            .map(|list| list.delete_session(session_id, cx))
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("This agent does not support deleting sessions")
+                            })
+                    })?;
+                    task.await?;
                 }
-            });
-            task.await
+
+                crate::thread_worktree_archive::cleanup_thread_archived_worktrees(thread_id, cx)
+                    .await;
+                cx.update(|cx| {
+                    ThreadMetadataStore::global(cx)
+                        .update(cx, |store, cx| store.delete(thread_id, cx));
+                });
+                Ok(())
+            }
+            .await;
+
+            if let Err(error) = result {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_error(format!("Failed to delete thread: {error}"), cx);
+                    })
+                    .log_err();
+            }
         })
-        .detach_and_log_err(cx);
+        .detach();
+    }
+
+    fn connection_store_for_remote(
+        &self,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        cx: &App,
+    ) -> Option<Entity<AgentConnectionStore>> {
+        let matches = |store: &Entity<AgentConnectionStore>| {
+            let project = store.read(cx).project().clone();
+            same_remote_connection_identity(
+                project.read(cx).remote_connection_options(cx).as_ref(),
+                remote_connection,
+            )
+        };
+
+        if let Some(store) = self.agent_connection_store.upgrade()
+            && matches(&store)
+        {
+            return Some(store);
+        }
+
+        crate::thread_worktree_archive::all_open_workspaces(cx)
+            .into_iter()
+            .find_map(|workspace| {
+                let panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
+                let store = panel.read(cx).connection_store().clone();
+                matches(&store).then_some(store)
+            })
     }
 
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
