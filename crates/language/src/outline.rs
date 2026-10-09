@@ -270,8 +270,8 @@ pub fn highlight_ranges_from_text(
     syntax_theme: &SyntaxTheme,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
     let rope = Rope::from(text);
-    let runs = language.highlight_text(&rope, 0..text.len());
-    syntax_theme.resolve_runs(&runs).collect()
+    let highlights = language.highlight_text_resolved(&rope, 0..text.len());
+    syntax_theme.resolve_runs(highlights.runs.iter()).collect()
 }
 
 /// Interleaves synthetic [`OutlineSearchEntry::Ancestor`] rows before each match so callers

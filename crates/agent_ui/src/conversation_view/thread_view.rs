@@ -454,13 +454,14 @@ fn highlight_code_runs(
 
     let mut runs = Vec::new();
     let mut offset = 0;
-    for (range, highlight_id) in language.highlight_text(&Rope::from(code), 0..code.len()) {
+    let highlights = language.highlight_text_resolved(&Rope::from(code), 0..code.len());
+    for (range, highlight_id) in highlights.runs.iter() {
         if range.start > offset {
             runs.push(code_text_style.to_run(range.start - offset));
         }
 
         let mut run_style = code_text_style.clone();
-        if let Some(highlight) = markdown_style.syntax.get(highlight_id).cloned() {
+        if let Some(highlight) = markdown_style.syntax.get(*highlight_id).cloned() {
             run_style = run_style.highlight(highlight);
         }
         runs.push(run_style.to_run(range.len()));

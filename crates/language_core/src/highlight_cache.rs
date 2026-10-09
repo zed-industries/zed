@@ -94,7 +94,7 @@ impl TextHighlightCache {
     pub fn insert(
         &self,
         key: TextHighlightKey,
-        text: Arc<str>,
+        text: String,
         highlights: ResolvedHighlights,
     ) -> ResolvedHighlights {
         let cost = text.len() + highlights.cost_bytes();
@@ -196,7 +196,7 @@ impl<K: Hash + Eq, V> CostBudgetedLru<K, V> {
 }
 
 struct TextHighlightEntry {
-    text: Arc<str>,
+    text: String,
     highlights: ResolvedHighlights,
 }
 
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn test_oversized_highlights_are_returned_but_not_cached() {
-        let text = Arc::<str>::from("fn main() {}");
+        let text = "fn main() {}";
         let run_bytes = size_of::<(Range<usize>, HighlightId)>();
         let max_entry_cost = text.len() + 2 * run_bytes;
         let cache = TextHighlightCache(Mutex::new(CostBudgetedLru::new(
@@ -300,12 +300,12 @@ mod tests {
                 .collect(),
         };
 
-        let small_text = Arc::<str>::from("fn f() {}");
-        let small_key = TextHighlightKey::new([small_text.as_ref()].into_iter(), small_text.len());
+        let small_text = "fn f() {}";
+        let small_key = TextHighlightKey::new([small_text].into_iter(), small_text.len());
         let small_range = 0..2;
         let small_highlights = cache.insert(
             small_key.clone(),
-            Arc::clone(&small_text),
+            small_text.to_owned(),
             resolved(std::slice::from_ref(&small_range)),
         );
         assert_eq!(
@@ -314,17 +314,17 @@ mod tests {
         );
         assert_eq!(
             cache
-                .get(&small_key, [small_text.as_ref()].into_iter())
+                .get(&small_key, [small_text].into_iter())
                 .map(|highlights| highlights.runs),
             Some(small_highlights.runs.clone()),
             "highlights within the entry budget must be cached as-is"
         );
 
-        let big_key = TextHighlightKey::new([text.as_ref()].into_iter(), text.len());
+        let big_key = TextHighlightKey::new([text].into_iter(), text.len());
         let big_highlights_source = resolved(&[0..2, 3..7, 8..9]);
         let big_highlights = cache.insert(
             big_key.clone(),
-            Arc::clone(&text),
+            text.to_owned(),
             big_highlights_source.clone(),
         );
         assert!(
@@ -332,7 +332,7 @@ mod tests {
             "highlights over the entry budget must be returned unchanged"
         );
         assert!(
-            cache.get(&big_key, [text.as_ref()].into_iter()).is_none(),
+            cache.get(&big_key, [text].into_iter()).is_none(),
             "highlights over the entry budget must not be cached"
         );
     }

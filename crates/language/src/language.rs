@@ -1135,7 +1135,8 @@ impl Language {
         text: &'a Rope,
         range: Range<usize>,
     ) -> Vec<(Range<usize>, HighlightId)> {
-        self.highlight_text_resolved(text, range).runs.to_vec()
+        let highlights = self.highlight_text_resolved(text, 0..text.len());
+        highlight_runs_in_range(&highlights.runs, range).collect()
     }
 
     pub fn highlight_text_resolved(
@@ -1158,11 +1159,15 @@ impl Language {
                 .get(&key, text.chunks())
             {
                 Some(highlights) => highlights,
-                None => highlights_config.text_highlight_cache.insert(
-                    key,
-                    Arc::from(text.chunks().collect::<String>()),
-                    self.compute_resolved_highlights(grammar, text),
-                ),
+                None => {
+                    let mut cached_text = String::with_capacity(text.len());
+                    cached_text.extend(text.chunks());
+                    highlights_config.text_highlight_cache.insert(
+                        key,
+                        cached_text,
+                        self.compute_resolved_highlights(grammar, text),
+                    )
+                }
             }
         };
         if range.start == 0 && range.end >= text.len() {
@@ -1170,18 +1175,7 @@ impl Language {
         }
         ResolvedHighlights {
             sources: highlights.sources.clone(),
-            runs: highlights
-                .runs
-                .iter()
-                .filter(|(run_range, _)| run_range.start < range.end && run_range.end > range.start)
-                .map(|(run_range, highlight_id)| {
-                    (
-                        run_range.start.max(range.start) - range.start
-                            ..run_range.end.min(range.end) - range.start,
-                        *highlight_id,
-                    )
-                })
-                .collect(),
+            runs: highlight_runs_in_range(&highlights.runs, range).collect(),
         }
     }
 
@@ -1477,6 +1471,21 @@ pub(crate) fn parse_text(grammar: &Grammar, text: &Rope, old_tree: Option<Tree>)
             )
             .unwrap()
     })
+}
+
+fn highlight_runs_in_range(
+    runs: &[(Range<usize>, HighlightId)],
+    range: Range<usize>,
+) -> impl Iterator<Item = (Range<usize>, HighlightId)> + '_ {
+    runs.iter()
+        .filter(move |(run_range, _)| run_range.start < range.end && run_range.end > range.start)
+        .map(move |(run_range, highlight_id)| {
+            (
+                run_range.start.max(range.start) - range.start
+                    ..run_range.end.min(range.end) - range.start,
+                *highlight_id,
+            )
+        })
 }
 
 pub trait CodeLabelExt {

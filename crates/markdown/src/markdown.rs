@@ -1674,15 +1674,15 @@ fn compute_code_block_highlights(parsed: &ParsedMarkdown) -> CodeBlockHighlights
 }
 
 fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut CodeBlockHighlights) {
-    let mut combined = String::new();
+    let mut combined = Rope::new();
     let mut text_offsets = Vec::with_capacity(block.texts.len());
     for (_, text) in &block.texts {
         text_offsets.push(combined.len());
-        combined.push_str(text);
+        combined.push(text);
     }
     let resolved = block
         .language
-        .highlight_text_resolved(&Rope::from(combined.as_str()), 0..combined.len());
+        .highlight_text_resolved(&combined, 0..combined.len());
     if resolved.runs.is_empty() {
         return;
     }
