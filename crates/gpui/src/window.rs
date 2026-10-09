@@ -1599,6 +1599,9 @@ impl Window {
             tabbing_identifier,
         } = options;
 
+        #[cfg(target_os = "macos")]
+        let system_window_tabs_enabled = tabbing_identifier.is_some();
+
         let initial_window_title = titlebar
             .as_ref()
             .and_then(|titlebar| titlebar.title.clone());
@@ -1627,7 +1630,19 @@ impl Window {
 
         let tab_bar_visible = platform_window.tab_bar_visible();
         SystemWindowTabController::init_visible(cx, tab_bar_visible);
-        if let Some(tabs) = platform_window.tabbed_windows() {
+        let tabs = platform_window.tabbed_windows();
+        #[cfg(target_os = "macos")]
+        let tabs = tabs.or_else(|| {
+            // AppKit returns nil for standalone windows, which still need to be
+            // tracked so their tabs are included when windows are merged.
+            system_window_tabs_enabled.then(|| {
+                vec![SystemWindowTab::new(
+                    initial_window_title.clone().unwrap_or_default(),
+                    handle,
+                )]
+            })
+        });
+        if let Some(tabs) = tabs {
             SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
         }
 
@@ -2071,8 +2086,13 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move || {
                 handle
-                    .update(&mut cx, |_, _window, cx| {
-                        SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                    .update(&mut cx, |_, window, cx| {
+                        if let Some(tabs) = window.platform_window.tabbed_windows() {
+                            SystemWindowTabController::synchronize_tabs(cx, tabs);
+                        } else {
+                            SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                        }
+                        cx.refresh_windows();
                     })
                     .log_err();
             })
