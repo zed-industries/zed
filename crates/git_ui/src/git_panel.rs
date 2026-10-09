@@ -6803,8 +6803,6 @@ impl GitPanel {
             .h_full()
             .gap_px()
             .p_1p5()
-            .opacity(0.6)
-            .hover(|s| s.opacity(1.0))
             .child(
                 IconButton::new("expand-commit-editor", IconName::MaximizeAlt)
                     .icon_size(IconSize::Small)
@@ -6822,7 +6820,14 @@ impl GitPanel {
                         move |_, _, window, cx| {
                             window.dispatch_action(git::ExpandCommitEditor.boxed_clone(), cx)
                         }
-                    })),
+                    }))
+                    .map(|button| {
+                        div()
+                            .flex_none()
+                            .opacity(0.6)
+                            .hover(|style| style.opacity(1.0))
+                            .child(button)
+                    }),
             )
             .child({
                 let (icon, label) = if self.commit_editor_expanded {
@@ -6849,6 +6854,13 @@ impl GitPanel {
                             window.dispatch_action(git::ToggleFillCommitEditor.boxed_clone(), cx)
                         }
                     }))
+                    .map(|button| {
+                        div()
+                            .flex_none()
+                            .opacity(0.6)
+                            .hover(|style| style.opacity(1.0))
+                            .child(button)
+                    })
             });
 
         let collapsed = self.commit_editor_collapsed;
