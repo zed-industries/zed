@@ -16,7 +16,7 @@ use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
     StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
 };
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use collections::{FxHashMap, FxHashSet};
 use core::fmt;
 use derive_more::{Add, Deref, FromStr, Sub};
@@ -325,29 +325,23 @@ impl TextSystem {
         self.missing_glyph_reporter.report(missing_glyphs);
     }
 
-    /// Get the FontId for the configure font family and style.
-    fn font_id(&self, font: &Font) -> Result<FontId> {
-        fn clone_font_id_result(font_id: &Result<FontId>) -> Result<FontId> {
-            match font_id {
-                Ok(font_id) => Ok(*font_id),
-                Err(err) => Err(anyhow!("{err}")),
-            }
+    fn font_id(&self, font: &Font) -> Option<FontId> {
+        if let Some(result) = self.font_ids_by_font.read().get(font) {
+            return match result {
+                Ok(font_id) => Some(*font_id),
+                Err(_) => None,
+            };
         }
 
-        let font_id = self
-            .font_ids_by_font
-            .read()
-            .get(font)
-            .map(clone_font_id_result);
-        if let Some(font_id) = font_id {
-            font_id
-        } else {
-            let font_id = self.platform_text_system.font_id(font);
-            self.font_ids_by_font
-                .write()
-                .insert(font.clone(), clone_font_id_result(&font_id));
-            font_id
-        }
+        let result = self.platform_text_system.font_id(font);
+        let font_id = match &result {
+            Ok(font_id) => Some(*font_id),
+            Err(_) => None,
+        };
+        // Keep the original diagnostic, but do not format and allocate a new
+        // error each time an unavailable font is retried by the fallback stack.
+        self.font_ids_by_font.write().insert(font.clone(), result);
+        font_id
     }
 
     /// Get the Font for the Font Id.
@@ -368,11 +362,11 @@ impl TextSystem {
     ///
     /// Panics if the font and none of the fallbacks can be resolved.
     pub fn resolve_font(&self, font: &Font) -> FontId {
-        if let Ok(font_id) = self.font_id(font) {
+        if let Some(font_id) = self.font_id(font) {
             return font_id;
         }
         for fallback in &self.fallback_font_stack {
-            if let Ok(font_id) = self.font_id(fallback) {
+            if let Some(font_id) = self.font_id(fallback) {
                 return font_id;
             }
         }
@@ -1443,6 +1437,77 @@ pub fn font_name_with_fallbacks_shared<'a>(
         ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
         ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
+    }
+}
+
+#[cfg(test)]
+mod font_resolution_tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct CountedFontFailure(Arc<AtomicUsize>);
+
+    impl Display for CountedFontFailure {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            formatter.write_str("unavailable test font")
+        }
+    }
+
+    impl std::error::Error for CountedFontFailure {}
+
+    #[gpui::test]
+    fn cached_font_failures_do_not_reconstruct_diagnostics(cx: &mut crate::TestAppContext) {
+        let mut text_system = TextSystem::new(cx.text_system().platform_text_system.clone());
+        let preferred = font("unavailable preferred test font");
+        let missing_fallback = font("unavailable fallback test font");
+        let fallback = font("available fallback test font");
+        let fallback_id = FontId(42);
+        text_system.fallback_font_stack = smallvec![missing_fallback.clone(), fallback.clone()];
+        let formatted = Arc::<AtomicUsize>::default();
+        text_system.font_ids_by_font.write().extend([
+            (
+                preferred.clone(),
+                Err(anyhow::Error::new(CountedFontFailure(formatted.clone()))),
+            ),
+            (
+                missing_fallback,
+                Err(anyhow::Error::new(CountedFontFailure(formatted.clone()))),
+            ),
+            (fallback.clone(), Ok(fallback_id)),
+        ]);
+        for _ in 0..100 {
+            assert_eq!(text_system.resolve_font(&preferred), fallback_id);
+        }
+        assert_eq!(formatted.load(Ordering::Relaxed), 0);
+        assert_eq!(text_system.get_font_for_id(fallback_id), Some(fallback));
+        {
+            let font_ids = text_system.font_ids_by_font.read();
+            let diagnostic = font_ids
+                .get(&preferred)
+                .expect("cached failure")
+                .as_ref()
+                .expect_err("unavailable font");
+            assert_eq!(diagnostic.to_string(), "unavailable test font");
+        }
+        assert_eq!(formatted.load(Ordering::Relaxed), 1);
+        assert_eq!(text_system.font_id(&preferred), None);
+        assert_eq!(formatted.load(Ordering::Relaxed), 1);
+        let preferred_id = FontId(43);
+        text_system
+            .font_ids_by_font
+            .write()
+            .insert(preferred.clone(), Ok(preferred_id));
+        assert_eq!(text_system.resolve_font(&preferred), preferred_id);
+        let generation = text_system.font_generation.load(Ordering::Acquire);
+        text_system
+            .add_fonts(Vec::new())
+            .expect("invalidate installed font cache");
+        assert!(text_system.font_ids_by_font.read().is_empty());
+        assert_eq!(
+            text_system.font_generation.load(Ordering::Acquire),
+            generation + 1
+        );
     }
 }
 
