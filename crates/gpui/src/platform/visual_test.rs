@@ -101,6 +101,10 @@ impl Platform for VisualTestPlatform {
         self.platform.primary_display()
     }
 
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.platform.on_displays_changed(callback)
+    }
+
     fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform.active_window()
     }
