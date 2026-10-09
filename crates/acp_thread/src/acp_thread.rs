@@ -1444,23 +1444,6 @@ impl ToolCall {
         })
     }
 
-    #[cfg(test)]
-    fn update_fields(
-        &mut self,
-        fields: acp_v1::ToolCallUpdateFields,
-        meta: Option<acp_v1::Meta>,
-        language_registry: Arc<LanguageRegistry>,
-        terminals: &HashMap<acp_v2::TerminalId, Entity<Terminal>>,
-        cx: &mut App,
-    ) -> Result<()> {
-        self.apply_patch(
-            ToolCallPatch::legacy(fields, meta),
-            language_registry,
-            ToolTerminalResolver::registered(terminals),
-            cx,
-        )
-    }
-
     fn apply_patch(
         &mut self,
         patch: ToolCallPatch,
@@ -3191,17 +3174,6 @@ pub enum ToolCallUpdate {
     V1(acp_v1::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
-}
-
-impl ToolCallUpdate {
-    fn id(&self) -> acp_v2::ToolCallId {
-        match self {
-            Self::V2(update) => update.tool_call_id.clone(),
-            Self::V1(update) => acp_v2::ToolCallId::new(update.tool_call_id.0.clone()),
-            Self::UpdateDiff(diff) => diff.id.clone(),
-            Self::UpdateTerminal(terminal) => terminal.id.clone(),
-        }
-    }
 }
 
 impl From<acp_v2::ToolCallUpdate> for ToolCallUpdate {
@@ -5301,81 +5273,95 @@ impl AcpThread {
         update: impl Into<ToolCallUpdate>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let update = match update.into() {
-            ToolCallUpdate::V2(update) => {
-                return self.upsert_local_tool_call(update, cx);
-            }
-            update => update,
-        };
-        let languages = self.project.read(cx).languages().clone();
-
-        let id = update.id();
-        let ix = match self.index_for_tool_call(&id) {
-            Some(ix) => ix,
-            None => {
-                // Tool call not found - create a failed tool call entry
-                let failed_tool_call = ToolCall::from_acp(
-                    acp_v1::ToolCall::new(acp_v1::ToolCallId::new(id.0), "Tool call not found")
-                        .kind(acp_v1::ToolKind::Fetch)
-                        .status(acp_v1::ToolCallStatus::Failed)
-                        .content(vec!["Tool call not found".into()]),
-                    Some(ToolCallStatus::Failed),
+        match update.into() {
+            ToolCallUpdate::V1(update) => {
+                let id = acp_v2::ToolCallId::new(update.tool_call_id.0);
+                let Some(index) = self.tool_call_index_for_update(&id, cx)? else {
+                    return Ok(());
+                };
+                let languages = self.project.read(cx).languages().clone();
+                let Some(AgentThreadEntry::ToolCall(call)) = self.entries.get_mut(index) else {
+                    anyhow::bail!("Tool call entry disappeared while updating");
+                };
+                let patch = ToolCallPatch::legacy(update.fields, update.meta);
+                let location_updated = !patch.locations.is_undefined();
+                let authorization_id = call.authorization_id();
+                let result = call.apply_patch(
+                    patch,
                     languages,
-                    &self.terminals,
+                    ToolTerminalResolver::registered(&self.terminals),
                     cx,
-                )?;
-                self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
-                return Ok(());
+                );
+                let detached_id =
+                    authorization_id.filter(|id| call.authorization_id() != Some(*id));
+                if let Some(id) = detached_id {
+                    self.resolve_permission_request(id, RequestPermissionOutcome::Cancelled, cx);
+                }
+                if let Err(error) = result {
+                    cx.emit(AcpThreadEvent::EntryUpdated(index));
+                    return Err(error);
+                }
+                if location_updated {
+                    self.resolve_locations(id, cx);
+                }
+                cx.emit(AcpThreadEvent::EntryUpdated(index));
+                Ok(())
             }
-        };
-        let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
-            unreachable!()
-        };
-
-        let patch = match update {
-            ToolCallUpdate::V2(_) => unreachable!(),
-            ToolCallUpdate::V1(update) => Some(ToolCallPatch::legacy(update.fields, update.meta)),
+            ToolCallUpdate::V2(update) => self.upsert_local_tool_call(update, cx),
             ToolCallUpdate::UpdateDiff(update) => {
-                call.structured_content.clear();
-                call.structured_content
-                    .push(ToolCallContent::Diff(update.diff));
-                call.update_raw_output_content(&languages, cx);
-                None
+                self.update_tool_call_content(update.id, ToolCallContent::Diff(update.diff), cx)
             }
-            ToolCallUpdate::UpdateTerminal(update) => {
-                call.structured_content.clear();
-                call.structured_content.push(ToolCallContent::Terminal {
+            ToolCallUpdate::UpdateTerminal(update) => self.update_tool_call_content(
+                update.id,
+                ToolCallContent::Terminal {
                     terminal: update.terminal,
                     meta: None,
-                });
-                call.update_raw_output_content(&languages, cx);
-                None
-            }
-        };
-        if let Some(patch) = patch {
-            let location_updated = !patch.locations.is_undefined();
-            let authorization_id = call.authorization_id();
-            let result = call.apply_patch(
-                patch,
-                languages,
-                ToolTerminalResolver::registered(&self.terminals),
+                },
                 cx,
-            );
-            let detached_id = authorization_id.filter(|id| call.authorization_id() != Some(*id));
-            if let Some(id) = detached_id {
-                self.resolve_permission_request(id, RequestPermissionOutcome::Cancelled, cx);
-            }
-            if let Err(error) = result {
-                cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                return Err(error);
-            }
-            if location_updated {
-                self.resolve_locations(id, cx);
-            }
+            ),
         }
+    }
 
-        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+    fn tool_call_index_for_update(
+        &mut self,
+        id: &acp_v2::ToolCallId,
+        cx: &mut Context<Self>,
+    ) -> Result<Option<usize>> {
+        if let Some(index) = self.index_for_tool_call(id) {
+            return Ok(Some(index));
+        }
+        let languages = self.project.read(cx).languages().clone();
+        let failed_tool_call = ToolCall::from_acp(
+            acp_v1::ToolCall::new(acp_v1::ToolCallId::new(id.0.clone()), "Tool call not found")
+                .kind(acp_v1::ToolKind::Fetch)
+                .status(acp_v1::ToolCallStatus::Failed)
+                .content(vec!["Tool call not found".into()]),
+            Some(ToolCallStatus::Failed),
+            languages,
+            &self.terminals,
+            cx,
+        )?;
+        self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
+        Ok(None)
+    }
 
+    fn update_tool_call_content(
+        &mut self,
+        id: acp_v2::ToolCallId,
+        content: ToolCallContent,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let Some(index) = self.tool_call_index_for_update(&id, cx)? else {
+            return Ok(());
+        };
+        let languages = self.project.read(cx).languages().clone();
+        let Some(AgentThreadEntry::ToolCall(call)) = self.entries.get_mut(index) else {
+            anyhow::bail!("Tool call entry disappeared while updating content");
+        };
+        call.structured_content.clear();
+        call.structured_content.push(content);
+        call.update_raw_output_content(&languages, cx);
+        cx.emit(AcpThreadEvent::EntryUpdated(index));
         Ok(())
     }
 
@@ -13378,22 +13364,33 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_legacy_tool_update_id_shares_backing_arc() {
+    #[gpui::test]
+    async fn test_legacy_tool_update_id_shares_backing_arc(cx: &mut TestAppContext) {
+        init_test(cx);
         for value in ["", "tool/ \0 雪 😀"] {
-            let backing: Arc<str> = value.into();
-            let wire_id = acp_v1::ToolCallId::new(backing.clone());
-            let update = ToolCallUpdate::from(acp_v1::ToolCallUpdate::new(
-                wire_id.clone(),
-                acp_v1::ToolCallUpdateFields::new(),
-            ));
-            let id = update.id();
-            assert_eq!(id, acp_v2::ToolCallId::new(value));
-            assert!(Arc::ptr_eq(&id.0, &backing));
-            assert_eq!(
-                serde_json::to_value(&id).expect("canonical ID"),
-                serde_json::to_value(&wire_id).expect("wire ID"),
-            );
+            let thread = new_test_thread(cx).await;
+            thread.update(cx, |thread, cx| {
+                let backing: Arc<str> = value.into();
+                let wire_id = acp_v1::ToolCallId::new(backing.clone());
+                thread
+                    .update_tool_call(
+                        acp_v1::ToolCallUpdate::new(
+                            wire_id.clone(),
+                            acp_v1::ToolCallUpdateFields::new(),
+                        ),
+                        cx,
+                    )
+                    .expect("legacy update creates the failed placeholder");
+                let (_, call) = thread
+                    .tool_call(&acp_v2::ToolCallId::new(value))
+                    .expect("canonical tool");
+                assert_eq!(&call.id, &acp_v2::ToolCallId::new(value));
+                assert!(Arc::ptr_eq(&call.id.0, &backing));
+                assert_eq!(
+                    serde_json::to_value(&call.id).expect("canonical ID"),
+                    serde_json::to_value(&wire_id).expect("wire ID"),
+                );
+            });
         }
     }
 
@@ -15080,8 +15077,13 @@ mod tests {
             ),
         ] {
             cx.update(|cx| {
-                call.update_fields(update, None, languages.clone(), &HashMap::default(), cx)
-                    .expect("tool label update should apply");
+                call.apply_patch(
+                    ToolCallPatch::legacy(update, None),
+                    languages.clone(),
+                    ToolTerminalResolver::registered(&HashMap::default()),
+                    cx,
+                )
+                .expect("tool label update should apply");
             });
             cx.run_until_parked();
             cx.read(|cx| {
@@ -15128,11 +15130,13 @@ mod tests {
         let created_export = cx.read(|cx| created_with_raw_output.to_markdown(cx));
         cx.update(|cx| {
             updated_with_raw_output
-                .update_fields(
-                    acp_v1::ToolCallUpdateFields::new().raw_output(serde_json::json!("first")),
-                    None,
+                .apply_patch(
+                    ToolCallPatch::legacy(
+                        acp_v1::ToolCallUpdateFields::new().raw_output(serde_json::json!("first")),
+                        None,
+                    ),
                     languages.clone(),
-                    &HashMap::default(),
+                    ToolTerminalResolver::registered(&HashMap::default()),
                     cx,
                 )
                 .expect("first raw output update should apply");
@@ -15149,20 +15153,24 @@ mod tests {
             .clone();
         cx.update(|cx| {
             created_with_raw_output
-                .update_fields(
-                    acp_v1::ToolCallUpdateFields::new().raw_output(serde_json::json!("second")),
-                    None,
+                .apply_patch(
+                    ToolCallPatch::legacy(
+                        acp_v1::ToolCallUpdateFields::new().raw_output(serde_json::json!("second")),
+                        None,
+                    ),
                     languages.clone(),
-                    &HashMap::default(),
+                    ToolTerminalResolver::registered(&HashMap::default()),
                     cx,
                 )
                 .expect("second raw output update should apply");
             updated_with_raw_output
-                .update_fields(
-                    acp_v1::ToolCallUpdateFields::new().raw_output(serde_json::json!("second")),
-                    None,
+                .apply_patch(
+                    ToolCallPatch::legacy(
+                        acp_v1::ToolCallUpdateFields::new().raw_output(serde_json::json!("second")),
+                        None,
+                    ),
                     languages.clone(),
-                    &HashMap::default(),
+                    ToolTerminalResolver::registered(&HashMap::default()),
                     cx,
                 )
                 .expect("second raw output update should apply");
@@ -15213,11 +15221,13 @@ mod tests {
             );
         });
         cx.update(|cx| {
-            call.update_fields(
-                acp_v1::ToolCallUpdateFields::new().raw_output(serde_json::json!("new raw")),
-                None,
+            call.apply_patch(
+                ToolCallPatch::legacy(
+                    acp_v1::ToolCallUpdateFields::new().raw_output(serde_json::json!("new raw")),
+                    None,
+                ),
                 languages.clone(),
-                &HashMap::default(),
+                ToolTerminalResolver::registered(&HashMap::default()),
                 cx,
             )
             .expect("raw output should update without replacing structured content");
@@ -15227,11 +15237,10 @@ mod tests {
             );
         });
         cx.update(|cx| {
-            call.update_fields(
-                acp_v1::ToolCallUpdateFields::new().content(vec![]),
-                None,
+            call.apply_patch(
+                ToolCallPatch::legacy(acp_v1::ToolCallUpdateFields::new().content(vec![]), None),
                 languages.clone(),
-                &HashMap::default(),
+                ToolTerminalResolver::registered(&HashMap::default()),
                 cx,
             )
             .expect("clearing structured content should apply");
@@ -15244,11 +15253,13 @@ mod tests {
             );
         });
         cx.update(|cx| {
-            call.update_fields(
-                acp_v1::ToolCallUpdateFields::new().content(vec!["replacement".into()]),
-                None,
+            call.apply_patch(
+                ToolCallPatch::legacy(
+                    acp_v1::ToolCallUpdateFields::new().content(vec!["replacement".into()]),
+                    None,
+                ),
                 languages,
-                &HashMap::default(),
+                ToolTerminalResolver::registered(&HashMap::default()),
                 cx,
             )
             .expect("structured content should replace the raw fallback");
@@ -15516,13 +15527,15 @@ mod tests {
             let diff = diff.clone();
             let input = call.raw_input_markdown.clone().expect("input");
             for text in ["input", "input appended", "replacement", ""] {
-                call.update_fields(
-                    acp_v1::ToolCallUpdateFields::new()
-                        .content(content.clone())
-                        .raw_input(json!(text)),
-                    None,
+                call.apply_patch(
+                    ToolCallPatch::legacy(
+                        acp_v1::ToolCallUpdateFields::new()
+                            .content(content.clone())
+                            .raw_input(json!(text)),
+                        None,
+                    ),
                     languages.clone(),
-                    &terminals,
+                    ToolTerminalResolver::registered(&terminals),
                     cx,
                 )
                 .expect("update snapshots");
@@ -15534,16 +15547,18 @@ mod tests {
                 };
                 assert_eq!(block.markdown(), Some(&output));
             }
-            call.update_fields(
-                acp_v1::ToolCallUpdateFields::new().content(vec![
-                    "output".into(),
-                    acp_v1::ToolCallContent::Diff(
-                        acp_v1::Diff::new("second.rs", "new text").old_text("old text"),
-                    ),
-                ]),
-                None,
+            call.apply_patch(
+                ToolCallPatch::legacy(
+                    acp_v1::ToolCallUpdateFields::new().content(vec![
+                        "output".into(),
+                        acp_v1::ToolCallContent::Diff(
+                            acp_v1::Diff::new("second.rs", "new text").old_text("old text"),
+                        ),
+                    ]),
+                    None,
+                ),
                 languages.clone(),
-                &terminals,
+                ToolTerminalResolver::registered(&terminals),
                 cx,
             )
             .expect("same diff text at another path");
@@ -15552,13 +15567,15 @@ mod tests {
             assert_eq!(changed.read(cx).file_path(cx).as_deref(), Some("second.rs"));
             assert_eq!(diff.read(cx).file_path(cx).as_deref(), Some("first.rs"));
 
-            call.update_fields(
-                acp_v1::ToolCallUpdateFields::new()
-                    .content(Vec::new())
-                    .raw_input(serde_json::Value::Null),
-                None,
+            call.apply_patch(
+                ToolCallPatch::legacy(
+                    acp_v1::ToolCallUpdateFields::new()
+                        .content(Vec::new())
+                        .raw_input(serde_json::Value::Null),
+                    None,
+                ),
                 languages.clone(),
-                &terminals,
+                ToolTerminalResolver::registered(&terminals),
                 cx,
             )
             .expect("clear structured content and render a typed null input");
@@ -15567,14 +15584,16 @@ mod tests {
             assert_eq!(call.content().len(), 1);
             assert_eq!(call.content()[0].to_markdown(cx), "raw fallback");
             assert!(
-                call.update_fields(
-                    acp_v1::ToolCallUpdateFields::new().content(vec![
-                        "partial output".into(),
-                        acp_v1::ToolCallContent::Terminal(acp_v1::Terminal::new("missing")),
-                    ]),
-                    None,
+                call.apply_patch(
+                    ToolCallPatch::legacy(
+                        acp_v1::ToolCallUpdateFields::new().content(vec![
+                            "partial output".into(),
+                            acp_v1::ToolCallContent::Terminal(acp_v1::Terminal::new("missing")),
+                        ]),
+                        None,
+                    ),
                     languages,
-                    &terminals,
+                    ToolTerminalResolver::registered(&terminals),
                     cx,
                 )
                 .is_err()
