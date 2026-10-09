@@ -852,7 +852,6 @@ pub struct ProjectPanelSettingsContent {
     pub indent_size: Option<crate::PixelSetting>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
-    /// Gitignored entries are never auto revealed.
     ///
     /// Default: true
     pub auto_reveal_entries: Option<bool>,

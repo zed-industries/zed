@@ -7185,7 +7185,7 @@ impl ProjectPanel {
         &mut self,
         project: Entity<Project>,
         entry_id: ProjectEntryId,
-        skip_ignored: bool,
+        is_auto_reveal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -7195,26 +7195,29 @@ impl ProjectPanel {
             .context("can't reveal a non-existent entry in the project panel")?;
         let worktree = worktree.read(cx);
         let worktree_id = worktree.id();
-        let is_ignored = worktree
+        let entry = worktree
             .entry_for_id(entry_id)
-            .is_none_or(|entry| entry.is_ignored && !entry.is_always_included);
-        if skip_ignored && is_ignored {
-            if self.index_for_entry(entry_id, worktree_id).is_none() {
-                anyhow::bail!("can't reveal an ignored entry in the project panel");
+            .context("can't reveal a non-existent entry in the project panel")?;
+        if is_auto_reveal && entry.is_ignored && !entry.is_always_included {
+            if self.index_for_entry(entry_id, worktree_id).is_some() {
+                self.selection = Some(SelectedEntry {
+                    worktree_id,
+                    entry_id,
+                });
+                self.marked_entries.clear();
+                self.marked_entries.push(SelectedEntry {
+                    worktree_id,
+                    entry_id,
+                });
+                self.autoscroll(cx);
+                cx.notify();
+                return Ok(());
             }
 
-            self.selection = Some(SelectedEntry {
-                worktree_id,
-                entry_id,
-            });
-            self.marked_entries.clear();
-            self.marked_entries.push(SelectedEntry {
-                worktree_id,
-                entry_id,
-            });
-            self.autoscroll(cx);
-            cx.notify();
-            return Ok(());
+            let settings = ProjectPanelSettings::get_global(cx);
+            if settings.hide_gitignore || (settings.hide_hidden && entry.is_hidden) {
+                return Ok(());
+            }
         }
         let is_active_item_file_diff_view = self
             .workspace

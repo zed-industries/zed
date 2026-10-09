@@ -6437,17 +6437,20 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
             "v project_root",
             "    > .git",
             "    v dir_1",
-            "        > gitignored_dir",
+            "        v gitignored_dir",
+            "              file_a.py  <== selected  <== marked",
+            "              file_b.py",
+            "              file_c.py",
             "          file_1.py",
             "          file_2.py",
             "          file_3.py",
             "    v dir_2",
-            "          file_1.py  <== selected  <== marked",
+            "          file_1.py",
             "          file_2.py",
             "          file_3.py",
             "      .gitignore",
         ],
-        "When auto reveal is enabled, a gitignored selected entry should not be revealed in the project panel"
+        "When auto reveal is enabled, an indexed gitignored entry should be revealed in the project panel"
     );
 
     panel.update(cx, |panel, cx| {

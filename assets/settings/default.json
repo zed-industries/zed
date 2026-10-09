@@ -902,7 +902,6 @@
     "indent_size": 20,
     // Whether to reveal it in the project panel automatically,
     // when a corresponding project entry becomes active.
-    // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true,
     // Whether the project panel should open on startup.
     "starts_open": true,
