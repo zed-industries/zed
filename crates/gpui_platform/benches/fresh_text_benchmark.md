@@ -269,6 +269,80 @@ coverage is required. Logs:
 `layout-cache-mode-{0,1}-tree-measured.log`. All measured runs were serial on
 CPU 0, with the same 20 samples / 1 s warmup / 2 s measurement configuration.
 
+### Follow-up text trials
+
+The profile then identified ordinary style conversion and empty text-background
+painting as bounded costs. Separate preserved trials are:
+
+- `2d90309841`: construct the default text Taffy style directly, with a full
+  equality test against GPUI default conversion across rem sizes and fractional
+  scales. Adds no cache or duplicated per-node style.
+- `3b3b555957`: skip background bounds/layers/glyph traversal when every
+  decoration run has no background. Transparent `Some` backgrounds retain the
+  original path. Scene-order tests use bounded synthetic glyph primitives
+  because the no-op test font backend does not rasterize glyphs; they are not
+  pixel-rendering evidence.
+- `d1ed32c243`: retain the first preliminary text measurement only when no
+  payload exists. Subsequent probes still cannot replace existing lines;
+  final layout either reuses compatible lines or publishes its own result.
+  This uses the existing payload, not a second provisional snapshot.
+
+At 96 installed-font panels, before resolved-style caching:
+
+| Stage, cache on | Warm instructions / wall median | First-populated instructions / allocations |
+| --- | --- | --- |
+| Original layout-cache checkpoint | 154.73 M / 11.205 ms | 286.83 M / 91,881 |
+| Default text style | 149.22 M / 10.783 ms | 281.21 M / 91,881 |
+| Skip absent backgrounds | 142.04 M / 10.546 ms | 274.11 M / 91,878 |
+| First-probe reuse | 141.51 M / 10.638 ms | 246.55 M / 79,585 |
+
+The first-probe stage's same-binary cache-off warm result was
+224.98 M instructions / 17.200 ms / 77,556 allocations versus cache-on
+141.51 M / 10.638 ms / 46,684 allocations. First-populated cache-off was
+241.03 M / 78,397 allocations. The population live-heap estimate was
+59,540,272 B off versus 60,342,733 B on.
+
+The broad capture's first-populated wall medians were 17.403 ms off versus
+18.859 ms on. Two subsequent alternating, first-input-only captures were
+18.236/18.413 ms and 18.210/18.356 ms off/on. Their instructions stayed near
+241.2/246.4 M, allocations near 78,397/79,579, and cycles near 95.0/95.8 M.
+The smaller repeatable startup premium is encouraging but is **not** parity:
+instructions remain about 2.2% higher, allocations 1.5% higher, and population
+live heap about 1.3% higher. Do not select a wall-time run to claim a startup win.
+
+First-probe instruction confidence intervals in the broad capture were
+224.89–225.11 M off versus 141.47–141.57 M on for warm updates, and
+241.00–241.07 M off versus 246.39–246.74 M on for startup. Independent static
+review found no concrete first-probe/final-hit counterexample in Taffy 0.14.
+Parent validation passed 404 GPUI tests in each mode, including the preserved
+strict final-hit matrix, plus all nine text smoke inputs. Earlier background
+validation and the final first-probe stack both passed project Clippy.
+
+Artifacts: `default-text-style-mode-{0,1}-measured.log`,
+`empty-background-mode-{0,1}-measured.log`,
+`first-probe-mode-{0,1}-measured.log`, and
+`first-probe-startup-{0,1}-{0,1}.log` under `target/fresh-performance`.
+All use the same benchmark-source hash above. These trials do not establish
+that the implementation beats gpui-fast, and the latest text changes have not
+yet been remeasured on the box-tree groups.
+
+Resolved-style trial `e222a9e06f` subsequently passed 406 GPUI tests in each
+mode, project Clippy and both complete seed-3 benchmark smoke suites. Noto/96
+warm medians were 222.79 M instructions / 16.739 ms / 65,268 allocations off,
+and 138.33 M / 10.172 ms / 34,396 allocations on. First-populated instructions
+were 238.47 M off and 243.64 M on, with 66,111 versus 67,293 allocations.
+Population live-heap estimates were 59,297,941 B off and 60,110,136 B on.
+First-populated wall medians reversed relative to previous captures
+(18.669 ms off, 17.588 ms on); this is not a consistent startup-latency win.
+The extended seed sweep and final WGPU rerun were interrupted and have no
+completed result. Logs are `resolved-style-mode-{0,1}-measured.log`.
+
+The absent-background and resolved-style commits have also been extracted onto
+the Taffy-0.13 mainline-based stack as `00fd54fc4a` and `68b81bf917`.
+Those separate extractions have passed static checks only; their mainline
+runtime and performance validation remains pending. The combined prototype
+measurements above are not standalone mainline attribution.
+
 ## Measured fresh-only checkpoints
 
 These are historical warm-frame results, not measurements of the new
