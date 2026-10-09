@@ -723,6 +723,7 @@ fn measure_text_panel_updates(
     });
     cx.run_until_idle();
     window.update(|window, _| {
+        assert_layout_cache_mode(window);
         let scene = window.rendered_scene();
         let glyph_count = scene.monochrome_sprites.len()
             + scene.subpixel_sprites.len()
@@ -773,6 +774,14 @@ fn measure_text_panel_updates(
         incremental,
         window.update(|window, _| snapshot_glyphs(window)),
         "updated glyph output must match a full redraw of the final model"
+    );
+}
+
+fn assert_layout_cache_mode(window: &Window) {
+    assert_eq!(
+        window.layout_cache_enabled(),
+        std::env::var("GPUI_LAYOUT_CACHE").is_ok_and(|value| value == "1"),
+        "the benchmark must exercise the requested layout-cache mode"
     );
 }
 
@@ -841,6 +850,7 @@ impl FirstPopulatedFrame {
         );
         self.window
             .update(|window, cx| {
+                assert_layout_cache_mode(window);
                 let root = self.root.read(cx);
                 assert_eq!(root.panels.len(), self.panel_count);
                 assert!(root.panels.iter().all(|panel| panel.read(cx).value == 0));
@@ -931,7 +941,7 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
         window.update(|window, _| {
             let scene = window.rendered_scene();
             eprintln!(
-                "first populated panels: {panel_count}, family Noto Sans Mono, viewport {:?}, quads {}, glyphs {}, root renders {}, panel renders {}; GPUI_RETAINED_DISPATCH={:?}, GPUI_VIEW_RETENTION={:?}; requested GPUI_LAYOUT_CACHE={:?} (actual mode unverified)",
+                "first populated panels: {panel_count}, family Noto Sans Mono, viewport {:?}, quads {}, glyphs {}, root renders {}, panel renders {}; GPUI_RETAINED_DISPATCH={:?}, GPUI_VIEW_RETENTION={:?}; requested GPUI_LAYOUT_CACHE={:?}, actual layout cache {}",
                 window.viewport_size(),
                 scene.quads.len(),
                 scene.monochrome_sprites.len() + scene.subpixel_sprites.len() + scene.polychrome_sprites.len(),
@@ -940,6 +950,7 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
                 std::env::var_os("GPUI_RETAINED_DISPATCH"),
                 std::env::var_os("GPUI_VIEW_RETENTION"),
                 std::env::var_os("GPUI_LAYOUT_CACHE"),
+                window.layout_cache_enabled(),
             );
         });
         match before_window.zip(before_population).zip(after_population) {
