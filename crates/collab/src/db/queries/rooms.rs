@@ -1030,6 +1030,22 @@ impl Database {
                     .await?;
 
                 // Unshare projects.
+                let mut unshared_project_ids = Vec::new();
+                let unshared_projects = project::Entity::find()
+                    .filter(
+                        Condition::all()
+                            .add(project::Column::RoomId.eq(room_id))
+                            .add(project::Column::HostConnectionId.eq(connection.id as i32))
+                            .add(
+                                project::Column::HostConnectionServerId
+                                    .eq(connection.owner_id as i32),
+                            ),
+                    )
+                    .all(&*tx)
+                    .await?;
+
+                unshared_project_ids.extend(unshared_projects.iter().map(|project| project.id));
+
                 project::Entity::delete_many()
                     .filter(
                         Condition::all()
@@ -1056,6 +1072,7 @@ impl Database {
                     channel,
                     left_projects,
                     canceled_calls_to_user_ids,
+                    unshared_project_ids,
                     deleted,
                 };
 

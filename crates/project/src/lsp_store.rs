@@ -6029,11 +6029,14 @@ impl LspStore {
     }
 
     fn notify_server_memory_usage(
-        &self,
+        &mut self,
         server: &LanguageServer,
         memory_usage: u64,
         cx: &mut Context<Self>,
     ) {
+        if let Some(status) = self.language_server_statuses.get_mut(&server.server_id()) {
+            status.memory_usage = Some(memory_usage);
+        }
         let message = proto::update_language_server::Variant::MemoryUsageUpdated(
             proto::ServerMemoryUsageUpdated { memory_usage },
         );
@@ -10174,6 +10177,21 @@ impl LspStore {
                     .log_err();
             }
         }
+
+        for (server_id, status) in &self.language_server_statuses {
+            if let Some(memory_usage) = status.memory_usage {
+                downstream_client
+                    .send(proto::UpdateLanguageServer {
+                        project_id,
+                        server_name: Some(status.name.to_string()),
+                        language_server_id: server_id.to_proto(),
+                        variant: Some(proto::update_language_server::Variant::MemoryUsageUpdated(
+                            proto::ServerMemoryUsageUpdated { memory_usage },
+                        )),
+                    })
+                    .log_err();
+            }
+        }
     }
 
     pub fn disconnected_from_host(&mut self) {
@@ -10205,6 +10223,7 @@ impl LspStore {
             .zip(server_capabilities)
             .map(|(server, server_capabilities)| {
                 let server_id = LanguageServerId(server.id as usize);
+                let server_version = server.server_version;
                 self.insert_synced_server_capabilities(server_id, &server_capabilities);
 
                 let name = LanguageServerName::from_proto(server.name);
@@ -10236,8 +10255,8 @@ impl LspStore {
                     LanguageServerStatus {
                         name,
                         language_name: language_name,
-                        server_version: None,
-                        server_readable_version: None,
+                        server_version: server_version.as_ref().map(SharedString::new),
+                        server_readable_version: server_version.as_ref().map(SharedString::new),
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
@@ -17761,6 +17780,36 @@ mod tests {
 
         let _ = child.kill();
         let _ = smol::block_on(child.status());
+    }
+
+    #[gpui::test]
+    async fn test_language_server_snapshot_preserves_server_version(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.set_language_server_statuses_from_proto(
+                project.downgrade(),
+                vec![proto::LanguageServer {
+                    id: 42,
+                    name: "test-language-server".to_string(),
+                    server_version: Some("1.2.3".to_string()),
+                    ..Default::default()
+                }],
+                vec![String::new()],
+                cx,
+            );
+
+            let status = &lsp_store.language_server_statuses[&LanguageServerId(42)];
+            assert_eq!(status.server_version.as_deref(), Some("1.2.3"));
+            assert_eq!(status.server_readable_version.as_deref(), Some("1.2.3"));
+        });
     }
 
     fn inlay_hint_for_test(position: Anchor, label: &str) -> InlayHint {

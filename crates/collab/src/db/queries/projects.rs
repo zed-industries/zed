@@ -125,7 +125,11 @@ impl Database {
             project::Entity::delete_by_id(project_id).exec(&*tx).await?;
             Ok(())
         })
-        .await
+        .await?;
+
+        self.remove_project_language_server_memory_usage(project_id);
+
+        Ok(())
     }
 
     /// Unshares the given project.
@@ -998,7 +1002,8 @@ impl Database {
                         server_version: language_server.server_version,
                     },
                     capabilities: language_server.capabilities,
-                    memory_usage: None,
+                    memory_usage: self
+                        .language_server_memory_usage(project.id, language_server.id as u64),
                 })
                 .collect(),
             path_style,

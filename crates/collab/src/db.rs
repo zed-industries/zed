@@ -89,6 +89,19 @@ impl Database {
             .insert((project_id, language_server_id), memory_usage);
     }
 
+    pub fn remove_language_server_memory_usage(
+        &self,
+        project_id: ProjectId,
+        language_server_id: u64,
+    ) {
+        self.memory_usage.remove(&(project_id, language_server_id));
+    }
+
+    pub fn remove_project_language_server_memory_usage(&self, project_id: ProjectId) {
+        self.memory_usage
+            .retain(|(cached_project_id, _), _| *cached_project_id != project_id);
+    }
+
     pub fn language_server_memory_usage(
         &self,
         project_id: ProjectId,
@@ -584,6 +597,7 @@ pub struct LeftRoom {
     pub channel: Option<channel::Model>,
     pub left_projects: HashMap<ProjectId, LeftProject>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
+    pub unshared_project_ids: Vec<ProjectId>,
     pub deleted: bool,
 }
 
