@@ -1148,23 +1148,51 @@ struct ToolCallPatch {
 }
 
 enum ToolContentPatch {
-    Legacy(Vec<acp_v1::ToolCallContent>),
-    ClientManaged(Vec<acp_v2::ToolCallContent>),
-    Protocol(Vec<acp_v2::ToolCallContent>),
+    V1(Vec<acp_v1::ToolCallContent>),
+    V2(Vec<acp_v2::ToolCallContent>),
+}
+
+#[derive(Clone, Copy)]
+struct ToolTerminalResolver<'a> {
+    terminals: &'a HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+    client_managed_only: bool,
+}
+
+impl<'a> ToolTerminalResolver<'a> {
+    fn registered(terminals: &'a HashMap<acp_v1::TerminalId, Entity<Terminal>>) -> Self {
+        Self {
+            terminals,
+            client_managed_only: false,
+        }
+    }
+
+    fn resolve(self, id: &acp_v1::TerminalId, cx: &App) -> Result<Entity<Terminal>> {
+        let terminal = self
+            .terminals
+            .get(id)
+            .cloned()
+            .ok_or_else(|| anyhow!("Terminal with id `{id}` not found"))?;
+        if self.client_managed_only {
+            // Process ownership survives completion and does not depend on
+            // whether the renderer still has an active PTY.
+            anyhow::ensure!(
+                terminal.read(cx).is_process_backed(),
+                "Client-managed tool content cannot reference an agent-owned display terminal"
+            );
+        }
+        Ok(terminal)
+    }
 }
 
 impl ToolContentPatch {
     fn prepare(
         self,
-        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        terminals: ToolTerminalResolver<'_>,
         cx: &App,
     ) -> Result<Vec<PreparedToolCallContent>> {
         match self {
-            Self::Legacy(content) => PreparedToolCallContent::prepare(content, terminals),
-            Self::ClientManaged(content) => {
-                PreparedToolCallContent::prepare_client_managed(content, terminals, cx)
-            }
-            Self::Protocol(content) => PreparedToolCallContent::prepare_v2(content, terminals),
+            Self::V1(content) => PreparedToolCallContent::prepare(content, terminals, cx),
+            Self::V2(content) => PreparedToolCallContent::prepare_v2(content, terminals, cx),
         }
     }
 }
@@ -1205,22 +1233,13 @@ fn tool_status_from_v1(status: acp_v1::ToolCallStatus) -> Option<acp_v2::ToolCal
 }
 
 impl ToolCallPatch {
-    fn client_managed(mut update: acp_v2::ToolCallUpdate) -> Self {
-        let content =
-            std::mem::take(&mut update.content).map_value(ToolContentPatch::ClientManaged);
-        Self {
-            content,
-            ..Self::protocol(update)
-        }
-    }
-
     fn legacy(fields: acp_v1::ToolCallUpdateFields, meta: Option<acp_v1::Meta>) -> Self {
         Self {
             title: legacy_tool_field(fields.title),
             name: legacy_tool_field(fields.name),
             kind: legacy_tool_field(fields.kind.and_then(tool_kind_from_v1)),
             status: legacy_tool_field(fields.status.and_then(tool_status_from_v1)),
-            content: legacy_tool_field(fields.content.map(ToolContentPatch::Legacy)),
+            content: legacy_tool_field(fields.content.map(ToolContentPatch::V1)),
             locations: legacy_tool_field(
                 fields
                     .locations
@@ -1238,7 +1257,7 @@ impl ToolCallPatch {
             name: update.name,
             kind: update.kind,
             status: update.status,
-            content: update.content.map_value(ToolContentPatch::Protocol),
+            content: update.content.map_value(ToolContentPatch::V2),
             locations: update
                 .locations
                 .map_value(|locations| locations.into_iter().map(Into::into).collect()),
@@ -1262,7 +1281,7 @@ impl ToolCall {
             acp_v2::ToolCallId::new(update.tool_call_id.0),
             ToolCallPatch::legacy(update.fields, update.meta),
             language_registry,
-            terminals,
+            ToolTerminalResolver::registered(terminals),
             cx,
         )?;
         if let Some(status) = status {
@@ -1275,7 +1294,7 @@ impl ToolCall {
         id: acp_v2::ToolCallId,
         patch: ToolCallPatch,
         language_registry: Arc<LanguageRegistry>,
-        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        terminals: ToolTerminalResolver<'_>,
         cx: &mut App,
     ) -> Result<Self> {
         let content = patch
@@ -1437,7 +1456,7 @@ impl ToolCall {
         self.apply_patch(
             ToolCallPatch::legacy(fields, meta),
             language_registry,
-            terminals,
+            ToolTerminalResolver::registered(terminals),
             cx,
         )
     }
@@ -1446,7 +1465,7 @@ impl ToolCall {
         &mut self,
         patch: ToolCallPatch,
         language_registry: Arc<LanguageRegistry>,
-        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        terminals: ToolTerminalResolver<'_>,
         cx: &mut App,
     ) -> Result<()> {
         let legacy_terminal_labels = matches!(&patch.meta, ToolMetadataPatch::Legacy(_));
@@ -2975,7 +2994,8 @@ enum PreparedToolCallContent {
 impl PreparedToolCallContent {
     fn prepare(
         content: Vec<acp_v1::ToolCallContent>,
-        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        terminals: ToolTerminalResolver<'_>,
+        cx: &App,
     ) -> Result<Vec<Self>> {
         let mut prepared = Vec::with_capacity(content.len());
         for content in content {
@@ -2987,10 +3007,7 @@ impl PreparedToolCallContent {
                 acp_v1::ToolCallContent::Terminal(acp_v1::Terminal {
                     terminal_id, meta, ..
                 }) => Self::Terminal {
-                    terminal: terminals
-                        .get(&terminal_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow!("Terminal with id `{terminal_id}` not found"))?,
+                    terminal: terminals.resolve(&terminal_id, cx)?,
                     meta,
                 },
                 _ => continue,
@@ -3002,36 +3019,19 @@ impl PreparedToolCallContent {
 
     fn prepare_v2(
         content: Vec<acp_v2::ToolCallContent>,
-        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        terminals: ToolTerminalResolver<'_>,
+        cx: &App,
     ) -> Result<Vec<Self>> {
         content
             .into_iter()
-            .map(|content| Self::from_v2(content, terminals))
+            .map(|content| Self::from_v2(content, terminals, cx))
             .collect()
-    }
-
-    fn prepare_client_managed(
-        content: Vec<acp_v2::ToolCallContent>,
-        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
-        cx: &App,
-    ) -> Result<Vec<Self>> {
-        let content = Self::prepare_v2(content, terminals)?;
-        for content in &content {
-            if let Self::Terminal { terminal, .. } = content {
-                // Process ownership survives completion and does not depend on
-                // whether the renderer still has an active PTY.
-                anyhow::ensure!(
-                    terminal.read(cx).is_process_backed(),
-                    "Client-managed tool content cannot reference an agent-owned display terminal"
-                );
-            }
-        }
-        Ok(content)
     }
 
     fn from_v2(
         content: acp_v2::ToolCallContent,
-        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        terminals: ToolTerminalResolver<'_>,
+        cx: &App,
     ) -> Result<Self> {
         match content {
             acp_v2::ToolCallContent::Content(content) => Ok(Self::ContentBlock(*content)),
@@ -3039,10 +3039,7 @@ impl PreparedToolCallContent {
             acp_v2::ToolCallContent::Terminal(terminal) => {
                 let terminal_id = acp_v1::TerminalId::new(terminal.terminal_id.0);
                 Ok(Self::Terminal {
-                    terminal: terminals
-                        .get(&terminal_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow!("Terminal with id `{terminal_id}` not found"))?,
+                    terminal: terminals.resolve(&terminal_id, cx)?,
                     meta: terminal.meta,
                 })
             }
@@ -5363,7 +5360,12 @@ impl AcpThread {
         if let Some(patch) = patch {
             let location_updated = !patch.locations.is_undefined();
             let authorization_id = call.authorization_id();
-            let result = call.apply_patch(patch, languages, &self.terminals, cx);
+            let result = call.apply_patch(
+                patch,
+                languages,
+                ToolTerminalResolver::registered(&self.terminals),
+                cx,
+            );
             let detached_id = authorization_id.filter(|id| call.authorization_id() != Some(*id));
             if let Some(id) = detached_id {
                 self.resolve_permission_request(id, RequestPermissionOutcome::Cancelled, cx);
@@ -5450,7 +5452,12 @@ impl AcpThread {
             };
 
             let authorization_id = call.authorization_id();
-            let result = call.apply_patch(patch, language_registry, &self.terminals, cx);
+            let result = call.apply_patch(
+                patch,
+                language_registry,
+                ToolTerminalResolver::registered(&self.terminals),
+                cx,
+            );
             let detached_id = authorization_id.filter(|id| call.authorization_id() != Some(*id));
             if result.is_ok()
                 && let Some(status) = status
@@ -5471,8 +5478,13 @@ impl AcpThread {
                 patch.title.value().is_some(),
                 "title is required for a tool call"
             );
-            let mut call =
-                ToolCall::from_patch(id.clone(), patch, language_registry, &self.terminals, cx)?;
+            let mut call = ToolCall::from_patch(
+                id.clone(),
+                patch,
+                language_registry,
+                ToolTerminalResolver::registered(&self.terminals),
+                cx,
+            )?;
             if let Some(status) = status {
                 call.set_legacy_status(status);
             }
@@ -5495,7 +5507,7 @@ impl AcpThread {
         }
         let id = update.tool_call_id.clone();
         let patch = ToolCallPatch::protocol(update);
-        self.upsert_tool_call_patch_inner(id, patch, cx)
+        self.upsert_tool_call_patch_inner(id, patch, false, cx)
     }
 
     /// In-process updates may reference registered client-managed terminals, but
@@ -5506,14 +5518,15 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let id = update.tool_call_id.clone();
-        let patch = ToolCallPatch::client_managed(update);
-        self.upsert_tool_call_patch_inner(id, patch, cx)
+        let patch = ToolCallPatch::protocol(update);
+        self.upsert_tool_call_patch_inner(id, patch, true, cx)
     }
 
     fn upsert_tool_call_patch_inner(
         &mut self,
         id: acp_v2::ToolCallId,
         patch: ToolCallPatch,
+        client_managed_terminals_only: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let locations_changed = !patch.locations.is_undefined();
@@ -5521,12 +5534,16 @@ impl AcpThread {
             self.report_tool_call_completed(status);
         }
         let languages = self.project.read(cx).languages().clone();
+        let terminals = ToolTerminalResolver {
+            terminals: &self.terminals,
+            client_managed_only: client_managed_terminals_only,
+        };
         if let Some(index) = self.index_for_tool_call(&id) {
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[index] else {
                 unreachable!()
             };
             let authorization_id = call.authorization_id();
-            let result = call.apply_patch(patch, languages, &self.terminals, cx);
+            let result = call.apply_patch(patch, languages, terminals, cx);
             let detached_id = authorization_id.filter(|id| call.authorization_id() != Some(*id));
             if let Some(id) = detached_id {
                 self.resolve_permission_request(id, RequestPermissionOutcome::Cancelled, cx);
@@ -5534,7 +5551,7 @@ impl AcpThread {
             cx.emit(AcpThreadEvent::EntryUpdated(index));
             result?;
         } else {
-            let call = ToolCall::from_patch(id.clone(), patch, languages, &self.terminals, cx)?;
+            let call = ToolCall::from_patch(id.clone(), patch, languages, terminals, cx)?;
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         }
         if locations_changed {
@@ -5556,7 +5573,11 @@ impl AcpThread {
             ..
         } = chunk;
         self.ensure_tool_content_terminal(&content, cx);
-        let content = PreparedToolCallContent::from_v2(content, &self.terminals)?;
+        let content = PreparedToolCallContent::from_v2(
+            content,
+            ToolTerminalResolver::registered(&self.terminals),
+            cx,
+        )?;
         let language_registry = self.project.read(cx).languages().clone();
         let id = tool_call_id;
 
@@ -5568,7 +5589,7 @@ impl AcpThread {
                 id.clone(),
                 ToolCallPatch::protocol(acp_v2::ToolCallUpdate::new(id)),
                 language_registry.clone(),
-                &self.terminals,
+                ToolTerminalResolver::registered(&self.terminals),
                 cx,
             )?;
             call.append_content(content, &language_registry, cx);
@@ -8961,7 +8982,8 @@ mod tests {
             };
             let prepared = PreparedToolCallContent::prepare_v2(
                 vec![make_content("first", "first")],
-                &HashMap::default(),
+                ToolTerminalResolver::registered(&HashMap::default()),
+                cx,
             )
             .expect("prepare content");
             let mut content = ToolCallContent::from_prepared(
@@ -8972,7 +8994,8 @@ mod tests {
             let original = content.markdown().expect("markdown").clone();
             let prepared = PreparedToolCallContent::prepare_v2(
                 vec![make_content("second", "second")],
-                &HashMap::default(),
+                ToolTerminalResolver::registered(&HashMap::default()),
+                cx,
             )
             .expect("prepare update");
             content.update_from_prepared(
@@ -9279,7 +9302,8 @@ mod tests {
                     .expect("unknown content");
             let prepared = PreparedToolCallContent::prepare_v2(
                 vec![acp_v2::ToolCallContent::Diff(diff.clone()), unknown.clone()],
-                &HashMap::default(),
+                ToolTerminalResolver::registered(&HashMap::default()),
+                cx,
             )
             .expect("prepare v2 content");
             let mut content: Vec<_> = prepared
@@ -14122,7 +14146,7 @@ mod tests {
                 "fallback".into(),
                 ToolCallPatch::legacy(acp_v1::ToolCallUpdateFields::new(), None),
                 languages,
-                &thread.terminals,
+                ToolTerminalResolver::registered(&thread.terminals),
                 cx,
             )
             .expect("missing enums use display fallbacks");
