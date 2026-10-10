@@ -521,6 +521,68 @@ impl MarkdownPreviewView {
         .detach();
     }
 
+    /// Opens the source editor for `project_path`, suppressing the automatic
+    /// markdown preview so the file stays in the editor. If a preview for the
+    /// file is already open, it is closed and its source editor is shown, just
+    /// like the preview's "Show Source" action.
+    pub fn open_editor_for_project_path(
+        project_path: ProjectPath,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let existing_preview = workspace.panes().iter().find_map(|pane| {
+            pane.read(cx)
+                .items_of_type::<MarkdownPreviewView>()
+                .find(|preview| {
+                    preview.read(cx).source_project_path(cx).as_ref() == Some(&project_path)
+                })
+        });
+
+        if let Some(preview) = existing_preview {
+            workspace.activate_item(&preview, true, true, window, cx);
+            preview.update(cx, |preview, cx| {
+                preview.close_and_return_to_editor(&CloseAndReturnToEditor, window, cx);
+            });
+            return;
+        }
+
+        let open_buffer = workspace
+            .project()
+            .update(cx, |project, cx| project.open_buffer(project_path, cx));
+
+        cx.spawn_in(window, async move |workspace, mut cx| {
+            let Some(buffer) = open_buffer
+                .await
+                .notify_workspace_async_err(workspace.clone(), &mut cx)
+            else {
+                return;
+            };
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                    // Adding the editor emits `ItemAdded`; suppress its automatic
+                    // preview so the file stays open in the editor.
+                    cx.global_mut::<SuppressedAutoPreviews>()
+                        .0
+                        .insert(editor.entity_id());
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(editor), true, true, None, window, cx);
+                    });
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Returns the project path of the file this preview is rendering, if any.
+    pub fn source_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.active_editor
+            .as_ref()
+            .and_then(|state| Self::project_path_for_active_editor(state.editor.read(cx), cx))
+    }
+
     pub fn is_markdown_file(editor: &Entity<Editor>, cx: &App) -> bool {
         let buffer = editor.read(cx).buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton()
@@ -4032,6 +4094,44 @@ mod tests {
             preview_source_path(cx, &preview).as_ref(),
             rel_path("targeted.md")
         );
+    }
+
+    #[gpui::test]
+    async fn open_editor_for_project_path_keeps_source_when_auto_preview_enabled(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, multi_workspace) =
+            markdown_workspace(cx, json!({ "note.md": "# Note\n" }), false).await;
+        cx.update(|cx| set_auto_preview_enabled(cx, true));
+
+        let project_path = cx.update(|cx| test_project_path(&project, "note.md", cx));
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    MarkdownPreviewView::open_editor_for_project_path(
+                        project_path,
+                        workspace,
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            assert!(
+                workspace.read(cx).active_item_as::<Editor>(cx).is_some(),
+                "the file should stay open in the editor"
+            );
+            assert!(
+                workspace
+                    .read(cx)
+                    .active_item_as::<MarkdownPreviewView>(cx)
+                    .is_none(),
+                "the automatic preview should be suppressed"
+            );
+        });
     }
 
     #[gpui::test]
