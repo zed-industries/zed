@@ -171,6 +171,7 @@ pub(crate) async fn send_fim_request(
     http_client: &Arc<dyn http_client::HttpClient>,
 ) -> Result<(String, String)> {
     if provider == settings::EditPredictionProvider::OpenAiCompatibleApi {
+        // Flash uses a native suffix instead of the Coder markers selected by format inference.
         if let Some(response) =
             deepseek_fim::try_request(settings, prefix, suffix, api_key.clone(), http_client)
                 .await?
@@ -207,9 +208,7 @@ pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
         }
         "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
         "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
-        "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
-        "deepseek-flash" => {
-            // This selects the FIM route; the official API uses a native suffix instead of Coder markers.
+        "deepseek-coder" | "deepseek-coder-v2" | "deepseek-flash" => {
             EditPredictionPromptFormat::DeepseekCoder
         }
         "qwen2.5-coder" | "qwen-coder" | "qwen" => EditPredictionPromptFormat::Qwen,
