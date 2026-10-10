@@ -20,6 +20,7 @@ use std::{
 
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
+    client_inset: Pixels,
     pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
@@ -95,6 +96,7 @@ impl TestWindow {
         };
         Self(Rc::new(Mutex::new(TestWindowState {
             bounds: params.bounds,
+            client_inset: Pixels::ZERO,
             display,
             platform,
             handle,
@@ -341,6 +343,11 @@ impl PlatformWindow for TestWindow {
         WindowBounds::Windowed(self.bounds())
     }
 
+    fn inner_window_bounds(&self) -> WindowBounds {
+        let state = self.0.lock();
+        WindowBounds::Windowed(state.bounds.inset(state.client_inset))
+    }
+
     fn is_maximized(&self) -> bool {
         false
     }
@@ -352,6 +359,10 @@ impl PlatformWindow for TestWindow {
     fn resize(&mut self, size: Size<Pixels>) {
         let mut lock = self.0.lock();
         lock.bounds.size = size;
+    }
+
+    fn set_client_inset(&self, inset: Pixels) {
+        self.0.lock().client_inset = inset;
     }
 
     fn scale_factor(&self) -> f32 {
