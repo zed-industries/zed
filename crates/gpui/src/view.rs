@@ -331,6 +331,7 @@ struct ViewElementCacheKey {
     bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
+    opacity: f32,
 }
 
 #[cfg(not(gpui_hot_reload))]
@@ -542,11 +543,13 @@ fn prepaint_view(
             |element_state, window| {
                 let content_mask = window.content_mask();
                 let text_style = window.text_style();
+                let opacity = window.element_opacity();
 
                 if let Some(mut element_state) = element_state
                     && element_state.cache_key.bounds == bounds
                     && element_state.cache_key.content_mask == content_mask
                     && element_state.cache_key.text_style == text_style
+                    && element_state.cache_key.opacity == opacity
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
                 {
@@ -582,6 +585,7 @@ fn prepaint_view(
                             bounds,
                             content_mask,
                             text_style,
+                            opacity,
                         },
                     },
                 )
