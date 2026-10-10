@@ -605,7 +605,7 @@ fn verify_tree_reuse(config: RandomizedElementTreeConfig, cx: &mut BenchAppConte
     fresh_window.update(|window, _| window.remove_window());
 }
 
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedRandomizedTree/full refresh", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/full refresh", fps = 120)]
 fn cached_full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = cached_input(family, &mut rng);
     let measured = measure_in_window("cached full refresh", &input, cx, |_, window, _| {
@@ -614,7 +614,7 @@ fn cached_full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppCo
     assert!(measured.frames > 0);
 }
 
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedRandomizedTree/leaf style", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/leaf style", fps = 120)]
 fn cached_leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = cached_input(family, &mut rng);
     let frames = measure("cached leaf style", &input, cx, |tree, cx| {
@@ -623,7 +623,7 @@ fn cached_leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppCont
     assert!(frames > 0);
 }
 
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedRandomizedTree/leaf bounds", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/leaf bounds", fps = 120)]
 fn cached_leaf_bounds(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = cached_input(family, &mut rng);
     let frames = measure("cached leaf bounds", &input, cx, |tree, cx| {
@@ -632,7 +632,7 @@ fn cached_leaf_bounds(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppCon
     assert!(frames > 0);
 }
 
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedRandomizedTree/insert-remove", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/insert-remove", fps = 120)]
 fn cached_insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = cached_input(family, &mut rng);
     let mut insert = true;
@@ -650,7 +650,7 @@ fn cached_insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppC
     assert!(frames > 0);
 }
 
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedRandomizedTree/reorder", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/reorder", fps = 120)]
 fn cached_reorder(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = cached_input(family, &mut rng);
     let frames = measure("cached reorder", &input, cx, |tree, cx| {
@@ -825,20 +825,18 @@ fn verify_text_reuse(panel_count: usize, font_family: &'static str, cx: &mut Ben
     let create = |window: &mut Window, cx: &mut gpui::App, force| {
         window.set_force_view_reconstruction(force);
         window.replace_root(cx, |_, cx| {
-            cx.new(|cx| {
-                CachedTextPanelRoot(TextPanelRoot {
-                    panels: (0..panel_count)
-                        .map(|index| {
-                            cx.new(|_| TextPanel {
-                                index,
-                                value: 0,
-                                renders: Rc::new(Cell::new(0)),
-                            })
+            CachedTextPanelRoot(TextPanelRoot {
+                panels: (0..panel_count)
+                    .map(|index| {
+                        cx.new(|_| TextPanel {
+                            index,
+                            value: 0,
+                            renders: Rc::new(Cell::new(0)),
                         })
-                        .collect(),
-                    renders: Rc::new(Cell::new(0)),
-                    font_family: font_family.into(),
-                })
+                    })
+                    .collect(),
+                renders: Rc::new(Cell::new(0)),
+                font_family: font_family.into(),
             })
         })
     };
