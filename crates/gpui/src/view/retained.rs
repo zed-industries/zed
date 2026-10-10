@@ -790,6 +790,11 @@ impl Window {
             let view = retained.view.clone().ok_or(SpliceFallback::MissingView)?;
             let global_id = self.element_id_interner.global_id(retained.element_path);
             let entity = retained.entity;
+            let changes = self
+                .layout_engine
+                .as_ref()
+                .expect("layout engine")
+                .layout_changes();
             let (layout, element) = self.with_view_layout_scope(scope, |window| {
                 window.request_implicit_view_layout(
                     entity,
@@ -815,6 +820,10 @@ impl Window {
             if layout != old_id || size != old_size || output != old_output {
                 return Err(SpliceFallback::LayoutSize);
             }
+            self.layout_engine
+                .as_mut()
+                .expect("layout engine")
+                .accept_internal_layout_changes(changes);
             self.view_store
                 .retained_mut(child)
                 .layout
@@ -1318,6 +1327,137 @@ mod tests {
             fallbacks[super::SpliceFallback::LayoutSize as usize] > 0,
             "an intrinsic size change must fall back even with an identical root style"
         );
+    }
+
+    #[crate::test]
+    fn retained_root_skips_color_layout_but_resizes_and_moves_siblings(cx: &mut TestAppContext) {
+        let leaf = cx.new(|_| ImplicitLeaf {
+            renders: Rc::default(),
+            width: px(20.),
+            margin: px(0.),
+            color: 0xff0000,
+            intrinsic: false,
+        });
+        let sibling = cx.new(|_| ImplicitLeaf {
+            renders: Rc::default(),
+            width: px(20.),
+            margin: px(0.),
+            color: 0x00ff00,
+            intrinsic: false,
+        });
+        let branch = cx.new(|_| ImplicitBranch {
+            renders: Rc::default(),
+            children: vec![leaf.clone(), sibling.clone()],
+        });
+        let window = cx.add_window(|window, _| {
+            window.set_implicit_view_splicing(true);
+            ImplicitRoot(branch)
+        });
+        let draw = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                if !window.implicit_view_splicing {
+                    return None;
+                }
+                let occurrence = window.view_store.by_entity[&sibling.entity_id()][0];
+                let bounds = window
+                    .view_store
+                    .state(occurrence)
+                    .expect("sibling state")
+                    .cache_key
+                    .bounds;
+                Some((window.take_view_reuse_stats(), bounds))
+            })
+            .expect("draw")
+        };
+        let Some((_, initial_bounds)) = draw(cx) else {
+            return;
+        };
+        leaf.update(cx, |leaf, cx| {
+            leaf.color ^= 0xffffff;
+            cx.notify();
+        });
+        let (stats, unchanged_bounds) = draw(cx).expect("retained color frame");
+        assert_eq!(stats.root_layout_computations, 0);
+        assert!(stats.frames > 0);
+        assert_eq!(stats.root_layout_skips, stats.frames);
+        assert_eq!(unchanged_bounds, initial_bounds);
+        leaf.update(cx, |leaf, cx| {
+            leaf.width = px(30.);
+            cx.notify();
+        });
+        let (stats, moved_bounds) = draw(cx).expect("retained resize frame");
+        assert_eq!(stats.root_layout_computations, 1);
+        assert_eq!(moved_bounds.origin.x, initial_bounds.origin.x + px(10.));
+        assert_eq!(moved_bounds.size, initial_bounds.size);
+    }
+
+    struct TextPanel {
+        renders: Rc<Cell<usize>>,
+        alternate: bool,
+    }
+
+    impl Render for TextPanel {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .w(px(100.))
+                .h(px(20.))
+                .child(if self.alternate { "Panel 1" } else { "Panel 0" })
+        }
+    }
+
+    struct TextPanels(Vec<Entity<TextPanel>>);
+
+    impl Render for TextPanels {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().flex().children(self.0.clone())
+        }
+    }
+
+    #[crate::test]
+    fn retained_text_panels_keep_unchanged_bounds_without_root_layout(cx: &mut TestAppContext) {
+        let renders = Rc::new(Cell::new(0));
+        let panels = (0..8)
+            .map(|_| {
+                cx.new(|_| TextPanel {
+                    renders: renders.clone(),
+                    alternate: false,
+                })
+            })
+            .collect::<Vec<_>>();
+        let window = cx.add_window(|window, _| {
+            window.set_implicit_view_splicing(true);
+            TextPanels(panels.clone())
+        });
+        let retained = cx
+            .update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.take_view_reuse_stats();
+                window.implicit_view_splicing
+            })
+            .expect("initial text frame");
+        if !retained {
+            return;
+        }
+        let initial_renders = renders.get();
+        for panel in panels.iter().take(2) {
+            panel.update(cx, |panel, cx| {
+                panel.alternate = true;
+                cx.notify();
+            });
+        }
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(window.view_reuse_stats().root_layout_computations, 0);
+            assert!(window.view_reuse_stats().frames > 0);
+            assert_eq!(
+                window.view_reuse_stats().root_layout_skips,
+                window.view_reuse_stats().frames
+            );
+        })
+        .expect("updated text frame");
+        assert_eq!(renders.get(), initial_renders + 2);
     }
 
     struct ProbeGlobal(u32);

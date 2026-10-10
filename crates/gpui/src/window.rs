@@ -1376,6 +1376,8 @@ impl Drop for RenderPhaseTimer {
 #[expect(missing_docs)]
 pub struct ViewReuseStats {
     pub frames: usize,
+    pub root_layout_computations: usize,
+    pub root_layout_skips: usize,
     /// Actual element callbacks, in request-layout, prepaint, paint order.
     pub phase_element_visits: [usize; 3],
     /// Cached boundary callbacks for hits; retained descendants have zero visits.
@@ -1566,6 +1568,7 @@ pub struct Window {
     pub(crate) view_splicing: bool,
     pub(crate) implicit_view_splicing: bool,
     root_view_changed: bool,
+    window_root_layout: Option<LayoutId>,
     retained_a11y_active: bool,
     retained_font_generation: Option<usize>,
     retained_input_changed: bool,
@@ -2501,6 +2504,7 @@ impl Window {
                 .is_ok_and(|value| value == "all")
                 && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1"),
             root_view_changed: false,
+            window_root_layout: None,
             retained_a11y_active: false,
             retained_font_generation: None,
             retained_input_changed: false,
@@ -4518,7 +4522,9 @@ impl Window {
         drop(timer);
         #[cfg(feature = "bench-support")]
         let timer = RenderPhaseTimer::start(RenderPhase::RootPrepaint);
+        self.window_root_layout = Some(root_layout_id);
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+        self.window_root_layout = None;
         #[cfg(feature = "bench-support")]
         drop(timer);
 
@@ -6292,7 +6298,17 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let mut layout_engine = self.layout_engine.take().unwrap();
-        layout_engine.compute_layout(layout_id, available_space, self, cx);
+        if self.window_root_layout == Some(layout_id) {
+            layout_engine.compute_window_root_layout(
+                layout_id,
+                available_space,
+                self.implicit_view_splicing && !self.refreshing,
+                self,
+                cx,
+            );
+        } else {
+            layout_engine.compute_layout(layout_id, available_space, self, cx);
+        }
         self.layout_engine = Some(layout_engine);
     }
 

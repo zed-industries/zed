@@ -315,6 +315,8 @@ pub struct TaffyLayoutEngine {
     retained: Option<Box<RetainedLayouts>>,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
+    layout_changes: u64,
+    window_root: Option<(LayoutId, Size<AvailableSpace>, f32, u64)>,
 }
 
 #[derive(Clone, Copy)]
@@ -346,6 +348,8 @@ impl TaffyLayoutEngine {
             retained: None,
             computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
+            layout_changes: 0,
+            window_root: None,
         }
     }
 
@@ -373,6 +377,51 @@ impl TaffyLayoutEngine {
 
     pub(crate) fn retained_output(&self, id: LayoutId) -> Option<taffy::LayoutOutput> {
         self.retained.as_ref()?.outputs.get(&id.0).copied()
+    }
+
+    pub(crate) fn layout_changes(&self) -> u64 {
+        self.layout_changes
+    }
+
+    pub(crate) fn accept_internal_layout_changes(&mut self, before: u64) {
+        // Only a contiguous span of validated writes can advance the root's
+        // frontier. An earlier parent-facing write must still force root layout.
+        if let Some((_, _, _, accepted)) = self.window_root.as_mut()
+            && *accepted >= before
+        {
+            *accepted = self.layout_changes;
+        }
+    }
+
+    pub(crate) fn compute_window_root_layout(
+        &mut self,
+        id: LayoutId,
+        available_space: Size<AvailableSpace>,
+        allow_skip: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let scale_factor = window.scale_factor();
+        if allow_skip
+            && self.retained.is_some()
+            && self.window_root == Some((id, available_space, scale_factor, self.layout_changes))
+            && self.cache.as_ref().is_some_and(|cache| {
+                cache.font_generation == Some(window.text_system().font_generation())
+            })
+        {
+            self.retain_subtree(id);
+            #[cfg(any(test, feature = "bench-support"))]
+            {
+                window.view_reuse_stats.root_layout_skips += 1;
+            }
+            return;
+        }
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            window.view_reuse_stats.root_layout_computations += 1;
+        }
+        self.compute_layout(id, available_space, window, cx);
+        self.window_root = Some((id, available_space, scale_factor, self.layout_changes));
     }
 
     pub(crate) fn retained_geometry_unchanged(
@@ -523,6 +572,8 @@ impl TaffyLayoutEngine {
                                 .set_node_context(id.0, None)
                                 .expect(EXPECT_MESSAGE);
                             self.taffy.remove(id.0).expect(EXPECT_MESSAGE);
+                            self.absolute_layout.remove(id.0.into());
+                            self.layout_changes += 1;
                             if let Some(retained) = self.retained.as_mut() {
                                 retained.layouts.remove(&id.0);
                                 retained.inputs.remove(&id.0);
@@ -548,7 +599,11 @@ impl TaffyLayoutEngine {
         } else {
             self.taffy.clear();
         }
-        self.advance_layout_epoch();
+        // Retained bounds survive frame teardown. Root computes invalidate the
+        // whole epoch; in-place computes invalidate only the subtree they change.
+        if self.retained.is_none() {
+            self.advance_layout_epoch();
+        }
         self.computed_layouts.clear();
         if let Some(retained) = self.retained.as_mut() {
             retained.previous_layouts.clear();
@@ -581,6 +636,7 @@ impl TaffyLayoutEngine {
         let id = if let Some(id) = existing {
             if self.taffy.style(id.0).expect(EXPECT_MESSAGE) != &style {
                 self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+                self.layout_changes += 1;
             }
             if !self
                 .taffy
@@ -590,9 +646,11 @@ impl TaffyLayoutEngine {
                 self.taffy
                     .set_children(id.0, LayoutId::to_taffy_slice(children))
                     .expect(EXPECT_MESSAGE);
+                self.layout_changes += 1;
             }
             id
         } else {
+            self.layout_changes += 1;
             let id = self.taffy.new_leaf(style).expect(EXPECT_MESSAGE);
             if !children.is_empty() {
                 // Unlike new_with_children, set_children detaches previous parents.
@@ -632,6 +690,7 @@ impl TaffyLayoutEngine {
             self.taffy
                 .set_node_context(id.0, context)
                 .expect(EXPECT_MESSAGE);
+            self.layout_changes += 1;
         }
         id
     }
@@ -733,12 +792,14 @@ impl TaffyLayoutEngine {
                 **previous = measure;
                 if !carried {
                     self.taffy.mark_dirty(id.0).expect(EXPECT_MESSAGE);
+                    self.layout_changes += 1;
                 }
             } else {
                 measure.reset();
                 self.taffy
                     .set_node_context(id.0, Some(NodeContext::Text(Box::new(measure))))
                     .expect(EXPECT_MESSAGE);
+                self.layout_changes += 1;
             }
             id
         } else {
@@ -776,7 +837,10 @@ impl TaffyLayoutEngine {
             style.size.height =
                 taffy::style::Dimension::length(round_to_device_pixel(size.height.0, scale_factor));
         }
-        self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+        if self.taffy.style(id.0).expect(EXPECT_MESSAGE) != &style {
+            self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+            self.layout_changes += 1;
+        }
     }
 
     // Used to understand performance
@@ -869,6 +933,7 @@ impl TaffyLayoutEngine {
                             && measure.refresh_fonts(generation)
                         {
                             self.taffy.mark_dirty(id.0).expect(EXPECT_MESSAGE);
+                            self.layout_changes += 1;
                         }
                     }
                 }
@@ -883,6 +948,7 @@ impl TaffyLayoutEngine {
             // A root may still have a parent from the previous frame. Preserve
             // current-frame parentage when a custom element computes a subtree.
             self.taffy.remove_child(parent, id.0).expect(EXPECT_MESSAGE);
+            self.layout_changes += 1;
         }
         // Leaving this here until we have a better instrumentation approach.
         // println!("Laying out {} children", self.count_all_children(id)?);
@@ -906,7 +972,16 @@ impl TaffyLayoutEngine {
         }
         // A speculative child may have populated absolute bounds before its
         // containing root redistributes flex space, even on that root's first pass.
-        self.advance_layout_epoch();
+        if input.is_some() {
+            let stack = &mut self.layout_bounds_scratch_space;
+            stack.push(id);
+            while let Some(node) = stack.pop() {
+                self.absolute_layout.remove(node.0.into());
+                stack.extend(self.taffy.child_ids(node.0).map(LayoutId));
+            }
+        } else {
+            self.advance_layout_epoch();
+        }
 
         let scale_factor = window.scale_factor();
 
