@@ -493,6 +493,22 @@ pub(crate) struct LineLayoutIndex {
     wrapped_lines_by_hash_index: usize,
 }
 
+impl LineLayoutIndex {
+    pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
+        Self {
+            font_generation: new.font_generation,
+            lines_index: self.lines_index - old.lines_index + new.lines_index,
+            wrapped_lines_index: self.wrapped_lines_index - old.wrapped_lines_index
+                + new.wrapped_lines_index,
+            lines_by_hash_index: self.lines_by_hash_index - old.lines_by_hash_index
+                + new.lines_by_hash_index,
+            wrapped_lines_by_hash_index: self.wrapped_lines_by_hash_index
+                - old.wrapped_lines_by_hash_index
+                + new.wrapped_lines_by_hash_index,
+        }
+    }
+}
+
 impl LineLayoutCache {
     pub fn new(
         platform_text_system: Arc<dyn PlatformTextSystem>,

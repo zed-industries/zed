@@ -97,6 +97,20 @@ pub(crate) struct ReusedSubtree {
 }
 
 impl ReusedSubtree {
+    pub(crate) fn node_mapping(old: DispatchNodeId, new: DispatchNodeId) -> Self {
+        Self {
+            old_range: old.0..old.0 + 1,
+            new_range: new.0..new.0 + 1,
+            contains_focus: false,
+        }
+    }
+
+    pub(crate) fn remap_node_id(&self, node_id: DispatchNodeId) -> Option<DispatchNodeId> {
+        self.old_range
+            .contains(&node_id.0)
+            .then(|| DispatchNodeId(node_id.0 - self.old_range.start + self.new_range.start))
+    }
+
     pub fn refresh_node_id(&self, node_id: DispatchNodeId) -> DispatchNodeId {
         debug_assert!(
             self.old_range.contains(&node_id.0),
@@ -261,13 +275,15 @@ impl DispatchTree {
         target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
     }
 
-    pub fn reuse_subtree(
+    pub(crate) fn reuse_subtree(
         &mut self,
         old_range: Range<usize>,
         source: &mut Self,
         focus: Option<FocusId>,
+        mut remap_parent: impl FnMut(DispatchNodeId) -> Option<DispatchNodeId>,
     ) -> ReusedSubtree {
         let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
+        let original_node = self.active_node_id();
 
         let mut contains_focus = false;
         let mut source_stack = vec![];
@@ -288,6 +304,11 @@ impl DispatchTree {
                 }
             }
 
+            if source_stack.is_empty()
+                && let Some(parent) = source_node.parent.and_then(&mut remap_parent)
+            {
+                self.set_active_node(parent);
+            }
             source_stack.push(source_node_id);
             if source_node.focus_id.is_some() && source_node.focus_id == focus {
                 contains_focus = true;
@@ -298,6 +319,13 @@ impl DispatchTree {
         while !source_stack.is_empty() {
             source_stack.pop();
             self.pop_node();
+        }
+        if let Some(original_node) = original_node {
+            self.set_active_node(original_node);
+        } else {
+            while self.active_node_id().is_some() {
+                self.pop_node();
+            }
         }
 
         ReusedSubtree {
@@ -649,6 +677,48 @@ mod tests {
             Rc::new(RefCell::new(Keymap::new(bindings))),
             Rc::new(registry),
         )
+    }
+
+    #[test]
+    fn replay_fragments_remap_external_parents() {
+        let mut source = test_dispatch_tree(Vec::new());
+        let old_root = source.push_node();
+        let old_parent = source.push_node();
+        let old_child = source.push_node();
+        source.push_node();
+        source.pop_node();
+        source.pop_node();
+        source.push_node();
+        source.pop_node();
+        source.pop_node();
+        source.push_node();
+        source.pop_node();
+        source.pop_node();
+
+        let mut target = test_dispatch_tree(Vec::new());
+        let prefix = target.reuse_subtree(0..3, &mut source, None, |_| None);
+        let new_child = prefix.refresh_node_id(old_child);
+        target.set_active_node(new_child);
+        target.push_node();
+        target.push_node();
+        target.pop_node();
+        target.pop_node();
+        let suffix = target.reuse_subtree(4..6, &mut source, None, |parent| {
+            prefix.remap_node_id(parent)
+        });
+        assert_eq!(
+            target
+                .node(suffix.refresh_node_id(super::DispatchNodeId(4)))
+                .parent,
+            Some(prefix.refresh_node_id(old_parent)),
+        );
+        assert_eq!(
+            target
+                .node(suffix.refresh_node_id(super::DispatchNodeId(5)))
+                .parent,
+            Some(prefix.refresh_node_id(old_root)),
+        );
+        assert_eq!(target.active_node_id(), Some(new_child));
     }
 
     struct PendingInputTestView {
