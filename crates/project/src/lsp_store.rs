@@ -318,7 +318,32 @@ enum DocumentSelectorPath {
     Unknown,
     /// The document has no file system path, so no `pattern` filter matches it.
     Absent,
-    Present(PathBuf),
+    /// The absolute path of the document with `/` separators, in the path style of the host it
+    /// belongs to, which differs from this machine's for remote projects.
+    Present { path: String, path_style: PathStyle },
+}
+
+impl DocumentSelectorPath {
+    fn for_file(file: &File, cx: &App) -> Self {
+        Self::present(
+            &file.abs_path(cx).to_string_lossy(),
+            file.worktree.read(cx).path_style(),
+        )
+    }
+
+    fn present(path: &str, path_style: PathStyle) -> Self {
+        Self::Present {
+            path: path_with_slashes(path, path_style),
+            path_style,
+        }
+    }
+}
+
+fn path_with_slashes(path: &str, path_style: PathStyle) -> String {
+    match path_style {
+        PathStyle::Windows => path.replace('\\', "/"),
+        PathStyle::Unix => path.to_string(),
+    }
 }
 
 pub struct LocalLspStore {
@@ -6057,7 +6082,7 @@ impl LspStore {
         let buffer = buffer.read(cx);
         let language = buffer.language().map(|language| language.name());
         let path = File::from_dyn(buffer.file()).map_or(DocumentSelectorPath::Unknown, |file| {
-            DocumentSelectorPath::Present(file.abs_path(cx))
+            DocumentSelectorPath::for_file(file, cx)
         });
         let context = self.remote_document_selector_context(server_id, language.as_ref(), path);
         remote_text_document_capabilities_match(
@@ -14991,7 +15016,7 @@ fn document_selector_context_for_buffer(
     cx: &App,
 ) -> DocumentSelectorContext {
     let path = File::from_dyn(buffer.file()).map_or(DocumentSelectorPath::Absent, |file| {
-        DocumentSelectorPath::Present(file.abs_path(cx))
+        DocumentSelectorPath::for_file(file, cx)
     });
     DocumentSelectorContext {
         language_id: buffer
@@ -15039,8 +15064,8 @@ fn document_selector_matches(
             match &context.path {
                 DocumentSelectorPath::Unknown => {}
                 DocumentSelectorPath::Absent => return false,
-                DocumentSelectorPath::Present(path) => {
-                    if !document_filter_pattern_matches(pattern, path) {
+                DocumentSelectorPath::Present { path, path_style } => {
+                    if !document_filter_pattern_matches(pattern, path, *path_style) {
                         return false;
                     }
                 }
@@ -15051,40 +15076,70 @@ fn document_selector_matches(
     })
 }
 
-fn document_filter_pattern_matcher(
-    pattern: &lsp::GlobPattern,
-) -> Result<(Option<PathBuf>, GlobMatcher)> {
-    let (base_path, pattern) = match pattern {
+fn document_filter_glob(pattern: &lsp::GlobPattern) -> (Option<&lsp::Uri>, &str) {
+    match pattern {
         lsp::GlobPattern::String(pattern) => (None, pattern),
         lsp::GlobPattern::Relative(relative_pattern) => {
             let base_uri = match &relative_pattern.base_uri {
                 OneOf::Left(workspace_folder) => &workspace_folder.uri,
                 OneOf::Right(base_uri) => base_uri,
             };
-            let base_path = base_uri
-                .to_file_path()
-                .map_err(|()| anyhow!("relative pattern base URI {base_uri} is not a file path"))?;
-            (Some(base_path), &relative_pattern.pattern)
+            (Some(base_uri), &relative_pattern.pattern)
         }
-    };
-    // In LSP glob patterns, `*` and `?` never match a path separator.
-    let matcher = GlobBuilder::new(pattern)
-        .literal_separator(true)
-        .build()?
-        .compile_matcher();
-    Ok((base_path, matcher))
+    }
 }
 
-fn document_filter_pattern_matches(pattern: &lsp::GlobPattern, path: &Path) -> bool {
-    let Some((base_path, matcher)) = document_filter_pattern_matcher(pattern).log_err() else {
+fn document_filter_glob_matcher(glob: &str) -> Result<GlobMatcher> {
+    // In LSP glob patterns, `*` and `?` never match a path separator.
+    Ok(GlobBuilder::new(glob)
+        .literal_separator(true)
+        .build()?
+        .compile_matcher())
+}
+
+fn validate_document_filter_pattern(pattern: &lsp::GlobPattern) -> Result<()> {
+    let (base_uri, glob) = document_filter_glob(pattern);
+    if let Some(base_uri) = base_uri {
+        anyhow::ensure!(
+            base_uri.scheme() == "file",
+            "relative pattern base URI {base_uri} is not a file URI"
+        );
+    }
+    document_filter_glob_matcher(glob)?;
+    Ok(())
+}
+
+fn document_filter_pattern_matches(
+    pattern: &lsp::GlobPattern,
+    path: &str,
+    path_style: PathStyle,
+) -> bool {
+    let (base_uri, glob) = document_filter_glob(pattern);
+    let Some(matcher) = document_filter_glob_matcher(glob).log_err() else {
         return false;
     };
-    match base_path {
-        Some(base_path) => path
-            .strip_prefix(&base_path)
-            .is_ok_and(|relative_path| matcher.is_match(relative_path)),
-        None => matcher.is_match(path),
-    }
+    let Some(base_uri) = base_uri else {
+        return matcher.is_match(path);
+    };
+
+    // The base URI is on the same host as the document, so it is read in the same path style.
+    let Ok(base_path) = base_uri.to_file_path_ext(path_style) else {
+        return false;
+    };
+    let base_path = path_with_slashes(&base_path.to_string_lossy(), path_style);
+    let base_path = base_path.trim_end_matches('/');
+    let Some(path_prefix) = path.get(..base_path.len()) else {
+        return false;
+    };
+    let base_path_matches = match path_style {
+        // Windows paths are case-insensitive, and URIs often carry lowercase drive letters.
+        PathStyle::Windows => path_prefix.eq_ignore_ascii_case(base_path),
+        PathStyle::Unix => path_prefix == base_path,
+    };
+    base_path_matches
+        && path[base_path.len()..]
+            .strip_prefix('/')
+            .is_some_and(|relative_path| matcher.is_match(relative_path))
 }
 
 fn remote_text_document_capabilities_match(
@@ -17698,7 +17753,7 @@ mod tests {
             Some("toml"),
             lsp::GlobPattern::String("**/Project.toml".to_string()),
         );
-        let present = |path: &str| DocumentSelectorPath::Present(PathBuf::from(path));
+        let present = |path: &str| DocumentSelectorPath::present(path, PathStyle::local());
 
         assert!(document_selector_matches(
             selector.as_ref(),
@@ -17736,7 +17791,7 @@ mod tests {
         let selector =
             pattern_selector(None, lsp::GlobPattern::String("**/root/*.toml".to_string()));
         let context =
-            |path: &str| toml_file_context(DocumentSelectorPath::Present(PathBuf::from(path)));
+            |path: &str| toml_file_context(DocumentSelectorPath::present(path, PathStyle::local()));
 
         assert!(document_selector_matches(
             selector.as_ref(),
@@ -17758,7 +17813,7 @@ mod tests {
             }),
         );
         let context =
-            |path: &str| toml_file_context(DocumentSelectorPath::Present(PathBuf::from(path)));
+            |path: &str| toml_file_context(DocumentSelectorPath::present(path, PathStyle::local()));
 
         assert!(document_selector_matches(
             selector.as_ref(),
@@ -17772,6 +17827,57 @@ mod tests {
             selector.as_ref(),
             &context(util::path!("/root/Project.toml")),
         ));
+    }
+
+    #[test]
+    fn document_selector_pattern_matches_paths_in_the_host_path_style() {
+        // Remote clients match the paths of hosts with another path style than their own.
+        let windows_context =
+            |path: &str| toml_file_context(DocumentSelectorPath::present(path, PathStyle::Windows));
+        let absolute_selector = pattern_selector(
+            None,
+            lsp::GlobPattern::String("C:/repo/**/Project.toml".to_string()),
+        );
+        assert!(document_selector_matches(
+            absolute_selector.as_ref(),
+            &windows_context(r"C:\repo\sub\Project.toml"),
+        ));
+        assert!(!document_selector_matches(
+            absolute_selector.as_ref(),
+            &windows_context(r"D:\repo\sub\Project.toml"),
+        ));
+
+        let relative_selector = pattern_selector(
+            None,
+            lsp::GlobPattern::Relative(lsp::RelativePattern {
+                base_uri: OneOf::Right("file:///c%3A/repo".parse().unwrap()),
+                pattern: "sub/*.toml".to_string(),
+            }),
+        );
+        assert!(
+            document_selector_matches(
+                relative_selector.as_ref(),
+                &windows_context(r"C:\repo\sub\Project.toml"),
+            ),
+            "the base URI must be read in the host path style, ignoring the drive letter case",
+        );
+        assert!(!document_selector_matches(
+            relative_selector.as_ref(),
+            &windows_context(r"C:\repository\sub\Project.toml"),
+        ));
+
+        let unix_context = toml_file_context(DocumentSelectorPath::present(
+            r"/repo/sub\Project.toml",
+            PathStyle::Unix,
+        ));
+        assert!(
+            !document_selector_matches(
+                pattern_selector(None, lsp::GlobPattern::String("**/sub/*.toml".to_string()))
+                    .as_ref(),
+                &unix_context,
+            ),
+            "backslashes are not separators in Unix paths",
+        );
     }
 
     fn rename_registrations(
