@@ -194,6 +194,7 @@ struct ServerMetadata {
     server_version: Option<SharedString>,
     binary_display_path: Option<SharedString>,
     process_id: Option<u32>,
+    memory_usage: Option<u64>,
 }
 
 impl ServerInfo {
@@ -288,6 +289,7 @@ impl LanguageServerState {
                                         tooltip_for_server_binary(binary, path_style)
                                     }),
                                     process_id: status.process_id,
+                                    memory_usage: status.memory_usage,
                                 },
                             )
                         })
@@ -388,6 +390,7 @@ impl LanguageServerState {
                 server_version,
                 binary_display_path,
                 process_id,
+                memory_usage,
             } = server_metadata
                 .get(&server_info.id)
                 .cloned()
@@ -607,8 +610,10 @@ impl LanguageServerState {
                             let server_message = server_message.clone();
                             let process_memory_cache = process_memory_cache.clone();
                             move |_, cx| {
-                                let memory_usage = process_id.map(|pid| {
-                                    process_memory_cache.borrow_mut().get_memory_usage(pid)
+                                let memory_usage = memory_usage.or_else(|| {
+                                    process_id.map(|pid| {
+                                        process_memory_cache.borrow_mut().get_memory_usage(pid)
+                                    })
                                 });
 
                                 let memory_label = memory_usage.map(|bytes| {
@@ -1055,6 +1060,15 @@ impl LspButton {
                 });
                 updated = true;
             }
+            LspStoreEvent::LanguageServerUpdate {
+                message:
+                    proto::update_language_server::Variant::MetadataUpdated(_)
+                    | proto::update_language_server::Variant::MemoryUsageUpdated(_),
+                ..
+            } => {
+                updated = true;
+            }
+
             LspStoreEvent::LanguageServerRemoved(server_id) => {
                 self.server_state.update(cx, |state, _| {
                     state.language_servers.remove_server(*server_id);
@@ -1258,15 +1272,22 @@ impl LspButton {
                 lsp_button
                     .update_in(cx, |lsp_button, window, cx| {
                         lsp_button.regenerate_items(cx);
-                        let menu = ContextMenu::build(window, cx, |menu, _, cx| {
-                            state.update(cx, |state, cx| state.fill_menu(menu, cx))
-                        });
-                        lsp_button.lsp_menu = Some(menu.clone());
-                        lsp_button.popover_menu_handle.refresh_menu(
-                            window,
-                            cx,
-                            Rc::new(move |_, _| Some(menu.clone())),
-                        );
+
+                        if let Some(menu) = lsp_button.lsp_menu.clone() {
+                            menu.update(cx, |menu, cx| menu.rebuild(window, cx));
+                        } else {
+                            let menu =
+                                ContextMenu::build_persistent(window, cx, move |menu, _, cx| {
+                                    state.update(cx, |state, cx| state.fill_menu(menu, cx))
+                                });
+                            lsp_button.lsp_menu = Some(menu.clone());
+                            lsp_button.popover_menu_handle.refresh_menu(
+                                window,
+                                cx,
+                                Rc::new(move |_, _| Some(menu.clone())),
+                            );
+                        }
+
                         cx.notify();
                     })
                     .ok();

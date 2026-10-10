@@ -107,6 +107,7 @@ zed_credentials_provider.workspace = true
 zeroize.workspace = true
 zlog.workspace = true
 ztracing.workspace = true
+sysinfo.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

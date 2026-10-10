@@ -12,6 +12,7 @@ pub struct Model {
     pub language_name: Option<String>,
     pub capabilities: String,
     pub worktree_id: Option<i64>,
+    pub server_version: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

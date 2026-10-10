@@ -173,6 +173,7 @@ CREATE TABLE "language_servers" (
     "language_name" VARCHAR,
     "capabilities" TEXT NOT NULL,
     "worktree_id" BIGINT,
+    "server_version" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 

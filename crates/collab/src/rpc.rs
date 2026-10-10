@@ -1511,11 +1511,15 @@ async fn rejoin_room(
     let room;
     let channel;
     {
-        let mut rejoined_room = session
-            .db()
-            .await
+        let db = session.db().await;
+        let mut rejoined_room = db
             .rejoin_room(request, session.user_id(), session.connection_id)
             .await?;
+
+        for project_id in &rejoined_room.deleted_project_ids {
+            db.remove_project_language_server_memory_usage(*project_id);
+        }
+        drop(db);
 
         response.send(proto::RejoinRoomResponse {
             room: Some(rejoined_room.room.clone()),
@@ -1537,6 +1541,29 @@ async fn rejoin_room(
                 .map(|rejoined_project| rejoined_project.to_proto())
                 .collect(),
         })?;
+
+        for project in &rejoined_room.rejoined_projects {
+            for server in &project.language_servers {
+                if let Some(memory_usage) = server.memory_usage {
+                    session
+                        .peer
+                        .send(
+                            session.connection_id,
+                            proto::UpdateLanguageServer {
+                                project_id: project.id.to_proto(),
+                                server_name: Some(server.server.name.clone()),
+                                language_server_id: server.server.id,
+                                variant: Some(
+                                    proto::update_language_server::Variant::MemoryUsageUpdated(
+                                        proto::ServerMemoryUsageUpdated { memory_usage },
+                                    ),
+                                ),
+                            },
+                        )
+                        .trace_err();
+                }
+            }
+        }
         room_updated(&rejoined_room.room, &session.peer);
 
         for project in &rejoined_room.reshared_projects {
@@ -2134,6 +2161,20 @@ async fn join_project(
     }
 
     for language_server in &project.language_servers {
+        if let Some(memory_usage) = language_server.memory_usage {
+            session.peer.send(
+                session.connection_id,
+                proto::UpdateLanguageServer {
+                    project_id: project_id.to_proto(),
+                    server_name: Some(language_server.server.name.clone()),
+                    language_server_id: language_server.server.id,
+                    variant: Some(proto::update_language_server::Variant::MemoryUsageUpdated(
+                        proto::ServerMemoryUsageUpdated { memory_usage },
+                    )),
+                },
+            )?;
+        }
+
         session.peer.send(
             session.connection_id,
             proto::UpdateLanguageServer {
@@ -2353,16 +2394,41 @@ async fn update_language_server(
     let project_id = ProjectId::from_proto(request.project_id);
     let db = session.db().await;
 
-    if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
-        && let Some(capabilities) = update.capabilities.clone()
-    {
-        db.update_server_capabilities(project_id, request.language_server_id, capabilities)
-            .await?;
+    let project_connection_ids = match request.variant.as_ref() {
+        Some(proto::update_language_server::Variant::MemoryUsageUpdated(update)) => {
+            db.cache_language_server_memory_usage_for_connection(
+                project_id,
+                session.connection_id,
+                request.language_server_id,
+                update.memory_usage,
+            )
+            .await?
+        }
+        Some(proto::update_language_server::Variant::MetadataUpdated(update)) => {
+            if let Some(capabilities) = update.capabilities.clone() {
+                db.update_server_capabilities_and_get_connection_ids(
+                    project_id,
+                    session.connection_id,
+                    request.language_server_id,
+                    capabilities,
+                )
+                .await?
+            } else {
+                db.project_connection_ids(project_id, session.connection_id, true)
+                    .await?
+                    .into_inner()
+            }
+        }
+        _ => db
+            .project_connection_ids(project_id, session.connection_id, true)
+            .await?
+            .into_inner(),
+    };
+
+    if let Some(proto::update_language_server::Variant::Removed(_)) = &request.variant {
+        db.0.remove_language_server_memory_usage(project_id, request.language_server_id);
     }
 
-    let project_connection_ids = db
-        .project_connection_ids(project_id, session.connection_id, true)
-        .await?;
     broadcast(
         Some(session.connection_id),
         project_connection_ids.iter().copied(),
@@ -4106,7 +4172,12 @@ async fn leave_room_for_session(session: &Session, connection_id: ConnectionId) 
     let room;
     let channel;
 
-    if let Some(mut left_room) = session.db().await.leave_room(connection_id).await? {
+    let db = session.db().await;
+
+    if let Some(mut left_room) = db.leave_room(connection_id).await? {
+        for project_id in &left_room.unshared_project_ids {
+            db.remove_project_language_server_memory_usage(*project_id);
+        }
         contacts_to_update.insert(session.user_id());
 
         for project in left_room.left_projects.values() {
@@ -4121,9 +4192,12 @@ async fn leave_room_for_session(session: &Session, connection_id: ConnectionId) 
         channel = mem::take(&mut left_room.channel);
 
         room_updated(&room, &session.peer);
+        drop(left_room);
     } else {
         return Ok(());
     }
+
+    drop(db);
 
     if let Some(channel) = channel {
         channel_updated(

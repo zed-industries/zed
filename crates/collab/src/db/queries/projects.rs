@@ -125,7 +125,11 @@ impl Database {
             project::Entity::delete_by_id(project_id).exec(&*tx).await?;
             Ok(())
         })
-        .await
+        .await?;
+
+        self.remove_project_language_server_memory_usage(project_id);
+
+        Ok(())
     }
 
     /// Unshares the given project.
@@ -589,6 +593,7 @@ impl Database {
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
                 language_name: ActiveValue::set(server.language_name.clone()),
+                server_version: ActiveValue::set(server.server_version.clone()),
                 worktree_id: ActiveValue::set(server.worktree_id.map(|id| id as i64)),
                 capabilities: ActiveValue::set(update.capabilities.clone()),
             })
@@ -600,6 +605,7 @@ impl Database {
                 .update_columns([
                     language_server::Column::Name,
                     language_server::Column::LanguageName,
+                    language_server::Column::ServerVersion,
                     language_server::Column::Capabilities,
                     language_server::Column::WorktreeId,
                 ])
@@ -993,8 +999,11 @@ impl Database {
                         name: language_server.name,
                         worktree_id: language_server.worktree_id.map(|id| id as u64),
                         language_name: language_server.language_name,
+                        server_version: language_server.server_version,
                     },
                     capabilities: language_server.capabilities,
+                    memory_usage: self
+                        .language_server_memory_usage(project.id, language_server.id as u64),
                 })
                 .collect(),
             path_style,
@@ -1213,6 +1222,99 @@ impl Database {
             Ok((host_connection_id, guest_connection_ids))
         })
         .await
+    }
+
+    pub async fn cache_language_server_memory_usage_for_connection(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+        language_server_id: u64,
+        memory_usage: u64,
+    ) -> Result<HashSet<ConnectionId>> {
+        let project_connection_ids = self
+            .project_transaction(project_id, |tx| async move {
+                let project = project::Entity::find_by_id(project_id)
+                    .one(&*tx)
+                    .await?
+                    .context("no such project")?;
+
+                // Ensure the update comes from the host.
+                if project.host_connection()? != connection_id {
+                    return Err(
+                        anyhow::anyhow!("can't update a project hosted by someone else").into(),
+                    );
+                }
+
+                let connection_ids = self
+                    .internal_project_connection_ids(project_id, connection_id, true, &tx)
+                    .await?;
+
+                let language_server_exists =
+                    language_server::Entity::find_by_id((project_id, language_server_id as i64))
+                        .one(&*tx)
+                        .await?
+                        .is_some();
+
+                if !language_server_exists {
+                    return Err(anyhow::anyhow!("no such language server").into());
+                }
+
+                Ok(connection_ids)
+            })
+            .await?;
+
+        let connection_ids = project_connection_ids.iter().copied().collect();
+
+        self.update_language_server_memory_usage(project_id, language_server_id, memory_usage);
+
+        drop(project_connection_ids);
+
+        Ok(connection_ids)
+    }
+
+    pub async fn update_server_capabilities_and_get_connection_ids(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+        server_id: u64,
+        new_capabilities: String,
+    ) -> Result<HashSet<ConnectionId>> {
+        let project_connection_ids = self
+            .project_transaction(project_id, |tx| {
+                let new_capabilities = new_capabilities.clone();
+                async move {
+                    let connection_ids = self
+                        .internal_project_connection_ids(project_id, connection_id, true, &tx)
+                        .await?;
+
+                    let language_server_exists =
+                        language_server::Entity::find_by_id((project_id, server_id as i64))
+                            .one(&*tx)
+                            .await?
+                            .is_some();
+
+                    if !language_server_exists {
+                        return Err(anyhow::anyhow!("no such language server").into());
+                    }
+
+                    language_server::Entity::update(language_server::ActiveModel {
+                        project_id: ActiveValue::unchanged(project_id),
+                        id: ActiveValue::unchanged(server_id as i64),
+                        capabilities: ActiveValue::set(new_capabilities),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?;
+
+                    Ok(connection_ids)
+                }
+            })
+            .await?;
+
+        let connection_ids = project_connection_ids.iter().copied().collect();
+        drop(project_connection_ids);
+
+        Ok(connection_ids)
     }
 
     /// Returns the connection IDs in the given project.

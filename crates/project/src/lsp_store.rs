@@ -4576,6 +4576,7 @@ pub struct LspStore {
     semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
     buffer_reload_tasks: HashMap<BufferId, Task<anyhow::Result<()>>>,
+    _memory_usage_task: Option<Task<()>>,
     next_hint_id: Arc<AtomicUsize>,
 }
 
@@ -4733,6 +4734,7 @@ pub struct LanguageServerStatus {
     pub configuration: Option<Value>,
     pub workspace_folders: BTreeSet<Uri>,
     pub process_id: Option<u32>,
+    pub memory_usage: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -4984,6 +4986,91 @@ impl LspStore {
             active_entry: None,
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
+            _memory_usage_task: Some(cx.spawn(async move |this, cx| {
+                let mut last_memory_usage = HashMap::default();
+
+                loop {
+                    let servers = this
+                        .update(cx, |this, _| {
+                            this.language_server_statuses
+                                .iter()
+                                .filter_map(|(server_id, status)| {
+                                    status.process_id.map(|pid| (*server_id, pid))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .ok();
+
+                    let Some(servers) = servers else {
+                        break;
+                    };
+
+                    if !servers.is_empty() {
+                        let memory_usage = cx
+                            .background_spawn(async move {
+                                let mut system = sysinfo::System::new();
+
+                                let refresh_kind = sysinfo::RefreshKind::nothing().with_processes(
+                                    sysinfo::ProcessRefreshKind::nothing()
+                                        .without_tasks()
+                                        .with_memory(),
+                                );
+
+                                system.refresh_specifics(refresh_kind);
+
+                                servers
+                                    .into_iter()
+                                    .map(|(server_id, process_id)| {
+                                        let memory = Self::process_tree_memory(
+                                            &system,
+                                            sysinfo::Pid::from_u32(process_id),
+                                        );
+                                        (server_id, memory)
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .await;
+
+                        for (server_id, memory) in memory_usage {
+                            if !last_memory_usage
+                                .get(&server_id)
+                                .is_some_and(|last| memory.abs_diff(*last) < 1024 * 1024)
+                            {
+                                last_memory_usage.insert(server_id, memory);
+
+                                let should_continue = this
+                                    .update(cx, |this, cx| {
+                                        let server = this.as_local().and_then(|local| {
+                                            local.language_servers.values().find_map(|state| {
+                                                match state {
+                                                    LanguageServerState::Running {
+                                                        server, ..
+                                                    } if server.server_id() == server_id => {
+                                                        Some(server.clone())
+                                                    }
+                                                    _ => None,
+                                                }
+                                            })
+                                        });
+
+                                        if let Some(server) = server {
+                                            this.notify_server_memory_usage(&server, memory, cx);
+                                        }
+                                    })
+                                    .is_ok();
+
+                                if !should_continue {
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        last_memory_usage.clear();
+                    }
+
+                    cx.background_executor().timer(Duration::from_secs(5)).await;
+                }
+            })),
         }
     }
 
@@ -5052,6 +5139,8 @@ impl LspStore {
 
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
+
+            _memory_usage_task: None,
         }
     }
 
@@ -5889,6 +5978,7 @@ impl LspStore {
                     .iter()
                     .map(|uri| uri.to_string())
                     .collect(),
+                server_version: server.readable_version().map(|version| version.to_string()),
             });
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
@@ -5901,6 +5991,68 @@ impl LspStore {
                 .context("sending server metadata downstream")
                 .log_err();
         }
+        cx.emit(LspStoreEvent::LanguageServerUpdate {
+            language_server_id: server.server_id(),
+            name: Some(server.name()),
+            message,
+        });
+    }
+
+    fn process_tree_memory(system: &sysinfo::System, root: sysinfo::Pid) -> u64 {
+        let mut children: HashMap<sysinfo::Pid, Vec<sysinfo::Pid>> = HashMap::default();
+
+        for (&pid, process) in system.processes() {
+            if let Some(parent) = process.parent() {
+                children.entry(parent).or_default().push(pid);
+            }
+        }
+
+        let mut total = 0;
+        let mut stack = vec![root];
+        let mut seen = HashSet::default();
+
+        while let Some(pid) = stack.pop() {
+            if !seen.insert(pid) {
+                continue;
+            }
+
+            if let Some(process) = system.process(pid) {
+                total += process.memory();
+            }
+
+            if let Some(kids) = children.get(&pid) {
+                stack.extend(kids.iter().copied());
+            }
+        }
+
+        total
+    }
+
+    fn notify_server_memory_usage(
+        &mut self,
+        server: &LanguageServer,
+        memory_usage: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(status) = self.language_server_statuses.get_mut(&server.server_id()) {
+            status.memory_usage = Some(memory_usage);
+        }
+        let message = proto::update_language_server::Variant::MemoryUsageUpdated(
+            proto::ServerMemoryUsageUpdated { memory_usage },
+        );
+
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::UpdateLanguageServer {
+                    project_id: *project_id,
+                    server_name: Some(server.name().to_string()),
+                    language_server_id: server.server_id().to_proto(),
+                    variant: Some(message.clone()),
+                })
+                .context("sending server memory usage downstream")
+                .log_err();
+        }
+
         cx.emit(LspStoreEvent::LanguageServerUpdate {
             language_server_id: server.server_id(),
             name: Some(server.name()),
@@ -9992,6 +10144,23 @@ impl LspStore {
         }
     }
 
+    pub(crate) fn resend_language_server_memory_usage(&self) {
+        let Some((downstream_client, project_id)) = &self.downstream_client else {
+            return;
+        };
+
+        for message in language_server_memory_usage_updates(
+            *project_id,
+            self.language_server_statuses
+                .iter()
+                .map(|(server_id, status)| {
+                    (*server_id, status.name.to_string(), status.memory_usage)
+                }),
+        ) {
+            downstream_client.send(message).log_err();
+        }
+    }
+
     pub fn shared(
         &mut self,
         project_id: u64,
@@ -10016,12 +10185,17 @@ impl LspStore {
                                 .language_name
                                 .as_ref()
                                 .map(|name| name.to_proto()),
+                            server_version: server
+                                .readable_version()
+                                .map(|version| version.to_string()),
                         }),
                         capabilities,
                     })
                     .log_err();
             }
         }
+
+        self.resend_language_server_memory_usage();
     }
 
     pub fn disconnected_from_host(&mut self) {
@@ -10053,6 +10227,7 @@ impl LspStore {
             .zip(server_capabilities)
             .map(|(server, server_capabilities)| {
                 let server_id = LanguageServerId(server.id as usize);
+                let server_version = server.server_version;
                 self.insert_synced_server_capabilities(server_id, &server_capabilities);
 
                 let name = LanguageServerName::from_proto(server.name);
@@ -10084,8 +10259,8 @@ impl LspStore {
                     LanguageServerStatus {
                         name,
                         language_name: language_name,
-                        server_version: None,
-                        server_readable_version: None,
+                        server_version: server_version.as_ref().map(SharedString::new),
+                        server_readable_version: server_version.as_ref().map(SharedString::new),
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
@@ -10094,6 +10269,7 @@ impl LspStore {
                         configuration: None,
                         workspace_folders: BTreeSet::new(),
                         process_id: None,
+                        memory_usage: None,
                     },
                 )
             })
@@ -11441,8 +11617,8 @@ impl LspStore {
                 LanguageServerStatus {
                     name: server_name.clone(),
                     language_name,
-                    server_version: None,
-                    server_readable_version: None,
+                    server_version: server.server_version.as_ref().map(SharedString::new),
+                    server_readable_version: server.server_version.as_ref().map(SharedString::new),
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
@@ -11451,6 +11627,7 @@ impl LspStore {
                     configuration: None,
                     workspace_folders: BTreeSet::new(),
                     process_id: None,
+                    memory_usage: None,
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -11471,7 +11648,11 @@ impl LspStore {
         lsp_store.update(&mut cx, |lsp_store, cx| {
             let language_server_id = LanguageServerId(envelope.payload.language_server_id as usize);
 
-            match envelope.payload.variant.context("invalid variant")? {
+            let Some(variant) = envelope.payload.variant else {
+                log::debug!("ignoring UpdateLanguageServer with unknown or missing variant");
+                return Ok(());
+            };
+            match variant {
                 proto::update_language_server::Variant::WorkStart(payload) => {
                     lsp_store.on_lsp_work_start(
                         language_server_id,
@@ -11532,8 +11713,7 @@ impl LspStore {
                 }
 
                 non_lsp @ proto::update_language_server::Variant::StatusUpdate(_)
-                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_)
-                | non_lsp @ proto::update_language_server::Variant::MetadataUpdated(_) => {
+                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_) => {
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
                         name: envelope
@@ -11543,6 +11723,49 @@ impl LspStore {
                             .map(LanguageServerName),
                         message: non_lsp,
                     });
+                }
+
+                proto::update_language_server::Variant::MetadataUpdated(metadata) => {
+                    if let Some(status) = lsp_store
+                        .language_server_statuses
+                        .get_mut(&language_server_id)
+                    {
+                        status.server_readable_version =
+                            metadata.server_version.as_ref().map(SharedString::new);
+                    }
+
+                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                        language_server_id,
+                        name: envelope
+                            .payload
+                            .server_name
+                            .map(SharedString::new)
+                            .map(LanguageServerName),
+                        message: proto::update_language_server::Variant::MetadataUpdated(metadata),
+                    });
+
+                    cx.notify();
+                }
+
+                proto::update_language_server::Variant::MemoryUsageUpdated(memory) => {
+                    if let Some(status) = lsp_store
+                        .language_server_statuses
+                        .get_mut(&language_server_id)
+                    {
+                        status.memory_usage = Some(memory.memory_usage);
+                    }
+
+                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                        language_server_id,
+                        name: envelope
+                            .payload
+                            .server_name
+                            .map(SharedString::new)
+                            .map(LanguageServerName),
+                        message: proto::update_language_server::Variant::MemoryUsageUpdated(memory),
+                    });
+
+                    cx.notify();
                 }
             }
 
@@ -13510,6 +13733,7 @@ impl LspStore {
             })
             .into_iter()
             .collect();
+
         local.language_servers.insert(
             server_id,
             LanguageServerState::Running {
@@ -13553,6 +13777,7 @@ impl LspStore {
                 configuration: Some(language_server.configuration().clone()),
                 workspace_folders: language_server.workspace_folders(),
                 process_id: language_server.process_id(),
+                memory_usage: None,
             },
         );
 
@@ -13575,6 +13800,9 @@ impl LspStore {
                         name: language_server.name().to_string(),
                         worktree_id: Some(key.worktree_id.to_proto()),
                         language_name: Some(language_name.to_proto()),
+                        server_version: language_server
+                            .readable_version()
+                            .map(|version| version.to_string()),
                     }),
                     capabilities,
                 })
@@ -14894,6 +15122,24 @@ impl LspStore {
         }
         lsp_data
     }
+}
+
+fn language_server_memory_usage_updates(
+    project_id: u64,
+    servers: impl IntoIterator<Item = (LanguageServerId, String, Option<u64>)>,
+) -> impl Iterator<Item = proto::UpdateLanguageServer> {
+    servers
+        .into_iter()
+        .filter_map(move |(server_id, server_name, memory_usage)| {
+            memory_usage.map(|memory_usage| proto::UpdateLanguageServer {
+                project_id,
+                server_name: Some(server_name),
+                language_server_id: server_id.to_proto(),
+                variant: Some(proto::update_language_server::Variant::MemoryUsageUpdated(
+                    proto::ServerMemoryUsageUpdated { memory_usage },
+                )),
+            })
+        })
 }
 
 fn document_selector_context_for_buffer(
@@ -16931,6 +17177,30 @@ mod tests {
     use settings::SettingsStore;
     use text::Point;
 
+    #[test]
+    fn reshare_republishes_retained_language_server_memory_usage() {
+        let mut updates = language_server_memory_usage_updates(
+            42,
+            [
+                (LanguageServerId(7), "rust-analyzer".to_owned(), Some(128)),
+                (LanguageServerId(8), "typescript".to_owned(), None),
+            ],
+        );
+
+        assert_eq!(
+            updates.next(),
+            Some(proto::UpdateLanguageServer {
+                project_id: 42,
+                server_name: Some("rust-analyzer".to_owned()),
+                language_server_id: 7,
+                variant: Some(proto::update_language_server::Variant::MemoryUsageUpdated(
+                    proto::ServerMemoryUsageUpdated { memory_usage: 128 },
+                )),
+            })
+        );
+        assert_eq!(updates.next(), None);
+    }
+
     #[gpui::test]
     fn test_inlay_hint_server_removal_retires_ids_and_resolves(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("x", cx));
@@ -17502,6 +17772,90 @@ mod tests {
         let mut response_error = lsp::ResponseError::server_cancelled();
         response_error.data = data;
         anyhow::Error::new(response_error)
+    }
+
+    #[test]
+    fn process_tree_memory_includes_root_process() {
+        let mut system = sysinfo::System::new_all();
+        system.refresh_all();
+
+        let pid = sysinfo::Pid::from_u32(std::process::id());
+        let process_memory = system
+            .process(pid)
+            .map(|process| process.memory())
+            .unwrap_or(0);
+
+        let tree_memory = LspStore::process_tree_memory(&system, pid);
+
+        assert!(tree_memory >= process_memory);
+        assert!(tree_memory > 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_tree_memory_includes_child_process() {
+        let mut system = sysinfo::System::new_all();
+        system.refresh_all();
+
+        let parent_pid = sysinfo::Pid::from_u32(std::process::id());
+        let parent_memory = system
+            .process(parent_pid)
+            .map(|process| process.memory())
+            .unwrap_or(0);
+
+        let mut child = smol::process::Command::new("sleep")
+            .arg("2")
+            .spawn()
+            .expect("failed to spawn child process");
+
+        std::thread::sleep(Duration::from_millis(100));
+
+        system.refresh_all();
+
+        let child_pid = sysinfo::Pid::from_u32(child.id());
+
+        let child_memory = system
+            .process(child_pid)
+            .map(|process| process.memory())
+            .unwrap_or(0);
+
+        let tree_memory = LspStore::process_tree_memory(&system, parent_pid);
+
+        assert!(tree_memory >= parent_memory);
+        assert!(tree_memory >= parent_memory + child_memory);
+
+        let _ = child.kill();
+        let _ = smol::block_on(child.status());
+    }
+
+    #[gpui::test]
+    async fn test_language_server_snapshot_preserves_server_version(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.set_language_server_statuses_from_proto(
+                project.downgrade(),
+                vec![proto::LanguageServer {
+                    id: 42,
+                    name: "test-language-server".to_string(),
+                    server_version: Some("1.2.3".to_string()),
+                    ..Default::default()
+                }],
+                vec![String::new()],
+                cx,
+            );
+
+            let status = &lsp_store.language_server_statuses[&LanguageServerId(42)];
+            assert_eq!(status.server_version.as_deref(), Some("1.2.3"));
+            assert_eq!(status.server_readable_version.as_deref(), Some("1.2.3"));
+        });
     }
 
     fn inlay_hint_for_test(position: Anchor, label: &str) -> InlayHint {

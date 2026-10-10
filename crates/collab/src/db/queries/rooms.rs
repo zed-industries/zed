@@ -561,6 +561,22 @@ impl Database {
                 });
             }
 
+            let deleted_project_ids = project::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(project::Column::RoomId.eq(room_id))
+                        .add(project::Column::HostUserId.eq(user_id))
+                        .add(
+                            project::Column::Id
+                                .is_not_in(reshared_projects.iter().map(|project| project.id)),
+                        ),
+                )
+                .all(&*tx)
+                .await?
+                .into_iter()
+                .map(|project| project.id)
+                .collect::<Vec<_>>();
+
             project::Entity::delete_many()
                 .filter(
                     Condition::all()
@@ -591,6 +607,7 @@ impl Database {
                 channel,
                 rejoined_projects,
                 reshared_projects,
+                deleted_project_ids,
             })
         })
         .await
@@ -820,14 +837,20 @@ impl Database {
             .all(tx)
             .await?
             .into_iter()
-            .map(|language_server| LanguageServer {
-                server: proto::LanguageServer {
-                    id: language_server.id as u64,
-                    name: language_server.name,
-                    worktree_id: language_server.worktree_id.map(|id| id as u64),
-                    language_name: language_server.language_name,
-                },
-                capabilities: language_server.capabilities,
+            .map(|language_server| {
+                let memory_usage =
+                    self.language_server_memory_usage(project_id, language_server.id as u64);
+                LanguageServer {
+                    server: proto::LanguageServer {
+                        id: language_server.id as u64,
+                        name: language_server.name,
+                        worktree_id: language_server.worktree_id.map(|id| id as u64),
+                        language_name: language_server.language_name,
+                        server_version: language_server.server_version,
+                    },
+                    capabilities: language_server.capabilities,
+                    memory_usage,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -1024,6 +1047,22 @@ impl Database {
                     .await?;
 
                 // Unshare projects.
+                let mut unshared_project_ids = Vec::new();
+                let unshared_projects = project::Entity::find()
+                    .filter(
+                        Condition::all()
+                            .add(project::Column::RoomId.eq(room_id))
+                            .add(project::Column::HostConnectionId.eq(connection.id as i32))
+                            .add(
+                                project::Column::HostConnectionServerId
+                                    .eq(connection.owner_id as i32),
+                            ),
+                    )
+                    .all(&*tx)
+                    .await?;
+
+                unshared_project_ids.extend(unshared_projects.iter().map(|project| project.id));
+
                 project::Entity::delete_many()
                     .filter(
                         Condition::all()
@@ -1050,6 +1089,7 @@ impl Database {
                     channel,
                     left_projects,
                     canceled_calls_to_user_ids,
+                    unshared_project_ids,
                     deleted,
                 };
 

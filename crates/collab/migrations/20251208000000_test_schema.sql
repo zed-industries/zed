@@ -228,7 +228,8 @@ CREATE TABLE public.language_servers (
     name character varying NOT NULL,
     capabilities text NOT NULL,
     worktree_id bigint,
-    language_name character varying
+    language_name character varying,
+    server_version character varying
 );
 
 CREATE TABLE public.notification_kinds (

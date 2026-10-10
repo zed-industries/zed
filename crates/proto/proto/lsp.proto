@@ -729,6 +729,7 @@ message LanguageServer {
   string name = 2;
   optional uint64 worktree_id = 3;
   optional string language_name = 4;
+  optional string server_version = 5;
 }
 
 message StartLanguageServer {
@@ -765,6 +766,7 @@ message UpdateLanguageServer {
     RegisteredForBuffer registered_for_buffer = 10;
     ServerMetadataUpdated metadata_updated = 11;
     ServerRemoved removed = 12;
+    ServerMemoryUsageUpdated memory_usage_updated = 13;
   }
 }
 
@@ -837,11 +839,16 @@ message LanguageServerBinaryInfo {
   repeated string arguments = 2;
 }
 
+message ServerMemoryUsageUpdated {
+  uint64 memory_usage = 1;
+}
+
 message ServerMetadataUpdated {
   optional string capabilities = 1;
   optional LanguageServerBinaryInfo binary = 2;
   optional string configuration = 3;
   repeated string workspace_folders = 4;
+  optional string server_version = 5;
 }
 
 message LanguageServerLog {
