@@ -45897,6 +45897,17 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         1
         ˇ. item
     "});
+
+    // Case 9: A marker in the middle of a line is not a list marker
+    cx.set_state(indoc! {"
+        foo 1. barˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        foo 1. bar
+        ˇ
+    "});
 }
 
 #[gpui::test]
@@ -46016,7 +46027,15 @@ async fn test_tab_list_indent(cx: &mut TestAppContext) {
     "};
     cx.assert_editor_state(expected);
 
-    // Case 8: Cursor at start of list item, moves the cursor when "indent_list_on_tab" is false
+    // Case 8: Ordered list marker in the middle of a line is not a list row
+    cx.set_state(indoc! {"
+        foo 1. barˇ
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state("foo 1. bar  ˇ\n");
+
+    // Case 9: Cursor at start of list item, moves the cursor when "indent_list_on_tab" is false
     cx.update_editor(|_, _, cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
