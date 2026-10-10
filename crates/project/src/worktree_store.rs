@@ -1018,6 +1018,7 @@ impl WorktreeStore {
     }
 
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut Context<Self>) {
+        let mut removed = false;
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
                 if worktree.read(cx).id() == id_to_remove {
@@ -1025,6 +1026,7 @@ impl WorktreeStore {
                         worktree.entity_id(),
                         id_to_remove,
                     ));
+                    removed = true;
                     false
                 } else {
                     true
@@ -1033,6 +1035,14 @@ impl WorktreeStore {
                 false
             }
         });
+        // A remote client asks to remove a worktree whenever it releases a
+        // handle to it, which can happen again after the worktree is gone.
+        // Announcing the unchanged worktrees in response would make the
+        // client re-create and release handles for the ones it has dropped
+        // in the meantime, and send us even more removal requests.
+        if !removed {
+            return;
+        }
         self.update_initial_scan_state(cx);
         self.send_project_updates(cx);
     }
