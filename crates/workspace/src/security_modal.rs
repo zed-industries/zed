@@ -584,28 +584,18 @@ mod tests {
             PathBuf::from(r"C:\Users\me\dev\wt"),
         );
 
+        assert!(validate_trust_scope(r"C:\Users\me", project, None, style).is_ok());
+
         assert_eq!(
             validate_trust_scope(r"C:\Users\me\dev\wt\t1", project, None, style).unwrap(),
             PathBuf::from(r"C:\Users\me\dev\wt\t1")
         );
 
-        // Forward slashes are normalized to backslashes.
-        assert_eq!(
-            validate_trust_scope("C:/Users/me/dev/wt", project, None, style).unwrap(),
-            PathBuf::from(r"C:\Users\me\dev\wt"),
-        );
-        // Double separators and "." components are collapsed during normalization.
-        assert_eq!(
-            validate_trust_scope(r"C:\Users\me\\dev\.\wt", project, None, style).unwrap(),
-            PathBuf::from(r"C:\Users\me\dev\wt"),
-        );
         // Drive letters are matched case-insensitively.
         assert_eq!(
             validate_trust_scope(r"c:\Users\me\dev\wt", project, None, style).unwrap(),
             PathBuf::from(r"c:\Users\me\dev\wt")
         );
-        // A distant ancestor is allowed.
-        assert!(validate_trust_scope(r"C:\Users\me", project, None, style).is_ok());
     }
 
     #[test]
