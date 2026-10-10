@@ -384,3 +384,280 @@ Raw logs, feature graph, exact final test matrices, phase totals, and parsed
 `measurements/summary.json` are under ignored `target/retained-next/`.
 Remaining work is the refresh-boundary bookkeeping and CachedTree/mixed fallback
 path, not a claim that the approximately 3% no-reuse target was achieved.
+
+## Retained-overhead follow-up
+
+### Outcome
+
+The near-zero no-reuse target is **not achieved**. Dense refresh remains about
+16% above the supplied OFF wall baseline, mixed refresh about 5%, and first
+population is not improved. The adopted changes fix the mixed cached-tree
+regression and the dense leaf tail without losing warm text reuse.
+
+The adaptive recording and dense layout-storage experiments were rejected.
+Retaining a hot child's placement is necessary to let its clean ancestors
+splice around a fresh child; almost all eager boundary metadata in this base
+is placement, not optional own-content reuse data.
+
+### Provenance and commits
+
+- Worktree: `/home/anth/.local/share/delta-trunk/worktrees/kyyxn50kg5vn/zed`.
+- Branch: `gpui-retained-overhead`; supplied base `986a6c6f03`.
+- Final measured code: `fdcee7eab8`.
+- Commits:
+  - `92f6e7840f`: fixed-frame phase traces and fine boundary attribution.
+  - `91a0a77360`: preserve clean children across implicit reconstruction.
+  - `d9c63d132a`: carry implicit occurrences without persistent element-state
+    handles; explicit cached handles and their range conventions are unchanged.
+  - `5b0dba3ca6`: recycle empty entity-read sets and directly index transitive
+    dependency collectors.
+  - `1d8bb6071d`: hoist disabled per-node timer checks.
+  - `77b7c6cc66`: adaptive K=2 content eligibility with placement preserved.
+  - `5980d82caa`: reject/revert the adaptive experiment after its screen.
+  - `fdcee7eab8`: isolate fine scope-field timers in an opt-in profiled helper.
+- No base rebuild or base remeasurement, push, PR, subagents or README marker.
+- Same Linux CPU/text/headless platform and font as the preceding report.
+  No native GPU presentation or pixel-correctness claim.
+- Reflink-seeded private `target/private`; all workspace Rust/manifests touched
+  immediately after seeding. All Cargo commands used that private directory.
+- Shared locks, CPU8/9, six build jobs; 900-second build/check limits and
+  300-second benchmark limits. Wall runs held the exclusive lock on CPU0.
+- The full benchmark feature graph contains no `test-support`.
+- Benchmark source SHA-256:
+  `33d658ad2d56b4985ca8e774047283d1111dfce1ec0c295de4f8b2c42f4d07ee`.
+  Lockfile hash is unchanged from the preceding report.
+
+### Attribution before changing behavior
+
+OFF keeps `GPUI_LAYOUT_CACHE=1` and unsets `GPUI_VIEW_SPLICE`; ON uses `all`.
+Tree traces use `SEED=3 ITERATIONS=1 GPUI_RETAINED_PHASE_FRAMES=32` with
+Criterion `--test`, not a statistical benchmark. First population is one
+explicit setup draw. Values below are **instrumented inclusive microseconds
+per frame**, not benchmark latency or independently additive exclusive costs.
+Nested timer entry/exit is included in enclosing phases.
+
+| Workload | Phase | OFF | ON |
+| --- | --- | ---: | ---: |
+| Dense full refresh | Root request | 185.59 | 256.09 |
+| | Root prepaint | 62.44 | 145.10 |
+| | Root paint | 177.48 | 233.69 |
+| | Boundary bookkeeping | 0 | 28.11 |
+| | Dependency push + pop | 0 | 25.55 |
+| | Scope capture | 0 | 8.90 |
+| | Layout input/output capture | 0 | 7.21 |
+| | SceneIndex recording | 0 | 3.79 |
+| Mixed full refresh | Root request | 406.40 | 440.26 |
+| | Root prepaint | 150.42 | 190.45 |
+| | Root paint | 191.92 | 217.72 |
+| | Boundary bookkeeping | 0 | 13.97 |
+| | Dependency push + pop | 0 | 11.36 |
+| | Scope capture | 0 | 4.24 |
+| | Layout input/output capture | 0 | 4.23 |
+| | SceneIndex recording | 0 | 1.75 |
+| CachedTree mixed leaf style | Root request | 160.19 | 97.73 |
+| | Root prepaint | 120.34 | 378.39 |
+| | Root paint | 113.60 | 191.31 |
+| | Layout compute, inside prepaint | 13.45 | 73.21 |
+| | Boundary bookkeeping | 0 | 8.31 |
+| | Dependency push + pop | 0 | 5.48 |
+| Text first population | Layout compute | 12576.36 | 15548.42 |
+| | Fine layout capture, inside layout | 0 | 1745.05 |
+| | Boundary bookkeeping, includes growth | 0 | 58.76 |
+| | ViewStore growth | 0 | 27.47 |
+| | Dependency push + pop | 0 | 16.38 |
+| | Scope capture | 0 | 6.92 |
+| | SceneIndex recording | 0 | 2.46 |
+
+Dispatch payload indexing was essentially shared work: dense refresh
+2.89/2.96 µs, mixed refresh 4.35/4.34 µs, cached mixed leaf 2.71/2.63 µs,
+text first population zero. ViewStore growth is zero on steady refreshes.
+The text fine layout timer executes 86,413 times, versus 97 boundaries:
+its 1745 µs is strongly affected by timer overhead and is **not** a claim that
+snapshot bookkeeping adds 1.745 ms to production. It includes per-node layout
+writes and boundary-input/output checks.
+
+The major cached-tree regression was behavioral, not that small bookkeeping
+residual: notifying an ordinary implicit root invented a refresh and forced
+all explicit cached children to reconstruct. Ordinary ancestors in the OFF
+path do not impose that invalidation contract.
+
+Dense leaf slow frames likewise cascaded from a local failure to all 205
+boundaries. Fixed 32-frame counts before/after the reconstruction fix:
+
+| Trace | Mean boundary misses/frame before | After |
+| --- | ---: | ---: |
+| CachedTree mixed leaf | 55.91 | 3.94 |
+| Ordinary mixed leaf | 61.13 | 47.97 |
+| Dense leaf | 74.53 | 7.56 |
+
+Dense `ExecutionScope` fallback events remain 19, but no longer rebuild the
+whole tree. Dense `LayoutConstraints` events fall from 19 to zero. Mixed
+`LayoutConstraints` events fall from two to zero; cached mixed
+`ExecutionScope` events were three/five. Event counts can include multiple
+failed attempts in a frame; they are not a count of distinct affected frames.
+
+### Correctness and policy choices
+
+Real refreshes and explicit cached misses still refresh descendants.
+Reconstructing an ordinary implicit boundary does not. Own-dirty implicit
+ancestors conservatively reconstruct their implicit descendants because
+inherited paint opacity and visibility are not represented by the prepaint
+reuse key. Explicit cached children retain the existing OFF opt-in contract.
+Fallback-only clean ancestors can reuse unaffected implicit siblings.
+
+Hidden ancestors prepaint children without painting them. Retention now
+invalidates an implicit child's paint eligibility when its previous paint
+range did not survive into the rendered frame. Removing the invented refresh
+without this guard exposed stale ranges in the differential property tests.
+
+No size heuristic or small-view eligibility threshold was adopted.
+
+### Rejected experiments
+
+The adaptive experiment counts fresh rendered frames, suspends own-content
+eligibility after two consecutive renders, preserves placement and all
+invalidation dependencies, and records once when it cools before own reuse
+can resume. A hot child remains spliceable as a fresh child. The targeted
+cooling test and all six modes passed, including both differential sweeps.
+
+Fixed-sampling instruction screen, adaptive OFF/ON in the same binary:
+
+| Workload | OFF M instructions | ON | Change |
+| --- | ---: | ---: | ---: |
+| Dense full refresh | 7.0665 | 7.0033 | -0.89% |
+| Mixed full refresh | 11.609 | 11.475 | -1.15%, noisy |
+| Warm Noto/96 | 15.732 | 15.734 | unchanged |
+
+This fails the architect's 3% dense-refresh adoption gate and was reverted.
+It saves little because typed scene snapshots are already lazy, while shared
+scene/dispatch records must remain available for an ancestor's reuse.
+
+A capacity-reused dense ViewLayout side array and revision-guarded exact
+input/output captures passed the library/oracle tests but screened at
+7.0222 M dense-refresh instructions versus 7.0265 M before (-0.06%).
+It was not committed and was discarded.
+
+Before adopting scope interning, individual fields were timed on 32 dense
+refresh frames, 580 captures/frame:
+
+| Scope component | Raw µs/frame | Minus matched empty-timer floor |
+| --- | ---: | ---: |
+| Text style / Rc | 8.547 | 2.634 |
+| Identity/path/offset | 6.414 | 0.501 |
+| Dispatch/parent | 6.121 | 0.208 |
+| Content mask | 6.637 | 0.724 |
+| Rem/scale/opacity/fallback | 6.439 | 0.526 |
+| Image cache stack | 8.670 | 2.757 |
+| Empty timer | 5.913 | 0 |
+
+The subtraction is a diagnostic floor adjustment, not an exact exclusive
+production measurement. Bookkeeping was 28.447 µs, dependencies 23.005 µs,
+layout capture 6.570 µs and range indexing 3.787 µs in this trace. No individual
+scope field exceeds 20% of placement cost. Full scopes also contain unique
+occurrence, element and dispatch identities; blindly interning those would
+not share sibling snapshots. A common-context interner draft was discarded
+before building, per the architect's stop rule.
+
+Final inline sizes are hot 32 B, cold 504 B, cache 568 B, layout 248 B, for
+97 occurrences in TextPanels/96. The supplied 408/800 cache/layout estimates
+do not describe these actual types. The rejected adaptive and dense-array
+experiments do not change the final sizes.
+
+### Final performance evidence
+
+All statistical runs use the explicit equal **sampling configuration**
+`--sample-size 10 --warm-up-time 1 --measurement-time 1 --noplot`, never
+`--quick`. Criterion still chooses different actual iteration counts.
+Phase timers, fixed-frame traces and differential verification are disabled.
+The supplied base was not remeasured.
+
+The table compares the supplied OFF/ON instruction point estimates with
+the final candidate ON run at `fdcee7eab8`, in millions:
+
+| Workload | Supplied OFF | Supplied ON | Final ON | Final vs supplied OFF |
+| --- | ---: | ---: | ---: | ---: |
+| Mixed full refresh | 10.8540 | 11.3220 | 11.485 | +5.8% |
+| Dense full refresh | 6.1442 | 7.1896 | 7.0315 | +14.4% |
+| CachedTree mixed leaf | 6.6704 | 8.0753 | 4.4069 | -33.9% |
+| Mixed leaf | 11.4390 | 7.7674 | 6.7866 | -40.7% |
+| Dense leaf | 6.3811 | 3.8756 | 2.1677 | -66.0% |
+| Warm monospace/96 | 120.550 | 19.937 | 20.002 | -83.4% |
+| Warm Noto/96 | 116.610 | 15.755 | 15.726 | -86.5% |
+| First population Noto/96 | 224.060 | 236.290 | 237.020 | +5.8% |
+
+An initial candidate OFF/ON comparison also measured 6.1502/7.0265 M dense
+refresh, 6.7180/4.4132 M cached mixed leaf, and 11.454/6.7841 M mixed leaf.
+Churn final ON point estimates, without a baseline claim: replace-8-of-96
+125.83 M, remount-48-of-96 118.06 M, ID/anonymous-count 222.03 M, text-96
+222.82 M.
+
+CPU0 draw milliseconds, including Criterion warmup/calibration:
+
+| Workload | Supplied OFF p50 | Supplied ON p50 | Candidate ON p50 | Candidate ON p95 |
+| --- | --- | --- | --- | --- |
+| Mixed refresh | 0.811 | 0.863 | 0.854 / 0.852 | 0.916 / 0.911 |
+| Dense refresh | 0.484–0.485 | 0.595–0.597 | 0.564 / 0.565; final 0.562 | 0.611 / 0.610; final 0.608 |
+| Cached mixed leaf | not supplied | not supplied | 0.371 / 0.372 | 0.485 / 0.481 |
+| Mixed leaf | 0.797–0.800 | 0.847–0.848 | 0.300 / 0.298 | 0.901 / 0.895 |
+| Dense leaf | 0.488–0.489 | 0.155–0.156 | 0.136 / 0.136 | 0.200 / 0.200 |
+| Warm monospace/96 | 7.692–7.696 | 1.502–1.523 | final 1.501 | final 1.763 |
+| Warm Noto/96 | 7.549–7.619 | 1.262–1.284 | final 1.255 | final 1.476 |
+| First population Noto/96 | 15.344–15.442 | 16.007–16.196 | final 17.449 | final 18.432 |
+
+Tree pairs are from the original candidate ABAB at `5b0dba3ca6`;
+the final focused pass is at `fdcee7eab8`. Differences between these revisions
+are bench-only timer guards/helpers, not production behavior. The first-frame
+wall result regresses and is not accepted as an improvement: corrected text
+passes also gave 16.941/16.417 ms ON and 15.303/16.114 ms OFF. No stable
+first-frame reduction is established.
+
+Mixed leaf is bimodal. Equal Criterion sample settings do not mean equal
+mutation iteration counts: the initial ABAB observed 3092/2068 OFF draws and
+3697/3697 ON. Its median can cross the inexpensive/whole-root boundary;
+the p95 and fixed-frame traces must accompany that median. Corresponding
+instruction-run secondaries were OFF/ON 4.876/3.033 M cycles,
+21.408/15.646 K branch misses, 1.522/1.305 K cache misses, IPC 2.349/2.261.
+These support less work overall, not a claim that every mutation is faster
+or that the older wall/instruction disagreement was purely hardware.
+
+Final first-population requested live heap is 57,497,172 B versus the
+supplied OFF 55,740,240 B (+3.15%) and supplied ON 57,509,196 B.
+The 12,024 B reduction is negligible; no substantial heap win is claimed.
+
+### Gates, deviations and remaining work
+
+- Final `cargo test --locked -p gpui --lib`: 469 passed, two existing timing
+  tests ignored, in all six cache/splice modes. Both 12-seed differential
+  sweeps pass. Adaptive experiment had 470 passed before being reverted.
+- Targeted coverage includes ordinary ancestor notification preserving an
+  explicit cached child, layout fallback preserving an unaffected implicit
+  sibling, and existing opacity/visibility/property and retained-range tests.
+- Both production-font 16-frame text differential smokes pass.
+- Final `./script/clippy --locked -p gpui`, `cargo fmt --all -- --check`, and
+  `cargo check --locked -p gpui -p ui -p workspace -p editor` pass.
+- Measurement deviations: initial measurement window 06:07:23–06:17:34
+  (10m10s) included a text-only corrected pass after timer hoisting. The
+  architect then requested adaptive and placement experiments; these added
+  instruction screens and the final 06:53:15–06:57:29 focused measurement
+  window (4m14s), rather than pretending there was only one measurement pass.
+  Coarse phase smokes run concurrently with a build were not used as
+  before/after latency evidence. No intermediate `--quick` screen was used.
+- First mount was left recording; no first-mount-policy toggle was measured.
+  Rejected experiments were not promoted to another full ABAB wall matrix.
+- No full Zed build, GPU pixel oracle, native Metal run or external profiler.
+  Optional cargo-shear/typos/buf checks were not run.
+- Near-zero refresh/first-frame overhead remains open. The captured placement
+  contract is the documented trade-off; scope interning was not justified by
+  the field attribution.
+
+Source-only upstream follow-up at `9ab0715969`: explicit cached reuse in
+`crates/gpui/src/view.rs:484–490` checks bounds, mask, text style, dirtiness and
+refresh, but not inherited opacity. `elements/div.rs:2544` applies parent
+opacity during paint, after that prepaint decision. A minimal repro is an
+ordinary notifying parent that renders
+`div().opacity(self.opacity).child(clean_child.cached(fixed_size))`, then
+changes only its opacity: the child can replay primitives carrying the old
+opacity. Hiding/unhiding an ancestor also warrants a separate stale-range
+repro (`div.rs:2535` skips painting hidden children). This was inspected,
+not built or fixed on main; hidden/unhidden behavior is not claimed proved
+by the opacity source check.
