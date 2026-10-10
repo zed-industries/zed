@@ -676,6 +676,9 @@ impl LineLayoutCache {
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
+                #[cfg(feature = "bench-support")]
+                let _timer =
+                    crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::TextWrap);
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
                 SmallVec::new()
@@ -735,9 +738,14 @@ impl LineLayoutCache {
             layout
         } else {
             let text = SharedString::from(text);
+            #[cfg(feature = "bench-support")]
+            let timer =
+                crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::TextShape);
             let mut layout = self
                 .platform_text_system
                 .layout_line(&text, font_size, runs);
+            #[cfg(feature = "bench-support")]
+            drop(timer);
 
             if let Some(force_width) = force_width {
                 apply_force_width_to_layout(&mut layout, force_width);

@@ -1327,12 +1327,15 @@ pub(crate) enum RenderPhase {
     RootRequest,
     RootPrepaint,
     RootPaint,
+    TextMeasure,
+    TextShape,
+    TextWrap,
 }
 
 #[cfg(feature = "bench-support")]
 thread_local! {
-    static RENDER_PHASE_TIMINGS: std::cell::Cell<[(Duration, usize); 11]> =
-        const { std::cell::Cell::new([(Duration::ZERO, 0); 11]) };
+    static RENDER_PHASE_TIMINGS: std::cell::Cell<[(Duration, usize); 14]> =
+        const { std::cell::Cell::new([(Duration::ZERO, 0); 14]) };
 }
 
 #[cfg(feature = "bench-support")]
@@ -2624,9 +2627,9 @@ impl Window {
     /// Takes opt-in foreground phase totals. Timings are inclusive: replay and
     /// layout totals are also included in the enclosing root phase.
     #[cfg(feature = "bench-support")]
-    pub fn take_render_phase_timings(&self) -> [(&'static str, Duration, usize); 11] {
+    pub fn take_render_phase_timings(&self) -> [(&'static str, Duration, usize); 14] {
         let values =
-            RENDER_PHASE_TIMINGS.with(|timings| timings.replace([(Duration::ZERO, 0); 11]));
+            RENDER_PHASE_TIMINGS.with(|timings| timings.replace([(Duration::ZERO, 0); 14]));
         let names = [
             "layout",
             "retain",
@@ -2639,6 +2642,9 @@ impl Window {
             "root request",
             "root prepaint",
             "root paint",
+            "text measure",
+            "platform text shape",
+            "text wrap",
         ];
         std::array::from_fn(|index| (names[index], values[index].0, values[index].1))
     }

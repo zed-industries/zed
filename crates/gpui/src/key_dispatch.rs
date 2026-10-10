@@ -76,6 +76,7 @@ pub(crate) struct DispatchTree {
     topology: Vec<DispatchTopology>,
     focus_nodes: Vec<DispatchNodeId>,
     view_nodes: Vec<DispatchNodeId>,
+    payload_nodes: Vec<DispatchNodeId>,
     #[cfg(debug_assertions)]
     consumed: Vec<Range<usize>>,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
@@ -170,6 +171,7 @@ impl DispatchTree {
             topology: Vec::new(),
             focus_nodes: Vec::new(),
             view_nodes: Vec::new(),
+            payload_nodes: Vec::new(),
             #[cfg(debug_assertions)]
             consumed: Vec::new(),
             focusable_node_ids: FxHashMap::default(),
@@ -187,6 +189,7 @@ impl DispatchTree {
         self.topology.clear();
         self.focus_nodes.clear();
         self.view_nodes.clear();
+        self.payload_nodes.clear();
         #[cfg(debug_assertions)]
         self.consumed.clear();
         self.focusable_node_ids.clear();
@@ -323,18 +326,6 @@ impl DispatchTree {
             stats
                 .dispatch_nodes
                 .copied(&source.topology[old_range.clone()]);
-            stats.dispatch_nodes.moved_count::<(
-                Vec<KeyListener>,
-                Vec<DispatchActionListener>,
-                Vec<ModifiersChangedListener>,
-            )>(old_range.len());
-            for node in &source.nodes[old_range.clone()] {
-                if let Some(context) = &node.context {
-                    stats
-                        .dispatch_contexts
-                        .cloned(std::slice::from_ref(context));
-                }
-            }
         }
         for (offset, topology) in self.topology[new_range.clone()].iter_mut().enumerate() {
             let old_id = old_range.start + offset;
@@ -350,16 +341,37 @@ impl DispatchTree {
                 }
             }
         }
-        self.nodes.extend(
-            source.nodes[old_range.clone()]
-                .iter_mut()
-                .map(|node| DispatchNode {
-                    context: node.context.clone(),
-                    key_listeners: mem::take(&mut node.key_listeners),
-                    action_listeners: mem::take(&mut node.action_listeners),
-                    modifiers_changed_listeners: mem::take(&mut node.modifiers_changed_listeners),
-                }),
-        );
+        self.nodes.resize_with(new_range.end, DispatchNode::default);
+        let payload_start = source
+            .payload_nodes
+            .partition_point(|node| node.0 < old_range.start);
+        let payload_end = source
+            .payload_nodes
+            .partition_point(|node| node.0 < old_range.end);
+        for old_node in &source.payload_nodes[payload_start..payload_end] {
+            let new_node = DispatchNodeId(new_range.start + old_node.0 - old_range.start);
+            let source = &mut source.nodes[old_node.0];
+            #[cfg(any(test, feature = "bench-support"))]
+            {
+                stats.dispatch_nodes.moved_count::<(
+                    Vec<KeyListener>,
+                    Vec<DispatchActionListener>,
+                    Vec<ModifiersChangedListener>,
+                )>(1);
+                if let Some(context) = &source.context {
+                    stats
+                        .dispatch_contexts
+                        .cloned(std::slice::from_ref(context));
+                }
+            }
+            self.nodes[new_node.0] = DispatchNode {
+                context: source.context.clone(),
+                key_listeners: mem::take(&mut source.key_listeners),
+                action_listeners: mem::take(&mut source.action_listeners),
+                modifiers_changed_listeners: mem::take(&mut source.modifiers_changed_listeners),
+            };
+            self.payload_nodes.push(new_node);
+        }
 
         let mut contains_focus = false;
         let focus_start = source
@@ -413,6 +425,8 @@ impl DispatchTree {
             .truncate(self.focus_nodes.partition_point(|node| node.0 < index));
         self.view_nodes
             .truncate(self.view_nodes.partition_point(|node| node.0 < index));
+        self.payload_nodes
+            .truncate(self.payload_nodes.partition_point(|node| node.0 < index));
     }
 
     pub fn on_key_event(&mut self, listener: KeyListener) {
@@ -716,6 +730,12 @@ impl DispatchTree {
 
     fn active_node(&mut self) -> &mut DispatchNode {
         let active_node_id = self.active_node_id().unwrap();
+        let index = self
+            .payload_nodes
+            .partition_point(|node| node.0 < active_node_id.0);
+        if self.payload_nodes.get(index) != Some(&active_node_id) {
+            self.payload_nodes.insert(index, active_node_id);
+        }
         &mut self.nodes[active_node_id.0]
     }
 
@@ -892,6 +912,40 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn empty_replay_nodes_do_not_move_listener_payloads() {
+        let mut source = test_dispatch_tree(Vec::new());
+        for _ in 0..1024 {
+            source.push_node();
+            source.pop_node();
+        }
+        source.set_active_node(super::DispatchNodeId(512));
+        source.on_key_event(Rc::new(|_, _, _, _| {}));
+        source.set_key_context(KeyContext::parse("Payload").expect("valid context"));
+        let mut target = test_dispatch_tree(Vec::new());
+        let mut stats = crate::ViewReuseStats::default();
+        target.reuse_subtree(0..1024, &mut source, None, |_| None, &mut stats);
+        assert_eq!(target.payload_nodes.len(), 1);
+        assert_eq!(stats.dispatch_nodes.copied_elements, 1024);
+        assert_eq!(stats.dispatch_nodes.moved_elements, 1);
+        assert!(
+            source
+                .node(super::DispatchNodeId(512))
+                .key_listeners
+                .is_empty()
+        );
+        assert_eq!(
+            target.node(super::DispatchNodeId(512)).key_listeners.len(),
+            1
+        );
+        assert_eq!(
+            source.node(super::DispatchNodeId(512)).context,
+            target.node(super::DispatchNodeId(512)).context
+        );
+        target.truncate(512);
+        assert!(target.payload_nodes.is_empty());
     }
 
     #[cfg(debug_assertions)]
