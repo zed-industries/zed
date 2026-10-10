@@ -1541,8 +1541,12 @@ impl Render for PanelButtons {
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
-                                        window.focus(&focus_handle, cx);
-                                        window.dispatch_action(action.boxed_clone(), cx)
+                                        dispatch_panel_button_action(
+                                            &focus_handle,
+                                            action.boxed_clone(),
+                                            window,
+                                            cx,
+                                        )
                                     }
                                 })
                                 .when(!is_active, |this| {
@@ -1582,6 +1586,20 @@ impl Render for PanelButtons {
                 this.child(Divider::vertical().color(DividerColor::Border))
             })
     }
+}
+
+pub(crate) fn dispatch_panel_button_action(
+    dock_focus_handle: &FocusHandle,
+    action: Box<dyn Action>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    // Dispatching from an unmounted focus handle never reaches the workspace's action
+    // handlers, and a zoomed dock isn't mounted, so only focus it when nothing else is.
+    if window.focused(cx).is_none() {
+        window.focus(dock_focus_handle, cx);
+    }
+    window.dispatch_action(action, cx)
 }
 
 impl StatusItemView for PanelButtons {
