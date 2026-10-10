@@ -491,6 +491,7 @@ impl SearchQuery {
         subrange: Option<Range<usize>>,
     ) -> Vec<Range<usize>> {
         const YIELD_INTERVAL: usize = 20000;
+        let maximum_results = crate::project_search::Search::MAX_SEARCH_RESULT_RANGES;
 
         if self.as_str().is_empty() {
             return Default::default();
@@ -535,7 +536,10 @@ impl SearchQuery {
                             continue;
                         }
                     }
-                    matches.push(mat.start()..mat.end())
+                    matches.push(mat.start()..mat.end());
+                    if matches.len() >= maximum_results {
+                        break;
+                    }
                 }
             }
 
@@ -561,6 +565,9 @@ impl SearchQuery {
                         };
                         if should_push {
                             matches.push(mat.start()..mat.end());
+                            if matches.len() >= maximum_results {
+                                break;
+                            }
                         }
                     }
                 }
