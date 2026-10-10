@@ -8411,6 +8411,7 @@ mod tests {
                     old_text: Some("content".into()),
                     new_text: Some("updated content".into()),
                     is_binary: false,
+                    is_generated: false,
                 }],
                 is_shallow_boundary: false,
             });
