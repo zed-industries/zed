@@ -436,9 +436,8 @@ impl SecurityModal {
                                 if restricted_paths.is_file {
                                     None
                                 } else {
-                                    let parent_abs_path = path_style
-                                        .parent(&restricted_paths.abs_path)?
-                                        .to_path_buf();
+                                    let parent_abs_path =
+                                        path_style.parent(&restricted_paths.abs_path)?.to_owned();
                                     Some(PathTrust::AbsPath(parent_abs_path))
                                 }
                             },
@@ -535,9 +534,7 @@ fn validate_trust_scope(
         return Err("Enter an absolute folder path".into());
     }
 
-    let expanded = PathBuf::from(path_style.normalize(&expanded.to_string_lossy()));
-    let project = PathBuf::from(path_style.normalize(&project.to_string_lossy()));
-    if path_style.strip_prefix(&project, &expanded).is_none() {
+    if !path_style.starts_with(project, expanded.as_path()) {
         return Err("Must be a parent folder of the project".into());
     }
     Ok(expanded)
@@ -627,6 +624,16 @@ mod tests {
                 Path::new(r"C:\Users\me\dev\wt2"),
                 None,
                 style,
+            )
+            .is_err()
+        );
+
+        assert!(
+            validate_trust_scope(
+                r"\\server",
+                Path::new(r"\\server\share\project"),
+                None,
+                style
             )
             .is_err()
         );
