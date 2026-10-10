@@ -906,8 +906,8 @@ impl Inner {
         name: &str,
         cx: &mut AsyncApp,
     ) -> Result<bool> {
-        let open_item = self.workspace.update(cx, |workspace, cx| {
-            workspace.panes().iter().find_map(|pane| {
+        let (open_item, is_dir) = self.workspace.update(cx, |workspace, cx| {
+            let open_item = workspace.panes().iter().find_map(|pane| {
                 pane.read(cx).items().find_map(|item| {
                     (item.is_dirty(cx)
                         && item
@@ -916,11 +916,22 @@ impl Inner {
                             .any(|item_path| item_path == project_path))
                     .then(|| (pane.clone(), item.boxed_clone()))
                 })
-            })
+            });
+            let project = workspace.project().read(cx);
+            let is_dir = project
+                .worktree_for_id(project_path.worktree_id, cx)
+                .and_then(|w| {
+                    w.read(cx)
+                        .entry_for_path(&project_path.path)
+                        .map(|e| e.is_dir())
+                })
+                .unwrap_or(false);
+
+            (open_item, is_dir)
         })?;
 
         let Some((pane, item)) = open_item else {
-            return self.trash_prompt(&[name], 0, cx).await;
+            return self.trash_prompt(&[(name, is_dir)], 0, cx).await;
         };
 
         let mut async_window_cx = self
@@ -953,22 +964,33 @@ impl Inner {
         trash_paths: Vec<&ProjectPath>,
         cx: &mut AsyncApp,
     ) -> Result<bool> {
-        let (names, dirty_buffers) = self.workspace.update(cx, |workspace, cx| {
+        let (items, dirty_buffers) = self.workspace.update(cx, |workspace, cx| {
             let project = workspace.project().read(cx);
             let path_style = project.path_style(cx);
             let dirty_buffers = project
                 .dirty_buffers(cx)
                 .filter(|dirty_path| trash_paths.contains(&dirty_path))
                 .count();
-            let names = trash_paths
+            let items = trash_paths
                 .iter()
-                .map(|project_path| project_path_display(project, project_path, path_style, cx))
+                .map(|project_path| {
+                    let name = project_path_display(project, project_path, path_style, cx);
+                    let is_dir = project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .and_then(|w| {
+                            w.read(cx)
+                                .entry_for_path(&project_path.path)
+                                .map(|e| e.is_dir())
+                        })
+                        .unwrap_or(false);
+                    (name, is_dir)
+                })
                 .collect::<Vec<_>>();
 
-            (names, dirty_buffers)
+            (items, dirty_buffers)
         })?;
 
-        self.trash_prompt(&names, dirty_buffers, cx).await
+        self.trash_prompt(&items, dirty_buffers, cx).await
     }
 
     /// Prompts the user to confirm whether they actually want to trash the
@@ -977,21 +999,21 @@ impl Inner {
     /// Returns `true` if the user confirms, `false` otherwise.
     async fn trash_prompt<S>(
         &self,
-        names: &[S],
+        items: &[(S, bool)],
         dirty_buffers: usize,
         cx: &mut AsyncApp,
     ) -> Result<bool>
     where
         S: AsRef<str>,
     {
-        let prompt = ProjectPanel::build_removal_prompt(RemovalKind::Trash, names, dirty_buffers);
+        let prompt = ProjectPanel::build_removal_prompt(RemovalKind::Trash, items, dirty_buffers);
         let answer = self
             .panel
             .update_in(cx, |_panel, window, cx| {
                 window.prompt(
                     PromptLevel::Info,
                     &prompt.message,
-                    prompt.detail,
+                    prompt.detail.as_deref(),
                     &[prompt.confirmation_label, "Cancel"],
                     cx,
                 )
