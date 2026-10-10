@@ -392,6 +392,41 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_ollama_without_model_is_not_configured(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            client::init(&app_state.client, cx);
+            language_model::init(cx);
+            app_state
+        });
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.edit_predictions =
+                        Some(settings::EditPredictionSettingsContent {
+                            provider: Some(EditPredictionProvider::Ollama),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+
+        cx.update(|cx| {
+            assert!(
+                all_language_settings(None, cx)
+                    .edit_predictions
+                    .ollama
+                    .is_none(),
+                "Ollama should only count as configured once the user picks a model"
+            );
+            assert!(edit_prediction_provider_config_for_settings(cx).is_none());
+        });
+
+        drop(app_state);
+    }
+
+    #[gpui::test]
     async fn test_subscribe_uses_stale_provider_config_after_settings_change(
         cx: &mut TestAppContext,
     ) {
