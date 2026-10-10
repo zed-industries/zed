@@ -189,6 +189,9 @@ impl StagedDiff {
                     editor.set_diff_hunk_renderer(Some(Arc::new(StagedDiffHunkRenderer)), cx);
                     editor.rhs_editor().update(cx, |rhs_editor, _cx| {
                         rhs_editor.set_read_only(true);
+                        // The displayed buffers hold the index text, so the diff
+                        // multibuffer maps opens onto the files in the worktree.
+                        rhs_editor.set_delegate_open_excerpts(true);
                         rhs_editor.register_addon(GitPanelAddon {
                             workspace: workspace_handle,
                         });
@@ -942,6 +945,128 @@ mod tests {
                     .count(),
                 0
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_file_from_staged_diff_opens_worktree_buffer(cx: &mut TestAppContext) {
+        assert_open_file_opens_worktree_buffer(DiffViewStyle::Unified, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_open_file_from_split_staged_diff_opens_worktree_buffer(cx: &mut TestAppContext) {
+        assert_open_file_opens_worktree_buffer(DiffViewStyle::Split, cx).await;
+    }
+
+    async fn assert_open_file_opens_worktree_buffer(
+        diff_view_style: DiffViewStyle,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(diff_view_style);
+                });
+            });
+        });
+
+        let committed_contents = r#"
+            fn main() {
+                println!("hello world");
+            }
+        "#
+        .unindent();
+        let staged_contents = r#"
+            fn main() {
+                println!("goodbye world");
+            }
+        "#
+        .unindent();
+        let file_contents = r#"
+            // print goodbye
+            fn main() {
+                println!("goodbye world");
+            }
+        "#
+        .unindent();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": file_contents,
+                }
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", committed_contents)],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", staged_contents)],
+        );
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            StagedDiff::deploy_at(workspace, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        // In the split view, open from the HEAD side so the selection is
+        // translated to the index text before being mapped to the worktree.
+        let editor = workspace.update(cx, |workspace, cx| {
+            let staged_diff = workspace.active_item_as::<StagedDiff>(cx).unwrap();
+            let staged_diff = staged_diff.read(cx);
+            let splittable = staged_diff.diff.read(cx).editor().read(cx);
+            match diff_view_style {
+                DiffViewStyle::Split => splittable.lhs_editor().unwrap().clone(),
+                DiffViewStyle::Unified => splittable.rhs_editor().clone(),
+            }
+        });
+
+        // Select the `println!` line, which is row 1 of the HEAD and index
+        // texts and row 2 of the file on disk.
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let offset = snapshot.text().find("println").unwrap();
+            let offset = multi_buffer::MultiBufferOffset(offset);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([offset..offset]);
+            });
+        });
+        cx.focus(&editor);
+        cx.update(|window, cx| {
+            window.dispatch_action(editor::actions::OpenExcerpts.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let opened_editor = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        });
+        opened_editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            let file = buffer.read(cx).file().unwrap();
+            assert!(
+                project::File::from_dyn(Some(file)).is_some(),
+                "Open File should open the worktree buffer, not the index text"
+            );
+            assert!(!editor.read_only(cx));
+            let cursor = editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head();
+            assert_eq!(cursor.row, 2);
         });
     }
 
