@@ -278,8 +278,9 @@ impl LspAdapter for GoLspAdapter {
         match completion.kind.zip(completion.detail.as_ref()) {
             Some((lsp::CompletionItemKind::MODULE, detail)) => {
                 let text = format!("{label} {detail}");
-                let source = Rope::from(format!("import {text}").as_str());
-                let runs = language.highlight_text(&source, 7..7 + text[name_offset..].len());
+                let source = format!("import {text}");
+                let runs =
+                    language.highlight_text(source.as_str(), 7..7 + text[name_offset..].len());
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -295,11 +296,10 @@ impl LspAdapter for GoLspAdapter {
                 detail,
             )) => {
                 let text = format!("{label} {detail}");
-                let source =
-                    Rope::from(format!("var {} {}", &text[name_offset..], detail).as_str());
+                let source = format!("var {} {}", &text[name_offset..], detail);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 4..4 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 4..4 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -313,10 +313,10 @@ impl LspAdapter for GoLspAdapter {
             }
             Some((lsp::CompletionItemKind::STRUCT, _)) => {
                 let text = format!("{label} struct {{}}");
-                let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
+                let source = format!("type {}", &text[name_offset..]);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -330,10 +330,10 @@ impl LspAdapter for GoLspAdapter {
             }
             Some((lsp::CompletionItemKind::INTERFACE, _)) => {
                 let text = format!("{label} interface {{}}");
-                let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
+                let source = format!("type {}", &text[name_offset..]);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -347,11 +347,10 @@ impl LspAdapter for GoLspAdapter {
             }
             Some((lsp::CompletionItemKind::FIELD, detail)) => {
                 let text = format!("{label} {detail}");
-                let source =
-                    Rope::from(format!("type T struct {{ {} }}", &text[name_offset..]).as_str());
+                let source = format!("type T struct {{ {} }}", &text[name_offset..]);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 16..16 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 16..16 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -366,10 +365,10 @@ impl LspAdapter for GoLspAdapter {
             Some((lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD, detail)) => {
                 if let Some(signature) = detail.strip_prefix("func") {
                     let text = format!("{label}{signature}");
-                    let source = Rope::from(format!("func {} {{}}", &text[name_offset..]).as_str());
+                    let source = format!("func {} {{}}", &text[name_offset..]);
                     let runs = adjust_runs(
                         name_offset,
-                        language.highlight_text(&source, 5..5 + text[name_offset..].len()),
+                        language.highlight_text(source.as_str(), 5..5 + text[name_offset..].len()),
                     );
                     let filter_range = completion
                         .filter_text
@@ -442,7 +441,7 @@ impl LspAdapter for GoLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language.highlight_text(text.as_str(), display_range),
         ))
     }
 

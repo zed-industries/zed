@@ -33,7 +33,7 @@ use gpui::{
     TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop,
     linear_gradient, list, pulsating_between,
 };
-use language::{Buffer, Language, Rope};
+use language::{Buffer, Language};
 use language_model::{
     LanguageModelCompletionError, ProviderErrorCategory, ZED_CLOUD_PROVIDER_NAME,
 };

@@ -243,7 +243,7 @@ fn label_for_python_symbol(
     Some(language::CodeLabel::new(
         text[display_range.clone()].to_string(),
         filter_range,
-        language.highlight_text(&text.as_str().into(), display_range),
+        language.highlight_text(text.as_str(), display_range),
     ))
 }
 
