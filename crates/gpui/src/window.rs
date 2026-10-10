@@ -25,6 +25,7 @@ use crate::{
     WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
+use crate::element::{ElementIdInterner, InternedHandle};
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
 use crate::interactive::TouchEvent;
 use anyhow::{Context as _, Result, anyhow};
@@ -970,43 +971,44 @@ pub(crate) struct TooltipRequest {
     tooltip: AnyTooltip,
 }
 
-/// The ids of the elements being drawn, root first, with the hash of every
-/// prefix alongside: a [`GlobalElementId`] for the current element is then
-/// the ids cloned out and the hash on top of the stack, without walking the
-/// path — the ids of every ancestor, string names byte by byte — for each
-/// element on every frame.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct ElementIdStack {
     ids: SmallVec<[ElementId; 32]>,
-    hashes: SmallVec<[u64; 32]>,
+    handles: SmallVec<[InternedHandle; 32]>,
+    root: InternedHandle,
 }
 
 impl ElementIdStack {
-    pub(crate) fn push(&mut self, id: ElementId) {
-        self.hashes.push(crate::extend_path_hash(self.hash(), &id));
-        self.ids.push(id);
+    fn new(interner: &ElementIdInterner) -> Self {
+        Self {
+            ids: SmallVec::new(),
+            handles: SmallVec::new(),
+            root: interner.root(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, id: ElementId, interner: &mut ElementIdInterner) {
+        let parent = self.handle();
+        self.ids.push(id.clone());
+        self.handles.push(interner.intern(parent, id, &self.ids));
     }
 
     pub(crate) fn pop(&mut self) -> Option<ElementId> {
-        self.hashes.pop();
+        self.handles.pop();
         self.ids.pop()
     }
 
     pub(crate) fn clear(&mut self) {
         self.ids.clear();
-        self.hashes.clear();
+        self.handles.clear();
     }
 
-    /// The hash of the whole path on the stack.
-    pub(crate) fn hash(&self) -> u64 {
-        self.hashes
-            .last()
-            .copied()
-            .unwrap_or(crate::EMPTY_PATH_HASH)
+    pub(crate) fn handle(&self) -> InternedHandle {
+        self.handles.last().copied().unwrap_or(self.root)
     }
 
-    pub(crate) fn global_id(&self) -> GlobalElementId {
-        GlobalElementId::with_hash(&self.ids, self.hash())
+    pub(crate) fn global_id(&self, interner: &ElementIdInterner) -> GlobalElementId {
+        interner.global_id(self.handle())
     }
 }
 
@@ -1035,8 +1037,8 @@ pub(crate) struct DeferredDraw {
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
-    pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    accessed_element_states: Vec<(GlobalElementId, TypeId)>,
+    pub(crate) element_states: FxHashMap<(InternedHandle, TypeId), ElementStateBox>,
+    accessed_element_states: Vec<(InternedHandle, TypeId)>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -1233,6 +1235,7 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
+    pub(crate) element_id_interner: ElementIdInterner,
     text_style_stack: Vec<TextStyleRefinement>,
     // Keep the large resolved value off Window and retain its allocation across invalidations.
     resolved_text_style: RefCell<Option<Box<Option<TextStyle>>>>,
@@ -2117,6 +2120,7 @@ impl Window {
 
         platform_window.map_window().unwrap();
 
+        let element_id_interner = ElementIdInterner::default();
         Ok(Window {
             handle,
             invalidator,
@@ -2140,7 +2144,8 @@ impl Window {
                 engine
             }),
             root: None,
-            element_id_stack: ElementIdStack::default(),
+            element_id_stack: ElementIdStack::new(&element_id_interner),
+            element_id_interner,
             text_style_stack: Vec::new(),
             resolved_text_style: RefCell::new(None),
             rendered_entity_stack: Vec::new(),
@@ -3143,7 +3148,7 @@ impl Window {
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.with_id(element_id, |this| {
-            let global_id = this.element_id_stack.global_id();
+            let global_id = this.element_id_stack.global_id(&this.element_id_interner);
 
             f(&global_id, this)
         })
@@ -3156,7 +3161,8 @@ impl Window {
         element_id: impl Into<ElementId>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.element_id_stack.push(element_id.into());
+        self.element_id_stack
+            .push(element_id.into(), &mut self.element_id_interner);
         let result = f(self);
         self.element_id_stack.pop();
         result
@@ -3527,6 +3533,10 @@ impl Window {
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
+        for &(handle, _) in &self.next_frame.accessed_element_states {
+            self.element_id_interner.mark_used(handle);
+        }
+        self.element_id_interner.finish_frame();
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -4016,7 +4026,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
+                .copied(),
         );
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -4096,7 +4106,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
+                .copied(),
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
@@ -4337,7 +4347,8 @@ impl Window {
         element_id: impl Into<ElementId>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.element_id_stack.push(element_id.into());
+        self.element_id_stack
+            .push(element_id.into(), &mut self.element_id_interner);
         let result = f(self);
         self.element_id_stack.pop();
         result
@@ -5234,7 +5245,7 @@ impl Window {
         let scale_factor = self.scale_factor();
 
         let engine = self.layout_engine.as_mut().unwrap();
-        engine.set_request_scope(&self.element_id_stack);
+        engine.set_request_scope(&self.element_id_stack.handle());
         engine.request_layout(style, rem_size, scale_factor, &cx.layout_id_buffer)
     }
 
@@ -5256,7 +5267,7 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
         let engine = self.layout_engine.as_mut().unwrap();
-        engine.set_request_scope(&self.element_id_stack);
+        engine.set_request_scope(&self.element_id_stack.handle());
         engine.request_measured_layout(style, rem_size, scale_factor, measure)
     }
 
@@ -5266,7 +5277,7 @@ impl Window {
     ) -> LayoutId {
         self.invalidator.debug_assert_prepaint();
         let engine = self.layout_engine.as_mut().unwrap();
-        engine.set_request_scope(&self.element_id_stack);
+        engine.set_request_scope(&self.element_id_stack.handle());
         engine.request_text_layout(measure)
     }
 
@@ -7335,9 +7346,9 @@ impl Window {
         &mut self,
         global_id: &GlobalElementId,
         state_type: TypeId,
-    ) -> ((GlobalElementId, TypeId), Option<ElementStateBox>) {
-        let key = (global_id.clone(), state_type);
-        self.next_frame.accessed_element_states.push(key.clone());
+    ) -> ((InternedHandle, TypeId), Option<ElementStateBox>) {
+        let key = (self.element_id_interner.resolve(global_id), state_type);
+        self.next_frame.accessed_element_states.push(key);
         let state = self
             .next_frame
             .element_states
@@ -7349,7 +7360,7 @@ impl Window {
     #[inline(never)]
     fn insert_element_state(
         &mut self,
-        key: (GlobalElementId, TypeId),
+        key: (InternedHandle, TypeId),
         state: ElementStateBox,
     ) -> Option<ElementStateBox> {
         self.next_frame.element_states.insert(key, state)

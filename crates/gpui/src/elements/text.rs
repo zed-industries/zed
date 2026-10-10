@@ -1514,7 +1514,7 @@ mod tests {
                 width: crate::AvailableSpace::Definite(crate::px(50.0)),
                 height: crate::AvailableSpace::MaxContent,
             };
-            let scope = crate::window::ElementIdStack::default();
+            let scope = crate::element::InternedHandle::for_test(0, 0);
             for previous_runs in &variants {
                 for next_runs in &variants {
                     let mut engine = crate::TaffyLayoutEngine::new();
@@ -1578,7 +1578,7 @@ mod tests {
                 width: crate::AvailableSpace::Definite(crate::px(50.0)),
                 height: crate::AvailableSpace::MaxContent,
             };
-            let scope = crate::window::ElementIdStack::default();
+            let scope = crate::element::InternedHandle::for_test(0, 0);
             for shared in [false, true] {
                 for change in 0..12 {
                     let mut engine = crate::TaffyLayoutEngine::new();
@@ -1669,7 +1669,7 @@ mod tests {
         cx.add_empty_window().update(|window, cx| {
             let mut engine = crate::TaffyLayoutEngine::new();
             engine.enable_cache();
-            let scope = crate::window::ElementIdStack::default();
+            let scope = crate::element::InternedHandle::for_test(0, 0);
             let available = Size {
                 width: crate::AvailableSpace::MaxContent,
                 height: crate::AvailableSpace::MaxContent,
@@ -1828,7 +1828,7 @@ mod tests {
             // failure result to exercise its rejection and next-frame recovery.
             let mut engine = crate::TaffyLayoutEngine::new();
             engine.enable_cache();
-            let scope = crate::window::ElementIdStack::default();
+            let scope = crate::element::InternedHandle::for_test(0, 0);
             engine.set_request_scope(&scope);
             let id = engine.request_text_layout(moved_measure);
             engine.compute_layout(id, available, window, cx);
@@ -2206,7 +2206,7 @@ mod tests {
                         let mut reference = crate::TaffyLayoutEngine::new();
                         let mut cached = crate::TaffyLayoutEngine::new();
                         cached.enable_cache();
-                        let scope = crate::window::ElementIdStack::default();
+                        let scope = crate::element::InternedHandle::for_test(0, 0);
                         let mut previous_id = None;
                         for frame in 0..8 {
                             let scale = if frame < 4 { 1.0 } else { 1.25 };
