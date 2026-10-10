@@ -472,6 +472,22 @@ impl ViewStore {
         self.set_own_access(id, Default::default(), false);
     }
 
+    fn append_layout_access(&mut self, id: ViewOccurrenceId, mut own: collections::FxHashSet<EntityId>) {
+        let retained = self.retained_mut(id);
+        own.remove(&retained.entity);
+        let mut dependencies = Vec::new();
+        for entity in own {
+            let new = !retained.own_prepaint_entities.contains(&entity)
+                && !retained.own_paint_entities.contains(&entity);
+            if retained.own_layout_entities.insert(entity) && new {
+                dependencies.push(entity);
+            }
+        }
+        for entity in dependencies {
+            self.by_dependency.entry(entity).or_default().push(id);
+        }
+    }
+
     pub(crate) fn block_splicing(&mut self, id: ViewOccurrenceId, reason: SpliceFallback) {
         let mut current = Some(id);
         while let Some(id) = current {
@@ -509,6 +525,7 @@ impl ViewStore {
     ) {
         if self.retained(id).layout.is_none() {
             self.clear_global_access(id);
+            self.set_layout_access(id, Default::default());
         }
         self.record_mut(id).blocked = scope.fallback;
     }
@@ -613,6 +630,22 @@ impl ViewStore {
 }
 
 impl Window {
+    pub(crate) fn with_view_measure_access<R>(
+        &mut self,
+        occurrence: ViewOccurrenceId,
+        cx: &mut App,
+        measure: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> R {
+        let entity = self.view_store.retained(occurrence).entity;
+        let parent = self.current_view_occurrence.replace(occurrence);
+        let previous = self.begin_cached_entity_access(cx);
+        let result = self.with_rendered_view(entity, |window| measure(window, cx));
+        let (own, _) = self.end_cached_entity_access(previous, cx);
+        self.view_store.append_layout_access(occurrence, own);
+        self.current_view_occurrence = parent;
+        result
+    }
+
     /// Live occurrences and inline bytes for hot records, cold slots, cache boxes
     /// and implicit-layout boxes. Excludes map/set capacity and shared payloads.
     #[cfg(any(test, feature = "bench-support"))]
@@ -1438,6 +1471,120 @@ mod tests {
             "nested reads must not dirty the ancestor's own output"
         );
         assert_eq!(child_renders.get(), initial_child + 1);
+    }
+
+    struct MeasureGlobal(usize);
+    impl crate::Global for MeasureGlobal {}
+
+    struct MeasuredView {
+        renders: Rc<Cell<usize>>,
+        observed: Rc<Cell<usize>>,
+        entity: Option<Entity<Cell<usize>>>,
+        global: bool,
+    }
+
+    impl Render for MeasuredView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            MeasuredElement {
+                observed: self.observed.clone(),
+                entity: self.entity.clone(),
+                global: self.global,
+            }
+        }
+    }
+
+    struct MeasuredElement {
+        observed: Rc<Cell<usize>>,
+        entity: Option<Entity<Cell<usize>>>,
+        global: bool,
+    }
+
+    impl IntoElement for MeasuredElement {
+        type Element = Self;
+        fn into_element(self) -> Self { self }
+    }
+
+    impl crate::Element for MeasuredElement {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+        fn id(&self) -> Option<crate::ElementId> { None }
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
+        fn request_layout(
+            &mut self, _: Option<&crate::GlobalElementId>, _: Option<&crate::InspectorElementId>,
+            window: &mut Window, _: &mut crate::App,
+        ) -> (crate::LayoutId, ()) {
+            let observed = self.observed.clone();
+            let entity = self.entity.clone();
+            let global = self.global;
+            (window.request_measured_layout(crate::Style::default(), move |_, _, _, cx| {
+                let value = if global { cx.global::<MeasureGlobal>().0 }
+                    else { entity.as_ref().map_or(0, |entity| entity.read(cx).get()) };
+                observed.set(value);
+                crate::size(px(20.), px(20.))
+            }), ())
+        }
+        fn prepaint(
+            &mut self, _: Option<&crate::GlobalElementId>, _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<Pixels>, _: &mut (), _: &mut Window, _: &mut crate::App,
+        ) {}
+        fn paint(
+            &mut self, _: Option<&crate::GlobalElementId>, _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<Pixels>, _: &mut (), _: &mut (), _: &mut Window, _: &mut crate::App,
+        ) {}
+    }
+
+    struct MeasureRoot {
+        renders: Rc<Cell<usize>>,
+        children: Vec<Entity<MeasuredView>>,
+    }
+
+    impl Render for MeasureRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div().flex().children(self.children.clone())
+        }
+    }
+
+    #[crate::test]
+    fn custom_measure_dependencies_dirty_only_the_owner(cx: &mut TestAppContext) {
+        for global in [false, true] {
+            cx.set_global(MeasureGlobal(1));
+            let source = cx.new(|_| Cell::new(1));
+            let root_renders = Rc::new(Cell::new(0));
+            let owner_renders = Rc::new(Cell::new(0));
+            let sibling_renders = Rc::new(Cell::new(0));
+            let observed = Rc::new(Cell::new(0));
+            let owner = cx.new(|_| MeasuredView {
+                renders: owner_renders.clone(), observed: observed.clone(),
+                entity: (!global).then(|| source.clone()), global,
+            });
+            let sibling = cx.new(|_| MeasuredView {
+                renders: sibling_renders.clone(), observed: Rc::default(), entity: None, global: false,
+            });
+            let window = cx.add_window(|window, _| {
+                window.set_implicit_view_splicing(true);
+                MeasureRoot { renders: root_renders.clone(), children: vec![owner, sibling] }
+            });
+            let retained = cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.implicit_view_splicing
+            }).expect("initial draw");
+            if !retained { return; }
+            assert_eq!(observed.get(), 1);
+            let initial = (root_renders.get(), owner_renders.get(), sibling_renders.get());
+            if global {
+                cx.set_global(MeasureGlobal(2));
+            } else {
+                source.update(cx, |source, cx| { source.set(2); cx.notify(); });
+            }
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx)).expect("measured dependency draw");
+            assert_eq!(observed.get(), 2);
+            assert_eq!(owner_renders.get(), initial.1 + 1);
+            assert_eq!(sibling_renders.get(), initial.2, "unrelated sibling must retain");
+            assert_eq!(root_renders.get(), initial.0, "measure reads must not belong to the root");
+            cx.update_window(window.into(), |_, window, _| window.remove_window()).expect("remove measured window");
+        }
     }
 
     #[derive(Default)]

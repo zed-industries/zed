@@ -28,7 +28,13 @@ type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
 
 enum NodeContext {
     Custom(NodeMeasureFn),
+    OwnedCustom(Box<OwnedMeasure>),
     Text(Box<crate::elements::TextMeasure>),
+}
+
+struct OwnedMeasure {
+    measure: NodeMeasureFn,
+    occurrence: crate::view::ViewOccurrenceId,
 }
 
 struct LayoutCache {
@@ -85,7 +91,7 @@ struct RetainedLayouts {
     previous_layouts: FxHashMap<NodeId, taffy::Layout>,
     inputs: FxHashMap<NodeId, taffy::LayoutInput>,
     outputs: FxHashMap<NodeId, taffy::LayoutOutput>,
-    kept: FxHashSet<LayoutId>,
+    node_scopes: SecondaryMap<DefaultKey, (usize, usize)>,
 }
 
 impl RetainedLayouts {
@@ -399,24 +405,19 @@ impl TaffyLayoutEngine {
             epochs.last_computed = cache.epoch;
             cache.computed_roots.push(id);
         }
-        let mut nodes = FxHashSet::default();
-        let mut stack = vec![id.0];
+        if cache.nodes[node_index(id.0)].last_requested == cache.epoch {
+            return;
+        }
+        let retained = self.retained.as_ref().expect("retained layout ownership");
+        let stack = &mut self.layout_bounds_scratch_space;
+        stack.push(id);
         while let Some(node) = stack.pop() {
-            if nodes.insert(LayoutId(node)) {
-                cache.nodes[node_index(node)].last_requested = cache.epoch;
-                stack.extend(self.taffy.child_ids(node));
-            }
-        }
-        for scope in cache.scopes.iter_mut().flatten() {
-            for (ordinal, node) in scope.nodes.iter().enumerate() {
-                if node.is_some_and(|id| nodes.contains(&id)) {
-                    scope.last_requested_epoch = cache.epoch;
-                    scope.cursor = scope.cursor.max(ordinal + 1);
-                }
-            }
-        }
-        if let Some(retained) = self.retained.as_mut() {
-            retained.kept.extend(nodes);
+            cache.nodes[node_index(node.0)].last_requested = cache.epoch;
+            let &(scope, ordinal) = retained.node_scopes.get(node.0.into()).expect("layout node owner");
+            let scope = cache.scopes[scope].as_mut().expect("live layout scope");
+            scope.last_requested_epoch = cache.epoch;
+            scope.cursor = scope.cursor.max(ordinal + 1);
+            stack.extend(self.taffy.child_ids(node.0).map(LayoutId));
         }
     }
 
@@ -527,20 +528,9 @@ impl TaffyLayoutEngine {
                                 retained.layouts.remove(&id.0);
                                 retained.inputs.remove(&id.0);
                                 retained.outputs.remove(&id.0);
+                                retained.node_scopes.remove(id.0.into());
                             }
                             *node = None;
-                        } else if !self
-                            .retained
-                            .as_ref()
-                            .is_some_and(|retained| retained.kept.contains(&id))
-                            && matches!(
-                                self.taffy.get_node_context(id.0),
-                                Some(NodeContext::Custom(_))
-                            )
-                        {
-                            self.taffy
-                                .set_node_context(id.0, None)
-                                .expect(EXPECT_MESSAGE);
                         }
                     }
                 }
@@ -563,7 +553,6 @@ impl TaffyLayoutEngine {
         self.advance_layout_epoch();
         self.computed_layouts.clear();
         if let Some(retained) = self.retained.as_mut() {
-            retained.kept.clear();
             retained.previous_layouts.clear();
         }
     }
@@ -626,6 +615,9 @@ impl TaffyLayoutEngine {
                 cache.nodes[slot] = NodeEpochs::default();
             }
             cache.nodes[slot].last_requested = cache.epoch;
+            if let Some(retained) = self.retained.as_mut() {
+                retained.node_scopes.insert(id.0.into(), (index, ordinal));
+            }
         }
         (id, existing.is_some())
     }
@@ -686,16 +678,32 @@ impl TaffyLayoutEngine {
         ) -> Size<Pixels>
         + 'static,
     ) -> LayoutId {
+        self.request_owned_measured_layout(style, rem_size, scale_factor, None, measure)
+    }
+
+    pub(crate) fn request_owned_measured_layout(
+        &mut self,
+        style: Style,
+        rem_size: Pixels,
+        scale_factor: f32,
+        occurrence: Option<crate::view::ViewOccurrenceId>,
+        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels> + 'static,
+    ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
         let measure = Box::new(measure) as Box<MeasureFn>;
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
 
+        let context = if let Some(occurrence) = occurrence {
+            NodeContext::OwnedCustom(Box::new(OwnedMeasure { measure, occurrence }))
+        } else {
+            NodeContext::Custom(measure)
+        };
         if self.cache.is_some() {
-            return self.request_node(taffy_style, &[], Some(NodeContext::Custom(measure)));
+            return self.request_node(taffy_style, &[], Some(context));
         }
         self.taffy
-            .new_leaf_with_context(taffy_style, NodeContext::Custom(measure))
+            .new_leaf_with_context(taffy_style, context)
             .expect(EXPECT_MESSAGE)
             .into()
     }
@@ -941,6 +949,11 @@ impl TaffyLayoutEngine {
                     let measured_size = match node_context {
                         NodeContext::Custom(measure) => {
                             measure(known_dimensions, available_space, window, cx)
+                        }
+                        NodeContext::OwnedCustom(owned) => {
+                            window.with_view_measure_access(owned.occurrence, cx, |window, cx| {
+                                (owned.measure)(known_dimensions, available_space, window, cx)
+                            })
                         }
                         NodeContext::Text(measure) => measure.measure(
                             known_dimensions,
@@ -1673,7 +1686,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn layout_cache_reuses_ordinals_and_drops_measurements(cx: &mut crate::TestAppContext) {
+    fn layout_cache_reuses_ordinals_and_preserves_reachable_measurements(cx: &mut crate::TestAppContext) {
         use std::{cell::Cell, rc::Rc};
 
         cx.add_empty_window().update(|window, cx| {
@@ -1683,6 +1696,7 @@ mod tests {
             let scope = crate::element::InternedHandle::for_test(0, 0);
             let calls = Rc::new(Cell::new(0));
             let mut previous = None;
+            let mut previous_capture: Option<std::rc::Weak<()>> = None;
             for frame in 0..4 {
                 let capture = Rc::new(());
                 let weak_capture = Rc::downgrade(&capture);
@@ -1696,6 +1710,9 @@ mod tests {
                             size(Pixels(20.0 + frame as f32), Pixels(10.0))
                         }
                     });
+                if let Some(previous_capture) = previous_capture.take() {
+                    assert!(previous_capture.upgrade().is_none());
+                }
                 engine.set_request_scope(&scope);
                 let root = engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[measured]);
                 if let Some(previous) = previous {
@@ -1710,10 +1727,12 @@ mod tests {
                     size(Pixels(20.0 + frame as f32), Pixels(10.0))
                 );
                 engine.clear();
-                assert!(weak_capture.upgrade().is_none());
+                assert!(weak_capture.upgrade().is_some());
+                previous_capture = Some(weak_capture);
             }
             engine.set_request_scope(&scope);
             let unmeasured = engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[]);
+            assert!(previous_capture.expect("previous capture").upgrade().is_none());
             assert_eq!(unmeasured, previous.expect("previous frame").0);
             engine.compute_layout(unmeasured, AvailableSpace::min_size(), window, cx);
             assert_eq!(engine.layout_bounds(unmeasured, 1.0).size, Size::default());
