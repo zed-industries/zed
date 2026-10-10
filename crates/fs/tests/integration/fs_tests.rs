@@ -689,6 +689,34 @@ async fn test_fake_fs_rename_ignore_if_exists_leaves_source_and_target_unchanged
     );
 }
 
+#[gpui::test]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+async fn test_realfs_rename_collision_is_typed_already_exists(executor: BackgroundExecutor) {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    let source = root.join("source.txt");
+    let target = root.join("target.txt");
+
+    std::fs::write(&source, "from source").unwrap();
+    std::fs::write(&target, "from target").unwrap();
+
+    let fs = RealFs::new(None, executor);
+    let err = fs
+        .rename(&source, &target, RenameOptions::default())
+        .await
+        .expect_err("renaming onto an existing file should fail");
+
+    assert_eq!(
+        err.downcast_ref::<std::io::Error>().map(|e| e.kind()),
+        Some(std::io::ErrorKind::AlreadyExists),
+        "a collision should be a typed AlreadyExists error, got: {err:#}"
+    );
+
+    // Nothing was moved or overwritten.
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "from source");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "from target");
+}
+
 async fn assert_copy_and_remove_semantics(root: &Path, fs: &dyn Fs) {
     let source = root.join("source.txt");
     let target = root.join("target.txt");
