@@ -8,7 +8,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, atomic::Ordering::SeqCst},
+    sync::Arc,
     time::Duration,
 };
 
@@ -831,7 +831,7 @@ pub struct App {
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
-    pub(crate) focus_handles: Arc<FocusMap>,
+    pub(crate) focus_handles: Arc<RwLock<FocusMap>>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
@@ -967,7 +967,7 @@ impl App {
                 windows: SlotMap::with_key(),
                 window_update_stack: Vec::new(),
                 window_handles: FxHashMap::default(),
-                focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
+                focus_handles: Arc::new(RwLock::new(FocusMap::default())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
                 keyboard_layout,
                 keyboard_mapper,
@@ -2087,25 +2087,36 @@ impl App {
 
     /// Repeatedly called during `flush_effects` to handle a focused handle being dropped.
     fn release_dropped_focus_handles(&mut self) {
-        self.focus_handles
-            .clone()
-            .write()
-            .retain(|handle_id, focus| {
-                if focus.ref_count.load(SeqCst) == 0 {
-                    for window_handle in self.windows() {
-                        window_handle
-                            .update(self, |_, window, cx| {
-                                if window.focus == Some(handle_id) {
-                                    window.blur(cx);
-                                }
-                            })
-                            .unwrap();
-                    }
-                    false
-                } else {
-                    true
-                }
-            });
+        let focus_handles = self.focus_handles.clone();
+        let mut focus_handles = focus_handles.write();
+        let FocusMap {
+            handles,
+            dropped_handles,
+        } = &mut *focus_handles;
+        if dropped_handles.is_empty() {
+            return;
+        }
+
+        let windows = self
+            .windows
+            .values()
+            .filter_map(|window| {
+                let window = window.as_ref()?;
+                dropped_handles
+                    .contains(&window.focus?)
+                    .then_some(window.handle)
+            })
+            .collect::<SmallVec<[_; 1]>>();
+        for handle_id in dropped_handles.drain(..) {
+            handles.remove(handle_id);
+        }
+        drop(focus_handles);
+
+        for window_handle in windows {
+            window_handle
+                .update(self, |_, window, cx| window.blur(cx))
+                .ok();
+        }
     }
 
     fn apply_notify_effect(&mut self, emitter: EntityId) {

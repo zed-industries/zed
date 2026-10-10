@@ -2389,13 +2389,14 @@ impl ConversationView {
         cx.spawn_in(window, async move |this, cx| {
             let subagent_thread = subagent_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
-                let Some(conversation) = this
-                    .as_connected()
-                    .map(|connected| connected.conversation.clone())
-                else {
+                let Some(connected) = this.as_connected() else {
                     return;
                 };
                 let subagent_session_id = subagent_thread.read(cx).session_id().clone();
+                if connected.threads.contains_key(&subagent_session_id) {
+                    return;
+                }
+                let conversation = connected.conversation.clone();
                 conversation.update(cx, |conversation, cx| {
                     conversation.register_thread(subagent_thread.clone(), cx);
                 });
@@ -4020,6 +4021,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::any::Any;
+    use std::cell::RefCell;
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
@@ -5523,6 +5525,56 @@ pub(crate) mod tests {
             assert_eq!(view.list_state.item_count(), 0);
             assert!(view.thread.read(cx).notices().is_empty());
         });
+    }
+
+    #[gpui::test]
+    async fn test_concurrent_subagent_loads_create_one_thread_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) = setup_conversation_view(FakeAcpAgentServer::new(), cx).await;
+        let root_session_id =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.session_id.clone());
+        let subagent_session_id = acp_v1::SessionId::new("subagent");
+        let created_views = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|_, cx| {
+            cx.observe_new::<ThreadView>({
+                let created_views = created_views.clone();
+                let subagent_session_id = subagent_session_id.clone();
+                move |view, _, cx| {
+                    if view.session_id == subagent_session_id {
+                        created_views.borrow_mut().push(cx.entity_id());
+                    }
+                }
+            })
+        });
+
+        conversation_view.update_in(cx, |view, window, cx| {
+            for _ in 0..2 {
+                view.load_subagent_session(
+                    subagent_session_id.clone(),
+                    root_session_id.clone(),
+                    window,
+                    cx,
+                );
+            }
+            assert_eq!(view.as_connected().expect("connected").threads.len(), 1);
+        });
+        cx.run_until_parked();
+
+        let restored_view = conversation_view.read_with(cx, |view, cx| {
+            let connected = view.as_connected().expect("connected");
+            assert_eq!(connected.threads.len(), 2);
+            assert_eq!(connected.conversation.read(cx).subscriptions.len(), 2);
+            connected
+                .threads
+                .get(&subagent_session_id)
+                .expect("restored subagent")
+                .clone()
+        });
+        assert_eq!(
+            created_views.borrow().as_slice(),
+            &[restored_view.entity_id()]
+        );
     }
 
     #[gpui::test]
