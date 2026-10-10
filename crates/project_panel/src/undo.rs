@@ -450,19 +450,16 @@ pub(crate) fn project_path_display(
         .unwrap_or_else(|| project_path.path.display(path_style).to_string())
 }
 
-/// Returns `true` if a rename failed because something already exists at the destination.
+/// Returns `true` if a rename failed because something already exists at the
+/// destination.
 ///
-/// `RealFs::rename` may return an error other than `io::Error` when the file already exists,
-/// in this case(its fallback uses `bail`, and `FakeFs` uses its own message),
-/// so we also check the text of the whole error chain
+/// Only a typed `io::ErrorKind::AlreadyExists` counts. Error context strings
+/// contain file paths, so matching on text would misdiagnose unrelated
+/// failures for files whose names contain "already exists".
 pub(crate) fn already_exists_error(err: &anyhow::Error) -> bool {
-    let already_exists = err.chain().any(|cause| {
-        cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::AlreadyExists)
-    }) || format!("{err:#}").contains("already exists");
-
-    already_exists
+    err.chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::AlreadyExists)
 }
 
 impl Inner {
