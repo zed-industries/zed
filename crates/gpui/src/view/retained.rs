@@ -61,7 +61,6 @@ pub(crate) struct ViewStore {
     by_entity: FxHashMap<EntityId, Vec<ViewOccurrenceId>>,
     by_dependency: FxHashMap<EntityId, Vec<ViewOccurrenceId>>,
     epoch: u64,
-    fallback_counts: [u64; 8],
 }
 
 impl ViewStore {
@@ -401,8 +400,9 @@ impl Window {
         id: ViewOccurrenceId,
     ) -> Result<(), SpliceFallback> {
         let result = self.validate_view_splice(id);
+        #[cfg(any(test, feature = "bench-support"))]
         if let Err(reason) = result {
-            self.view_store.fallback_counts[reason as usize] += 1;
+            self.view_reuse_stats.splice_fallbacks[reason as usize] += 1;
         }
         result
     }
@@ -449,6 +449,11 @@ impl Window {
 
     pub(super) fn splice_view_prepaint(&mut self, id: ViewOccurrenceId, cx: &mut App) {
         let children = self.dirty_view_children(id);
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            self.view_reuse_stats.splice_prepaint_calls += 1;
+            self.view_reuse_stats.spliced_children += children.len();
+        }
         let retained = self.view_store.retained(id);
         let ancestor_range = retained
             .state
@@ -532,6 +537,10 @@ impl Window {
             self.reuse_paint(ancestor_range);
             return;
         };
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            self.view_reuse_stats.splice_paint_calls += 1;
+        }
         let mut cursor = ancestor_range.start;
         for mut child in children {
             self.reuse_paint(cursor..child.old_paint_range.start);

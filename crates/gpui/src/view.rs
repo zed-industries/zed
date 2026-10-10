@@ -449,6 +449,14 @@ fn request_layout_view(
                 (layout_id, None)
             }
             _ => {
+                #[cfg(any(test, feature = "bench-support"))]
+                {
+                    window.record_view_render(entity_id, caching_disabled);
+                    if cached_style.is_some() {
+                        window.view_reuse_stats.cached_misses += 1;
+                        window.view_reuse_stats.miss_inspector += 1;
+                    }
+                }
                 let mut element = render(window, cx);
                 let layout_id = element.request_layout(window, cx);
                 (layout_id, Some(element))
@@ -505,6 +513,21 @@ fn prepaint_view(
             let text_style = window.text_style();
 
             let element_state = window.view_store.state(occurrence);
+            #[cfg(any(test, feature = "bench-support"))]
+            let force_reconstruction = window.force_view_reconstruction;
+            #[cfg(not(any(test, feature = "bench-support")))]
+            let force_reconstruction = false;
+
+            #[cfg(any(test, feature = "bench-support"))]
+            let cache_changes = element_state.map(|state| {
+                (
+                    state.cache_key.bounds != bounds,
+                    state.cache_key.bounds.size != bounds.size,
+                    state.cache_key.content_mask != content_mask,
+                    state.cache_key.text_style != text_style,
+                )
+            });
+            let mut reused = false;
             if let Some(element_state) = element_state
                 && element_state.cache_key.bounds == bounds
                 && element_state.cache_key.content_mask == content_mask
@@ -514,11 +537,21 @@ fn prepaint_view(
                     || window.view_store.is_descendant_dirty(occurrence))
                 && window.retained_scope_fallback != Some(retained::SpliceFallback::Transaction)
                 && !window.refreshing
+                && !force_reconstruction
             {
                 let prepaint_range = element_state.prepaint_range.clone();
                 let can_reuse = !window.view_store.is_descendant_dirty(occurrence)
                     || window.prepare_view_splice(occurrence).is_ok();
                 if can_reuse {
+                    reused = true;
+                }
+                if reused {
+                    #[cfg(any(test, feature = "bench-support"))]
+                    {
+                        window.view_reuse_stats.cached_hits += 1;
+                        window.view_reuse_stats.reused_view_boundary_visits[0] += 1;
+                        window.view_reuse_stats.reused_view_boundary_visits[1] += 1;
+                    }
                     let prepaint_start = window.prepaint_index();
                     if window.view_store.is_descendant_dirty(occurrence) {
                         window.splice_view_prepaint(occurrence, cx);
@@ -542,6 +575,31 @@ fn prepaint_view(
                 }
             }
 
+            #[cfg(any(test, feature = "bench-support"))]
+            {
+                let stats = &mut window.view_reuse_stats;
+                stats.cached_misses += 1;
+                if let Some((bounds_changed, size_changed, mask_changed, text_changed)) =
+                    cache_changes
+                {
+                    stats.miss_bounds += usize::from(bounds_changed);
+                    stats.miss_content_mask += usize::from(mask_changed);
+                    stats.miss_text_style += usize::from(text_changed);
+                    stats.miss_dirty += usize::from(
+                        window.dirty_views.contains(&entity_id)
+                            || window.view_store.is_own_dirty(occurrence),
+                    );
+                    stats.miss_refreshing += usize::from(window.refreshing);
+                    stats.miss_forced_reconstruction += usize::from(force_reconstruction);
+                    stats.bounds_size_changed += usize::from(size_changed);
+                    stats.bounds_origin_only_changed +=
+                        usize::from(bounds_changed && !size_changed);
+                } else {
+                    stats.miss_first_mount += 1;
+                }
+                window.record_view_render(entity_id, false);
+                window.cached_reconstruction_depth += 1;
+            }
             let refreshing = mem::replace(&mut window.refreshing, true);
             let prepaint_start = window.prepaint_index();
             let mut element = render(window, cx);
@@ -550,6 +608,10 @@ fn prepaint_view(
 
             let prepaint_end = window.prepaint_index();
             window.refreshing = refreshing;
+            #[cfg(any(test, feature = "bench-support"))]
+            {
+                window.cached_reconstruction_depth -= 1;
+            }
 
             window.view_store.set_state(
                 occurrence,
@@ -629,6 +691,10 @@ fn paint_view(
                         element.paint(window, cx);
                         window.refreshing = refreshing;
                     } else {
+                        #[cfg(any(test, feature = "bench-support"))]
+                        {
+                            window.view_reuse_stats.reused_view_boundary_visits[2] += 1;
+                        }
                         window.splice_view_paint(occurrence, cx);
                     }
 

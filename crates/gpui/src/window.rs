@@ -1288,6 +1288,140 @@ enum InputModality {
     Touch,
 }
 
+/// Work performed by view caching since the last explicit reset.
+///
+/// Miss reasons overlap: a view can have changed bounds and also be dirty.
+/// Byte counts describe inline array records, not allocations owned by those records.
+#[cfg(any(test, feature = "bench-support"))]
+#[derive(Clone, Debug, Default)]
+#[expect(missing_docs)]
+pub struct ViewReuseStats {
+    pub frames: usize,
+    /// Actual element callbacks, in request-layout, prepaint, paint order.
+    pub phase_element_visits: [usize; 3],
+    /// Cached boundary callbacks for hits; retained descendants have zero visits.
+    pub reused_view_boundary_visits: [usize; 3],
+    pub render_own_dirty: usize,
+    pub render_ancestor_caused: usize,
+    pub render_first_mount: usize,
+    pub render_refresh_or_inspector: usize,
+    pub render_cache_context: usize,
+    pub render_entity_dependency: usize,
+    pub splice_prepaint_calls: usize,
+    pub splice_paint_calls: usize,
+    pub spliced_children: usize,
+    /// Uncached view, deferred draw, transaction, autoscroll, accessibility,
+    /// inspector, execution scope, missing view.
+    pub splice_fallbacks: [usize; 8],
+    pub cached_hits: usize,
+    pub cached_misses: usize,
+    pub miss_first_mount: usize,
+    pub miss_bounds: usize,
+    pub miss_content_mask: usize,
+    pub miss_text_style: usize,
+    pub miss_dirty: usize,
+    pub miss_refreshing: usize,
+    pub miss_inspector: usize,
+    pub miss_forced_reconstruction: usize,
+    pub bounds_size_changed: usize,
+    pub bounds_origin_only_changed: usize,
+    pub prepaint_reuse_calls: usize,
+    pub paint_reuse_calls: usize,
+    pub hitboxes: ReuseArrayStats,
+    pub tooltips: ReuseArrayStats,
+    pub element_state_keys: ReuseArrayStats,
+    pub dispatch_nodes: ReuseArrayStats,
+    pub deferred_draws: ReuseArrayStats,
+    pub cursor_styles: ReuseArrayStats,
+    pub input_handlers: ReuseArrayStats,
+    pub mouse_listeners: ReuseArrayStats,
+    pub tab_stops: ReuseArrayStats,
+    pub text_layout_usage_indices: ReuseArrayStats,
+    /// Shadow, quad, path, underline, monochrome, subpixel, polychrome, surface.
+    pub scene_primitives: [ReuseArrayStats; 8],
+    pub scene_layer_operations: usize,
+    pub index_fixups: usize,
+}
+
+/// Canonical CPU output for differential runs of a deterministic fixture.
+///
+/// View identities must be logical fixture identities, not entity IDs from separate
+/// windows. This is not a pixel oracle, and native surfaces may contain external identity.
+#[cfg(any(test, feature = "bench-support"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(missing_docs)]
+pub struct ViewReuseSnapshot {
+    pub scene: Vec<String>,
+    pub hitboxes: Vec<String>,
+    pub dispatch: Vec<String>,
+    pub cursor_styles: Vec<String>,
+    pub tab_stops: Vec<String>,
+}
+
+#[cfg(any(test, feature = "bench-support"))]
+impl ViewReuseSnapshot {
+    /// Report the first CPU-output mismatch with its frame and logical dispatch identities.
+    pub fn compare(&self, reconstructed: &Self, frame: usize) -> anyhow::Result<()> {
+        for (name, reused, fresh) in [
+            ("scene", &self.scene, &reconstructed.scene),
+            ("hitboxes", &self.hitboxes, &reconstructed.hitboxes),
+            ("dispatch", &self.dispatch, &reconstructed.dispatch),
+            (
+                "cursor styles",
+                &self.cursor_styles,
+                &reconstructed.cursor_styles,
+            ),
+            ("tab stops", &self.tab_stops, &reconstructed.tab_stops),
+        ] {
+            if reused != fresh {
+                let index = reused
+                    .iter()
+                    .zip(fresh)
+                    .position(|(left, right)| left != right)
+                    .unwrap_or(reused.len().min(fresh.len()));
+                anyhow::bail!(
+                    "view reuse mismatch in frame {frame}, {name}[{index}]: reused={:?}, reconstructed={:?}; logical view dispatch={:?}",
+                    reused.get(index),
+                    fresh.get(index),
+                    self.dispatch,
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Inline records replayed by an array's existing reuse implementation.
+#[cfg(any(test, feature = "bench-support"))]
+#[derive(Clone, Debug, Default)]
+#[expect(missing_docs)]
+pub struct ReuseArrayStats {
+    pub cloned_elements: usize,
+    pub cloned_bytes: usize,
+    pub moved_elements: usize,
+    pub moved_bytes: usize,
+    pub rebuilt_elements: usize,
+    pub rebuilt_bytes: usize,
+}
+
+#[cfg(any(test, feature = "bench-support"))]
+impl ReuseArrayStats {
+    pub(crate) fn cloned<T>(&mut self, records: &[T]) {
+        self.cloned_elements += records.len();
+        self.cloned_bytes += std::mem::size_of_val(records);
+    }
+
+    fn moved<T>(&mut self, records: &[T]) {
+        self.moved_elements += records.len();
+        self.moved_bytes += std::mem::size_of_val(records);
+    }
+
+    pub(crate) fn rebuilt<T>(&mut self, count: usize) {
+        self.rebuilt_elements += count;
+        self.rebuilt_bytes += count * std::mem::size_of::<T>();
+    }
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -1338,6 +1472,14 @@ pub struct Window {
     pub(crate) retained_scope_fallback: Option<crate::view::retained::SpliceFallback>,
     pub(crate) dispatch_replay: Vec<crate::ReusedSubtree>,
     pub(crate) cached_entity_access_stack: Vec<FxHashSet<EntityId>>,
+    #[cfg(any(test, feature = "bench-support"))]
+    own_dirty_views: FxHashSet<EntityId>,
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) view_reuse_stats: ViewReuseStats,
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) force_view_reconstruction: bool,
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) cached_reconstruction_depth: usize,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
@@ -2248,6 +2390,15 @@ impl Window {
             retained_scope_fallback: None,
             dispatch_replay: Vec::new(),
             cached_entity_access_stack: Vec::new(),
+            #[cfg(any(test, feature = "bench-support"))]
+            own_dirty_views: FxHashSet::default(),
+            #[cfg(any(test, feature = "bench-support"))]
+            view_reuse_stats: ViewReuseStats::default(),
+            #[cfg(any(test, feature = "bench-support"))]
+            force_view_reconstruction: std::env::var("GPUI_FORCE_VIEW_RECONSTRUCTION")
+                .is_ok_and(|value| value == "1"),
+            #[cfg(any(test, feature = "bench-support"))]
+            cached_reconstruction_depth: 0,
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             focus_lost_path: SmallVec::new(),
@@ -2446,8 +2597,117 @@ impl Window {
         result
     }
 
+    /// Read view work accumulated since the last reset.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn view_reuse_stats(&self) -> &ViewReuseStats {
+        &self.view_reuse_stats
+    }
+
+    /// Return and reset accumulated view work without resetting invalidation state.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn take_view_reuse_stats(&mut self) -> ViewReuseStats {
+        std::mem::take(&mut self.view_reuse_stats)
+    }
+
+    /// Disable cached view reuse for differential runs of deterministic fixtures.
+    ///
+    /// This does not run an extra render pass in the live window. Compare independent
+    /// windows with identical scripted updates, since rendering may mutate entity state.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn set_force_view_reconstruction(&mut self, force: bool) {
+        self.force_view_reconstruction = force;
+    }
+
+    /// Snapshot the completed frame outside benchmark timing.
+    ///
+    /// Both independent fixtures must use identical fonts, platform resources,
+    /// scripted inputs, and deterministic rendering.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn view_reuse_snapshot(
+        &self,
+        mut view_identity: impl FnMut(EntityId) -> String,
+    ) -> ViewReuseSnapshot {
+        let frame = &self.rendered_frame;
+        ViewReuseSnapshot {
+            scene: frame.scene.reuse_snapshot(),
+            hitboxes: frame
+                .hitboxes
+                .iter()
+                .map(|hitbox| {
+                    format!(
+                        "{:?}:{:?}:{:?}",
+                        hitbox.bounds, hitbox.content_mask, hitbox.behavior
+                    )
+                })
+                .collect(),
+            dispatch: frame.dispatch_tree.reuse_snapshot(&mut view_identity),
+            cursor_styles: frame
+                .cursor_styles
+                .iter()
+                .map(|cursor| {
+                    let hitbox = cursor
+                        .hitbox_id
+                        .map(|id| frame.hitboxes.iter().position(|hitbox| hitbox.id == id));
+                    format!("{hitbox:?}:{:?}", cursor.style)
+                })
+                .collect(),
+            tab_stops: frame
+                .tab_stops
+                .insertion_history
+                .iter()
+                .map(|operation| match operation {
+                    crate::tab_stop::TabStopOperation::Insert(handle) => {
+                        format!(
+                            "insert:{:?}:{}:{}",
+                            frame.dispatch_tree.focusable_node_id(handle.id),
+                            handle.tab_index,
+                            handle.tab_stop
+                        )
+                    }
+                    crate::tab_stop::TabStopOperation::Group(index) => format!("group:{index}"),
+                    crate::tab_stop::TabStopOperation::GroupEnd => "group-end".into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn record_view_render(&mut self, entity_id: EntityId, inspector: bool) {
+        if self
+            .rendered_frame
+            .dispatch_tree
+            .view_path_reversed(entity_id)
+            .next()
+            .is_none()
+        {
+            self.view_reuse_stats.render_first_mount += 1;
+        } else if self.own_dirty_views.contains(&entity_id) {
+            self.view_reuse_stats.render_own_dirty += 1;
+        } else if self
+            .current_view_occurrence
+            .is_some_and(|occurrence| self.view_store.is_own_dirty(occurrence))
+        {
+            self.view_reuse_stats.render_entity_dependency += 1;
+        } else if self.cached_reconstruction_depth > 0 {
+            self.view_reuse_stats.render_ancestor_caused += 1;
+        } else if inspector || self.refreshing {
+            self.view_reuse_stats.render_refresh_or_inspector += 1;
+        } else if self
+            .rendered_frame
+            .dispatch_tree
+            .view_path_reversed(entity_id)
+            .any(|view| self.dirty_views.contains(&view))
+        {
+            self.view_reuse_stats.render_ancestor_caused += 1;
+        } else {
+            self.view_reuse_stats.render_cache_context += 1;
+        }
+    }
+
     fn mark_view_dirty(&mut self, view_id: EntityId) {
         self.view_store.mark_dirty(view_id);
+        #[cfg(any(test, feature = "bench-support"))]
+        self.own_dirty_views.insert(view_id);
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
         for view_id in self
@@ -3638,6 +3898,10 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            self.view_reuse_stats.frames += 1;
+        }
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -3692,6 +3956,8 @@ impl Window {
         }
         self.dirty_views.clear();
         self.view_store.finish_frame();
+        #[cfg(any(test, feature = "bench-support"))]
+        self.own_dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
         // Register requested input handler with the platform window.
@@ -4215,6 +4481,35 @@ impl Window {
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
         let new_start = self.prepaint_index();
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            let stats = &mut self.view_reuse_stats;
+            stats.prepaint_reuse_calls += 1;
+            stats.hitboxes.cloned(
+                &self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index],
+            );
+            stats.tooltips.moved(
+                &self.rendered_frame.tooltip_requests
+                    [range.start.tooltips_index..range.end.tooltips_index],
+            );
+            stats.element_state_keys.cloned(
+                &self.rendered_frame.accessed_element_states[range
+                    .start
+                    .accessed_element_states_index
+                    ..range.end.accessed_element_states_index],
+            );
+            stats
+                .dispatch_nodes
+                .rebuilt::<crate::key_dispatch::DispatchNode>(
+                    range.end.dispatch_tree_index - range.start.dispatch_tree_index,
+                );
+            stats.deferred_draws.rebuilt::<DeferredDraw>(
+                range.end.deferred_draws_index - range.start.deferred_draws_index,
+            );
+            stats.index_fixups += range.end.dispatch_tree_index - range.start.dispatch_tree_index
+                + range.end.deferred_draws_index
+                - range.start.deferred_draws_index;
+        }
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -4234,6 +4529,8 @@ impl Window {
         );
         self.text_system.reuse_layouts(
             range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+            #[cfg(any(test, feature = "bench-support"))]
+            &mut self.view_reuse_stats.text_layout_usage_indices,
         );
 
         let replay = &self.dispatch_replay;
@@ -4299,6 +4596,34 @@ impl Window {
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
         let new_start = self.paint_index();
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            let stats = &mut self.view_reuse_stats;
+            stats.paint_reuse_calls += 1;
+            stats.cursor_styles.cloned(
+                &self.rendered_frame.cursor_styles
+                    [range.start.cursor_styles_index..range.end.cursor_styles_index],
+            );
+            stats.input_handlers.moved(
+                &self.rendered_frame.input_handlers
+                    [range.start.input_handlers_index..range.end.input_handlers_index],
+            );
+            stats.mouse_listeners.moved(
+                &self.rendered_frame.mouse_listeners
+                    [range.start.mouse_listeners_index..range.end.mouse_listeners_index],
+            );
+            stats.element_state_keys.cloned(
+                &self.rendered_frame.accessed_element_states[range
+                    .start
+                    .accessed_element_states_index
+                    ..range.end.accessed_element_states_index],
+            );
+            stats
+                .tab_stops
+                .rebuilt::<crate::tab_stop::TabStopOperation>(
+                    range.end.tab_handle_index - range.start.tab_handle_index,
+                );
+        }
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
@@ -4338,10 +4663,14 @@ impl Window {
 
         self.text_system.reuse_layouts(
             range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+            #[cfg(any(test, feature = "bench-support"))]
+            &mut self.view_reuse_stats.text_layout_usage_indices,
         );
         self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
+            #[cfg(any(test, feature = "bench-support"))]
+            &mut self.view_reuse_stats,
         );
         for occurrence in
             &self.rendered_frame.paint_views[range.start.views_index..range.end.views_index]

@@ -138,14 +138,76 @@ impl Scene {
             .push(PaintOperation::Primitive(primitive));
     }
 
-    pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+    pub fn replay(
+        &mut self,
+        range: Range<usize>,
+        prev_scene: &Scene,
+        #[cfg(any(test, feature = "bench-support"))] stats: &mut crate::ViewReuseStats,
+    ) {
         for operation in &prev_scene.paint_operations[range] {
+            #[cfg(any(test, feature = "bench-support"))]
+            match operation {
+                PaintOperation::Primitive(primitive) => {
+                    match primitive {
+                        Primitive::Shadow(value) => {
+                            stats.scene_primitives[0].cloned(std::slice::from_ref(value))
+                        }
+                        Primitive::Quad(value) => {
+                            stats.scene_primitives[1].cloned(std::slice::from_ref(value))
+                        }
+                        Primitive::Path(value) => {
+                            stats.scene_primitives[2].cloned(std::slice::from_ref(value));
+                            stats.index_fixups += 1;
+                        }
+                        Primitive::Underline(value) => {
+                            stats.scene_primitives[3].cloned(std::slice::from_ref(value))
+                        }
+                        Primitive::MonochromeSprite(value) => {
+                            stats.scene_primitives[4].cloned(std::slice::from_ref(value))
+                        }
+                        Primitive::SubpixelSprite(value) => {
+                            stats.scene_primitives[5].cloned(std::slice::from_ref(value))
+                        }
+                        Primitive::PolychromeSprite(value) => {
+                            stats.scene_primitives[6].cloned(std::slice::from_ref(value))
+                        }
+                        Primitive::Surface(value) => {
+                            stats.scene_primitives[7].cloned(std::slice::from_ref(value))
+                        }
+                    }
+                    stats.index_fixups += 1;
+                }
+                PaintOperation::StartLayer(_) | PaintOperation::EndLayer => {
+                    stats.scene_layer_operations += 1;
+                }
+            }
             match operation {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
         }
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn reuse_snapshot(&self) -> Vec<String> {
+        self.paint_operations
+            .iter()
+            .map(|operation| match operation {
+                PaintOperation::Primitive(primitive) => match primitive {
+                    Primitive::Shadow(value) => format!("shadow:{value:?}"),
+                    Primitive::Quad(value) => format!("quad:{value:?}"),
+                    Primitive::Path(value) => format!("path:{value:?}"),
+                    Primitive::Underline(value) => format!("underline:{value:?}"),
+                    Primitive::MonochromeSprite(value) => format!("monochrome:{value:?}"),
+                    Primitive::SubpixelSprite(value) => format!("subpixel:{value:?}"),
+                    Primitive::PolychromeSprite(value) => format!("polychrome:{value:?}"),
+                    Primitive::Surface(value) => format!("surface:{value:?}"),
+                },
+                PaintOperation::StartLayer(bounds) => format!("layer:{bounds:?}"),
+                PaintOperation::EndLayer => "end-layer".into(),
+            })
+            .collect()
     }
 
     pub fn finish(&mut self) {

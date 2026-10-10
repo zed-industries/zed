@@ -536,7 +536,11 @@ impl LineLayoutCache {
         }
     }
 
-    pub fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {
+    pub fn reuse_layouts(
+        &self,
+        range: Range<LineLayoutIndex>,
+        #[cfg(any(test, feature = "bench-support"))] stats: &mut crate::ReuseArrayStats,
+    ) {
         let font_generation = self.clear_if_font_generation_changed();
         if range.start.font_generation != font_generation
             || range.end.font_generation != font_generation
@@ -545,6 +549,24 @@ impl LineLayoutCache {
         }
         let mut current_frame = &mut *self.current_frame.write();
         let mut previous_frame = &mut *self.previous_frame.lock();
+
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            stats
+                .cloned(&previous_frame.used_lines[range.start.lines_index..range.end.lines_index]);
+            stats.cloned(
+                &previous_frame.used_wrapped_lines
+                    [range.start.wrapped_lines_index..range.end.wrapped_lines_index],
+            );
+            stats.cloned(
+                &previous_frame.used_lines_by_hash
+                    [range.start.lines_by_hash_index..range.end.lines_by_hash_index],
+            );
+            stats.cloned(
+                &previous_frame.used_wrapped_lines_by_hash[range.start.wrapped_lines_by_hash_index
+                    ..range.end.wrapped_lines_by_hash_index],
+            );
+        }
 
         for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
             if let Some((key, line)) = previous_frame.lines.remove_entry(key) {

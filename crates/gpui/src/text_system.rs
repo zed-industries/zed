@@ -619,8 +619,16 @@ impl WindowTextSystem {
         self.line_layout_cache.layout_index()
     }
 
-    pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
-        self.line_layout_cache.reuse_layouts(index)
+    pub(crate) fn reuse_layouts(
+        &self,
+        index: Range<LineLayoutIndex>,
+        #[cfg(any(test, feature = "bench-support"))] stats: &mut crate::ReuseArrayStats,
+    ) {
+        self.line_layout_cache.reuse_layouts(
+            index,
+            #[cfg(any(test, feature = "bench-support"))]
+            stats,
+        )
     }
 
     pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {

@@ -623,6 +623,28 @@ impl DispatchTree {
         .filter_map(|node| node.view_id)
     }
 
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn reuse_snapshot(
+        &self,
+        view_identity: &mut impl FnMut(EntityId) -> String,
+    ) -> Vec<String> {
+        self.nodes
+            .iter()
+            .map(|node| {
+                format!(
+                    "parent={:?},view={:?},context={:?},focusable={},keys={},actions={:?},modifiers={}",
+                    node.parent.map(|parent| parent.0),
+                    node.view_id.map(&mut *view_identity),
+                    node.context,
+                    node.focus_id.is_some(),
+                    node.key_listeners.len(),
+                    node.action_listeners.iter().map(|listener| listener.action_type).collect::<Vec<_>>(),
+                    node.modifiers_changed_listeners.len(),
+                )
+            })
+            .collect()
+    }
+
     pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {
         &self.nodes[node_id.0]
     }
