@@ -105,6 +105,16 @@ impl IconButton {
         self
     }
 
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.base = self.base.opacity(opacity);
+        self
+    }
+
+    pub fn hover_opacity(mut self, opacity: f32) -> Self {
+        self.base.hover_opacity = Some(opacity);
+        self
+    }
+
     pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.selected_icon = icon.into();
         self
@@ -450,6 +460,14 @@ impl Component for IconButton {
                             IconButton::new("alpha", IconName::Check)
                                 .alpha(0.5)
                                 .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Hover Opacity",
+                            IconButton::new("hover_opacity", IconName::Check)
+                                .opacity(0.6)
+                                .hover_opacity(1.0)
                                 .layer(ElevationIndex::Background)
                                 .into_any_element(),
                         ),
