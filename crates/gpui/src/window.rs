@@ -1570,6 +1570,14 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
     window_bounds_ctor(Bounds::new(final_origin, base_size))
 }
 
+enum SvgPaintSource<'a> {
+    Path {
+        path: SharedString,
+        data: Option<&'a [u8]>,
+    },
+    Data(&'a crate::SvgData),
+}
+
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
@@ -4984,7 +4992,41 @@ impl Window {
         &mut self,
         bounds: Bounds<Pixels>,
         path: SharedString,
-        mut data: Option<&[u8]>,
+        data: Option<&[u8]>,
+        transformation: TransformationMatrix,
+        color: Hsla,
+        cx: &App,
+    ) -> Result<()> {
+        self.paint_svg_source(
+            bounds,
+            SvgPaintSource::Path { path, data },
+            transformation,
+            color,
+            cx,
+        )
+    }
+
+    pub(crate) fn paint_svg_data(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        data: &crate::SvgData,
+        transformation: TransformationMatrix,
+        color: Hsla,
+        cx: &App,
+    ) -> Result<()> {
+        self.paint_svg_source(
+            bounds,
+            SvgPaintSource::Data(data),
+            transformation,
+            color,
+            cx,
+        )
+    }
+
+    fn paint_svg_source(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        source: SvgPaintSource<'_>,
         transformation: TransformationMatrix,
         color: Hsla,
         cx: &App,
@@ -4994,22 +5036,30 @@ impl Window {
         let element_opacity = self.element_opacity();
         let bounds = self.snap_bounds(bounds);
 
-        let params = RenderSvgParams {
-            path,
-            size: bounds.size.map(|pixels| {
-                DevicePixels::from((pixels.0 * SMOOTH_SVG_SCALE_FACTOR).ceil() as i32)
-            }),
+        let size = bounds
+            .size
+            .map(|pixels| DevicePixels::from((pixels.0 * SMOOTH_SVG_SCALE_FACTOR).ceil() as i32));
+        let (params, data, key) = match source {
+            SvgPaintSource::Path { path, data } => {
+                let params = RenderSvgParams { path, size };
+                let key = params.clone().into();
+                (params, data, key)
+            }
+            SvgPaintSource::Data(data) => (
+                RenderSvgParams {
+                    path: SharedString::default(),
+                    size,
+                },
+                Some(data.as_bytes()),
+                crate::AtlasKey::SvgData(data.clone(), size),
+            ),
         };
-
-        let Some(tile) =
-            self.sprite_atlas
-                .get_or_insert_with(params.clone().into(), &mut || {
-                    let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params, data)?
-                    else {
-                        return Ok(None);
-                    };
-                    Ok(Some((size, Cow::Owned(bytes))))
-                })?
+        let Some(tile) = self.sprite_atlas.get_or_insert_with(key, &mut || {
+            let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params, data)? else {
+                return Ok(None);
+            };
+            Ok(Some((size, Cow::Owned(bytes))))
+        })?
         else {
             return Ok(());
         };
