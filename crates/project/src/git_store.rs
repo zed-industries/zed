@@ -665,8 +665,11 @@ enum NextCommitDataRequest {
     Closed,
 }
 
+#[derive(Default)]
 pub struct InitialGitGraphData {
-    fetch_task: Task<()>,
+    fetch_task: Option<Task<()>>,
+    requested_end: usize,
+    complete: bool,
     pub error: Option<SharedString>,
     pub commit_data: Vec<Arc<InitialGraphCommitData>>,
     pub commit_oid_to_index: HashMap<Oid, usize>,
@@ -4083,14 +4086,24 @@ impl GitStore {
                 .context("missing initial graph data log source")?,
         )?;
 
+        let start = payload.start as usize;
+        let end = if payload.count == 0 {
+            usize::MAX
+        } else {
+            start.saturating_add(payload.count as usize)
+        };
+
         let (subscriber_sender, subscriber_receiver) = async_channel::unbounded();
-        let (cached_commits, error, is_loading) =
+        let (cached_commits, error, is_loading, mut next_index) =
             repository_handle.update(&mut cx, |repository, cx| {
-                let response =
-                    repository.graph_data(log_source.clone(), log_order, 0..usize::MAX, cx);
+                let response = repository.graph_data(log_source.clone(), log_order, start..end, cx);
                 let cached_commits = response.commits.to_vec();
-                let error = response.error.clone();
+                let error = response.error;
                 let is_loading = response.is_loading;
+                let cached_len = repository
+                    .get_graph_data(log_source.clone(), log_order)
+                    .map_or(0, |data| data.commit_data.len());
+                let is_loading = is_loading && end > cached_len;
 
                 if is_loading {
                     if let Some(graph_data) = repository
@@ -4101,7 +4114,7 @@ impl GitStore {
                     }
                 }
 
-                (cached_commits, error, is_loading)
+                (cached_commits, error, is_loading, cached_len)
             });
 
         let (mut response_tx, response_rx) = mpsc::unbounded();
@@ -4146,16 +4159,26 @@ impl GitStore {
                     }
                 };
 
-                for commits in commits.chunks(CHUNK_SIZE) {
-                    let response = proto::GetInitialGraphDataResponse {
-                        commits: commits
-                            .iter()
-                            .map(|commit| initial_graph_commit_to_proto(commit))
-                            .collect(),
-                    };
-                    if response_tx.send(Ok(response)).await.is_err() {
-                        return;
+                let chunk_start = next_index;
+                next_index += commits.len();
+                let overlap = start.max(chunk_start)..end.min(next_index);
+                if overlap.start < overlap.end {
+                    for commits in commits[overlap.start - chunk_start..overlap.end - chunk_start]
+                        .chunks(CHUNK_SIZE)
+                    {
+                        let response = proto::GetInitialGraphDataResponse {
+                            commits: commits
+                                .iter()
+                                .map(|commit| initial_graph_commit_to_proto(commit))
+                                .collect(),
+                        };
+                        if response_tx.send(Ok(response)).await.is_err() {
+                            return;
+                        }
                     }
+                }
+                if next_index >= end {
+                    return;
                 }
             }
         })
@@ -7436,90 +7459,113 @@ impl Repository {
         range: Range<usize>,
         cx: &mut Context<Self>,
     ) -> GraphDataResponse<'_> {
-        let initial_commit_data = self
-            .initial_graph_data
-            .entry((log_source.clone(), log_order))
-            .or_insert_with(|| {
-                let state = self.repository_state.clone();
-                let log_source = log_source.clone();
+        let key = (log_source, log_order);
+        let data = self.initial_graph_data.entry(key.clone()).or_default();
+        data.requested_end = data.requested_end.max(range.end);
 
-                let fetch_task = cx.spawn(async move |repository, cx| {
-                    let state = state.await;
-                    let result = match state {
-                        Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
-                            Self::local_git_graph_data(
-                                repository.clone(),
-                                backend,
-                                log_source.clone(),
-                                log_order,
-                                cx,
-                            )
+        let fetch_is_idle = data.fetch_task.as_ref().is_none_or(|task| task.is_ready());
+        if fetch_is_idle && !data.complete && data.commit_data.len() < data.requested_end {
+            let state = self.repository_state.clone();
+            data.fetch_task = Some(cx.spawn(async move |repository, cx| {
+                let result = match state.await {
+                    Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                        Self::local_git_graph_data(
+                            repository.clone(),
+                            backend,
+                            key.0.clone(),
+                            key.1,
+                            cx,
+                        )
+                        .await
+                        .map(|()| true)
+                    }
+                    Ok(RepositoryState::Remote(remote)) => {
+                        Self::remote_git_graph_data_paged(repository.clone(), remote, &key, cx)
                             .await
-                        }
-                        Ok(RepositoryState::Remote(remote)) => {
-                            Self::remote_git_graph_data(
-                                repository.clone(),
-                                remote,
-                                log_source.clone(),
-                                log_order,
-                                cx,
-                            )
-                            .await
-                        }
-                        Err(e) => Err(SharedString::from(e)),
-                    };
+                    }
+                    Err(e) => Err(SharedString::from(e)),
+                };
 
-                    repository
-                        .update(cx, |repository, cx| {
-                            if let Some(data) = repository
-                                .initial_graph_data
-                                .get_mut(&(log_source.clone(), log_order))
-                            {
-                                match &result {
-                                    Ok(()) => {
-                                        cx.emit(RepositoryEvent::GraphEvent(
-                                            (log_source.clone(), log_order),
-                                            GitGraphEvent::FullyLoaded,
-                                        ));
-                                    }
-                                    Err(fetch_task_error) => {
-                                        data.subscribers.retain(|sender| {
-                                            sender.try_send(Err(fetch_task_error.clone())).is_ok()
-                                        });
-                                        data.error = Some(fetch_task_error.clone());
-                                        cx.emit(RepositoryEvent::GraphEvent(
-                                            (log_source.clone(), log_order),
-                                            GitGraphEvent::LoadingError,
-                                        ));
-                                    }
-                                }
+                repository
+                    .update(cx, |repository, cx| {
+                        let Some(data) = repository.initial_graph_data.get_mut(&key) else {
+                            debug_panic!("This task would be dropped if this entry doesn't exist");
+                            return;
+                        };
+                        match result {
+                            Ok(true) => {
+                                data.complete = true;
                                 data.subscribers.clear();
-                            } else {
-                                debug_panic!(
-                                    "This task would be dropped if this entry doesn't exist"
-                                );
+                                cx.emit(RepositoryEvent::GraphEvent(
+                                    key.clone(),
+                                    GitGraphEvent::FullyLoaded,
+                                ));
                             }
-                        })
-                        .log_err();
-                });
+                            Ok(false) => {}
+                            Err(fetch_task_error) => {
+                                data.complete = true;
+                                data.subscribers.retain(|sender| {
+                                    sender.try_send(Err(fetch_task_error.clone())).is_ok()
+                                });
+                                data.subscribers.clear();
+                                data.error = Some(fetch_task_error);
+                                cx.emit(RepositoryEvent::GraphEvent(
+                                    key.clone(),
+                                    GitGraphEvent::LoadingError,
+                                ));
+                            }
+                        }
+                    })
+                    .log_err();
+            }));
+        }
 
-                InitialGitGraphData {
-                    fetch_task,
-                    error: None,
-                    commit_data: Vec::new(),
-                    commit_oid_to_index: HashMap::default(),
-                    subscribers: Vec::new(),
-                }
-            });
-
-        let max_start = initial_commit_data.commit_data.len().saturating_sub(1);
-        let max_end = initial_commit_data.commit_data.len();
-
+        let end = range.end.min(data.commit_data.len());
+        let start = range.start.min(end);
         GraphDataResponse {
-            commits: &initial_commit_data.commit_data
-                [range.start.min(max_start)..range.end.min(max_end)],
-            is_loading: !initial_commit_data.fetch_task.is_ready(),
-            error: initial_commit_data.error.clone(),
+            commits: &data.commit_data[start..end],
+            is_loading: data
+                .fetch_task
+                .as_ref()
+                .is_some_and(|task| !task.is_ready()),
+            error: data.error.clone(),
+        }
+    }
+
+    async fn remote_git_graph_data_paged(
+        this: WeakEntity<Self>,
+        remote: RemoteRepositoryState,
+        key: &(LogSource, LogOrder),
+        cx: &mut AsyncApp,
+    ) -> Result<bool, SharedString> {
+        loop {
+            let (start, requested_end) = this
+                .read_with(cx, |repository, _| {
+                    repository
+                        .initial_graph_data
+                        .get(key)
+                        .map(|data| (data.commit_data.len(), data.requested_end))
+                })
+                .map_err(|err| SharedString::from(err.to_string()))?
+                .ok_or_else(|| SharedString::from("graph data was invalidated"))?;
+            if start >= requested_end {
+                return Ok(false);
+            }
+            let end = requested_end.max(start.saturating_add(git::repository::GRAPH_CHUNK_SIZE));
+            let appended = Self::remote_git_graph_data(
+                this.clone(),
+                remote.clone(),
+                key.0.clone(),
+                key.1,
+                start..end,
+                cx,
+            )
+            .await?;
+            // A short window means the log ended. That includes nothing appended, which
+            // keeps a peer that ignores the window from being asked again and again.
+            if appended < end - start {
+                return Ok(true);
+            }
         }
     }
 
@@ -7528,8 +7574,9 @@ impl Repository {
         graph_data_key: &(LogSource, LogOrder),
         initial_graph_commit_data: Vec<Arc<InitialGraphCommitData>>,
         cx: &mut AsyncApp,
-    ) {
+    ) -> usize {
         this.update(cx, |repository, cx| {
+            let mut appended = 0;
             let graph_data = repository
                 .initial_graph_data
                 .entry(graph_data_key.clone())
@@ -7543,10 +7590,18 @@ impl Repository {
                     }
 
                     for commit_data in initial_graph_commit_data {
+                        // A peer that ignores the requested window resends from the start.
+                        if graph_data
+                            .commit_oid_to_index
+                            .contains_key(&commit_data.sha)
+                        {
+                            continue;
+                        }
                         graph_data
                             .commit_oid_to_index
                             .insert(commit_data.sha, graph_data.commit_data.len());
                         graph_data.commit_data.push(commit_data);
+                        appended += 1;
                     }
                     cx.emit(RepositoryEvent::GraphEvent(
                         graph_data_key.clone(),
@@ -7560,8 +7615,10 @@ impl Repository {
                     debug_panic!("This task should be dropped if data doesn't exist");
                 }
             }
+            appended
         })
-        .log_err();
+        .log_err()
+        .unwrap_or(0)
     }
 
     async fn local_git_graph_data(
@@ -7600,17 +7657,24 @@ impl Repository {
         Ok(())
     }
 
+    /// Streams one window of the remote log and returns how many commits were new.
     async fn remote_git_graph_data(
         this: WeakEntity<Self>,
         remote: RemoteRepositoryState,
         log_source: LogSource,
         log_order: LogOrder,
+        range: Range<usize>,
         cx: &mut AsyncApp,
-    ) -> Result<(), SharedString> {
+    ) -> Result<usize, SharedString> {
         let repository_id = this
             .update(cx, |repository, _| repository.id)
             .map_err(|err| SharedString::from(err.to_string()))?;
         let graph_data_key = (log_source.clone(), log_order);
+        let count = if range.end == usize::MAX {
+            0
+        } else {
+            range.end.saturating_sub(range.start) as u64
+        };
         let mut response = remote
             .client
             .request_stream(proto::GetInitialGraphData {
@@ -7618,10 +7682,13 @@ impl Repository {
                 repository_id: repository_id.to_proto(),
                 log_source: Some(log_source_to_proto(&log_source)),
                 log_order: log_order_to_proto(log_order),
+                start: range.start as u64,
+                count,
             })
             .await
             .map_err(|err| SharedString::from(err.to_string()))?;
 
+        let mut appended = 0;
         while let Some(response) = response.next().await {
             let response = response.map_err(|err| SharedString::from(err.to_string()))?;
             let commits = response
@@ -7630,10 +7697,11 @@ impl Repository {
                 .map(initial_graph_commit_from_proto)
                 .collect::<Result<Vec<_>>>()
                 .map_err(|err| SharedString::from(err.to_string()))?;
-            Self::append_initial_graph_commits(&this, &graph_data_key, commits, cx).await;
+            appended +=
+                Self::append_initial_graph_commits(&this, &graph_data_key, commits, cx).await;
         }
 
-        Ok(())
+        Ok(appended)
     }
 
     pub fn fetch_commit_data(

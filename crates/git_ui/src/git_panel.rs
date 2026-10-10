@@ -32,9 +32,9 @@ use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
-    Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
-    get_git_committer,
+    GRAPH_CHUNK_SIZE, GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource,
+    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -7405,6 +7405,10 @@ impl GitPanel {
     }
 
     fn preload_commit_history(&mut self, cx: &mut Context<Self>) {
+        if !self.project.read(cx).is_local() {
+            return;
+        }
+
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -7414,11 +7418,17 @@ impl GitPanel {
         };
         let log_order = LogOrder::DateOrder;
 
-        // Kick off the git log fetch so data is ready when the user switches to History.
+        // Kick off the first page of the git log so data is ready when the user switches to History.
         // graph_data() is idempotent — if already loading/loaded, this is a no-op.
         active_repository.update(cx, |repository, cx| {
-            repository.graph_data(log_source, log_order, 0..0, cx);
+            repository.graph_data(log_source, log_order, 0..GRAPH_CHUNK_SIZE, cx);
         });
+    }
+
+    fn history_rows_wanted(&self) -> usize {
+        self.commit_history_scroll_handle
+            .logical_scroll_top_index()
+            .saturating_add(GRAPH_CHUNK_SIZE)
     }
 
     fn load_commit_history(&mut self, cx: &mut Context<Self>) {
@@ -7460,15 +7470,22 @@ impl GitPanel {
             return;
         };
         let log_order = LogOrder::DateOrder;
+        let wanted = self.history_rows_wanted();
 
         let (entries, is_loading, error) = active_repository.update(cx, |repository, cx| {
-            let response = repository.graph_data(log_source, log_order, 0..usize::MAX, cx);
-            let entries: Rc<[CommitHistoryEntry]> = response
-                .commits
-                .iter()
-                .map(CommitHistoryEntry::from)
-                .collect();
-            (entries, response.is_loading, response.error)
+            let response = repository.graph_data(log_source.clone(), log_order, 0..wanted, cx);
+            let is_loading = response.is_loading;
+            let error = response.error;
+            let entries: Rc<[CommitHistoryEntry]> = repository
+                .get_graph_data(log_source, log_order)
+                .map(|data| {
+                    data.commit_data
+                        .iter()
+                        .map(CommitHistoryEntry::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            (entries, is_loading, error)
         });
 
         self.set_commit_history(commit_history_from_response(entries, is_loading, error), cx);
@@ -7524,6 +7541,14 @@ impl GitPanel {
         let workspace = self.workspace.clone();
         let repo_weak = active_repository.downgrade();
         let item_count = entries.len();
+        let wanted = self.history_rows_wanted();
+        if wanted > item_count
+            && let Some(log_source) = Self::commit_history_log_source(active_repository, cx)
+        {
+            active_repository.update(cx, |repository, cx| {
+                repository.graph_data(log_source, LogOrder::DateOrder, 0..wanted, cx);
+            });
+        }
         let commit_history_scroll_handle = self.commit_history_scroll_handle.clone();
         let remote = self.git_remote(cx);
 
@@ -9303,6 +9328,19 @@ impl GitPanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         Self::new(workspace, window, cx)
+    }
+
+    pub fn activate_history_tab_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_active_tab(GitPanelTab::History, window, cx);
+    }
+
+    pub fn scroll_history_to_for_test(&self, index: usize) {
+        self.commit_history_scroll_handle
+            .scroll_to_item(index, ScrollStrategy::Top);
+    }
+
+    pub fn commit_history_len_for_test(&self) -> usize {
+        self.commit_history_entries().len()
     }
 
     pub fn active_repository(&self) -> Option<&Entity<Repository>> {

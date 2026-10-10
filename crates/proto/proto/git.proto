@@ -811,6 +811,9 @@ message GetInitialGraphData {
     REVERSE_CHRONOLOGICAL = 3;
   }
   LogOrder log_order = 4;
+  // Window of the log to stream; a zero count means everything from start.
+  uint64 start = 5;
+  uint64 count = 6;
 }
 
 message InitialGraphCommit {
