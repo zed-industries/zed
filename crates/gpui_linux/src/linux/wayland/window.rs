@@ -938,11 +938,16 @@ impl WaylandWindowStatePtr {
     pub fn frame(&self, signal_at: Option<Instant>, signal_source: FrameRequestSource) {
         self.frame_loop.set(FrameLoop::Ticking);
         let mut state = self.state.borrow_mut();
+        // resize_throttle also marks that a resize was applied since the last
+        // tick. An interactive resize is user interaction even though the
+        // compositor holds the input grab, so keep presenting at display rate
+        // and skip the unfocused-window frame interval.
+        let resize_pending = state.resize_throttle;
         state.resize_throttle = false;
         // GPUI may throttle this tick without calling draw, so leave the request
         // latched until a draw actually reaches the renderer.
         let force_render = state.redraw_requested;
-        let require_presentation = state.presentation.requires_presentation();
+        let require_presentation = state.presentation.requires_presentation() || resize_pending;
         drop(state);
 
         let mut callbacks = self.callbacks.borrow_mut();
@@ -1109,26 +1114,36 @@ impl WaylandWindowStatePtr {
                     state.tiling = configure.tiling;
                     let visibility_changed = state.visibility != configure.visibility;
                     state.visibility = configure.visibility;
+                    // Fullscreen and maximized windows are not freely
+                    // resizable; skip size normalization and bounds updates.
+                    let resizable = !configure.fullscreen && !configure.maximized;
+                    if resizable {
+                        configure.size = if got_unmaximized {
+                            Some(state.window_bounds.size)
+                        } else {
+                            compute_outer_size(state.inset(), configure.size, state.tiling)
+                        };
+                    }
+                    // Not every compositor sets the `resizing` toplevel state,
+                    // so also treat an incoming size change as a resize.
+                    let resizing = configure.resizing
+                        || resizable
+                            && configure
+                                .size
+                                .is_some_and(|size| size != state.window_bounds.size);
                     // Limit interactive resizes to once per vblank
-                    let throttled = configure.resizing && state.resize_throttle;
+                    let throttled = resizing && state.resize_throttle;
                     if throttled {
                         state.surface_state.ack_configure(serial);
                     } else {
-                        if configure.resizing {
+                        if resizing {
                             state.resize_throttle = true;
                         }
-                        if !configure.fullscreen && !configure.maximized {
-                            configure.size = if got_unmaximized {
-                                Some(state.window_bounds.size)
-                            } else {
-                                compute_outer_size(state.inset(), configure.size, state.tiling)
+                        if resizable && let Some(size) = configure.size {
+                            state.window_bounds = Bounds {
+                                origin: Point::default(),
+                                size,
                             };
-                            if let Some(size) = configure.size {
-                                state.window_bounds = Bounds {
-                                    origin: Point::default(),
-                                    size,
-                                };
-                            }
                         }
                     }
                     drop(state);
