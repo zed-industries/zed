@@ -1839,6 +1839,11 @@ impl Workspace {
                     this.dismiss_notification(&NotificationId::named(notification_id.clone()), cx)
                 }
 
+                project::Event::OpenPathOnClient(request) => {
+                    this.open_remote_cli_path(request.clone(), window, cx)
+                        .detach();
+                }
+
                 project::Event::LanguageServerPrompt(request) => {
                     struct LanguageServerPrompt;
 
@@ -4993,6 +4998,98 @@ impl Workspace {
     ) {
         let new_pane = self.split_pane(self.active_pane.clone(), split_direction, window, cx);
         self.add_item(new_pane, item, None, true, true, window, cx);
+    }
+
+    fn open_remote_cli_path(
+        &mut self,
+        request: project::RemoteCliRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let project = self.project.clone();
+        let worktree = project.update(cx, |project, cx| {
+            project.find_or_create_worktree(&request.request.path, request.request.is_directory, cx)
+        });
+        cx.spawn_in(window, async move |workspace, cx| {
+            let response = request.response;
+            let cancelled = response.closed().fuse();
+            let operation = async {
+                let item = {
+                    let timeout = cx
+                        .background_executor()
+                        .timer(std::time::Duration::from_secs(30))
+                        .fuse();
+                    let open = async {
+                        let (worktree, path) = worktree.await?;
+                        let project_path = worktree.read_with(cx, |worktree, _| ProjectPath {
+                            worktree_id: worktree.id(),
+                            path,
+                        });
+                        if request.request.is_directory {
+                            return Ok(None);
+                        }
+                        let item = workspace
+                            .update_in(cx, |workspace, window, cx| {
+                                workspace.open_path(project_path, None, true, window, cx)
+                            })?
+                            .await?;
+                        if let Some(row) = request.request.row {
+                            cx.update(|window, cx| {
+                                item.go_to_line(
+                                    row.saturating_sub(1),
+                                    request.request.column.unwrap_or(1).saturating_sub(1),
+                                    window,
+                                    cx,
+                                );
+                            })?;
+                        }
+                        anyhow::Ok(Some(item))
+                    }
+                    .fuse();
+                    futures::pin_mut!(open, timeout);
+                    futures::select_biased! {
+                        result = open => result?,
+                        _ = timeout => anyhow::bail!("Timed out opening remote path"),
+                    }
+                };
+                if request.request.wait {
+                    let (closed, released) = oneshot::channel();
+                    let subscription = if let Some(item) = item {
+                        cx.update(|_, cx| {
+                            item.on_release(
+                                cx,
+                                Box::new(move |_| {
+                                    if closed.send(()).is_err() {
+                                        log::debug!("Remote CLI stopped waiting");
+                                    }
+                                }),
+                            )
+                        })?
+                    } else {
+                        workspace.update(cx, |_, cx| {
+                            cx.on_release(move |_, _| {
+                                if closed.send(()).is_err() {
+                                    log::debug!("Remote CLI stopped waiting");
+                                }
+                            })
+                        })?
+                    };
+                    released.await.context("Remote workspace closed")?;
+                    drop(subscription);
+                }
+                anyhow::Ok(())
+            }
+            .fuse();
+            futures::pin_mut!(operation, cancelled);
+            futures::select_biased! {
+                result = operation => {
+                    if response.send(result).await.is_err() {
+                        log::debug!("Remote CLI request was cancelled");
+                    }
+                },
+                _ = cancelled => {},
+            }
+        })
     }
 
     pub fn open_abs_path(

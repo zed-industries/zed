@@ -57,6 +57,7 @@ use worktree::Worktree;
 pub struct HeadlessProject {
     pub fs: Arc<dyn Fs>,
     pub session: AnyProtoClient,
+    pub cli_environment: HashMap<String, String>,
     pub worktree_store: Entity<WorktreeStore>,
     pub buffer_store: Entity<BufferStore>,
     pub lsp_store: Entity<LspStore>,
@@ -414,6 +415,7 @@ impl HeadlessProject {
         HeadlessProject {
             next_entry_id: Default::default(),
             session,
+            cli_environment: HashMap::default(),
             settings_observer,
             fs,
             worktree_store,
@@ -1465,8 +1467,12 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::DirectoryEnvironment> {
         let shell = task::shell_from_proto(envelope.payload.shell.context("missing shell")?)?;
-        let directory = PathBuf::from(envelope.payload.directory);
-        let environment = this
+        let directory = if envelope.payload.directory.is_empty() {
+            paths::home_dir().to_path_buf()
+        } else {
+            PathBuf::from(envelope.payload.directory)
+        };
+        let mut environment: HashMap<String, String> = this
             .update(&mut cx, |this, cx| {
                 this.environment.update(cx, |environment, cx| {
                     environment.local_directory_environment(&shell, directory.into(), cx)
@@ -1476,7 +1482,12 @@ impl HeadlessProject {
             .context("failed to get directory environment")?
             .into_iter()
             .collect();
-        Ok(proto::DirectoryEnvironment { environment })
+        this.read_with(&cx, |this, _| {
+            environment.extend(this.cli_environment.clone())
+        });
+        Ok(proto::DirectoryEnvironment {
+            environment: environment.into_iter().collect(),
+        })
     }
 
     async fn handle_get_terminal_shell(

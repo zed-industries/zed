@@ -650,6 +650,10 @@ impl Item for Editor {
         }
     }
 
+    fn go_to_line(&mut self, row: u32, column: u32, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to_singleton_buffer_point(Point::new(row, column), window, cx);
+    }
+
     fn navigate(
         &mut self,
         data: Arc<dyn Any + Send>,
