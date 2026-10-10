@@ -15,6 +15,9 @@ use std::{
     ops::Range,
 };
 
+pub(crate) mod retained;
+pub(crate) use retained::{ViewOccurrenceId, ViewStore};
+
 /// A dynamically-typed view handle that can be downcast to a specific `Entity<V>`.
 ///
 /// This is the type-erased counterpart to [`ViewElement`]: it holds an entity plus
@@ -42,7 +45,8 @@ impl AnyView {
     /// [Context::notify] was called on the backing entity since it was rendered
     /// (or [Window::refresh] is called, which ignores caching).
     pub fn cached(self, style: StyleRefinement) -> ViewElement<AnyView> {
-        ViewElement::new(self).cached(style)
+        let retained_view = self.downgrade();
+        ViewElement::new(self).cached(style, retained_view)
     }
 
     /// Convert this to a weak handle.
@@ -119,6 +123,7 @@ impl IntoElement for AnyView {
 }
 
 /// A weak, dynamically-typed view handle.
+#[derive(Clone)]
 pub struct AnyWeakView {
     entity: AnyWeakEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
@@ -240,7 +245,8 @@ impl<T: Render> Entity<T> {
     /// uncached case.
     #[track_caller]
     pub fn cached(self, style: StyleRefinement) -> ViewElement<Entity<T>> {
-        ViewElement::new(self).cached(style)
+        let retained_view = self.downgrade().into();
+        ViewElement::new(self).cached(style, retained_view)
     }
 }
 
@@ -251,6 +257,7 @@ pub struct ViewElement<V: View> {
     view: Option<V>,
     entity_id: Option<EntityId>,
     cached_style: Option<StyleRefinement>,
+    retained_view: Option<AnyWeakView>,
     #[cfg(debug_assertions)]
     source: &'static core::panic::Location<'static>,
 }
@@ -263,6 +270,7 @@ impl<V: View> ViewElement<V> {
         ViewElement {
             entity_id,
             cached_style: None,
+            retained_view: None,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -278,8 +286,9 @@ impl<V: View> ViewElement<V> {
     /// view has no such contract, so a frozen subtree could never be invalidated.
     /// Reach this through [`Entity::cached`] or [`AnyView::cached`], which are
     /// entity-backed by construction.
-    pub(crate) fn cached(mut self, style: StyleRefinement) -> Self {
+    fn cached(mut self, style: StyleRefinement, retained_view: AnyWeakView) -> Self {
         self.cached_style = Some(style);
+        self.retained_view = Some(retained_view);
         self
     }
 }
@@ -299,6 +308,9 @@ struct ViewElementState {
     accessed_entities: FxHashSet<EntityId>,
 }
 
+struct ViewElementHandle(ViewOccurrenceId);
+
+#[derive(Clone)]
 struct ViewElementCacheKey {
     bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
@@ -366,6 +378,7 @@ impl<V: View> Element for ViewElement<V> {
                 global_id,
                 bounds,
                 element,
+                self.retained_view.as_ref(),
                 window,
                 cx,
                 &mut |window, cx| {
@@ -464,68 +477,110 @@ fn prepaint_view(
     global_id: Option<&GlobalElementId>,
     bounds: Bounds<Pixels>,
     element: &mut Option<AnyElement>,
+    retained_view: Option<&AnyWeakView>,
     window: &mut Window,
     cx: &mut App,
     render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
 ) -> Option<AnyElement> {
     window.set_view_id(entity_id);
-    window.with_rendered_view(entity_id, |window| {
+    let occurrence = window.begin_view_occurrence(entity_id, global_id, retained_view);
+    let parent_occurrence = mem::replace(&mut window.current_view_occurrence, occurrence);
+    let mut scope = (retained_view.is_some() && element.is_none()).then(|| {
+        let mut scope = window.capture_view_scope();
+        scope.parent_occurrence = parent_occurrence;
+        scope
+    });
+    let previous_access = scope
+        .as_ref()
+        .map(|_| window.begin_cached_entity_access(cx));
+    let result = window.with_rendered_view(entity_id, |window| {
         if let Some(mut element) = element.take() {
             element.prepaint(window, cx);
             return Some(element);
         }
 
-        window.with_element_state::<ViewElementState, _>(
-            global_id.unwrap(),
-            |element_state, window| {
-                let content_mask = window.content_mask();
-                let text_style = window.text_style();
+        window.with_element_state::<ViewElementHandle, _>(global_id.unwrap(), |_handle, window| {
+            let occurrence = occurrence.expect("cached views have an occurrence");
+            let content_mask = window.content_mask();
+            let text_style = window.text_style();
 
-                if let Some(mut element_state) = element_state
-                    && element_state.cache_key.bounds == bounds
-                    && element_state.cache_key.content_mask == content_mask
-                    && element_state.cache_key.text_style == text_style
-                    && !window.dirty_views.contains(&entity_id)
-                    && !window.refreshing
-                {
+            let element_state = window.view_store.state(occurrence);
+            if let Some(element_state) = element_state
+                && element_state.cache_key.bounds == bounds
+                && element_state.cache_key.content_mask == content_mask
+                && element_state.cache_key.text_style == text_style
+                && !window.view_store.is_own_dirty(occurrence)
+                && (!window.dirty_views.contains(&entity_id)
+                    || window.view_store.is_descendant_dirty(occurrence))
+                && window.retained_scope_fallback != Some(retained::SpliceFallback::Transaction)
+                && !window.refreshing
+            {
+                let prepaint_range = element_state.prepaint_range.clone();
+                let can_reuse = !window.view_store.is_descendant_dirty(occurrence)
+                    || window.prepare_view_splice(occurrence).is_ok();
+                if can_reuse {
                     let prepaint_start = window.prepaint_index();
-                    window.reuse_prepaint(element_state.prepaint_range.clone());
-                    cx.entities
-                        .extend_accessed(&element_state.accessed_entities);
+                    if window.view_store.is_descendant_dirty(occurrence) {
+                        window.splice_view_prepaint(occurrence, cx);
+                    } else {
+                        window.reuse_prepaint(prepaint_range);
+                    }
                     let prepaint_end = window.prepaint_index();
-                    element_state.prepaint_range = prepaint_start..prepaint_end;
-
-                    return (None, element_state);
+                    window.view_store.reused_view_prepaint(
+                        occurrence,
+                        prepaint_start..prepaint_end,
+                        scope.take().expect("cached views have a scope"),
+                    );
+                    cx.entities.extend_accessed(
+                        &window
+                            .view_store
+                            .state(occurrence)
+                            .expect("cached state")
+                            .accessed_entities,
+                    );
+                    return (None, ViewElementHandle(occurrence));
                 }
+            }
 
-                let refreshing = mem::replace(&mut window.refreshing, true);
-                let prepaint_start = window.prepaint_index();
-                let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                    let mut element = render(window, cx);
-                    element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
-                    element.prepaint_at(bounds.origin, window, cx);
-                    element
-                });
+            let refreshing = mem::replace(&mut window.refreshing, true);
+            let prepaint_start = window.prepaint_index();
+            let mut element = render(window, cx);
+            element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
+            element.prepaint_at(bounds.origin, window, cx);
 
-                let prepaint_end = window.prepaint_index();
-                window.refreshing = refreshing;
+            let prepaint_end = window.prepaint_index();
+            window.refreshing = refreshing;
 
-                (
-                    Some(element),
-                    ViewElementState {
-                        accessed_entities,
-                        prepaint_range: prepaint_start..prepaint_end,
-                        paint_range: PaintIndex::default()..PaintIndex::default(),
-                        cache_key: ViewElementCacheKey {
-                            bounds,
-                            content_mask,
-                            text_style,
-                        },
+            window.view_store.set_state(
+                occurrence,
+                ViewElementState {
+                    accessed_entities: FxHashSet::default(),
+                    prepaint_range: prepaint_start..prepaint_end,
+                    paint_range: PaintIndex::default()..PaintIndex::default(),
+                    cache_key: ViewElementCacheKey {
+                        bounds,
+                        content_mask,
+                        text_style,
                     },
-                )
-            },
-        )
-    })
+                },
+                scope.take().expect("cached views have a scope"),
+            );
+            (Some(element), ViewElementHandle(occurrence))
+        })
+    });
+    if let Some(previous_access) = previous_access {
+        let (own, all) = window.end_cached_entity_access(previous_access, cx);
+        if result.is_some() {
+            window.view_store.set_own_access(
+                occurrence.expect("cached occurrence"),
+                own,
+                all,
+                false,
+            );
+        }
+    }
+    window.current_view_occurrence = parent_occurrence;
+    result
 }
 
 #[inline(never)]
@@ -550,14 +605,23 @@ fn paint_view(
     window: &mut Window,
     cx: &mut App,
 ) {
+    let caching_disabled = window.is_inspector_picking(cx);
+    let mut scope = (cached && !caching_disabled).then(|| window.capture_view_scope());
+    let previous_access = scope
+        .as_ref()
+        .map(|_| window.begin_cached_entity_access(cx));
+    let rendered = element.is_some();
+    let mut painted_occurrence = None;
     window.with_rendered_view(entity_id, |window| {
-        let caching_disabled = window.is_inspector_picking(cx);
         if cached && !caching_disabled {
-            window.with_element_state::<ViewElementState, _>(
+            window.with_element_state::<ViewElementHandle, _>(
                 global_id.unwrap(),
                 |element_state, window| {
-                    let mut element_state = element_state.unwrap();
+                    let handle = element_state.unwrap();
+                    let occurrence = handle.0;
+                    painted_occurrence = Some(occurrence);
 
+                    window.next_frame.paint_views.push(occurrence);
                     let paint_start = window.paint_index();
 
                     if let Some(element) = element {
@@ -565,19 +629,34 @@ fn paint_view(
                         element.paint(window, cx);
                         window.refreshing = refreshing;
                     } else {
-                        window.reuse_paint(element_state.paint_range.clone());
+                        window.splice_view_paint(occurrence, cx);
                     }
 
                     let paint_end = window.paint_index();
-                    element_state.paint_range = paint_start..paint_end;
+                    window.view_store.painted_view(
+                        occurrence,
+                        paint_start..paint_end,
+                        scope.take().expect("cached views have a paint scope"),
+                    );
 
-                    ((), element_state)
+                    ((), handle)
                 },
             )
         } else {
             element.as_mut().unwrap().paint(window, cx);
         }
     });
+    if let Some(previous_access) = previous_access {
+        let (own, all) = window.end_cached_entity_access(previous_access, cx);
+        if rendered {
+            window.view_store.set_own_access(
+                painted_occurrence.expect("painted cached occurrence"),
+                own,
+                all,
+                true,
+            );
+        }
+    }
 }
 
 #[inline(never)]

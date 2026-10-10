@@ -1022,6 +1022,7 @@ impl std::ops::Deref for ElementIdStack {
 
 pub(crate) struct DeferredDraw {
     current_view: EntityId,
+    parent_occurrence: Option<crate::view::ViewOccurrenceId>,
     priority: usize,
     parent_node: DispatchNodeId,
     element_id_stack: ElementIdStack,
@@ -1057,16 +1058,19 @@ pub(crate) struct Frame {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
     pub(crate) tab_stops: TabStopMap,
+    pub(crate) prepaint_views: Vec<crate::view::ViewOccurrenceId>,
+    pub(crate) paint_views: Vec<crate::view::ViewOccurrenceId>,
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct PrepaintStateIndex {
-    hitboxes_index: usize,
-    tooltips_index: usize,
-    deferred_draws_index: usize,
-    dispatch_tree_index: usize,
-    accessed_element_states_index: usize,
-    line_layout_index: LineLayoutIndex,
+    pub(crate) hitboxes_index: usize,
+    pub(crate) tooltips_index: usize,
+    pub(crate) deferred_draws_index: usize,
+    pub(crate) dispatch_tree_index: usize,
+    pub(crate) accessed_element_states_index: usize,
+    pub(crate) line_layout_index: LineLayoutIndex,
+    pub(crate) views_index: usize,
 }
 
 #[derive(Clone, Default)]
@@ -1080,6 +1084,74 @@ pub(crate) struct PaintIndex {
     accessed_element_states_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
+    pub(crate) views_index: usize,
+}
+
+impl PrepaintStateIndex {
+    pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
+        Self {
+            hitboxes_index: self.hitboxes_index - old.hitboxes_index + new.hitboxes_index,
+            tooltips_index: self.tooltips_index - old.tooltips_index + new.tooltips_index,
+            deferred_draws_index: self.deferred_draws_index - old.deferred_draws_index
+                + new.deferred_draws_index,
+            dispatch_tree_index: self.dispatch_tree_index - old.dispatch_tree_index
+                + new.dispatch_tree_index,
+            accessed_element_states_index: self.accessed_element_states_index
+                - old.accessed_element_states_index
+                + new.accessed_element_states_index,
+            line_layout_index: self
+                .line_layout_index
+                .rebase(&old.line_layout_index, &new.line_layout_index),
+            views_index: self.views_index - old.views_index + new.views_index,
+        }
+    }
+}
+
+impl PaintIndex {
+    pub(crate) fn with_cached_state_access(mut self) -> Self {
+        self.accessed_element_states_index -= 1;
+        self
+    }
+
+    pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
+        Self {
+            scene_index: self.scene_index - old.scene_index + new.scene_index,
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_index: self.debug_bounds_index - old.debug_bounds_index
+                + new.debug_bounds_index,
+            mouse_listeners_index: self.mouse_listeners_index - old.mouse_listeners_index
+                + new.mouse_listeners_index,
+            input_handlers_index: self.input_handlers_index - old.input_handlers_index
+                + new.input_handlers_index,
+            cursor_styles_index: self.cursor_styles_index - old.cursor_styles_index
+                + new.cursor_styles_index,
+            accessed_element_states_index: self.accessed_element_states_index
+                - old.accessed_element_states_index
+                + new.accessed_element_states_index,
+            tab_handle_index: self.tab_handle_index - old.tab_handle_index + new.tab_handle_index,
+            line_layout_index: self
+                .line_layout_index
+                .rebase(&old.line_layout_index, &new.line_layout_index),
+            views_index: self.views_index - old.views_index + new.views_index,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ViewExecutionScope {
+    element_ids: ElementIdStack,
+    text_styles: Vec<TextStyleRefinement>,
+    rendered_entities: Vec<EntityId>,
+    offsets: Vec<Point<Pixels>>,
+    content_masks: Vec<ContentMask<Pixels>>,
+    rem_overrides: SmallVec<[Pixels; 8]>,
+    image_caches: Vec<AnyImageCache>,
+    opacity: f32,
+    rem_size: Pixels,
+    scale_factor: f32,
+    pub(crate) dispatch_node: DispatchNodeId,
+    pub(crate) parent_occurrence: Option<crate::view::ViewOccurrenceId>,
+    pub(crate) fallback: Option<crate::view::retained::SpliceFallback>,
 }
 
 impl Frame {
@@ -1116,6 +1188,8 @@ impl Frame {
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
             tab_stops: TabStopMap::default(),
+            prepaint_views: Vec::new(),
+            paint_views: Vec::new(),
         }
     }
 
@@ -1133,6 +1207,8 @@ impl Frame {
         self.deferred_draws.clear();
         self.tab_stops.clear();
         self.focus = None;
+        self.prepaint_views.clear();
+        self.paint_views.clear();
 
         #[cfg(any(test, feature = "test-support"))]
         {
@@ -1257,6 +1333,11 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
+    pub(crate) view_store: crate::view::ViewStore,
+    pub(crate) current_view_occurrence: Option<crate::view::ViewOccurrenceId>,
+    pub(crate) retained_scope_fallback: Option<crate::view::retained::SpliceFallback>,
+    pub(crate) dispatch_replay: Vec<crate::ReusedSubtree>,
+    pub(crate) cached_entity_access_stack: Vec<FxHashSet<EntityId>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
@@ -2162,6 +2243,11 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
+            view_store: crate::view::ViewStore::default(),
+            current_view_occurrence: None,
+            retained_scope_fallback: None,
+            dispatch_replay: Vec::new(),
+            cached_entity_access_stack: Vec::new(),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             focus_lost_path: SmallVec::new(),
@@ -2257,7 +2343,111 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
+    pub(crate) fn begin_cached_entity_access(&mut self, cx: &mut App) -> FxHashSet<EntityId> {
+        self.cached_entity_access_stack.push(FxHashSet::default());
+        mem::take(cx.entities.accessed_entities.get_mut().deref_mut())
+    }
+
+    pub(crate) fn end_cached_entity_access(
+        &mut self,
+        previous: FxHashSet<EntityId>,
+        cx: &mut App,
+    ) -> (FxHashSet<EntityId>, FxHashSet<EntityId>) {
+        let own = mem::replace(
+            cx.entities.accessed_entities.get_mut().deref_mut(),
+            previous,
+        );
+        let mut all = self
+            .cached_entity_access_stack
+            .pop()
+            .expect("cached access scope");
+        all.extend(own.iter().copied());
+        if let Some(parent) = self.cached_entity_access_stack.last_mut() {
+            parent.extend(all.iter().copied());
+        } else {
+            cx.entities.extend_accessed(&all);
+        }
+        (own, all)
+    }
+
+    pub(crate) fn capture_view_scope(&self) -> ViewExecutionScope {
+        ViewExecutionScope {
+            element_ids: self.element_id_stack.clone(),
+            text_styles: self.text_style_stack.clone(),
+            rendered_entities: self.rendered_entity_stack.clone(),
+            offsets: self.element_offset_stack.clone(),
+            content_masks: self.content_mask_stack.clone(),
+            rem_overrides: self.rem_size_override_stack.clone(),
+            image_caches: self.image_cache_stack.clone(),
+            opacity: self.element_opacity,
+            rem_size: self.rem_size,
+            scale_factor: self.scale_factor,
+            dispatch_node: self
+                .next_frame
+                .dispatch_tree
+                .active_node_id()
+                .expect("view dispatch node"),
+            parent_occurrence: self.current_view_occurrence,
+            fallback: self.retained_scope_fallback,
+        }
+    }
+
+    pub(crate) fn view_scope_is_current(&self, scope: &ViewExecutionScope) -> bool {
+        self.rem_size == scope.rem_size && self.scale_factor == scope.scale_factor
+    }
+
+    pub(crate) fn with_view_scope<R>(
+        &mut self,
+        mut scope: ViewExecutionScope,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let dispatch_node = self.next_frame.dispatch_tree.active_node_id();
+        self.next_frame
+            .dispatch_tree
+            .set_active_node(scope.dispatch_node);
+        mem::swap(&mut self.element_id_stack, &mut scope.element_ids);
+        mem::swap(&mut self.text_style_stack, &mut scope.text_styles);
+        mem::swap(
+            &mut self.rendered_entity_stack,
+            &mut scope.rendered_entities,
+        );
+        mem::swap(&mut self.element_offset_stack, &mut scope.offsets);
+        mem::swap(&mut self.content_mask_stack, &mut scope.content_masks);
+        mem::swap(&mut self.rem_size_override_stack, &mut scope.rem_overrides);
+        mem::swap(&mut self.image_cache_stack, &mut scope.image_caches);
+        mem::swap(&mut self.element_opacity, &mut scope.opacity);
+        mem::swap(
+            &mut self.current_view_occurrence,
+            &mut scope.parent_occurrence,
+        );
+        mem::swap(&mut self.retained_scope_fallback, &mut scope.fallback);
+        self.invalidate_text_style();
+        let result = f(self);
+        mem::swap(&mut self.element_id_stack, &mut scope.element_ids);
+        mem::swap(&mut self.text_style_stack, &mut scope.text_styles);
+        mem::swap(
+            &mut self.rendered_entity_stack,
+            &mut scope.rendered_entities,
+        );
+        mem::swap(&mut self.element_offset_stack, &mut scope.offsets);
+        mem::swap(&mut self.content_mask_stack, &mut scope.content_masks);
+        mem::swap(&mut self.rem_size_override_stack, &mut scope.rem_overrides);
+        mem::swap(&mut self.image_cache_stack, &mut scope.image_caches);
+        mem::swap(&mut self.element_opacity, &mut scope.opacity);
+        mem::swap(
+            &mut self.current_view_occurrence,
+            &mut scope.parent_occurrence,
+        );
+        mem::swap(&mut self.retained_scope_fallback, &mut scope.fallback);
+        self.invalidate_text_style();
+        if let Some(dispatch_node) = dispatch_node {
+            self.next_frame.dispatch_tree.set_active_node(dispatch_node);
+        }
+        result
+    }
+
     fn mark_view_dirty(&mut self, view_id: EntityId) {
+        self.view_store.mark_dirty(view_id);
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
         for view_id in self
@@ -3463,6 +3653,8 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
+        self.view_store.begin_frame();
+        self.dispatch_replay.clear();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
@@ -3499,6 +3691,7 @@ impl Window {
             }
         }
         self.dirty_views.clear();
+        self.view_store.finish_frame();
         self.next_frame.window_active = self.active.get();
 
         // Register requested input handler with the platform window.
@@ -3927,6 +4120,13 @@ impl Window {
                     )
                 };
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
+                let previous_occurrence = mem::replace(
+                    &mut self.current_view_occurrence,
+                    self.next_frame.deferred_draws[deferred_draw_ix].parent_occurrence,
+                );
+                let previous_fallback = self
+                    .retained_scope_fallback
+                    .replace(crate::view::retained::SpliceFallback::DeferredDraw);
 
                 let prepaint_start = self.prepaint_index();
                 if let Some(mut element) = element {
@@ -3944,6 +4144,8 @@ impl Window {
                 let prepaint_end = self.prepaint_index();
                 self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
                     prepaint_start..prepaint_end;
+                self.current_view_occurrence = previous_occurrence;
+                self.retained_scope_fallback = previous_fallback;
             }
 
             self.element_id_stack.clear();
@@ -4007,10 +4209,12 @@ impl Window {
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             line_layout_index: self.text_system.layout_index(),
+            views_index: self.next_frame.prepaint_views.len(),
         }
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+        let new_start = self.prepaint_index();
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -4028,13 +4232,21 @@ impl Window {
                 .iter()
                 .copied(),
         );
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.text_system.reuse_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+        );
 
+        let replay = &self.dispatch_replay;
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut self.rendered_frame.dispatch_tree,
             self.focus,
+            |node| {
+                replay
+                    .iter()
+                    .rev()
+                    .find_map(|range| range.remap_node_id(node))
+            },
         );
 
         if reused_subtree.contains_focus() {
@@ -4047,6 +4259,7 @@ impl Window {
                 .iter()
                 .map(|deferred_draw| DeferredDraw {
                     current_view: deferred_draw.current_view,
+                    parent_occurrence: deferred_draw.parent_occurrence,
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
@@ -4059,6 +4272,14 @@ impl Window {
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
+        for occurrence in
+            &self.rendered_frame.prepaint_views[range.start.views_index..range.end.views_index]
+        {
+            self.view_store
+                .reuse_prepaint(*occurrence, &range.start, &new_start, &reused_subtree);
+            self.next_frame.prepaint_views.push(*occurrence);
+        }
+        self.dispatch_replay.push(reused_subtree);
     }
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
@@ -4072,10 +4293,12 @@ impl Window {
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
+            views_index: self.next_frame.paint_views.len(),
         }
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        let new_start = self.paint_index();
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
@@ -4113,12 +4336,24 @@ impl Window {
                 [range.start.tab_handle_index..range.end.tab_handle_index],
         );
 
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.text_system.reuse_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+        );
         self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
         );
+        for occurrence in
+            &self.rendered_frame.paint_views[range.start.views_index..range.end.views_index]
+        {
+            self.view_store.reuse_paint(
+                *occurrence,
+                &range.start,
+                &new_start,
+                &self.dispatch_replay,
+            );
+            self.next_frame.paint_views.push(*occurrence);
+        }
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -4254,7 +4489,11 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let previous_fallback = self
+            .retained_scope_fallback
+            .replace(crate::view::retained::SpliceFallback::Transaction);
         let result = f(self);
+        self.retained_scope_fallback = previous_fallback;
         if result.is_err() {
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
             self.next_frame
@@ -4270,6 +4509,9 @@ impl Window {
                 .accessed_element_states
                 .truncate(index.accessed_element_states_index);
             self.text_system.truncate_layouts(index.line_layout_index);
+            self.view_store
+                .rollback_views(&self.next_frame.prepaint_views[index.views_index..]);
+            self.next_frame.prepaint_views.truncate(index.views_index);
         }
         result
     }
@@ -4281,6 +4523,12 @@ impl Window {
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         self.invalidator.debug_assert_prepaint();
+        if let Some(occurrence) = self.current_view_occurrence {
+            self.view_store.block_splicing(
+                occurrence,
+                crate::view::retained::SpliceFallback::Autoscroll,
+            );
+        }
         self.requested_autoscroll = Some(bounds);
     }
 
@@ -4532,6 +4780,7 @@ impl Window {
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
+            parent_occurrence: self.current_view_occurrence,
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
