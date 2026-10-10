@@ -96,6 +96,7 @@ tree-sitter-python = { workspace = true, optional = true }
 ztracing.workspace = true
 unicode-segmentation.workspace = true
 unicode-script.workspace = true
+unicode-properties = { version = "=0.1.3", features = ["emoji"] }
 unindent = { workspace = true, optional = true }
 ui.workspace = true
 ui_input.workspace = true
