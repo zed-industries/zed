@@ -2545,7 +2545,10 @@ pub fn extract_file_name_and_directory(
     // If path is empty, this means we're matching with the root directory itself
     // so we use the path_prefix as the name
     if path.is_empty() && !path_prefix.is_empty() {
-        return (path_prefix.display(path_style).to_string().into(), None);
+        return (
+            acp_thread::replace_line_breaks(path_prefix.display(path_style).to_string()).into(),
+            None,
+        );
     }
 
     let full_path = path_prefix.join(path);
@@ -2553,7 +2556,7 @@ pub fn extract_file_name_and_directory(
     let display_path = full_path.display(path_style);
     let (directory, file_name) = display_path.split_at(display_path.len() - file_name.len());
     (
-        file_name.to_string().into(),
+        acp_thread::replace_line_breaks(file_name.to_string()).into(),
         Some(SharedString::new(directory)).filter(|dir| !dir.is_empty()),
     )
 }

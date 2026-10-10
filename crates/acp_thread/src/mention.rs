@@ -333,7 +333,7 @@ impl MentionUri {
     }
 
     pub fn name(&self) -> String {
-        match self {
+        let name = match self {
             MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => abs_path
                 .file_name()
                 .unwrap_or_default()
@@ -366,7 +366,8 @@ impl MentionUri {
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
             MentionUri::Skill { name, .. } => name.clone(),
-        }
+        };
+        replace_line_breaks(name)
     }
 
     /// Returns a label for this mention at the given disambiguation `detail`
@@ -389,7 +390,7 @@ impl MentionUri {
                 }
             }
             MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => {
-                project::path_suffix(abs_path, detail)
+                replace_line_breaks(project::path_suffix(abs_path, detail))
             }
             _ => self.name(),
         }
@@ -591,6 +592,17 @@ pub struct MentionLink<'a>(&'a MentionUri);
 impl fmt::Display for MentionLink<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[@{}]({})", self.0.name(), self.0.to_uri())
+    }
+}
+
+/// Mention names are inserted into the message editor, whose buffer normalizes
+/// `\r\n` and `\r` to `\n`. Names must not contain line breaks, or the
+/// inserted text would be shorter than the length computed for its crease.
+pub fn replace_line_breaks(name: String) -> String {
+    if name.contains(['\r', '\n']) {
+        name.replace("\r\n", " ").replace(['\r', '\n'], " ")
+    } else {
+        name
     }
 }
 
@@ -1788,5 +1800,22 @@ mod tests {
         };
         assert_eq!(root_file.disambiguated_name(1), "README.md");
         assert_eq!(root_file.disambiguated_name(5), "README.md");
+    }
+
+    #[test]
+    fn test_name_replaces_line_breaks() {
+        for (file_name, expected) in [
+            ("a\r\nb.pdf", "a b.pdf"),
+            ("a\rb.pdf", "a b.pdf"),
+            ("a\nb.pdf", "a b.pdf"),
+            ("a\r\rb.pdf", "a  b.pdf"),
+        ] {
+            let uri = MentionUri::File {
+                abs_path: PathBuf::from(path!("/project/dir")).join(file_name),
+            };
+            assert_eq!(uri.name(), expected);
+            assert_eq!(uri.disambiguated_name(1), format!("dir/{expected}"));
+            assert!(!uri.as_link().to_string().contains(['\r', '\n']));
+        }
     }
 }
