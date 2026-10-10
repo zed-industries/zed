@@ -31,16 +31,52 @@ enum NodeContext {
     Text(Box<crate::elements::TextMeasure>),
 }
 
-#[derive(Default)]
 struct LayoutCache {
-    scopes: FxHashMap<crate::element::InternedHandle, LayoutScope>,
-    request_scope: Option<crate::element::InternedHandle>,
+    scope_indices: FxHashMap<crate::element::InternedHandle, usize>,
+    scopes: Vec<Option<LayoutScope>>,
+    free_scopes: Vec<usize>,
+    visited_scopes: Vec<usize>,
+    request_scope: Option<usize>,
+    epoch: u64,
+    nodes: Vec<NodeEpochs>,
+    computed_roots: Vec<LayoutId>,
     font_generation: Option<usize>,
 }
 
+impl Default for LayoutCache {
+    fn default() -> Self {
+        Self {
+            scope_indices: FxHashMap::default(),
+            scopes: Vec::new(),
+            free_scopes: Vec::new(),
+            visited_scopes: Vec::new(),
+            request_scope: None,
+            epoch: 1,
+            nodes: Vec::new(),
+            computed_roots: Vec::new(),
+            font_generation: None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct NodeEpochs {
+    last_requested: u64,
+    last_reachable: u64,
+    last_computed: u64,
+}
+
+fn node_index(id: NodeId) -> usize {
+    // Taffy's NodeId stores slotmap KeyData: the low 32 bits are the slot.
+    // A newly claimed slot resets its stamps, even if its generation changed.
+    u64::from(id) as u32 as usize
+}
+
 struct LayoutScope {
+    handle: crate::element::InternedHandle,
     nodes: Vec<Option<LayoutId>>,
     cursor: usize,
+    last_requested_epoch: u64,
 }
 
 pub struct TaffyLayoutEngine {
@@ -97,7 +133,7 @@ impl TaffyLayoutEngine {
         let mut scope_count = 0;
         let mut text_count = 0;
         if let Some(cache) = &self.cache {
-            for scope in cache.scopes.values() {
+            for scope in cache.scopes.iter().flatten() {
                 scope_count += 1;
                 for id in scope.nodes.iter().flatten() {
                     if matches!(
@@ -128,29 +164,46 @@ impl TaffyLayoutEngine {
         let Some(cache) = self.cache.as_mut() else {
             return;
         };
-        cache.scopes.entry(*handle).or_insert_with(|| LayoutScope {
-            nodes: Vec::new(),
-            cursor: 0,
+        let index = *cache.scope_indices.entry(*handle).or_insert_with(|| {
+            let scope = LayoutScope {
+                handle: *handle,
+                nodes: Vec::new(),
+                cursor: 0,
+                last_requested_epoch: 0,
+            };
+            let index = if let Some(index) = cache.free_scopes.pop() {
+                cache.scopes[index] = Some(scope);
+                index
+            } else {
+                cache.scopes.push(Some(scope));
+                cache.scopes.len() - 1
+            };
+            cache.visited_scopes.push(index);
+            index
         });
-        cache.request_scope = Some(*handle);
+        cache.request_scope = Some(index);
     }
 
     pub fn clear(&mut self) {
         if let Some(cache) = self.cache.as_mut() {
-            let reachable = &mut self.computed_layouts;
             let stack = &mut self.layout_bounds_scratch_space;
-            stack.extend(reachable.iter().copied());
+            stack.append(&mut cache.computed_roots);
             while let Some(id) = stack.pop() {
-                for child in self.taffy.child_ids(id.0).map(LayoutId) {
-                    if reachable.insert(child) {
-                        stack.push(child);
-                    }
+                let epochs = &mut cache.nodes[node_index(id.0)];
+                if epochs.last_reachable != cache.epoch {
+                    epochs.last_reachable = cache.epoch;
+                    stack.extend(self.taffy.child_ids(id.0).map(LayoutId));
                 }
             }
-            cache.scopes.retain(|_, scope| {
-                for (index, node) in scope.nodes.iter_mut().enumerate() {
+            cache.visited_scopes.retain(|index| {
+                let scope = cache.scopes[*index].as_mut().expect(EXPECT_MESSAGE);
+                for node in &mut scope.nodes {
                     if let Some(id) = *node {
-                        if index >= scope.cursor || !reachable.contains(&id) {
+                        let epochs = &mut cache.nodes[node_index(id.0)];
+                        if scope.last_requested_epoch != cache.epoch
+                            || epochs.last_requested != cache.epoch
+                            || epochs.last_reachable != cache.epoch
+                        {
                             // Taffy 0.14's remove does not remove node context data.
                             self.taffy
                                 .set_node_context(id.0, None)
@@ -169,9 +222,17 @@ impl TaffyLayoutEngine {
                 }
                 scope.nodes.truncate(scope.cursor);
                 scope.cursor = 0;
-                scope.nodes.iter().any(Option::is_some)
+                if scope.nodes.iter().any(Option::is_some) {
+                    true
+                } else {
+                    cache.scope_indices.remove(&scope.handle);
+                    cache.scopes[*index] = None;
+                    cache.free_scopes.push(*index);
+                    false
+                }
             });
             cache.request_scope = None;
+            cache.epoch = cache.epoch.checked_add(1).expect("layout epoch overflow");
         } else {
             self.taffy.clear();
         }
@@ -188,19 +249,20 @@ impl TaffyLayoutEngine {
 
     fn claim_node(&mut self, style: taffy::Style, children: &[LayoutId]) -> (LayoutId, bool) {
         let scope = self.cache.as_mut().map(|cache| {
-            let handle = cache
+            let index = cache
                 .request_scope
                 .take()
                 .expect("cached layout requests require an execution scope");
-            let scope = cache.scopes.get_mut(&handle).expect(EXPECT_MESSAGE);
+            let scope = cache.scopes[index].as_mut().expect(EXPECT_MESSAGE);
+            scope.last_requested_epoch = cache.epoch;
             let ordinal = scope.cursor;
             scope.cursor += 1;
             if ordinal == scope.nodes.len() {
                 scope.nodes.push(None);
             }
-            &mut scope.nodes[ordinal]
+            (index, ordinal, scope.nodes[ordinal])
         });
-        let existing = scope.as_deref().copied().flatten();
+        let existing = scope.and_then(|(_, _, id)| id);
         let id = if let Some(id) = existing {
             if self.taffy.style(id.0).expect(EXPECT_MESSAGE) != &style {
                 self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
@@ -225,8 +287,17 @@ impl TaffyLayoutEngine {
             }
             LayoutId(id)
         };
-        if let Some(scope) = scope {
-            *scope = Some(id);
+        if let Some((index, ordinal, _)) = scope {
+            let cache = self.cache.as_mut().expect(EXPECT_MESSAGE);
+            cache.scopes[index].as_mut().expect(EXPECT_MESSAGE).nodes[ordinal] = Some(id);
+            let slot = node_index(id.0);
+            if slot >= cache.nodes.len() {
+                cache.nodes.resize_with(slot + 1, NodeEpochs::default);
+            }
+            if existing.is_none() {
+                cache.nodes[slot] = NodeEpochs::default();
+            }
+            cache.nodes[slot].last_requested = cache.epoch;
         }
         (id, existing.is_some())
     }
@@ -426,7 +497,7 @@ impl TaffyLayoutEngine {
             if cache.font_generation != Some(generation) {
                 // Fonts may be installed after request_layout, before this root
                 // is computed. Invalidating only at descriptor creation is too early.
-                for scope in cache.scopes.values() {
+                for scope in cache.scopes.iter().flatten() {
                     for id in scope.nodes.iter().flatten() {
                         if let Some(NodeContext::Text(measure)) =
                             self.taffy.get_node_context_mut(id.0)
@@ -441,10 +512,7 @@ impl TaffyLayoutEngine {
         }
         if let Some(cache) = self.cache.as_ref()
             && let Some(parent) = self.taffy.parent(id.0)
-            && !cache
-                .scopes
-                .values()
-                .any(|scope| scope.nodes[..scope.cursor].contains(&Some(LayoutId(parent))))
+            && cache.nodes[node_index(parent)].last_requested != cache.epoch
         {
             // A root may still have a parent from the previous frame. Preserve
             // current-frame parentage when a custom element computes a subtree.
@@ -461,7 +529,15 @@ impl TaffyLayoutEngine {
         // }
         //
 
-        self.computed_layouts.insert(id);
+        if let Some(cache) = self.cache.as_mut() {
+            let epochs = &mut cache.nodes[node_index(id.0)];
+            if epochs.last_computed != cache.epoch {
+                epochs.last_computed = cache.epoch;
+                cache.computed_roots.push(id);
+            }
+        } else {
+            self.computed_layouts.insert(id);
+        }
         self.advance_layout_epoch();
 
         let scale_factor = window.scale_factor();
@@ -1151,17 +1227,11 @@ mod tests {
         engine.enable_cache();
         let handle = crate::element::InternedHandle::for_test(1, 0);
         let recycled = crate::element::InternedHandle::for_test(1, 1);
-        let cache = engine.cache.as_mut().expect("cache enabled");
-        cache.scopes.insert(
-            handle,
-            LayoutScope {
-                nodes: Vec::new(),
-                cursor: 0,
-            },
-        );
+        engine.set_request_scope(&handle);
         engine.set_request_scope(&recycled);
         let cache = engine.cache.as_ref().expect("cache enabled");
-        assert_eq!(cache.request_scope, Some(recycled));
+        assert_eq!(cache.request_scope, Some(1));
+        assert_eq!(cache.scope_indices.len(), 2);
         assert_eq!(cache.scopes.len(), 2);
     }
 
