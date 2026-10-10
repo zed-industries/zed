@@ -45,17 +45,17 @@ use crate::InspectorElementRegistry;
 use crate::asset_cache::CachedLoad;
 use crate::{
     Action, ActionBuildError, ActionRegistry, ActivationPolicy, ActivityGuard, Any, AnyView,
-    AnyWindowHandle, AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds,
-    ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayChanges, DisplayEvent,
-    DisplayId, EventEmitter, ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor,
-    Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph,
-    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
-    SystemNotificationResponse, Task, TextRenderingMode, TextSystem, ThermalState, Window,
-    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
-    WindowingRequest,
+    AnyWindowHandle, AppContext, AppLifecyclePhase, Arena, ArenaBox, Asset, AssetSource,
+    BackgroundExecutor, Bounds, ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase,
+    DisplayChanges, DisplayEvent, DisplayId, EventEmitter, ExternalDragPayload, FocusHandle,
+    FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
+    Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
+    PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
+    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
+    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
+    WindowInvalidator, WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -334,6 +334,7 @@ impl Application {
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
+type AppLifecycleHandler = Box<dyn FnMut(AppLifecyclePhase, &mut App) -> bool + 'static>;
 type DisplayHandler = Box<dyn FnMut(DisplayEvent, &mut App) -> bool + 'static>;
 
 /// The properties of a display that GPUI reports changes to.
@@ -852,6 +853,8 @@ pub struct App {
     displays: HashMap<DisplayId, DisplayState>,
     pub(crate) system_sleep_observers: SubscriberSet<(), Handler>,
     pub(crate) system_wake_observers: SubscriberSet<(), Handler>,
+    app_lifecycle_observers: SubscriberSet<(), AppLifecycleHandler>,
+    memory_warning_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -990,6 +993,8 @@ impl App {
                 displays: read_displays(platform.as_ref()),
                 system_sleep_observers: SubscriberSet::new(),
                 system_wake_observers: SubscriberSet::new(),
+                app_lifecycle_observers: SubscriberSet::new(),
+                memory_warning_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
@@ -1080,6 +1085,32 @@ impl App {
                     cx.system_wake_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_app_lifecycle(Box::new({
+            let app = Rc::downgrade(&app);
+            move |phase| {
+                if let Some(app) = app.upgrade() {
+                    app.borrow_mut().update(|cx| {
+                        cx.app_lifecycle_observers
+                            .clone()
+                            .retain(&(), |callback| callback(phase, cx));
+                    });
+                }
+            }
+        }));
+
+        platform.on_memory_warning(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    app.borrow_mut().update(|cx| {
+                        cx.memory_warning_observers
+                            .clone()
+                            .retain(&(), |callback| callback(cx));
+                    });
                 }
             }
         }));
@@ -1684,6 +1715,42 @@ impl App {
         F: 'static + FnMut(&mut App),
     {
         let (subscription, activate) = self.system_wake_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Observes mobile application lifecycle changes. Desktop platforms do not
+    /// emit these events. On iOS these currently describe the single connected
+    /// scene, not individual windows.
+    ///
+    /// Save important changes incrementally: neither disconnection nor quit is
+    /// guaranteed before the system terminates a backgrounded application.
+    /// Dropping the returned subscription removes the observer.
+    pub fn on_app_lifecycle(
+        &self,
+        mut callback: impl FnMut(AppLifecyclePhase, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.app_lifecycle_observers.insert(
+            (),
+            Box::new(move |phase, cx| {
+                callback(phase, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Observes mobile memory-pressure warnings so applications can release
+    /// expendable caches. Dropping the subscription removes the observer.
+    pub fn on_memory_warning(&self, mut callback: impl FnMut(&mut App) + 'static) -> Subscription {
+        let (subscription, activate) = self.memory_warning_observers.insert(
             (),
             Box::new(move |cx| {
                 callback(cx);
