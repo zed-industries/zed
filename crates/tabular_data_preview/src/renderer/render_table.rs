@@ -106,6 +106,11 @@ impl TableView {
         let data_row = this.engine.d2d_mapping().get_data_row(display_row)?;
         let row = this.engine.contents.get_row(data_row)?;
 
+        let selection_bounds = this
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.display_bounds(this.engine.d2d_mapping()));
+
         let mut elements = Vec::with_capacity(cols);
         elements.push(this.create_row_identifier_cell(display_row, data_row, cx)?);
 
@@ -119,6 +124,13 @@ impl TableView {
             let display_cell_id = DisplayCellId::new(display_row, col);
             let data_cell_id = DataCellId::new(data_row, col);
 
+            let is_in_selection =
+                selection_bounds
+                    .as_ref()
+                    .is_some_and(|(row_range, col_range)| {
+                        row_range.contains(&display_row.0) && col_range.contains(&col.0)
+                    });
+
             let is_focus_cell = this
                 .selection
                 .as_ref()
@@ -126,6 +138,8 @@ impl TableView {
 
             let cell_bg = if is_focus_cell {
                 Some(cx.theme().colors().element_selected)
+            } else if is_in_selection {
+                Some(cx.theme().colors().element_hover)
             } else {
                 None
             };
@@ -143,6 +157,7 @@ impl TableView {
                 )
                 .child(TableView::create_selectable_cell(
                     display_cell_id,
+                    data_cell_id,
                     cell_content,
                     this.settings.vertical_alignment,
                     cx,
