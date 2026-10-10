@@ -617,7 +617,7 @@
     },
   },
   {
-    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv)",
+    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv || extension == jsonl || extension == ndjson)",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k v": "tabular_data::OpenPreviewToTheSide",
@@ -634,6 +634,7 @@
   {
     "context": "Workspace",
     "bindings": {
+      "alt-/": "which_key::ShowPendingBindings",
       // Move focus between the major regions of the window (editor, open
       // panels, status bar). Accessibility navigation; mirrors VS Code's
       // "Focus Next/Previous Part". `ctrl-f6` mirrors `f6` so region navigation
@@ -1674,6 +1675,15 @@
       "ctrl-enter": "skill_creator::SaveSkill",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "TableView",
+    "bindings": {
+      "up": ["tabular_data::MoveFocusedCell", { "direction": "up" }],
+      "down": ["tabular_data::MoveFocusedCell", { "direction": "down" }],
+      "left": ["tabular_data::MoveFocusedCell", { "direction": "left" }],
+      "right": ["tabular_data::MoveFocusedCell", { "direction": "right" }],
     },
   },
 ]

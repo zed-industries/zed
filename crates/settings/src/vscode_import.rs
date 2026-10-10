@@ -193,6 +193,7 @@ impl VsCodeSettings {
                 .map(|history| CommandPaletteSettingsContent {
                     use_command_history: Some(history > 0),
                 }),
+            copilot: None,
             credentials_url: None,
             debugger: None,
             diagnostics: None,
@@ -552,6 +553,13 @@ impl VsCodeSettings {
     fn default_language_settings_content(&self) -> LanguageSettingsContent {
         LanguageSettingsContent {
             allow_rewrap: None,
+            soft_wrap_indent: self.read_enum("editor.wrappingIndent", |s| match s {
+                "none" => Some(SoftWrapIndent::None),
+                "same" => Some(SoftWrapIndent::Same),
+                "indent" => Some(SoftWrapIndent::ExtraOne),
+                "deepIndent" => Some(SoftWrapIndent::ExtraTwo),
+                _ => None,
+            }),
             always_treat_brackets_as_autoclosed: None,
             auto_indent: None,
             auto_indent_on_paste: self.read_bool("editor.formatOnPaste"),
@@ -1029,6 +1037,7 @@ impl VsCodeSettings {
             agent_buffer_font_family: None,
             agent_buffer_font_size: None,
             git_commit_buffer_font_size: None,
+            mermaid_font_family: None,
             theme: None,
             icon_theme: None,
             ui_density: None,
@@ -1608,5 +1617,40 @@ mod tests {
             imported_title(r#"{ "window.title": "${activeFolderShort} — literal" }"#),
             Some(" — literal".to_string())
         );
+    }
+
+    fn imported_soft_wrap_indent(content: &str) -> Option<SoftWrapIndent> {
+        VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+            .unwrap()
+            .settings_content()
+            .project
+            .all_languages
+            .defaults
+            .soft_wrap_indent
+    }
+
+    #[test]
+    fn test_import_wrapping_indent() {
+        assert_eq!(
+            imported_soft_wrap_indent(r#"{ "editor.wrappingIndent": "none" }"#),
+            Some(SoftWrapIndent::None)
+        );
+        assert_eq!(
+            imported_soft_wrap_indent(r#"{ "editor.wrappingIndent": "same" }"#),
+            Some(SoftWrapIndent::Same)
+        );
+        assert_eq!(
+            imported_soft_wrap_indent(r#"{ "editor.wrappingIndent": "indent" }"#),
+            Some(SoftWrapIndent::ExtraOne)
+        );
+        assert_eq!(
+            imported_soft_wrap_indent(r#"{ "editor.wrappingIndent": "deepIndent" }"#),
+            Some(SoftWrapIndent::ExtraTwo)
+        );
+        assert_eq!(
+            imported_soft_wrap_indent(r#"{ "editor.wrappingIndent": "invalid" }"#),
+            None
+        );
+        assert_eq!(imported_soft_wrap_indent("{}"), None);
     }
 }

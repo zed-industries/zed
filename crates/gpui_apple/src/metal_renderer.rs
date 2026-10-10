@@ -1,11 +1,7 @@
 use crate::metal_atlas::MetalAtlas;
 use anyhow::{Context as _, Result};
 use block2::RcBlock;
-use cocoa::{
-    base::{NO, YES},
-    foundation::{NSSize, NSUInteger},
-    quartzcore::AutoresizingMask,
-};
+use core_graphics::geometry::CGSize;
 use gpui::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, PaintSurface, Path, Point,
     PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
@@ -14,16 +10,17 @@ use gpui::{
 use image::RgbaImage;
 use objc2::runtime::AnyObject;
 
-use core_foundation::base::TCFType;
-use core_video::{
-    metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
-    pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-};
 use foreign_types::{ForeignType, ForeignTypeRef};
 use metal::{
     CAMetalLayer, CommandQueue, MTLGPUFamily, MTLPixelFormat, MTLResourceOptions, NSRange,
+    NSUInteger,
 };
-use objc::{self, msg_send, sel, sel_impl};
+use objc2_core_foundation::CFRetained;
+use objc2_core_video::{
+    CVMetalTexture, CVMetalTextureCache, CVMetalTextureGetTexture, CVPixelBufferGetHeight,
+    CVPixelBufferGetHeightOfPlane, CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
+    CVPixelBufferGetWidthOfPlane, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVReturnSuccess,
+};
 use parking_lot::Mutex;
 
 use std::{cell::Cell, ffi::c_void, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
@@ -131,7 +128,7 @@ pub struct MetalRenderer {
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
-    core_video_texture_cache: core_video::metal_texture_cache::CVMetalTextureCache,
+    core_video_texture_cache: CFRetained<CVMetalTextureCache>,
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
@@ -153,28 +150,54 @@ impl MetalRenderer {
     /// Creates a new MetalRenderer with a CAMetalLayer for window-based rendering.
     pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, transparent: bool) -> Self {
         let device = Self::create_device();
-
         let layer = metal::MetalLayer::new();
-        layer.set_device(&device);
+        Self::configure_layer(&layer, &device, transparent);
+        Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
+    }
+
+    /// Creates a renderer for a CAMetalLayer owned by a platform view, such as
+    /// the backing layer UIKit creates for a view whose `layerClass` is
+    /// `CAMetalLayer`. The renderer retains the layer.
+    pub fn from_layer(
+        instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
+        layer: &objc2_quartz_core::CAMetalLayer,
+        transparent: bool,
+    ) -> Self {
+        let device = Self::create_device();
+        // Both types bind the same Objective-C class, so this only changes which
+        // Rust wrapper views the live layer. `to_owned` retains it.
+        let layer = unsafe {
+            metal::MetalLayerRef::from_ptr(ptr::from_ref(layer).cast_mut().cast::<CAMetalLayer>())
+        }
+        .to_owned();
+        Self::configure_layer(&layer, &device, transparent);
+        Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
+    }
+
+    fn configure_layer(layer: &metal::MetalLayerRef, device: &metal::DeviceRef, transparent: bool) {
+        layer.set_device(device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
         // Support direct-to-display rendering if the window is not transparent
         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
         layer.set_opaque(!transparent);
         layer.set_maximum_drawable_count(3);
-        // Allow texture reading for visual tests (captures screenshots without ScreenCaptureKit)
-        #[cfg(any(test, feature = "test-support"))]
+        // Allow texture reading for visual tests and UI automation screenshots
+        // (captures without ScreenCaptureKit). Only debug builds pay the
+        // presentation cost, even when `test-support` is compiled in.
+        #[cfg(all(feature = "test-support", debug_assertions))]
         layer.set_framebuffer_only(false);
-        unsafe {
-            let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
-            let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
-            let _: () = msg_send![
-                &*layer,
-                setAutoresizingMask: AutoresizingMask::WIDTH_SIZABLE
-                    | AutoresizingMask::HEIGHT_SIZABLE
-            ];
-        }
-
-        Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
+        // metal-rs doesn't bind these setters, so view the same object through
+        // objc2's typed CAMetalLayer binding.
+        let objc2_layer: &objc2_quartz_core::CAMetalLayer = unsafe { &*layer.as_ptr().cast() };
+        objc2_layer.setAllowsNextDrawableTimeout(false);
+        objc2_layer.setNeedsDisplayOnBoundsChange(true);
+        // UIKit sizes a view's backing layer itself; only AppKit-hosted
+        // layers need to track their superlayer's bounds.
+        #[cfg(target_os = "macos")]
+        objc2_layer.setAutoresizingMask(
+            objc2_quartz_core::CAAutoresizingMask::LayerWidthSizable
+                | objc2_quartz_core::CAAutoresizingMask::LayerHeightSizable,
+        );
     }
 
     /// Creates a new headless MetalRenderer for offscreen rendering without a window.
@@ -187,6 +210,7 @@ impl MetalRenderer {
         Self::new_internal(device, None, true, instance_buffer_pool)
     }
 
+    #[cfg(target_os = "macos")]
     fn create_device() -> metal::Device {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
@@ -202,11 +226,20 @@ impl MetalRenderer {
             log::error!(
                 "Unable to enumerate Metal devices; attempting to use system default device"
             );
-            metal::Device::system_default().unwrap_or_else(|| {
-                log::error!("unable to access a compatible graphics device");
-                std::process::exit(1);
-            })
+            Self::system_default_device()
         }
+    }
+
+    #[cfg(target_os = "ios")]
+    fn create_device() -> metal::Device {
+        Self::system_default_device()
+    }
+
+    fn system_default_device() -> metal::Device {
+        metal::Device::system_default().unwrap_or_else(|| {
+            log::error!("unable to access a compatible graphics device");
+            std::process::exit(1);
+        })
     }
 
     fn new_internal(
@@ -233,7 +266,9 @@ impl MetalRenderer {
 
         // Shared memory can be used only if CPU and GPU share the same memory space.
         // https://developer.apple.com/documentation/metal/setting-resource-storage-modes
-        let is_unified_memory = device.has_unified_memory();
+        // iOS does not support managed resources. Its simulator may report a
+        // non-unified host GPU even though resources must still use shared storage.
+        let is_unified_memory = cfg!(target_os = "ios") || device.has_unified_memory();
         // Apple GPU families support memoryless textures, which can significantly reduce
         // memory usage by keeping render targets in on-chip tile memory instead of
         // allocating backing store in system memory.
@@ -326,9 +361,27 @@ impl MetalRenderer {
         );
 
         let command_queue = device.new_command_queue();
-        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu));
-        let core_video_texture_cache =
-            CVMetalTextureCache::new(None, device.clone(), None).unwrap();
+        let supports_shared_storage = cfg!(target_os = "ios") || is_apple_gpu;
+        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), supports_shared_storage));
+        // metal and objc2-metal expose the same Objective-C device; the borrowed
+        // protocol object remains valid while `device` owns it.
+        let core_video_texture_cache = unsafe {
+            let mut cache = ptr::null_mut();
+            let status = CVMetalTextureCache::create(
+                None,
+                None,
+                &*device
+                    .as_ptr()
+                    .cast::<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>>(),
+                None,
+                ptr::NonNull::from(&mut cache),
+            );
+            assert_eq!(
+                status, kCVReturnSuccess,
+                "failed to create CoreVideo Metal texture cache"
+            );
+            CFRetained::from_raw(ptr::NonNull::new(cache).expect("CoreVideo returned a null cache"))
+        };
 
         Self {
             device,
@@ -382,16 +435,7 @@ impl MetalRenderer {
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         if let Some(layer) = &self.layer {
-            let ns_size = NSSize {
-                width: size.width.0 as f64,
-                height: size.height.0 as f64,
-            };
-            unsafe {
-                let _: () = msg_send![
-                    layer.as_ref(),
-                    setDrawableSize: ns_size
-                ];
-            }
+            layer.set_drawable_size(CGSize::new(size.width.0 as f64, size.height.0 as f64));
         }
         self.update_path_intermediate_textures(size);
     }
@@ -592,15 +636,22 @@ impl MetalRenderer {
             texture_descriptor.set_usage(
                 metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
             );
-            texture_descriptor.set_storage_mode(metal::MTLStorageMode::Managed);
+            // Like the atlas, only Apple GPUs can create shared textures on macOS;
+            // Intel Macs cannot, even with unified memory. iOS has no managed storage.
+            let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
+            texture_descriptor.set_storage_mode(if uses_shared_storage {
+                metal::MTLStorageMode::Shared
+            } else {
+                metal::MTLStorageMode::Managed
+            });
             let target_texture = self.device.new_texture(&texture_descriptor);
 
             let command_buffer = self.render_frame(scene, &target_texture, size)?;
 
-            // On discrete GPUs (non-unified memory), Managed textures require an
-            // explicit blit synchronize before the CPU can read back the rendered
-            // data. Without this, get_bytes returns stale zeros.
-            if !self.is_unified_memory {
+            // Managed textures require an explicit blit synchronize before the CPU
+            // can read back the rendered data. Without this, get_bytes returns
+            // stale zeros.
+            if !uses_shared_storage {
                 let blit = command_buffer.new_blit_command_encoder();
                 blit.synchronize_resource(&target_texture);
                 blit.end_encoding();
@@ -1159,52 +1210,59 @@ impl MetalRenderer {
         );
 
         for (index, surface) in surfaces.iter().enumerate() {
+            let image_buffer = &surface.image_buffer;
             let texture_size = size(
-                DevicePixels::from(surface.image_buffer.get_width() as i32),
-                DevicePixels::from(surface.image_buffer.get_height() as i32),
+                DevicePixels::from(CVPixelBufferGetWidth(image_buffer) as i32),
+                DevicePixels::from(CVPixelBufferGetHeight(image_buffer) as i32),
             );
 
             assert_eq!(
-                surface.image_buffer.get_pixel_format(),
+                CVPixelBufferGetPixelFormatType(image_buffer),
                 kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             );
 
-            let y_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
+            let plane_texture = |plane, format| unsafe {
+                let mut texture = ptr::null_mut();
+                let status = CVMetalTextureCache::create_texture_from_image(
                     None,
-                    MTLPixelFormat::R8Unorm,
-                    surface.image_buffer.get_width_of_plane(0),
-                    surface.image_buffer.get_height_of_plane(0),
-                    0,
-                )
-                .unwrap();
-            let cb_cr_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
+                    &self.core_video_texture_cache,
+                    image_buffer,
                     None,
-                    MTLPixelFormat::RG8Unorm,
-                    surface.image_buffer.get_width_of_plane(1),
-                    surface.image_buffer.get_height_of_plane(1),
-                    1,
+                    format,
+                    CVPixelBufferGetWidthOfPlane(image_buffer, plane),
+                    CVPixelBufferGetHeightOfPlane(image_buffer, plane),
+                    plane,
+                    ptr::NonNull::from(&mut texture),
+                );
+                assert_eq!(
+                    status, kCVReturnSuccess,
+                    "failed to create CoreVideo Metal texture"
+                );
+                CFRetained::<CVMetalTexture>::from_raw(
+                    ptr::NonNull::new(texture).expect("CoreVideo returned a null texture"),
                 )
-                .unwrap();
+            };
+            let y_texture = plane_texture(0, objc2_metal::MTLPixelFormat::R8Unorm);
+            let cb_cr_texture = plane_texture(1, objc2_metal::MTLPixelFormat::RG8Unorm);
 
             command_encoder.set_vertex_bytes(
                 SurfaceInputIndex::TextureSize as u64,
                 mem::size_of_val(&texture_size) as u64,
                 &texture_size as *const Size<DevicePixels> as *const _,
             );
-            // let y_texture = y_texture.get_texture().unwrap().
             command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef());
-                Some(metal::TextureRef::from_ptr(texture as *mut _))
+                let texture = CVMetalTextureGetTexture(&y_texture)
+                    .expect("CoreVideo returned no Metal texture");
+                Some(metal::TextureRef::from_ptr(
+                    objc2::rc::Retained::as_ptr(&texture) as *mut _,
+                ))
             });
             command_encoder.set_fragment_texture(SurfaceInputIndex::CbCrTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(cb_cr_texture.as_concrete_TypeRef());
-                Some(metal::TextureRef::from_ptr(texture as *mut _))
+                let texture = CVMetalTextureGetTexture(&cb_cr_texture)
+                    .expect("CoreVideo returned no Metal texture");
+                Some(metal::TextureRef::from_ptr(
+                    objc2::rc::Retained::as_ptr(&texture) as *mut _,
+                ))
             });
 
             command_encoder.draw_primitives_instanced_base_instance(
@@ -1636,5 +1694,81 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
 
     fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
         self.renderer.sprite_atlas().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use objc2_core_foundation::{CFDictionary, CFType};
+    use objc2_core_video::{
+        CVPixelBufferCreate, CVPixelBufferGetBaseAddressOfPlane,
+        CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
+        CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
+    };
+
+    #[test]
+    fn render_core_video_surface() {
+        let attributes = CFDictionary::from_slices(
+            &[unsafe { kCVPixelBufferIOSurfacePropertiesKey }],
+            &[&*CFDictionary::<CFType, CFType>::empty()],
+        );
+        let mut image_buffer = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                CVPixelBufferCreate(
+                    None,
+                    16,
+                    16,
+                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                    Some(attributes.as_opaque()),
+                    ptr::NonNull::from(&mut image_buffer),
+                )
+            },
+            kCVReturnSuccess
+        );
+        let image_buffer =
+            unsafe { CFRetained::from_raw(ptr::NonNull::new(image_buffer).unwrap()) };
+        unsafe {
+            assert_eq!(
+                CVPixelBufferLockBaseAddress(&image_buffer, CVPixelBufferLockFlags::empty()),
+                kCVReturnSuccess
+            );
+            for plane in 0..2 {
+                let bytes = CVPixelBufferGetBaseAddressOfPlane(&image_buffer, plane).cast::<u8>();
+                let length = CVPixelBufferGetBytesPerRowOfPlane(&image_buffer, plane)
+                    * CVPixelBufferGetHeightOfPlane(&image_buffer, plane);
+                slice::from_raw_parts_mut(bytes, length).fill(128);
+            }
+            assert_eq!(
+                CVPixelBufferUnlockBaseAddress(&image_buffer, CVPixelBufferLockFlags::empty()),
+                kCVReturnSuccess
+            );
+        }
+
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: size(ScaledPixels(16.0), ScaledPixels(16.0)),
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(PaintSurface {
+            order: 0,
+            bounds,
+            content_mask: ContentMask { bounds },
+            image_buffer: image_buffer.clone(),
+        });
+        drop(image_buffer);
+        scene.finish();
+
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let image = renderer
+            .render_scene_to_image(&scene, size(DevicePixels(16), DevicePixels(16)))
+            .unwrap();
+        for image::Rgba([red, green, blue, alpha]) in image.pixels() {
+            assert!(red.abs_diff(128) <= 2);
+            assert!(green.abs_diff(128) <= 2);
+            assert!(blue.abs_diff(128) <= 2);
+            assert_eq!(*alpha, 255);
+        }
     }
 }

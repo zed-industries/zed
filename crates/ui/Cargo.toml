@@ -22,7 +22,6 @@ icons.workspace = true
 itertools.workspace = true
 log.workspace = true
 menu.workspace = true
-num-format.workspace = true
 schemars.workspace = true
 serde.workspace = true
 smallvec.workspace = true

@@ -252,6 +252,12 @@ pub struct AgentSettingsContent {
     /// Don't use this field.
     #[schemars(skip)]
     pub threads_sidebar_auto_open: Option<bool>,
+    /// Maximum number of idle threads with loadable sessions to retain in the
+    /// agent panel. Set to 0 to unload every eligible idle thread when it is
+    /// no longer active.
+    ///
+    /// Default: 5
+    pub max_idle_retained_threads: Option<usize>,
     /// Settings for the threads sidebar.
     pub threads_sidebar: Option<ThreadsSidebarSettingsContent>,
     /// Default fixed width in pixels when the agent panel is docked to the left or right and
@@ -583,6 +589,7 @@ impl AgentSettingsContent {
 pub struct AgentProfileContent {
     pub name: Arc<str>,
     #[serde(default)]
+    #[schemars(schema_with = "agent_profile_tools_schema")]
     pub tools: IndexMap<Arc<str>, bool>,
     /// Whether all context servers are enabled by default.
     pub enable_all_context_servers: Option<bool>,
@@ -596,6 +603,44 @@ pub struct AgentProfileContent {
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
+}
+
+fn agent_profile_tools_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let tool_names = [
+        "apply_code_action",
+        "ask_user",
+        "copy_path",
+        "create_directory",
+        "create_thread",
+        "delete_path",
+        "diagnostics",
+        "edit_file",
+        "fetch",
+        "find_path",
+        "find_references",
+        "get_code_actions",
+        "go_to_definition",
+        "grep",
+        "list_agents_and_models",
+        "list_directory",
+        "move_path",
+        "read_file",
+        "rename_symbol",
+        "search_web",
+        "skill",
+        "spawn_agent",
+        "terminal",
+        "write_file",
+    ];
+    let properties = tool_names
+        .into_iter()
+        .map(|name| (name.to_string(), serde_json::json!({ "type": "boolean" })))
+        .collect::<serde_json::Map<_, _>>();
+    json_schema!({
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": false
+    })
 }
 
 #[derive(

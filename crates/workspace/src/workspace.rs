@@ -4306,6 +4306,13 @@ impl Workspace {
         self.active_pane().read(cx).active_item()
     }
 
+    pub fn item_for_action(&self, window: &Window, cx: &App) -> Option<Box<dyn ItemHandle>> {
+        self.items(cx)
+            .find(|item| item.item_focus_handle(cx).contains_focused(window, cx))
+            .map(|item| item.boxed_clone())
+            .or_else(|| self.active_item(cx))
+    }
+
     pub fn active_item_as<I: 'static>(&self, cx: &App) -> Option<Entity<I>> {
         let item = self.active_item(cx)?;
         // Prefer an exact downcast so that we return the active item itself when
@@ -10805,6 +10812,48 @@ pub fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<M
     })
 }
 
+fn workspace_is_at_location(
+    workspace: &Entity<Workspace>,
+    location: &SerializedWorkspaceLocation,
+    cx: &App,
+) -> bool {
+    let WorkspaceLocation::Location(workspace_location, _) =
+        workspace.read(cx).workspace_location(cx)
+    else {
+        return false;
+    };
+
+    match (&workspace_location, location) {
+        (SerializedWorkspaceLocation::Local, SerializedWorkspaceLocation::Local) => true,
+        (
+            SerializedWorkspaceLocation::Remote(workspace_remote),
+            SerializedWorkspaceLocation::Remote(remote),
+        ) => match (workspace_remote, remote) {
+            (RemoteConnectionOptions::Ssh(_), RemoteConnectionOptions::Ssh(_)) => {
+                same_remote_connection_identity(Some(workspace_remote), Some(remote))
+            }
+            (
+                RemoteConnectionOptions::Wsl(workspace_remote),
+                RemoteConnectionOptions::Wsl(remote),
+            ) => {
+                // The WSL username is not consistently populated in the workspace location, so ignore it for now.
+                workspace_remote.distro_name == remote.distro_name
+            }
+            (
+                RemoteConnectionOptions::Docker(workspace_remote),
+                RemoteConnectionOptions::Docker(remote),
+            ) => workspace_remote.container_id == remote.container_id,
+            #[cfg(any(test, feature = "test-support"))]
+            (
+                RemoteConnectionOptions::Mock(workspace_remote),
+                RemoteConnectionOptions::Mock(remote),
+            ) => workspace_remote.id == remote.id,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 pub fn workspace_windows_for_location(
     serialized_location: &SerializedWorkspaceLocation,
     cx: &App,
@@ -10813,43 +10862,10 @@ pub fn workspace_windows_for_location(
         .into_iter()
         .filter_map(|window| window.downcast::<MultiWorkspace>())
         .filter(|multi_workspace| {
-            let same_host = |left: &RemoteConnectionOptions, right: &RemoteConnectionOptions| match (left, right) {
-                (RemoteConnectionOptions::Ssh(a), RemoteConnectionOptions::Ssh(b)) => {
-                    (&a.host, &a.username, &a.port) == (&b.host, &b.username, &b.port)
-                }
-                (RemoteConnectionOptions::Wsl(a), RemoteConnectionOptions::Wsl(b)) => {
-                    // The WSL username is not consistently populated in the workspace location, so ignore it for now.
-                    a.distro_name == b.distro_name
-                }
-                (RemoteConnectionOptions::Docker(a), RemoteConnectionOptions::Docker(b)) => {
-                    a.container_id == b.container_id
-                }
-                #[cfg(any(test, feature = "test-support"))]
-                (RemoteConnectionOptions::Mock(a), RemoteConnectionOptions::Mock(b)) => {
-                    a.id == b.id
-                }
-                _ => false,
-            };
-
             multi_workspace.read(cx).is_ok_and(|multi_workspace| {
-                multi_workspace.workspaces().any(|workspace| {
-                    match workspace.read(cx).workspace_location(cx) {
-                        WorkspaceLocation::Location(location, _) => {
-                            match (&location, serialized_location) {
-                                (
-                                    SerializedWorkspaceLocation::Local,
-                                    SerializedWorkspaceLocation::Local,
-                                ) => true,
-                                (
-                                    SerializedWorkspaceLocation::Remote(a),
-                                    SerializedWorkspaceLocation::Remote(b),
-                                ) => same_host(a, b),
-                                _ => false,
-                            }
-                        }
-                        _ => false,
-                    }
-                })
+                multi_workspace
+                    .workspaces()
+                    .any(|workspace| workspace_is_at_location(workspace, serialized_location, cx))
             })
         })
         .collect()
@@ -10873,6 +10889,10 @@ pub async fn find_existing_workspace(
             for window in workspace_windows_for_location(location, cx) {
                 if let Ok(multi_workspace) = window.read(cx) {
                     for workspace in multi_workspace.workspaces() {
+                        if !workspace_is_at_location(workspace, location, cx) {
+                            continue;
+                        }
+
                         let project = workspace.read(cx).project.read(cx);
                         let m = match open_options.workspace_matching {
                             WorkspaceMatching::None => None,
@@ -11938,7 +11958,6 @@ pub fn client_side_decorations(
     window: &mut Window,
     cx: &mut App,
 ) -> Stateful<Div> {
-    const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
     let is_resizable = window.is_resizable();
     let tiling = match decorations {
@@ -12018,10 +12037,18 @@ pub fn client_side_decorations(
                     Decorations::Client { .. } => div
                         .border_color(cx.theme().colors().border)
                         .rounded_client_corners(tiling)
-                        .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
-                        .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
-                        .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
-                        .when(!tiling.right, |div| div.border_r(BORDER_SIZE))
+                        .when(!tiling.top, |div| {
+                            div.border_t(theme::CLIENT_SIDE_DECORATION_BORDER)
+                        })
+                        .when(!tiling.bottom, |div| {
+                            div.border_b(theme::CLIENT_SIDE_DECORATION_BORDER)
+                        })
+                        .when(!tiling.left, |div| {
+                            div.border_l(theme::CLIENT_SIDE_DECORATION_BORDER)
+                        })
+                        .when(!tiling.right, |div| {
+                            div.border_r(theme::CLIENT_SIDE_DECORATION_BORDER)
+                        })
                         .when(!tiling.is_tiled(), |div| {
                             div.shadow(vec![
                                 gpui::BoxShadow::new(

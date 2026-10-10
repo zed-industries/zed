@@ -189,7 +189,7 @@ use language::{
     LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
+        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior, SoftWrapIndent,
         WordsCompletionMode, all_language_settings,
     },
     point_to_lsp, text_diff_with_options,
@@ -4279,6 +4279,7 @@ impl Editor {
 
         self.update_hovered_link(
             position_map.point_for_position(mouse_position),
+            position_map.inlay_hint_glyph_for_position(mouse_position),
             Some(mouse_position),
             &position_map.snapshot,
             modifiers,
@@ -5697,7 +5698,13 @@ impl Editor {
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
             let indent_delta = match (current_indent.kind, indent_kind) {
                 (IndentKind::Space, IndentKind::Space) => {
-                    let columns_to_next_tab_stop = tab_size - (current_indent.len % tab_size);
+                    let columns_to_next_tab_stop = if delta_for_start_row > 0 {
+                        delta_for_start_row
+                    } else if has_multiple_rows {
+                        tab_size
+                    } else {
+                        tab_size - (current_indent.len % tab_size)
+                    };
                     IndentSize::spaces(columns_to_next_tab_stop)
                 }
                 (IndentKind::Tab, IndentKind::Space) => IndentSize::spaces(tab_size),
@@ -7526,13 +7533,9 @@ impl Editor {
         }
         let buffer = self.buffer.read(cx).snapshot(cx);
 
-        let mut new_selections = Vec::new();
-        let mut edits = Vec::new();
-
+        let mut selections = Vec::new();
         for selection in self.selections.all_adjusted(&self.display_snapshot(cx)) {
-            let selection_is_empty = selection.is_empty();
-
-            let (start, end) = if selection_is_empty {
+            let (start, end) = if selection.is_empty() {
                 let (word_range, _) = buffer.surrounding_word(selection.start, None);
                 (word_range.start, word_range.end)
             } else {
@@ -7541,20 +7544,48 @@ impl Editor {
                     buffer.point_to_offset(selection.end),
                 )
             };
+            selections.push(Selection {
+                id: selection.id,
+                start,
+                end,
+                reversed: selection.reversed,
+                goal: SelectionGoal::None,
+            });
+        }
 
-            let old_text = buffer.text_for_range(start..end).collect::<String>();
+        // Expanding cursors to words can make selections overlap, e.g. several
+        // cursors in one word. Overlapping edits would be applied once per
+        // selection and duplicate the text, so transform each merged range once.
+        selections.sort_by_key(|selection| selection.start);
+        let mut merged_selections: Vec<Selection<MultiBufferOffset>> = Vec::new();
+        for selection in selections {
+            if let Some(previous) = merged_selections.last_mut()
+                && selection.start < previous.end
+            {
+                previous.end = cmp::max(previous.end, selection.end);
+            } else {
+                merged_selections.push(selection);
+            }
+        }
+
+        let mut new_selections = Vec::new();
+        let mut edits = Vec::new();
+        for selection in merged_selections {
+            let old_text = buffer
+                .text_for_range(selection.start..selection.end)
+                .collect::<String>();
             let new_text = callback(&old_text);
 
             new_selections.push(Selection {
-                start: buffer.anchor_before(start),
-                end: buffer.anchor_after(end),
+                start: buffer.anchor_before(selection.start),
+                end: buffer.anchor_after(selection.end),
                 goal: SelectionGoal::None,
                 id: selection.id,
                 reversed: selection.reversed,
             });
 
             if new_text != old_text {
-                edits.push((start..end, new_text));
+                edits.push((selection.start..selection.end, new_text));
             }
         }
 
@@ -8945,6 +8976,7 @@ impl Editor {
         let blocks = self
             .display_map
             .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
+        self.inlay_hint_visibility_changed(cx);
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
@@ -8989,6 +9021,7 @@ impl Editor {
         self.display_map.update(cx, |display_map, cx| {
             display_map.remove_blocks(block_ids, cx)
         });
+        self.inlay_hint_visibility_changed(cx);
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
@@ -10199,6 +10232,7 @@ impl Editor {
                     self.detect_buffer_language(buffer_id, cx);
                 }
 
+                self.inlay_hint_visibility_changed(cx);
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
 
@@ -10230,6 +10264,7 @@ impl Editor {
                 self.register_visible_buffers(cx);
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                self.inlay_hint_visibility_changed(cx);
                 self.refresh_runnables(None, window, cx);
                 self.bracket_fetched_tree_sitter_chunks
                     .retain(|range, _| range.start.buffer_id != buffer_id);
@@ -10265,6 +10300,7 @@ impl Editor {
                 self.display_map.update(cx, |display_map, cx| {
                     display_map.unfold_buffers(removed_buffer_ids.iter().copied(), cx);
                 });
+                self.inlay_hint_visibility_changed(cx);
 
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::BuffersRemoved {
@@ -10275,6 +10311,7 @@ impl Editor {
                 self.display_map.update(cx, |map, cx| {
                     map.unfold_buffers(buffer_ids.iter().copied(), cx)
                 });
+                self.inlay_hint_visibility_changed(cx);
                 cx.emit(EditorEvent::BuffersEdited {
                     buffer_ids: buffer_ids.clone(),
                 });
@@ -10344,6 +10381,7 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.inlay_hint_visibility_changed(cx);
         cx.notify();
     }
 
@@ -12275,6 +12313,135 @@ impl EditorSnapshot {
         self.display_snapshot
             .buffer_snapshot()
             .language_at(position)
+    }
+
+    pub fn display_row_for_inline_code_action(&self, buffer_point: Point) -> Option<DisplayRow> {
+        if self.is_line_folded(MultiBufferRow(buffer_point.row)) {
+            return None;
+        }
+
+        let line_indent = self
+            .display_snapshot
+            .buffer_snapshot()
+            .line_indent_for_row(MultiBufferRow(buffer_point.row));
+        if line_indent.is_line_blank() {
+            return None;
+        }
+
+        const INLINE_SLOT_CHAR_LIMIT: u32 = 4;
+        const MAX_ALTERNATE_DISTANCE: u32 = 8;
+
+        let is_valid_row = |row_candidate: u32| -> bool {
+            if self.is_line_folded(MultiBufferRow(row_candidate)) {
+                return false;
+            }
+            if buffer_point.row == row_candidate {
+                if buffer_point.column < INLINE_SLOT_CHAR_LIMIT {
+                    return false;
+                }
+            } else {
+                let candidate_point = MultiBufferPoint {
+                    row: row_candidate,
+                    column: 0,
+                };
+                let range = if candidate_point < buffer_point {
+                    candidate_point..buffer_point
+                } else {
+                    buffer_point..candidate_point
+                };
+                if self
+                    .display_snapshot
+                    .buffer_snapshot()
+                    .excerpt_containing(range)
+                    .is_none()
+                {
+                    return false;
+                }
+            }
+            let line_indent = self
+                .display_snapshot
+                .buffer_snapshot()
+                .line_indent_for_row(MultiBufferRow(row_candidate));
+            if line_indent.is_line_blank() {
+                true
+            } else {
+                let indent_size = self
+                    .display_snapshot
+                    .buffer_snapshot()
+                    .indent_size_for_line(MultiBufferRow(row_candidate));
+                if indent_size.len >= INLINE_SLOT_CHAR_LIMIT {
+                    true
+                } else if row_candidate == buffer_point.row {
+                    let display_row = self
+                        .display_snapshot
+                        .point_to_display_point(buffer_point, text::Bias::Left)
+                        .row();
+                    let line_start_display_row = self
+                        .display_snapshot
+                        .point_to_display_point(Point::new(buffer_point.row, 0), text::Bias::Left)
+                        .row();
+                    if display_row > line_start_display_row {
+                        self.display_snapshot
+                            .soft_wrap_indent(DisplayRow(display_row.0 - 1))
+                            .is_some_and(|indent| indent >= INLINE_SLOT_CHAR_LIMIT)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+        };
+
+        let new_buffer_row = if is_valid_row(buffer_point.row) {
+            Some(buffer_point.row)
+        } else {
+            let max_row = self.display_snapshot.buffer_snapshot().max_point().row;
+            (1..=MAX_ALTERNATE_DISTANCE).find_map(|offset| {
+                let row_above = buffer_point.row.saturating_sub(offset);
+                let row_below = buffer_point.row + offset;
+                if row_above != buffer_point.row && is_valid_row(row_above) {
+                    Some(row_above)
+                } else if row_below <= max_row && is_valid_row(row_below) {
+                    Some(row_below)
+                } else {
+                    None
+                }
+            })
+        }?;
+
+        let mut new_display_row = self
+            .display_snapshot
+            .point_to_display_point(
+                Point {
+                    row: new_buffer_row,
+                    column: buffer_point.column,
+                },
+                text::Bias::Left,
+            )
+            .row();
+
+        let line_start_display_row = self
+            .display_snapshot
+            .point_to_display_point(
+                Point {
+                    row: new_buffer_row,
+                    column: 0,
+                },
+                text::Bias::Left,
+            )
+            .row();
+
+        if new_display_row > line_start_display_row
+            && self
+                .display_snapshot
+                .soft_wrap_indent(DisplayRow(new_display_row.0 - 1))
+                .is_some_and(|indent| indent < INLINE_SLOT_CHAR_LIMIT)
+        {
+            new_display_row = line_start_display_row;
+        }
+
+        Some(new_display_row)
     }
 
     pub fn is_focused(&self) -> bool {

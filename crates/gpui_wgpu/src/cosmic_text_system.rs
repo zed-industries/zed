@@ -418,10 +418,17 @@ impl CosmicTextSystemState {
                 "Segoe Fluent Icons",
             ];
 
+            // This only decides whether a face can be a primary font. The
+            // editor measures layout with the width of 'm' and would panic
+            // without it.
+            //
+            // Don't remove the face from the font database. Arabic, Devanagari
+            // and emoji fonts often have no Latin glyphs, and they are exactly
+            // what cosmic-text falls back to when the primary font lacks a
+            // glyph.
             if font.as_swash().charmap().map('m') == 0
                 && !allowed_bad_font_names.contains(&postscript_name.as_str())
             {
-                self.font_system.db_mut().remove_face(font.id());
                 continue;
             };
 
@@ -1200,6 +1207,7 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "test-support")]
     use std::{cell::RefCell, rc::Rc};
 
     #[test]
@@ -1314,6 +1322,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-support")]
     #[test]
     fn reports_graphemes_that_exhaust_font_fallback() -> Result<()> {
         let platform_text_system = Arc::new(text_system()?);

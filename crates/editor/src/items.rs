@@ -807,6 +807,7 @@ impl Item for Editor {
 
         h_flex()
             .gap_1()
+            .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
             .when(params.truncate_title_middle, |this| {
                 this.w_full().min_w_0().overflow_hidden()
             })

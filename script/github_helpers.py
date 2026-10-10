@@ -180,7 +180,8 @@ def set_github_project_field(project, item_id, field_name, option_name):
         (
             option["id"]
             for option in field.get("options", [])
-            if option["name"] == option_name
+            # Case-insensitive mainly for Track, which has a mapping maintained manually
+            if option["name"].casefold() == option_name.casefold()
         ),
         None,
     )
