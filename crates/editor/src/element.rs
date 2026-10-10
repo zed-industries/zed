@@ -11389,7 +11389,8 @@ mod tests {
     };
     use buffer_diff::BufferDiff;
     use gpui::{
-        Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext, WindowHandle, font,
+        EntityInputHandler, Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext,
+        WindowHandle, font,
     };
     use language::{
         Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal,
@@ -11402,6 +11403,82 @@ mod tests {
     use std::num::NonZeroU32;
     use text::PointUtf16;
     use util::test::sample_text;
+
+    #[gpui::test]
+    fn test_ime_underlines_with_diagnostics_disabled(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        for mode in [
+            EditorMode::SingleLine,
+            EditorMode::AutoHeight {
+                min_lines: 1,
+                max_lines: None,
+            },
+            EditorMode::full(),
+        ] {
+            let buffer = point_diagnostic_buffer(
+                "file-.rs",
+                [(PointUtf16::new(0, 0)..PointUtf16::new(0, 4), WARNING)],
+                cx,
+            );
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let window = cx.open_window(size(px(500.), px(100.)), |window, cx| {
+                let mut editor = Editor::new(mode, buffer, None, window, cx);
+                editor.disable_diagnostics(cx);
+                editor
+            });
+            let painted_underlines = |cx: &mut TestAppContext| {
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.painted_underlines()
+                })
+                .expect("completed editor scene")
+            };
+
+            assert!(painted_underlines(cx).is_empty());
+            for text in ["ni", "你好"] {
+                window
+                    .update(cx, |editor, window, cx| {
+                        assert!(!editor.style(cx).show_underlines);
+                        let end = text.encode_utf16().count();
+                        let replacement_range = editor
+                            .marked_text_range(window, cx)
+                            .is_none()
+                            .then_some(5..5);
+                        editor.replace_and_mark_text_in_range(
+                            replacement_range,
+                            text,
+                            Some(end..end),
+                            window,
+                            cx,
+                        );
+                        assert_eq!(editor.text(cx), format!("file-{text}.rs"));
+                        assert_eq!(editor.marked_text_range(window, cx), Some(5..5 + end));
+                    })
+                    .expect("updated preedit text");
+
+                let underlines = painted_underlines(cx);
+                assert_eq!(underlines.len(), 1, "preedit text: {text}");
+                let underline = underlines.first().expect("preedit underline");
+                assert!(
+                    !underline
+                        .bounds
+                        .intersect(&underline.content_mask.bounds)
+                        .is_empty()
+                );
+                assert_eq!(underline.wavy, false.into());
+            }
+
+            window
+                .update(cx, |editor, window, cx| {
+                    editor.replace_text_in_range(None, "你好", window, cx);
+                    assert_eq!(editor.text(cx), "file-你好.rs");
+                    assert_eq!(editor.marked_text_range(window, cx), None);
+                })
+                .expect("committed preedit text");
+            assert!(painted_underlines(cx).is_empty());
+        }
+    }
 
     struct MinimapGeometry {
         document_lines: f64,
