@@ -1418,8 +1418,10 @@ impl WaylandWindowStatePtr {
                     state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref();
                 state.update_subpixel_layout();
 
-                // We use `PreferredBufferScale` instead to set the scale if it's available
-                if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
+                // Prefer fractional scaling or `PreferredBufferScale` when available.
+                if state.globals.fractional_scale_manager.is_none()
+                    && state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE
+                {
                     state.surface.set_buffer_scale(scale);
                     drop(state);
                     self.rescale(scale as f32);
@@ -1440,8 +1442,10 @@ impl WaylandWindowStatePtr {
                     state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref();
                 state.update_subpixel_layout();
 
-                // We use `PreferredBufferScale` instead to set the scale if it's available
-                if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
+                // Prefer fractional scaling or `PreferredBufferScale` when available.
+                if state.globals.fractional_scale_manager.is_none()
+                    && state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE
+                {
                     state.surface.set_buffer_scale(scale);
                     drop(state);
                     self.rescale(scale as f32);
