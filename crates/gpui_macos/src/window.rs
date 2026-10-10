@@ -11,9 +11,10 @@ use cocoa::{
     appkit::{
         NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags, NSEventType,
         NSFilenamesPboardType, NSPasteboard, NSRequestUserAttentionType, NSScreen, NSView,
-        NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial, NSVisualEffectState,
-        NSVisualEffectView, NSWindow, NSWindowCollectionBehavior, NSWindowOcclusionState,
-        NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
+        NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectBlendingMode,
+        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -675,6 +676,7 @@ struct MacWindowState {
     last_visibility: Option<WindowVisibility>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
+    display_changed_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
@@ -1112,6 +1114,7 @@ impl MacWindow {
                 last_visibility: None,
                 resize_callback: None,
                 moved_callback: None,
+                display_changed_callback: None,
                 should_close_callback: None,
                 close_callback: None,
                 appearance_changed_callback: None,
@@ -1788,14 +1791,18 @@ impl PlatformWindow for MacWindow {
     fn activate(&self) {
         let lock = self.0.lock();
         let window = lock.native_window;
+        let view = lock.native_view.as_ptr();
         let closed = lock.closed.clone();
         let executor = lock.foreground_executor.clone();
         executor
             .spawn(async move {
                 if !closed.load(Ordering::Acquire) {
-                    unsafe {
-                        let _: () = msg_send![window, makeKeyAndOrderFront: nil];
+                    let window = unsafe { &*window.cast::<Objc2NSWindow>() };
+                    if !window.isVisible() {
+                        let view = unsafe { &*view.cast::<Objc2NSView>() };
+                        view.setNeedsDisplay(true);
                     }
+                    window.makeKeyAndOrderFront(None);
                 }
             })
             .detach();
@@ -2033,6 +2040,10 @@ impl PlatformWindow for MacWindow {
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.as_ref().lock().resize_callback = Some(callback);
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().display_changed_callback = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
@@ -3113,6 +3124,25 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     lock.start_display_link();
     drop(lock);
     update_window_scale_factor(&window_state);
+    report_display_change(&window_state);
+}
+
+fn report_display_change(window_state: &Arc<Mutex<MacWindowState>>) {
+    let executor = window_state.lock().foreground_executor.clone();
+    // AppKit can post screen changes while GPUI is updating a window, e.g.
+    // from `setFrame:`, so deliver after that update completes.
+    executor
+        .spawn({
+            let window_state = window_state.clone();
+            async move {
+                let callback = window_state.lock().display_changed_callback.take();
+                if let Some(mut callback) = callback {
+                    callback();
+                    window_state.lock().display_changed_callback = Some(callback);
+                }
+            }
+        })
+        .detach();
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
@@ -3776,9 +3806,13 @@ fn display_id_for_screen(screen: id) -> Option<CGDirectDisplayID> {
 extern "C" fn blurred_view_init_with_frame(this: &Object, _: Sel, frame: NSRect) -> id {
     unsafe {
         let view = msg_send![super(this, class!(NSVisualEffectView)), initWithFrame: frame];
-        // Use a colorless semantic material. The default value `AppearanceBased`, though not
-        // manually set, is deprecated.
-        NSVisualEffectView::setMaterial_(view, NSVisualEffectMaterial::Selection);
+        // A window-background material, whose tint and extra saturation
+        // `blurred_view_update_layer` strips, leaving only the blur. `Selection`, used before,
+        // has no `CABackdropLayer` on macOS 27, so nothing behind the window was blurred. (Setting
+        // a material also avoids the deprecated default, `AppearanceBased`.)
+        NSVisualEffectView::setMaterial_(view, NSVisualEffectMaterial::UnderWindowBackground);
+        // The default, but blurring what's behind the window is this view's whole purpose.
+        NSVisualEffectView::setBlendingMode_(view, NSVisualEffectBlendingMode::BehindWindow);
         NSVisualEffectView::setState_(view, NSVisualEffectState::Active);
         view
     }

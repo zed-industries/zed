@@ -611,6 +611,9 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_edit_predictions);
         if editor.read(cx).lsp_data_enabled() {
             register_action(editor, window, Editor::toggle_inlay_hints);
+            if editor.read(cx).can_accept_inlay_hint(cx) {
+                register_action(editor, window, Editor::accept_inlay_hint);
+            }
             register_action(editor, window, Editor::toggle_code_lens_action);
             register_action(editor, window, Editor::toggle_semantic_highlights);
             register_action(editor, window, Editor::toggle_diagnostics);
@@ -5932,11 +5935,11 @@ impl EditorElement {
                     );
                 } else if !window.modifiers().modified()
                     && let Some(hovered_command) = editor.hovered_inlay_hint_command()
-                    && hovered_command.contains_point(
+                    && hovered_command.contains_glyph(
                         &layout.position_map.snapshot,
                         layout
                             .position_map
-                            .point_for_position(window.mouse_position()),
+                            .inlay_hint_glyph_for_position(window.mouse_position()),
                     )
                 {
                     window.set_cursor_style(
@@ -10014,6 +10017,7 @@ impl Element for EditorElement {
                         snapshot,
                         text_align: self.style.text.text_align,
                         content_width: text_hitbox.size.width,
+                        content_origin,
                         gutter_hitbox: gutter_hitbox.clone(),
                         text_hitbox: text_hitbox.clone(),
                         inline_blame_bounds: inline_blame_layout
@@ -10776,6 +10780,7 @@ pub(crate) struct PositionMap {
     pub snapshot: EditorSnapshot,
     pub text_align: TextAlign,
     pub content_width: Pixels,
+    pub content_origin: gpui::Point<Pixels>,
     pub text_hitbox: Hitbox,
     pub gutter_hitbox: Hitbox,
     pub inline_blame_bounds: Option<(Bounds<Pixels>, BufferId, BlameEntry)>,
@@ -10830,6 +10835,26 @@ impl PointForPosition {
 }
 
 impl PositionMap {
+    pub(crate) fn inlay_hint_glyph_for_position(
+        &self,
+        position: gpui::Point<Pixels>,
+    ) -> Option<DisplayPoint> {
+        let position = position - self.content_origin;
+        if position.y < Pixels::ZERO {
+            return None;
+        }
+        let row = ((position.y / self.line_height) as f64 + self.scroll_position.y) as u32;
+        let line_index = row.checked_sub(self.visible_row_range.start.0)?;
+        let line = self.line_layouts.get(line_index as usize)?;
+        let x = position.x + (self.scroll_position.x as f32 * self.em_layout_width)
+            - line.alignment_offset(self.text_align, self.content_width);
+        if x < Pixels::ZERO {
+            return None;
+        }
+        let glyph = DisplayPoint::new(DisplayRow(row), line.index_for_x(x)? as u32);
+        self.snapshot.inlay_hint_at(glyph).map(|_| glyph)
+    }
+
     pub(crate) fn point_for_position(&self, position: gpui::Point<Pixels>) -> PointForPosition {
         let text_bounds = self.text_hitbox.bounds;
         let scroll_position = self.scroll_position;
