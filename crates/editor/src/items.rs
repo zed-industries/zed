@@ -664,6 +664,7 @@ impl Item for Editor {
             } else {
                 buffer.clip_point(data.cursor_position, Bias::Left)
             };
+            let destination_anchor = buffer.anchor_before(offset);
 
             let mut scroll_anchor = data.scroll_anchor;
             if !buffer.can_resolve(&scroll_anchor.anchor) {
@@ -674,12 +675,23 @@ impl Item for Editor {
 
             drop(buffer);
 
-            if newest_selection.head() == offset {
+            let was_folded = |cx: &mut Context<Self>| {
+                self.display_snapshot(cx)
+                    .folds_in_range(offset..offset)
+                    .next()
+                    .is_some()
+            };
+            let buffer_was_folded = |cx: &Context<Self>| {
+                destination_anchor
+                    .buffer_id()
+                    .is_some_and(|buffer_id| self.is_buffer_folded(buffer_id, cx))
+            };
+            if newest_selection.head() == offset && !was_folded(cx) && !buffer_was_folded(cx) {
                 false
             } else {
                 self.set_scroll_anchor(scroll_anchor, window, cx);
                 self.change_selections(
-                    SelectionEffects::default().nav_history(false),
+                    SelectionEffects::default().nav_history(false).unfold(),
                     window,
                     cx,
                     |s| s.select_ranges([offset..offset]),
