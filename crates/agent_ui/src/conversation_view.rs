@@ -164,6 +164,12 @@ pub(crate) enum ThreadError {
 
 impl From<anyhow::Error> for ThreadError {
     fn from(error: anyhow::Error) -> Self {
+        Self::from(&error)
+    }
+}
+
+impl From<&anyhow::Error> for ThreadError {
+    fn from(error: &anyhow::Error) -> Self {
         if error.is::<MaxOutputTokensError>() {
             Self::MaxOutputTokens
         } else if error.is::<NoModelConfiguredError>() {
@@ -1926,6 +1932,9 @@ impl ConversationView {
                         matches!(thread.read(cx).status(), ThreadStatus::Generating);
                     active.update(cx, |active, cx| {
                         if !is_generating {
+                            if thread.read(cx).uses_reported_activity() {
+                                active.sync_follow_agent_state(cx);
+                            }
                             active.thread_retry_status.take();
                             active.clear_auto_expand_tracking(cx);
                             if active.list_state.is_following_tail() {
@@ -1935,70 +1944,85 @@ impl ConversationView {
                         active.sync_generating_indicator(cx);
                     });
                 }
-                if is_subagent {
-                    if *stop_reason == Some(acp_v2::StopReason::EndTurn) {
-                        thread.update(cx, |thread, cx| {
-                            thread.mark_as_subagent_output(cx);
-                        });
-                    }
-                    return;
+                if is_subagent && *stop_reason == Some(acp_v2::StopReason::EndTurn) {
+                    thread.update(cx, |thread, cx| {
+                        thread.mark_as_subagent_output(cx);
+                    });
                 }
 
                 if *stop_reason == Some(acp_v2::StopReason::MaxTokens)
                     && thread.read(cx).uses_reported_activity()
                 {
-                    if let Some(active) = self.root_thread_view() {
+                    if let Some(active) = self.thread_view(&session_id) {
                         active.update(cx, |active, cx| {
                             active.message_queue.pause();
                             active
                                 .handle_thread_error(anyhow::Error::new(MaxOutputTokensError), cx);
                         });
                     }
-                    self.notify_with_sound(
-                        "Agent stopped at the output token limit",
-                        IconName::Warning,
-                        window,
-                        cx,
-                    );
+                    if !is_subagent {
+                        self.notify_with_sound(
+                            "Agent stopped at the output token limit",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
                     return;
                 }
                 if *stop_reason == Some(acp_v2::StopReason::Refusal)
                     && thread.read(cx).uses_reported_activity()
                 {
-                    if let Some(active) = self.root_thread_view() {
+                    if let Some(active) = self.thread_view(&session_id) {
                         active.update(cx, |active, cx| {
                             active.message_queue.pause();
                             active.handle_thread_error(ThreadError::Refusal, cx);
                         });
                     }
-                    self.notify_with_sound(
-                        "Agent refused to respond to this request",
-                        IconName::Warning,
-                        window,
-                        cx,
-                    );
+                    if !is_subagent {
+                        self.notify_with_sound(
+                            "Agent refused to respond to this request",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
                     return;
                 }
                 if let Some(acp_v2::StopReason::Error(details)) = stop_reason
                     && thread.read(cx).uses_reported_activity()
                 {
-                    if let Some(active) = self.root_thread_view() {
-                        let error = details
-                            .error
-                            .as_deref()
-                            .map(|error| anyhow::Error::new(error.clone()))
-                            .unwrap_or_else(|| anyhow!("Agent stopped because of an error"));
+                    if let Some(active) = self.thread_view(&session_id) {
+                        let error = thread
+                            .read(cx)
+                            .local_execution_error()
+                            .map(|error| ThreadError::from(error.as_ref()))
+                            .unwrap_or_else(|| {
+                                let error = details
+                                    .error
+                                    .as_deref()
+                                    .map(|error| anyhow::Error::new(error.clone()))
+                                    .unwrap_or_else(|| {
+                                        anyhow!("Agent stopped because of an error")
+                                    });
+                                ThreadError::from(error)
+                            });
                         active.update(cx, |active, cx| {
                             active.message_queue.pause();
                             active.handle_thread_error(error, cx);
                         });
                     }
-                    self.notify_with_sound(
-                        "Agent stopped because of an error",
-                        IconName::Warning,
-                        window,
-                        cx,
-                    );
+                    if !is_subagent {
+                        self.notify_with_sound(
+                            "Agent stopped because of an error",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
+                    return;
+                }
+                if is_subagent {
                     return;
                 }
 
@@ -5016,6 +5040,7 @@ pub(crate) mod tests {
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
         thread_view.update_in(cx, |view, window, cx| {
+            view.should_be_following = true;
             view.add_to_queue(vec!["queued".into()], vec![], window, cx);
         });
         thread.update(cx, |thread, cx| {
@@ -5043,7 +5068,10 @@ pub(crate) mod tests {
                 .expect("running B");
         });
         cx.run_until_parked();
-        thread_view.read_with(cx, |view, _| assert_eq!(view.message_queue.len(), 1));
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(view.message_queue.len(), 1);
+            assert!(view.should_be_following);
+        });
         assert!(thread.read_with(cx, |thread, _| thread.activity_generation() > generation_a));
         thread.update(cx, |thread, cx| {
             thread
@@ -5074,6 +5102,7 @@ pub(crate) mod tests {
                 Some(ThreadError::MaxOutputTokens)
             ));
             assert_eq!(view.message_queue.len(), 1);
+            assert!(!view.should_be_following);
             assert!(view.turn_fields.turn_started_at.is_none());
             assert!(view.turn_fields._turn_timer_task.is_none());
             assert_eq!(
@@ -5114,6 +5143,7 @@ pub(crate) mod tests {
     #[gpui::test]
     async fn test_reported_error_after_acceptance_pauses_queue(cx: &mut TestAppContext) {
         init_test(cx);
+        cx.update(language_model::init);
         let connection = StubAgentConnection::new().with_receipt_submissions(true);
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
@@ -5134,6 +5164,31 @@ pub(crate) mod tests {
             thread_view.read_with(cx, |view, _| view.current_submission.expect("submission"));
         thread_view.update_in(cx, |view, window, cx| {
             view.add_to_queue(vec!["follow-up".into()], vec![], window, cx);
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running local work");
+            thread
+                .report_local_execution_error(
+                    Arc::new(anyhow!(LanguageModelCompletionError::NoApiKey {
+                        provider: ZED_CLOUD_PROVIDER_NAME,
+                    })),
+                    cx,
+                )
+                .expect("failed local work");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _| {
+            let Some(ThreadError::NoCredentials { provider }) = &view.thread_error else {
+                panic!("native provider error classification should be retained");
+            };
+            assert_eq!(provider.to_string(), ZED_CLOUD_PROVIDER_NAME.to_string());
+            assert_eq!(view.message_queue.len(), 1);
+            assert!(view.message_queue.auto_send_candidate(false).is_none());
         });
         for (details, expected_message, expected_code) in [
             (
@@ -5158,6 +5213,7 @@ pub(crate) mod tests {
                         cx,
                     )
                     .expect("running");
+                assert!(thread.local_execution_error().is_none());
                 thread
                     .update_session_state(
                         acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new().stop_reason(

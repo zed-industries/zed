@@ -21,6 +21,10 @@ impl ClientUserMessageId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string().into())
     }
+
+    pub fn message_id(&self) -> acp_v2::MessageId {
+        acp_v2::MessageId::new(self.0.as_ref())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -206,13 +210,17 @@ pub trait AgentConnection {
         Ok(())
     }
 
-    /// This completion-based path retains a legacy response; receipt transports
-    /// acknowledge acceptance separately through `receipt_submissions`.
+    /// Receipt transports acknowledge acceptance through `receipt_submissions`
+    /// instead of implementing this completion-based path.
     fn prompt(
         &self,
-        params: acp_v2::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>>;
+        _params: acp_v2::PromptRequest,
+        _cx: &mut App,
+    ) -> Task<Result<acp_v1::PromptResponse>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "This agent does not support completion-based prompts"
+        )))
+    }
 
     fn retry(
         &self,
@@ -316,6 +324,16 @@ pub trait ReceiptSessionSubmissions {
         content: Vec<acp_v2::ContentBlock>,
         cx: &mut App,
     ) -> Task<Result<acp_v2::PromptResponse>>;
+
+    fn supports_retry(&self) -> bool {
+        false
+    }
+
+    fn retry(&self, _cx: &mut App) -> Task<Result<acp_v2::PromptResponse>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Receipt-driven retry is not supported"
+        )))
+    }
 }
 
 pub trait AgentSessionRetry {

@@ -1278,6 +1278,7 @@ impl ThreadView {
             return false;
         };
         thread.can_rewind_to(message.client_id.as_ref(), cx)
+            && !message.content.source_blocks().is_empty()
             && message
                 .content
                 .source_blocks()
@@ -1496,6 +1497,15 @@ impl ThreadView {
             self.turn_fields.last_turn_duration = duration;
         }
         cx.notify();
+    }
+
+    pub(crate) fn sync_follow_agent_state(&mut self, cx: &mut Context<Self>) {
+        self.should_be_following = self
+            .workspace
+            .update(cx, |workspace, _| {
+                workspace.is_being_followed(CollaboratorId::Agent)
+            })
+            .unwrap_or_default();
     }
 
     pub(crate) fn report_activity_completion(
@@ -2117,12 +2127,7 @@ impl ThreadView {
                 match res {
                     Ok(Some(SubmissionResponse::LegacyCompleted(_))) => {
                         this.current_submission.take();
-                        this.should_be_following = this
-                            .workspace
-                            .update(cx, |workspace, _| {
-                                workspace.is_being_followed(CollaboratorId::Agent)
-                            })
-                            .unwrap_or_default();
+                        this.sync_follow_agent_state(cx);
                     }
                     Ok(Some(SubmissionResponse::Accepted(_))) => {}
                     Ok(None) => {}
@@ -6759,6 +6764,9 @@ impl ThreadView {
 
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
+                if message.content.source_blocks().is_empty() {
+                    return Empty.into_any_element();
+                }
                 let Some(editor) = self
                     .entry_view_state
                     .read(cx)
