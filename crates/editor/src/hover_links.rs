@@ -21,7 +21,9 @@ use std::{
 use text::OffsetRangeExt;
 use theme::ActiveTheme as _;
 use util::{
-    ResultExt, TryFutureExt as _, markdown::source_position_from_fragment, paths::PathWithPosition,
+    ResultExt, TryFutureExt as _,
+    markdown::{generate_heading_slug, source_position_from_fragment, split_local_url_fragment},
+    paths::PathWithPosition,
 };
 use workspace::pane::NavigationEntry;
 
@@ -884,36 +886,65 @@ pub struct ResolvedFileTarget {
     pub resolved_path: ResolvedPath,
     pub row: Option<u32>,
     pub column: Option<u32>,
+    /// Slug of the Markdown heading a `#fragment` link points to.
+    pub heading: Option<String>,
 }
 
 impl ResolvedFileTarget {
-    /// After opening a file, navigate the editor to the row/column position if present.
+    /// After opening a file, navigate the editor to the row/column or heading position if present.
     pub fn navigate_item_to_position(
         &self,
         item: Box<dyn crate::ItemHandle>,
         cx: &mut AsyncWindowContext,
     ) {
-        if let Some(row) = self.row {
-            let col = self.column.unwrap_or(0);
-            if let Some(active_editor) = item.downcast::<crate::Editor>() {
-                active_editor
-                    .downgrade()
-                    .update_in(cx, |editor, window, cx| {
-                        let row = row.saturating_sub(1);
-                        let col = col.saturating_sub(1);
-                        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
-                            return;
-                        };
-                        let point = buffer
-                            .read(cx)
-                            .snapshot()
-                            .point_from_external_input(row, col);
-                        editor.go_to_singleton_buffer_point_silently(point, window, cx);
-                    })
-                    .log_err();
-            }
+        if self.row.is_none() && self.heading.is_none() {
+            return;
         }
+        let Some(active_editor) = item.downcast::<crate::Editor>() else {
+            return;
+        };
+        active_editor
+            .downgrade()
+            .update_in(cx, |editor, window, cx| {
+                let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                    return;
+                };
+                let snapshot = buffer.read(cx).snapshot();
+                let point = if let Some(heading) = &self.heading {
+                    let Some(row) = markdown_heading_row(snapshot.as_rope(), heading) else {
+                        return;
+                    };
+                    language::Point::new(row, 0)
+                } else if let Some(row) = self.row {
+                    let column = self.column.unwrap_or(0);
+                    snapshot
+                        .point_from_external_input(row.saturating_sub(1), column.saturating_sub(1))
+                } else {
+                    return;
+                };
+                editor.go_to_singleton_buffer_point_silently(point, window, cx);
+            })
+            .log_err();
     }
+}
+
+/// Finds the row of the first ATX heading (`## Title`) whose slug matches, using the same
+/// slugs as Markdown Preview.
+fn markdown_heading_row(text: &text::Rope, slug: &str) -> Option<u32> {
+    let mut lines = text.chunks().lines();
+    let mut row = 0;
+    while let Some(line) = lines.next() {
+        let title = line.trim_start_matches('#');
+        let level = line.len() - title.len();
+        if (1..=6).contains(&level)
+            && title.starts_with([' ', '\t'])
+            && generate_heading_slug(title.trim().trim_end_matches('#')) == slug
+        {
+            return Some(row);
+        }
+        row += 1;
+    }
+    None
 }
 
 pub(crate) async fn find_file(
@@ -966,6 +997,24 @@ pub(crate) async fn find_file(
                     resolved_path: existing_path,
                     row: None,
                     column: None,
+                    heading: None,
+                },
+            ));
+        }
+
+        if let (path, Some(fragment)) = split_local_url_fragment(pattern_candidate)
+            && let Some(existing_path) = check_path(path, &project, buffer, cx).await
+        {
+            let position = fragment
+                .strip_prefix('L')
+                .and_then(source_position_from_fragment);
+            return Some((
+                make_range(pattern_range),
+                ResolvedFileTarget {
+                    resolved_path: existing_path,
+                    row: position.map(|(row, _)| row + 1),
+                    column: position.map(|(_, column)| column + 1),
+                    heading: position.is_none().then(|| fragment.to_string()),
                 },
             ));
         }
@@ -984,6 +1033,7 @@ pub(crate) async fn find_file(
                         resolved_path: existing_path,
                         row: parsed.row,
                         column: parsed.column,
+                        heading: None,
                     },
                 ));
             }
@@ -1006,6 +1056,7 @@ pub(crate) async fn find_file(
                             resolved_path: existing_path,
                             row: None,
                             column: None,
+                            heading: None,
                         },
                     ));
                 }
@@ -1028,6 +1079,7 @@ pub(crate) async fn find_file(
                                 resolved_path: existing_path,
                                 row: parsed.row,
                                 column: parsed.column,
+                                heading: None,
                             },
                         ));
                     }
@@ -4222,6 +4274,83 @@ Sentence ending file2.rs.
                 "Expected cursor on column 2 (0-indexed: 1)"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_hover_markdown_link_with_heading_fragment(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(
+                path!("/root/dir/target.md"),
+                "# Main Head\n\n## sub-head-1\n\n## Sub Head 2 ##\n"
+                    .as_bytes()
+                    .to_vec(),
+            )
+            .await;
+        cx.run_until_parked();
+
+        for (link, expected_row) in [
+            ("target.md#missing-heading", 0),
+            ("target.md#sub-head-1", 2),
+            ("target.md#sub-head-2", 4),
+            ("target.md#L3", 2),
+        ] {
+            cx.set_state(&format!("See [here]({link}) for details.ˇ\n"));
+            let screen_coord =
+                cx.pixel_position(&format!("See [here](tarˇ{}) for details.\n", &link[3..]));
+
+            cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+            cx.assert_editor_text_highlights(
+                HighlightKey::HoveredLinkState,
+                &format!("See [here](«{link}ˇ») for details.\n"),
+            );
+
+            cx.simulate_click(screen_coord, Modifiers::secondary_key());
+
+            cx.update_workspace(|workspace, window, cx| {
+                let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+                let buffer = active_editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap();
+                let file_path = buffer
+                    .read(cx)
+                    .file()
+                    .unwrap()
+                    .as_local()
+                    .unwrap()
+                    .abs_path(cx);
+                assert_eq!(
+                    file_path,
+                    std::path::PathBuf::from(path!("/root/dir/target.md")),
+                    "{link}"
+                );
+                let snapshot = active_editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+                let head = active_editor
+                    .read(cx)
+                    .selections
+                    .newest::<language::Point>(&snapshot.display_snapshot)
+                    .head();
+                assert_eq!(head.row, expected_row, "{link}");
+            });
+
+            cx.update_workspace(|workspace, window, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+        }
     }
 
     #[gpui::test]
