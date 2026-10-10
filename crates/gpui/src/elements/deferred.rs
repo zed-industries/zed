@@ -97,10 +97,183 @@ impl Deferred {
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::Cell, rc::Rc};
+
     use crate::{
         Context, Entity, StyleRefinement, TestAppContext, Window, anchored, deferred, div, point,
         prelude::*, px, size,
     };
+
+    struct SubscriptionLeaf {
+        value: usize,
+        output: Rc<Cell<usize>>,
+    }
+
+    impl Render for SubscriptionLeaf {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.output.set(self.value);
+            div().size(px(50.))
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum SubscriptionPhase {
+        Render,
+        Prepaint,
+        Paint,
+        NonDeferred,
+    }
+
+    struct SubscriptionPanel {
+        leaf: Entity<SubscriptionLeaf>,
+        phase: SubscriptionPhase,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for SubscriptionPanel {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let child = if matches!(
+                self.phase,
+                SubscriptionPhase::Render | SubscriptionPhase::NonDeferred
+            ) {
+                self.leaf
+                    .clone()
+                    .cached(crate::StyleRefinement::default().size(px(50.)))
+                    .into_any_element()
+            } else {
+                let leaf = self.leaf.clone();
+                let phase = self.phase;
+                crate::canvas(
+                    move |_, _, cx| {
+                        if phase == SubscriptionPhase::Prepaint {
+                            let leaf = leaf.read(cx);
+                            leaf.output.set(leaf.value);
+                        }
+                    },
+                    {
+                        let leaf = self.leaf.clone();
+                        move |_, _, _, cx| {
+                            if phase == SubscriptionPhase::Paint {
+                                let leaf = leaf.read(cx);
+                                leaf.output.set(leaf.value);
+                            }
+                        }
+                    },
+                )
+                .size(px(50.))
+                .into_any_element()
+            };
+            if self.phase == SubscriptionPhase::NonDeferred {
+                child
+            } else {
+                deferred(child).into_any_element()
+            }
+        }
+    }
+
+    struct SubscriptionRoot {
+        panel: Entity<SubscriptionPanel>,
+        deferred_panel: bool,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for SubscriptionRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let panel = self
+                .panel
+                .clone()
+                .cached(crate::StyleRefinement::default().size(px(100.)));
+            if self.deferred_panel {
+                deferred(panel).into_any_element()
+            } else {
+                panel.into_any_element()
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_deferred_reuse_keeps_entity_subscriptions(cx: &mut TestAppContext) {
+        check_reused_subscriptions(cx, SubscriptionPhase::Render);
+    }
+
+    #[gpui::test]
+    fn test_deferred_canvas_prepaint_reuse_keeps_entity_subscriptions(cx: &mut TestAppContext) {
+        check_reused_subscriptions(cx, SubscriptionPhase::Prepaint);
+    }
+
+    #[gpui::test]
+    fn test_deferred_canvas_paint_reuse_keeps_entity_subscriptions(cx: &mut TestAppContext) {
+        check_reused_subscriptions(cx, SubscriptionPhase::Paint);
+    }
+
+    #[gpui::test]
+    fn test_non_deferred_reuse_keeps_entity_subscriptions(cx: &mut TestAppContext) {
+        check_reused_subscriptions(cx, SubscriptionPhase::NonDeferred);
+    }
+
+    fn check_reused_subscriptions(cx: &mut TestAppContext, phase: SubscriptionPhase) {
+        for deferred_panel in [false, true] {
+            let output = Rc::new(Cell::new(0));
+            let renders = Rc::new(Cell::new(0));
+            let root_renders = Rc::new(Cell::new(0));
+            let leaf = cx.new(|_| SubscriptionLeaf {
+                value: 1,
+                output: output.clone(),
+            });
+            let panel = cx.new(|_| SubscriptionPanel {
+                leaf: leaf.clone(),
+                phase,
+                renders: renders.clone(),
+            });
+            let window = cx.open_window(size(px(800.), px(600.)), |_, _| SubscriptionRoot {
+                panel,
+                deferred_panel,
+                renders: root_renders.clone(),
+            });
+            cx.run_until_parked();
+            assert_eq!(output.get(), 1);
+            let initial_renders = renders.get();
+            for _ in 0..2 {
+                window
+                    .update(cx, |_, _, cx| cx.notify())
+                    .expect("notify root");
+                cx.run_until_parked();
+                assert_eq!(
+                    renders.get(),
+                    initial_renders,
+                    "panel should reuse its cache"
+                );
+            }
+            let renders_before_notify = root_renders.get();
+            leaf.update(cx, |leaf, cx| {
+                leaf.value = 2;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            assert!(
+                root_renders.get() > renders_before_notify,
+                "leaf notification should redraw: phase {phase:?}, deferred panel {deferred_panel}"
+            );
+            if matches!(
+                phase,
+                SubscriptionPhase::Prepaint | SubscriptionPhase::Paint
+            ) {
+                // Non-view dependencies invalidate the window but have no dispatch-tree
+                // path to invalidate a cached ancestor. Refresh to inspect the callback.
+                window
+                    .update(cx, |_, window, _| window.refresh())
+                    .expect("refresh canvas");
+                cx.run_until_parked();
+            }
+            assert_eq!(
+                output.get(),
+                2,
+                "phase {phase:?}, deferred panel {deferred_panel}"
+            );
+        }
+    }
 
     /// A stand-in for a dock panel hosting a popover (deferred draw) whose
     /// content opens another popover (a deferred draw created while
