@@ -146,6 +146,7 @@ pub struct TerminalView {
     /// background paints over the container's corners. Only the background is
     /// rounded, terminal content isn't clipped.
     background_corner_radii: Option<Corners<Rems>>,
+    content_top_padding: Rems,
     read_only: bool,
     // Explicit override for whether workspace-specific context menu actions are shown.
     // When `None`, visibility is derived from `mode` (hidden for embedded terminals).
@@ -300,6 +301,7 @@ impl TerminalView {
             hover_tooltip_update: Task::ready(()),
             mode: TerminalMode::Standalone,
             background_corner_radii: None,
+            content_top_padding: Rems::ZERO,
             read_only: false,
             show_workspace_actions: None,
             workspace_id,
@@ -338,6 +340,26 @@ impl TerminalView {
     ) {
         self.background_corner_radii = corner_radii;
         cx.notify();
+    }
+
+    pub fn set_content_top_padding(&mut self, padding: Rems, cx: &mut Context<Self>) {
+        self.content_top_padding = padding;
+        cx.notify();
+    }
+
+    fn content_background_corner_radii(
+        &self,
+        content_mode: &ContentMode,
+        cx: &App,
+    ) -> Corners<Rems> {
+        let mut radii = self.background_corner_radii.unwrap_or_default();
+        if content_mode.is_scrollable()
+            && TerminalScrollbarSettingsWrapper.visibility(cx) != scrollbars::ShowScrollbar::Never
+        {
+            radii.top_right = Rems::ZERO;
+            radii.bottom_right = Rems::ZERO;
+        }
+        radii
     }
 
     pub fn is_read_only(&self) -> bool {
@@ -1439,6 +1461,8 @@ impl Render for TerminalView {
         let terminal_view_handle = cx.entity();
 
         let focused = self.focus_handle.is_focused(window);
+        let content_mode = self.content_mode(window, cx);
+        let content_corner_radii = self.content_background_corner_radii(&content_mode, cx);
 
         div()
             .id("terminal-view")
@@ -1505,17 +1529,27 @@ impl Render for TerminalView {
                             .rounded_bl(radii.bottom_left)
                             .rounded_br(radii.bottom_right)
                     })
-                    .child(TerminalElement::new(
-                        terminal_handle,
-                        terminal_view_handle,
-                        self.workspace.clone(),
-                        self.focus_handle.clone(),
-                        focused,
-                        self.should_show_cursor(focused, cx),
-                        self.block_below_cursor.clone(),
-                        self.mode.clone(),
-                    ))
-                    .when(self.content_mode(window, cx).is_scrollable(), |div| {
+                    .child(
+                        div()
+                            .size_full()
+                            .pt(self.content_top_padding)
+                            .bg(cx.theme().colors().terminal_background)
+                            .rounded_tl(content_corner_radii.top_left)
+                            .rounded_tr(content_corner_radii.top_right)
+                            .rounded_bl(content_corner_radii.bottom_left)
+                            .rounded_br(content_corner_radii.bottom_right)
+                            .child(TerminalElement::new(
+                                terminal_handle,
+                                terminal_view_handle,
+                                self.workspace.clone(),
+                                self.focus_handle.clone(),
+                                focused,
+                                self.should_show_cursor(focused, cx),
+                                self.block_below_cursor.clone(),
+                                self.mode.clone(),
+                            )),
+                    )
+                    .when(content_mode.is_scrollable(), |div| {
                         let colors = cx.theme().colors();
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
