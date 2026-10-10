@@ -6836,6 +6836,8 @@ dependencies = [
  "nucleo-matcher",
  "parking_lot",
  "path",
+ "unicode-normalization",
+ "unicode-segmentation",
 ]
 
 [[package]]

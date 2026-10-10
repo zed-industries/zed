@@ -337,6 +337,100 @@ async fn test_unicode_paths(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_canonically_equivalent_unicode_path(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    let original_file_name = "gro\u{0308}ssen.md";
+    let original_path = format!("a/{original_file_name}");
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({ "a": {} }))
+        .await;
+    app_state
+        .fs
+        .as_fake()
+        .insert_file(format!("/root/{original_path}"), Vec::new())
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    simulate_input(cx, "grö");
+    picker.read_with(cx, |picker, _| {
+        let matches = collect_search_matches(picker).search_matches_only();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path.as_ref(), rel_path(&original_path));
+
+        let (file_name, file_name_positions, _, _) = picker
+            .delegate
+            .labels_for_path_match(&matches[0], PathStyle::local());
+        assert_eq!(file_name, original_file_name);
+        assert_eq!(file_name_positions, vec![0, 1, 2, 3]);
+    });
+
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let active_editor = workspace
+            .read(cx)
+            .active_item_as::<Editor>(cx)
+            .expect("confirmed file should open in an editor");
+        let active_path = active_editor
+            .read(cx)
+            .active_project_path(cx)
+            .expect("opened editor should retain its project path");
+        assert_eq!(active_path.path.as_ref(), rel_path(&original_path));
+    });
+}
+
+#[gpui::test]
+async fn test_canonical_unicode_path_after_non_equivalent_grapheme(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    let original_file_name = "q\u{0323}-q\u{0307}.md";
+    let original_path = format!("a/{original_file_name}");
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({ "a": {} }))
+        .await;
+    app_state
+        .fs
+        .as_fake()
+        .insert_file(format!("/root/{original_path}"), Vec::new())
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    simulate_input(cx, "q\u{0307}");
+    picker.read_with(cx, |picker, _| {
+        let matches = collect_search_matches(picker).search_matches_only();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path.as_ref(), rel_path(&original_path));
+
+        let (file_name, file_name_positions, _, _) = picker
+            .delegate
+            .labels_for_path_match(&matches[0], PathStyle::local());
+        assert_eq!(file_name, original_file_name);
+        assert_eq!(file_name_positions, vec![4, 5]);
+    });
+
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let active_editor = workspace
+            .read(cx)
+            .active_item_as::<Editor>(cx)
+            .expect("confirmed file should open in an editor");
+        let active_path = active_editor
+            .read(cx)
+            .active_project_path(cx)
+            .expect("opened editor should retain its project path");
+        assert_eq!(active_path.path.as_ref(), rel_path(&original_path));
+    });
+}
+
+#[gpui::test]
 async fn test_absolute_paths(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state

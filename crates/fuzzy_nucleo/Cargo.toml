@@ -19,6 +19,8 @@ parking_lot = { workspace = true, features = ["arc_lock", "send_guard"] }
 gpui.workspace = true
 gpui_util.workspace = true
 path.workspace = true
+unicode-normalization = "0.1"
+unicode-segmentation.workspace = true
 
 [package.metadata.cargo-shear]
 ignored = ["parking_lot"]

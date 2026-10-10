@@ -340,5 +340,88 @@ fn bench_path_matching(criterion: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_string_matching, bench_path_matching);
+fn generate_unicode_path_strings(count: usize, mixed: bool, hangul: bool) -> &'static [String] {
+    let paths: Box<[String]> = (0..count)
+        .map(|index| {
+            if hangul {
+                format!("fixtures/{index}/\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}.md")
+            } else if mixed {
+                match index % 3 {
+                    0 => format!("fixtures/{index}/plain.md"),
+                    1 => format!("fixtures/{index}/grössen.md"),
+                    _ => format!("fixtures/{index}/gro\u{308}ssen.md"),
+                }
+            } else if index % 100 == 0 {
+                format!("fixtures/{index}/gro\u{308}ssen.md")
+            } else {
+                format!("fixtures/{index}/plain.md")
+            }
+        })
+        .collect();
+    Box::leak(paths)
+}
+
+fn generate_canonical_decoy_path_strings(count: usize) -> &'static [String] {
+    let paths = (0..count)
+        .map(|index| format!("fixtures/{index}/q\u{323}-q\u{307}.md"))
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    Box::leak(paths)
+}
+
+fn bench_unicode_path_matching(criterion: &mut Criterion) {
+    const CANDIDATE_COUNT: usize = 10_000;
+    let ascii_paths = generate_path_strings(CANDIDATE_COUNT);
+    let predominantly_ascii_paths = generate_unicode_path_strings(CANDIDATE_COUNT, false, false);
+    let mixed_paths = generate_unicode_path_strings(CANDIDATE_COUNT, true, false);
+    let hangul_paths = generate_unicode_path_strings(CANDIDATE_COUNT, false, true);
+    let canonical_decoy_paths = generate_canonical_decoy_path_strings(CANDIDATE_COUNT);
+    let mut group = criterion.benchmark_group("path/unicode");
+
+    for (name, paths, query) in [
+        ("ascii_query_ascii_candidates", ascii_paths, "src"),
+        (
+            "nfc_query_predominantly_ascii_candidates",
+            predominantly_ascii_paths,
+            "grö",
+        ),
+        ("nfc_query_mixed_nfc_nfd_candidates", mixed_paths, "grö"),
+        (
+            "nfc_query_decomposed_hangul_candidates",
+            hangul_paths,
+            "한글",
+        ),
+        (
+            "canonical_query_non_equivalent_decoys",
+            canonical_decoy_paths,
+            "q\u{307}",
+        ),
+    ] {
+        group.bench_function(name, |benchmark| {
+            benchmark.iter_batched(
+                || generate_nucleo_path_candidates(paths),
+                |candidates| {
+                    fuzzy_nucleo::match_fixed_path_set(
+                        candidates,
+                        0,
+                        None,
+                        query,
+                        fuzzy_nucleo::Case::Ignore,
+                        CANDIDATE_COUNT,
+                        PathStyle::Unix,
+                    )
+                },
+                BatchSize::SmallInput,
+            )
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_string_matching,
+    bench_path_matching,
+    bench_unicode_path_matching
+);
 criterion_main!(benches);
