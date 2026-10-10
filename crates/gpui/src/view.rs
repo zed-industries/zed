@@ -678,7 +678,7 @@ fn prepaint_view(
                 }
             }
             let refreshing = mem::replace(&mut window.refreshing, true);
-            let previous_access = window.begin_cached_entity_access(cx);
+            let previous_access = window.begin_view_entity_access(cx);
             window
                 .view_store
                 .begin_reconstruction(occurrence, scope.as_ref().expect("cached view scope"));
@@ -771,7 +771,7 @@ fn paint_view(
 
                     if let Some(element) = element {
                         let parent_occurrence = window.current_view_occurrence.replace(occurrence);
-                        let previous_access = window.begin_cached_entity_access(cx);
+                        let previous_access = window.begin_view_entity_access(cx);
                         let refreshing = mem::replace(&mut window.refreshing, true);
                         element.paint(window, cx);
                         window.refreshing = refreshing;

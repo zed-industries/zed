@@ -32,7 +32,6 @@ pub(crate) enum SpliceFallback {
 
 struct ViewLayout {
     id: LayoutId,
-    style: taffy::Style,
     input: Option<taffy::LayoutInput>,
     output: Option<taffy::LayoutOutput>,
     scope: ViewExecutionScope,
@@ -642,7 +641,7 @@ impl Window {
     ) -> R {
         let entity = self.view_store.retained(occurrence).entity;
         let parent = self.current_view_occurrence.replace(occurrence);
-        let previous = self.begin_cached_entity_access(cx);
+        let previous = self.begin_view_entity_access(cx);
         let result = self.with_rendered_view(entity, |window| measure(window, cx));
         let (own, _) = self.end_cached_entity_access(previous, cx);
         self.view_store.append_layout_access(occurrence, own);
@@ -738,23 +737,27 @@ impl Window {
             self.view_store.state(occurrence).is_none(),
         );
         self.view_store.clear_global_access(occurrence);
-        let previous_access = self.begin_cached_entity_access(cx);
+        let previous_access = self.begin_view_entity_access(cx);
         let mut element = self.with_rendered_view(entity, |window| render(window, cx));
         let layout = self.with_rendered_view(entity, |window| element.request_layout(window, cx));
         let (own, _) = self.end_cached_entity_access(previous_access, cx);
         self.view_store.set_layout_access(occurrence, own);
-        let style = self
-            .layout_engine
-            .as_ref()
+        self.layout_engine
+            .as_mut()
             .expect("layout engine")
-            .retained_style(layout);
-        self.view_store.retained_mut(occurrence).layout = Some(Box::new(ViewLayout {
+            .register_retained_boundary(layout);
+        let view_layout = ViewLayout {
             id: layout,
-            style,
             input: None,
             output: None,
             scope,
-        }));
+        };
+        let retained = self.view_store.retained_mut(occurrence);
+        if let Some(previous) = retained.layout.as_mut() {
+            **previous = view_layout;
+        } else {
+            retained.layout = Some(Box::new(view_layout));
+        }
         self.current_view_occurrence = previous_parent;
         (layout, Some(element))
     }
@@ -776,7 +779,11 @@ impl Window {
             let retained = self.view_store.retained(child);
             let layout = retained.layout.as_ref().expect("implicit layout");
             let old_id = layout.id;
-            let old_style = layout.style.clone();
+            let old_style = self
+                .layout_engine
+                .as_ref()
+                .expect("layout engine")
+                .retained_style(old_id);
             let input = layout.input.ok_or(SpliceFallback::LayoutConstraints)?;
             let old_output = layout.output;
             let scope = layout.scope.clone();
@@ -947,18 +954,24 @@ impl Window {
         Some(id)
     }
 
-    pub(crate) fn register_retained_access(&mut self, id: ViewOccurrenceId, cx: &mut App) {
+    pub(crate) fn register_retained_access(&mut self, id: ViewOccurrenceId, _cx: &mut App) {
         if let Some(layout) = self.view_store.retained(id).layout.as_ref() {
             self.layout_engine
                 .as_mut()
                 .expect("layout engine")
                 .retain_subtree(layout.id);
         }
-        if let Some(entities) = self.cached_entity_access_stack.last_mut() {
+        if let Some(entities) = self
+            .cached_entity_access_stack
+            .iter_mut()
+            .rev()
+            .flatten()
+            .next()
+        {
             self.view_store.extend_accessed(id, entities);
         } else {
             self.view_store
-                .extend_accessed(id, &mut cx.entities.accessed_entities.get_mut());
+                .extend_accessed(id, &mut self.frame_accessed_entities);
         }
     }
 

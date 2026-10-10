@@ -1576,7 +1576,8 @@ pub struct Window {
     pub(crate) current_view_occurrence: Option<crate::view::ViewOccurrenceId>,
     pub(crate) retained_scope_fallback: Option<crate::view::retained::SpliceFallback>,
     pub(crate) dispatch_replay: Vec<crate::ReusedSubtree>,
-    pub(crate) cached_entity_access_stack: Vec<FxHashSet<EntityId>>,
+    pub(crate) cached_entity_access_stack: Vec<Option<FxHashSet<EntityId>>>,
+    pub(crate) frame_accessed_entities: FxHashSet<EntityId>,
     cached_global_access_stack: Vec<(
         bool,
         FxHashSet<TypeId>,
@@ -2513,6 +2514,7 @@ impl Window {
             retained_scope_fallback: None,
             dispatch_replay: Vec::new(),
             cached_entity_access_stack: Vec::new(),
+            frame_accessed_entities: FxHashSet::default(),
             cached_global_access_stack: Vec::new(),
             #[cfg(any(test, feature = "bench-support"))]
             own_dirty_views: FxHashSet::default(),
@@ -2641,6 +2643,18 @@ impl Window {
     }
 
     pub(crate) fn begin_cached_entity_access(&mut self, cx: &mut App) -> FxHashSet<EntityId> {
+        self.begin_entity_access(cx, true)
+    }
+
+    pub(crate) fn begin_view_entity_access(&mut self, cx: &mut App) -> FxHashSet<EntityId> {
+        self.begin_entity_access(cx, false)
+    }
+
+    fn begin_entity_access(
+        &mut self,
+        cx: &mut App,
+        collect_descendants: bool,
+    ) -> FxHashSet<EntityId> {
         if self.implicit_view_splicing {
             self.cached_global_access_stack.push((
                 cx.tracking_retained_globals.replace(true),
@@ -2648,7 +2662,8 @@ impl Window {
                 self.current_view_occurrence,
             ));
         }
-        self.cached_entity_access_stack.push(FxHashSet::default());
+        self.cached_entity_access_stack
+            .push(collect_descendants.then(FxHashSet::default));
         mem::take(cx.entities.accessed_entities.get_mut().deref_mut())
     }
 
@@ -2672,15 +2687,28 @@ impl Window {
             cx.entities.accessed_entities.get_mut().deref_mut(),
             previous,
         );
-        let mut all = self
+        let descendants = self
             .cached_entity_access_stack
             .pop()
             .expect("cached access scope");
-        all.extend(own.iter().copied());
-        if let Some(parent) = self.cached_entity_access_stack.last_mut() {
+        self.frame_accessed_entities.extend(own.iter().copied());
+        let collect_descendants = descendants.is_some();
+        let mut all = descendants.unwrap_or_default();
+        if let Some(parent) = self
+            .cached_entity_access_stack
+            .iter_mut()
+            .rev()
+            .flatten()
+            .next()
+        {
+            parent.extend(own.iter().copied());
             parent.extend(all.iter().copied());
-        } else {
-            cx.entities.extend_accessed(&all);
+        }
+        // Deferred draws need the transitive set to register reads on replay;
+        // ordinary boundaries need only their own set and the window's union.
+        if collect_descendants {
+            all.extend(own.iter().copied());
+            self.frame_accessed_entities.extend(all.iter().copied());
         }
         (own, all)
     }
@@ -4228,6 +4256,7 @@ impl Window {
             self.dispatch_replay.clear();
         }
         cx.entities.clear_accessed();
+        self.frame_accessed_entities.clear();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
@@ -4380,6 +4409,7 @@ impl Window {
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
+        cx.entities.extend_accessed(&self.frame_accessed_entities);
         let mut entities_ref = cx.entities.accessed_entities.get_mut();
         let mut entities = mem::take(entities_ref.deref_mut());
         let handle = self.handle;

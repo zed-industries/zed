@@ -89,15 +89,20 @@ struct LayoutScope {
 
 #[derive(Default)]
 struct RetainedLayouts {
-    layouts: FxHashMap<NodeId, taffy::Layout>,
+    layouts: SecondaryMap<DefaultKey, taffy::Layout>,
     previous_layouts: FxHashMap<NodeId, taffy::Layout>,
-    inputs: FxHashMap<NodeId, taffy::LayoutInput>,
-    outputs: FxHashMap<NodeId, taffy::LayoutOutput>,
+    boundaries: FxHashMap<NodeId, BoundaryLayout>,
+}
+
+#[derive(Default)]
+struct BoundaryLayout {
+    input: Option<taffy::LayoutInput>,
+    output: Option<taffy::LayoutOutput>,
 }
 
 impl RetainedLayouts {
     fn set_layout(&mut self, node: NodeId, layout: taffy::Layout) {
-        if let Some(previous) = self.layouts.insert(node, layout)
+        if let Some(previous) = self.layouts.insert(node.into(), layout)
             && previous != layout
         {
             self.previous_layouts.entry(node).or_insert(previous);
@@ -170,8 +175,10 @@ where
         input: taffy::LayoutInput,
         block: Option<&mut taffy::BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
-        if input.run_mode == taffy::RunMode::PerformLayout {
-            self.retained.inputs.insert(node, input);
+        if input.run_mode == taffy::RunMode::PerformLayout
+            && let Some(boundary) = self.retained.boundaries.get_mut(&node)
+        {
+            boundary.input = Some(input);
         }
         if input.run_mode == taffy::RunMode::PerformHiddenLayout {
             return taffy::compute_hidden_layout(self, node);
@@ -195,8 +202,10 @@ where
                 }
             }
         });
-        if input.run_mode == taffy::RunMode::PerformLayout {
-            self.retained.outputs.insert(node, output);
+        if input.run_mode == taffy::RunMode::PerformLayout
+            && let Some(boundary) = self.retained.boundaries.get_mut(&node)
+        {
+            boundary.output = Some(output);
         }
         output
     }
@@ -372,11 +381,17 @@ impl TaffyLayoutEngine {
     }
 
     pub(crate) fn retained_input(&self, id: LayoutId) -> Option<taffy::LayoutInput> {
-        self.retained.as_ref()?.inputs.get(&id.0).copied()
+        self.retained.as_ref()?.boundaries.get(&id.0)?.input
     }
 
     pub(crate) fn retained_output(&self, id: LayoutId) -> Option<taffy::LayoutOutput> {
-        self.retained.as_ref()?.outputs.get(&id.0).copied()
+        self.retained.as_ref()?.boundaries.get(&id.0)?.output
+    }
+
+    pub(crate) fn register_retained_boundary(&mut self, id: LayoutId) {
+        if let Some(retained) = self.retained.as_mut() {
+            retained.boundaries.entry(id.0).or_default();
+        }
     }
 
     pub(crate) fn layout_changes(&self) -> u64 {
@@ -435,7 +450,7 @@ impl TaffyLayoutEngine {
         let mut stack = vec![id.0];
         while let Some(node) = stack.pop() {
             if let Some(previous) = retained.previous_layouts.get(&node)
-                && retained.layouts.get(&node) != Some(previous)
+                && retained.layouts.get(node.into()) != Some(previous)
             {
                 return false;
             }
@@ -574,9 +589,8 @@ impl TaffyLayoutEngine {
                             self.taffy.remove(id.0).expect(EXPECT_MESSAGE);
                             self.absolute_layout.remove(id.0.into());
                             if let Some(retained) = self.retained.as_mut() {
-                                retained.layouts.remove(&id.0);
-                                retained.inputs.remove(&id.0);
-                                retained.outputs.remove(&id.0);
+                                retained.layouts.remove(id.0.into());
+                                retained.boundaries.remove(&id.0);
                             }
                             *node = None;
                         }
@@ -1057,7 +1071,7 @@ impl TaffyLayoutEngine {
             };
             if let Some(input) = input {
                 let output = tree.compute(id.0, input, None);
-                if let Some(mut layout) = tree.retained.layouts.get(&id.0).copied() {
+                if let Some(mut layout) = tree.retained.layouts.get(id.0.into()).copied() {
                     layout.size = output.size;
                     layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
                     tree.retained.set_layout(id.0, layout);
@@ -1161,7 +1175,7 @@ impl TaffyLayoutEngine {
         let layout = self
             .retained
             .as_ref()
-            .and_then(|retained| retained.layouts.get(&id.0))
+            .and_then(|retained| retained.layouts.get(id.0.into()))
             .unwrap_or_else(|| self.taffy.layout(id.into()).expect(EXPECT_MESSAGE));
         let layout_location = layout.location;
         let layout_size = layout.size;
@@ -1886,6 +1900,39 @@ mod tests {
             engine.retain_subtree(root);
             engine.clear();
             assert_eq!(engine.cache_counts(), (2, 0, 2));
+        });
+    }
+
+    #[gpui::test]
+    fn retained_inputs_are_captured_only_for_registered_boundaries(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            let mut engine = TaffyLayoutEngine::new();
+            engine.enable_cache();
+            engine.enable_retention();
+            let scope = crate::element::InternedHandle::for_test(0, 0);
+            engine.set_request_scope(&scope);
+            let child = engine.request_layout(Style::default(), Pixels(16.), 1., &[]);
+            engine.set_request_scope(&scope);
+            let root = engine.request_layout(Style::default(), Pixels(16.), 1., &[child]);
+            engine.register_retained_boundary(root);
+            engine.compute_layout(root, AvailableSpace::min_size(), window, cx);
+            assert!(engine.retained_input(root).is_some());
+            assert!(engine.retained_output(root).is_some());
+            assert!(engine.retained_input(child).is_none());
+            assert!(engine.retained_output(child).is_none());
+            assert_eq!(
+                engine
+                    .retained
+                    .as_ref()
+                    .expect("retention")
+                    .boundaries
+                    .len(),
+                1
+            );
+            engine.clear();
+            engine.retain_subtree(root);
+            engine.clear();
+            assert!(engine.retained_input(root).is_some());
         });
     }
 
