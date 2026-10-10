@@ -107,6 +107,7 @@ impl SessionCapabilities {
                 PromptContextType::Fetch,
                 PromptContextType::Skill,
                 PromptContextType::BranchDiff,
+                PromptContextType::ContextServer,
             ]);
         }
         supported
