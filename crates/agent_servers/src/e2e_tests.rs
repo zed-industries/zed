@@ -1,6 +1,6 @@
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCallStatus};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use client::RefreshLlmTokenListener;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::AppContext;
@@ -72,7 +72,9 @@ where
             thread.send(
                 vec![
                     "Read the file ".into(),
-                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new("foo.rs", "foo.rs")),
+                    acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new(
+                        "foo.rs", "foo.rs",
+                    )),
                     " and tell me what the content of the println! is".into(),
                 ],
                 cx,
@@ -151,7 +153,7 @@ where
 
 pub async fn test_tool_call_with_permission<T, F>(
     server: F,
-    allow_option_id: acp::PermissionOptionId,
+    allow_option_id: acp_v2::PermissionOptionId,
     cx: &mut TestAppContext,
 ) where
     T: AgentServer + 'static,
@@ -201,7 +203,7 @@ pub async fn test_tool_call_with_permission<T, F>(
             tool_call_id,
             acp_thread::SelectedPermissionOutcome::new(
                 allow_option_id,
-                acp::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
             ),
             cx,
         );
@@ -356,7 +358,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::schema::v1::PermissionOptionId::new($allow_option_id),
+                    ::agent_client_protocol::schema::v2::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;
