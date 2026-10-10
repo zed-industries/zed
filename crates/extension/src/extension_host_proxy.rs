@@ -303,6 +303,7 @@ pub trait ExtensionLanguageServerProxy: Send + Sync + 'static {
         &self,
         source: Option<EntityId>,
         language_server_id: LanguageServerName,
+        worktree_id: Option<u64>,
         status: BinaryStatus,
     );
 }
@@ -338,13 +339,14 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
         &self,
         source: Option<EntityId>,
         language_server_id: LanguageServerName,
+        worktree_id: Option<u64>,
         status: BinaryStatus,
     ) {
         let Some(proxy) = self.language_server_proxy.read().clone() else {
             return;
         };
 
-        proxy.update_language_server_status(source, language_server_id, status)
+        proxy.update_language_server_status(source, language_server_id, worktree_id, status);
     }
 }
 

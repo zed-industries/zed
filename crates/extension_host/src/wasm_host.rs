@@ -94,7 +94,9 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Command> {
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
+                let worktree_id = worktree.id();
                 let resource = store.data_mut().table.push(worktree)?;
+                store.data_mut().active_worktree_id = Some(worktree_id);
                 let command = extension
                     .call_language_server_command(
                         store,
@@ -102,8 +104,9 @@ impl extension::Extension for WasmExtension {
                         &language_name,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
+                store.data_mut().active_worktree_id = None;
+                let command = command?.map_err(|err| store.data().extension_error(err))?;
 
                 Ok(command.into())
             }
@@ -121,7 +124,9 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
+                let worktree_id = worktree.id();
                 let resource = store.data_mut().table.push(worktree)?;
+                store.data_mut().active_worktree_id = Some(worktree_id);
                 let options = extension
                     .call_language_server_initialization_options(
                         store,
@@ -129,8 +134,9 @@ impl extension::Extension for WasmExtension {
                         &language_name,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
+                store.data_mut().active_worktree_id = None;
+                let options = options?.map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -146,15 +152,18 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
+                let worktree_id = worktree.id();
                 let resource = store.data_mut().table.push(worktree)?;
+                store.data_mut().active_worktree_id = Some(worktree_id);
                 let options = extension
                     .call_language_server_workspace_configuration(
                         store,
                         &language_server_id,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
+                store.data_mut().active_worktree_id = None;
+                let options = options?.map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -170,14 +179,20 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
+                let worktree_id = worktree.id();
                 let resource = store.data_mut().table.push(worktree)?;
-                extension
+                store.data_mut().active_worktree_id = Some(worktree_id);
+                let result = extension
                     .call_language_server_initialization_options_schema(
                         store,
                         &language_server_id,
                         resource,
                     )
-                    .await
+                    .await;
+
+                store.data_mut().active_worktree_id = None;
+
+                result
             }
             .boxed()
         })
@@ -193,14 +208,19 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
+                let worktree_id = worktree.id();
                 let resource = store.data_mut().table.push(worktree)?;
-                extension
+                store.data_mut().active_worktree_id = Some(worktree_id);
+                let result = extension
                     .call_language_server_workspace_configuration_schema(
                         store,
                         &language_server_id,
                         resource,
                     )
-                    .await
+                    .await;
+
+                store.data_mut().active_worktree_id = None;
+                result
             }
             .boxed()
         })
@@ -217,7 +237,9 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
+                let worktree_id = worktree.id();
                 let resource = store.data_mut().table.push(worktree)?;
+                store.data_mut().active_worktree_id = Some(worktree_id);
                 let options = extension
                     .call_language_server_additional_initialization_options(
                         store,
@@ -225,8 +247,9 @@ impl extension::Extension for WasmExtension {
                         &target_language_server_id,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
+                store.data_mut().active_worktree_id = None;
+                let options = options?.map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -243,7 +266,9 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
+                let worktree_id = worktree.id();
                 let resource = store.data_mut().table.push(worktree)?;
+                store.data_mut().active_worktree_id = Some(worktree_id);
                 let options = extension
                     .call_language_server_additional_workspace_configuration(
                         store,
@@ -251,8 +276,9 @@ impl extension::Extension for WasmExtension {
                         &target_language_server_id,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
+                store.data_mut().active_worktree_id = None;
+                let options = options?.map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -453,11 +479,14 @@ impl extension::Extension for WasmExtension {
     ) -> Result<DebugAdapterBinary> {
         self.call(|extension, store| {
             async move {
+                let worktree_id = worktree.id();
                 let resource = store.data_mut().table.push(worktree)?;
+                store.data_mut().active_worktree_id = Some(worktree_id);
                 let dap_binary = extension
                     .call_get_dap_binary(store, dap_name, config, user_installed_path, resource)
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
+                store.data_mut().active_worktree_id = None;
+                let dap_binary = dap_binary?.map_err(|err| store.data().extension_error(err))?;
                 let dap_binary = dap_binary.try_into()?;
                 Ok(dap_binary)
             }
@@ -542,6 +571,7 @@ impl extension::Extension for WasmExtension {
 pub struct WasmState {
     manifest: Arc<ExtensionManifest>,
     pub table: ResourceTable,
+    active_worktree_id: Option<u64>,
     ctx: WasiCtx,
     pub host: Arc<WasmHost>,
     pub(crate) capability_granter: CapabilityGranter,
@@ -674,6 +704,7 @@ impl WasmHost {
                     ctx: wasi_ctx,
                     manifest: manifest.clone(),
                     table: ResourceTable::new(),
+                    active_worktree_id: None,
                     host: this.clone(),
                     capability_granter: CapabilityGranter::new(
                         this.granted_capabilities.clone(),
