@@ -73,6 +73,11 @@ pub(crate) struct DispatchTree {
     pub(crate) context_stack: Vec<KeyContext>,
     view_stack: Vec<EntityId>,
     nodes: Vec<DispatchNode>,
+    topology: Vec<DispatchTopology>,
+    focus_nodes: Vec<DispatchNodeId>,
+    view_nodes: Vec<DispatchNodeId>,
+    #[cfg(debug_assertions)]
+    consumed: Vec<Range<usize>>,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
     keymap: Rc<RefCell<Keymap>>,
@@ -85,9 +90,14 @@ pub(crate) struct DispatchNode {
     pub action_listeners: Vec<DispatchActionListener>,
     pub modifiers_changed_listeners: Vec<ModifiersChangedListener>,
     pub context: Option<KeyContext>,
-    pub focus_id: Option<FocusId>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct DispatchTopology {
+    focus_id: Option<FocusId>,
     view_id: Option<EntityId>,
-    parent: Option<DispatchNodeId>,
+    // Internal edges survive relocation without rewriting every node.
+    parent_offset: Option<usize>,
 }
 
 pub(crate) struct ReusedSubtree {
@@ -157,6 +167,11 @@ impl DispatchTree {
             context_stack: Vec::new(),
             view_stack: Vec::new(),
             nodes: Vec::new(),
+            topology: Vec::new(),
+            focus_nodes: Vec::new(),
+            view_nodes: Vec::new(),
+            #[cfg(debug_assertions)]
+            consumed: Vec::new(),
             focusable_node_ids: FxHashMap::default(),
             view_node_ids: FxHashMap::default(),
             keymap,
@@ -169,6 +184,11 @@ impl DispatchTree {
         self.context_stack.clear();
         self.view_stack.clear();
         self.nodes.clear();
+        self.topology.clear();
+        self.focus_nodes.clear();
+        self.view_nodes.clear();
+        #[cfg(debug_assertions)]
+        self.consumed.clear();
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
     }
@@ -181,16 +201,17 @@ impl DispatchTree {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
 
-        self.nodes.push(DispatchNode {
-            parent,
+        self.topology.push(DispatchTopology {
+            parent_offset: parent.map(|parent| node_id.0 - parent.0),
             ..Default::default()
         });
+        self.nodes.push(DispatchNode::default());
         self.node_stack.push(node_id);
         node_id
     }
 
     pub fn set_active_node(&mut self, node_id: DispatchNodeId) {
-        let next_node_parent = self.nodes[node_id.0].parent;
+        let next_node_parent = self.parent(node_id);
         while self.node_stack.last().copied() != next_node_parent && !self.node_stack.is_empty() {
             self.pop_node();
         }
@@ -198,7 +219,7 @@ impl DispatchTree {
         if self.node_stack.last().copied() == next_node_parent {
             self.node_stack.push(node_id);
             let active_node = &self.nodes[node_id.0];
-            if let Some(view_id) = active_node.view_id {
+            if let Some(view_id) = self.topology[node_id.0].view_id {
                 self.view_stack.push(view_id)
             }
             if let Some(context) = active_node.context.clone() {
@@ -213,11 +234,11 @@ impl DispatchTree {
                 if let Some(context) = node.context.clone() {
                     self.context_stack.push(context);
                 }
-                if let Some(view_id) = node.view_id {
+                if let Some(view_id) = self.topology[node_id.0].view_id {
                     self.view_stack.push(view_id);
                 }
                 self.node_stack.push(node_id);
-                current_node_id = node.parent;
+                current_node_id = self.parent(node_id);
             }
 
             self.context_stack.reverse();
@@ -233,46 +254,44 @@ impl DispatchTree {
 
     pub fn set_focus_id(&mut self, focus_id: FocusId) {
         let node_id = *self.node_stack.last().unwrap();
-        self.nodes[node_id.0].focus_id = Some(focus_id);
+        if self.topology[node_id.0].focus_id.is_none() {
+            let index = self.focus_nodes.partition_point(|node| node.0 < node_id.0);
+            self.focus_nodes.insert(index, node_id);
+        }
+        self.topology[node_id.0].focus_id = Some(focus_id);
         self.focusable_node_ids.insert(focus_id, node_id);
     }
 
     pub fn set_view_id(&mut self, view_id: EntityId) {
         if self.view_stack.last().copied() != Some(view_id) {
             let node_id = *self.node_stack.last().unwrap();
-            self.nodes[node_id.0].view_id = Some(view_id);
+            if self.topology[node_id.0].view_id.is_none() {
+                let index = self.view_nodes.partition_point(|node| node.0 < node_id.0);
+                self.view_nodes.insert(index, node_id);
+            }
+            self.topology[node_id.0].view_id = Some(view_id);
             self.view_node_ids.insert(view_id, node_id);
             self.view_stack.push(view_id);
         }
     }
 
     pub fn pop_node(&mut self) {
-        let node = &self.nodes[self.active_node_id().unwrap().0];
+        let node_id = self.active_node_id().unwrap();
+        let node = &self.nodes[node_id.0];
         if node.context.is_some() {
             self.context_stack.pop();
         }
-        if node.view_id.is_some() {
+        if self.topology[node_id.0].view_id.is_some() {
             self.view_stack.pop();
         }
         self.node_stack.pop();
     }
 
-    fn move_node(&mut self, source: &mut DispatchNode) {
-        self.push_node();
-        if let Some(context) = source.context.clone() {
-            self.set_key_context(context);
-        }
-        if let Some(focus_id) = source.focus_id {
-            self.set_focus_id(focus_id);
-        }
-        if let Some(view_id) = source.view_id {
-            self.set_view_id(view_id);
-        }
-
-        let target = self.active_node();
-        target.key_listeners = mem::take(&mut source.key_listeners);
-        target.action_listeners = mem::take(&mut source.action_listeners);
-        target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
+    fn parent(&self, node_id: DispatchNodeId) -> Option<DispatchNodeId> {
+        self.topology
+            .get(node_id.0)?
+            .parent_offset
+            .map(|offset| DispatchNodeId(node_id.0 - offset))
     }
 
     pub(crate) fn reuse_subtree(
@@ -281,53 +300,93 @@ impl DispatchTree {
         source: &mut Self,
         focus: Option<FocusId>,
         mut remap_parent: impl FnMut(DispatchNodeId) -> Option<DispatchNodeId>,
+        #[cfg(any(test, feature = "bench-support"))] stats: &mut crate::ViewReuseStats,
     ) -> ReusedSubtree {
         let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
         let original_node = self.active_node_id();
+        #[cfg(debug_assertions)]
+        if !old_range.is_empty() {
+            debug_assert!(
+                source
+                    .consumed
+                    .iter()
+                    .all(|range| { old_range.end <= range.start || range.end <= old_range.start }),
+                "dispatch segment consumed twice"
+            );
+            source.consumed.push(old_range.clone());
+        }
 
-        let mut contains_focus = false;
-        let mut source_stack = vec![];
-        for (source_node_id, source_node) in source
-            .nodes
-            .iter_mut()
-            .enumerate()
-            .skip(old_range.start)
-            .take(old_range.len())
+        self.topology
+            .extend_from_slice(&source.topology[old_range.clone()]);
+        #[cfg(any(test, feature = "bench-support"))]
         {
-            let source_node_id = DispatchNodeId(source_node_id);
-            while let Some(source_ancestor) = source_stack.last() {
-                if source_node.parent == Some(*source_ancestor) {
-                    break;
-                } else {
-                    source_stack.pop();
-                    self.pop_node();
+            stats
+                .dispatch_nodes
+                .copied(&source.topology[old_range.clone()]);
+            stats.dispatch_nodes.moved_count::<(
+                Vec<KeyListener>,
+                Vec<DispatchActionListener>,
+                Vec<ModifiersChangedListener>,
+            )>(old_range.len());
+            for node in &source.nodes[old_range.clone()] {
+                if let Some(context) = &node.context {
+                    stats
+                        .dispatch_contexts
+                        .cloned(std::slice::from_ref(context));
                 }
             }
-
-            if source_stack.is_empty()
-                && let Some(parent) = source_node.parent.and_then(&mut remap_parent)
-                && self.active_node_id() != Some(parent)
-            {
-                self.set_active_node(parent);
-            }
-            source_stack.push(source_node_id);
-            if source_node.focus_id.is_some() && source_node.focus_id == focus {
-                contains_focus = true;
-            }
-            self.move_node(source_node);
         }
-
-        while !source_stack.is_empty() {
-            source_stack.pop();
-            self.pop_node();
-        }
-        if let Some(original_node) = original_node {
-            if self.active_node_id() != Some(original_node) {
-                self.set_active_node(original_node);
+        for (offset, topology) in self.topology[new_range.clone()].iter_mut().enumerate() {
+            let old_id = old_range.start + offset;
+            let old_parent = topology
+                .parent_offset
+                .map(|distance| DispatchNodeId(old_id - distance));
+            if old_parent.is_none_or(|parent| parent.0 < old_range.start) {
+                let parent = old_parent.and_then(&mut remap_parent).or(original_node);
+                topology.parent_offset = parent.map(|parent| new_range.start + offset - parent.0);
+                #[cfg(any(test, feature = "bench-support"))]
+                {
+                    stats.index_fixups += 1;
+                }
             }
-        } else {
-            while self.active_node_id().is_some() {
-                self.pop_node();
+        }
+        self.nodes.extend(
+            source.nodes[old_range.clone()]
+                .iter_mut()
+                .map(|node| DispatchNode {
+                    context: node.context.clone(),
+                    key_listeners: mem::take(&mut node.key_listeners),
+                    action_listeners: mem::take(&mut node.action_listeners),
+                    modifiers_changed_listeners: mem::take(&mut node.modifiers_changed_listeners),
+                }),
+        );
+
+        let mut contains_focus = false;
+        let focus_start = source
+            .focus_nodes
+            .partition_point(|node| node.0 < old_range.start);
+        let focus_end = source
+            .focus_nodes
+            .partition_point(|node| node.0 < old_range.end);
+        for old_node in &source.focus_nodes[focus_start..focus_end] {
+            let node = DispatchNodeId(new_range.start + old_node.0 - old_range.start);
+            if let Some(focus_id) = source.topology[old_node.0].focus_id {
+                contains_focus |= Some(focus_id) == focus;
+                self.focusable_node_ids.insert(focus_id, node);
+                self.focus_nodes.push(node);
+            }
+        }
+        let view_start = source
+            .view_nodes
+            .partition_point(|node| node.0 < old_range.start);
+        let view_end = source
+            .view_nodes
+            .partition_point(|node| node.0 < old_range.end);
+        for old_node in &source.view_nodes[view_start..view_end] {
+            let node = DispatchNodeId(new_range.start + old_node.0 - old_range.start);
+            if let Some(view_id) = source.topology[old_node.0].view_id {
+                self.view_node_ids.insert(view_id, node);
+                self.view_nodes.push(node);
             }
         }
 
@@ -339,7 +398,7 @@ impl DispatchTree {
     }
 
     pub fn truncate(&mut self, index: usize) {
-        for node in &self.nodes[index..] {
+        for node in &self.topology[index..] {
             if let Some(focus_id) = node.focus_id {
                 self.focusable_node_ids.remove(&focus_id);
             }
@@ -349,6 +408,11 @@ impl DispatchTree {
             }
         }
         self.nodes.truncate(index);
+        self.topology.truncate(index);
+        self.focus_nodes
+            .truncate(self.focus_nodes.partition_point(|node| node.0 < index));
+        self.view_nodes
+            .truncate(self.view_nodes.partition_point(|node| node.0 < index));
     }
 
     pub fn on_key_event(&mut self, listener: KeyListener) {
@@ -385,7 +449,7 @@ impl DispatchTree {
                 if node_id == *parent_node_id {
                     return true;
                 }
-                current_node_id = self.nodes[node_id.0].parent;
+                current_node_id = self.parent(node_id);
             }
         }
         false
@@ -596,7 +660,7 @@ impl DispatchTree {
         let mut current_node_id = Some(target);
         while let Some(node_id) = current_node_id {
             dispatch_path.push(node_id);
-            current_node_id = self.nodes.get(node_id.0).and_then(|node| node.parent);
+            current_node_id = self.parent(node_id);
         }
         dispatch_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         dispatch_path
@@ -606,24 +670,21 @@ impl DispatchTree {
         let mut focus_path: SmallVec<[FocusId; 8]> = SmallVec::new();
         let mut current_node_id = self.focusable_node_ids.get(&focus_id).copied();
         while let Some(node_id) = current_node_id {
-            let node = self.node(node_id);
+            let node = &self.topology[node_id.0];
             if let Some(focus_id) = node.focus_id {
                 focus_path.push(focus_id);
             }
-            current_node_id = node.parent;
+            current_node_id = self.parent(node_id);
         }
         focus_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         focus_path
     }
 
     pub fn view_path_reversed(&self, view_id: EntityId) -> impl Iterator<Item = EntityId> {
-        let mut current_node_id = self.view_node_ids.get(&view_id).copied();
+        let current_node_id = self.view_node_ids.get(&view_id).copied();
 
-        std::iter::successors(
-            current_node_id.map(|node_id| self.node(node_id)),
-            |node_id| Some(self.node(node_id.parent?)),
-        )
-        .filter_map(|node| node.view_id)
+        std::iter::successors(current_node_id, |node_id| self.parent(*node_id))
+            .filter_map(|node_id| self.topology[node_id.0].view_id)
     }
 
     #[cfg(any(test, feature = "bench-support"))]
@@ -633,13 +694,14 @@ impl DispatchTree {
     ) -> Vec<String> {
         self.nodes
             .iter()
-            .map(|node| {
+            .enumerate()
+            .map(|(index, node)| {
                 format!(
                     "parent={:?},view={:?},context={:?},focusable={},keys={},actions={:?},modifiers={}",
-                    node.parent.map(|parent| parent.0),
-                    node.view_id.map(&mut *view_identity),
+                    self.parent(DispatchNodeId(index)).map(|parent| parent.0),
+                    self.topology[index].view_id.map(&mut *view_identity),
                     node.context,
-                    node.focus_id.is_some(),
+                    self.topology[index].focus_id.is_some(),
                     node.key_listeners.len(),
                     node.action_listeners.iter().map(|listener| listener.action_type).collect::<Vec<_>>(),
                     node.modifiers_changed_listeners.len(),
@@ -721,29 +783,128 @@ mod tests {
         source.pop_node();
 
         let mut target = test_dispatch_tree(Vec::new());
-        let prefix = target.reuse_subtree(0..3, &mut source, None, |_| None);
+        let mut stats = crate::ViewReuseStats::default();
+        let prefix = target.reuse_subtree(0..3, &mut source, None, |_| None, &mut stats);
         let new_child = prefix.refresh_node_id(old_child);
         target.set_active_node(new_child);
         target.push_node();
         target.push_node();
         target.pop_node();
         target.pop_node();
-        let suffix = target.reuse_subtree(4..6, &mut source, None, |parent| {
-            prefix.remap_node_id(parent)
-        });
+        let suffix = target.reuse_subtree(
+            4..6,
+            &mut source,
+            None,
+            |parent| prefix.remap_node_id(parent),
+            &mut stats,
+        );
         assert_eq!(
-            target
-                .node(suffix.refresh_node_id(super::DispatchNodeId(4)))
-                .parent,
+            target.parent(suffix.refresh_node_id(super::DispatchNodeId(4))),
             Some(prefix.refresh_node_id(old_parent)),
         );
         assert_eq!(
-            target
-                .node(suffix.refresh_node_id(super::DispatchNodeId(5)))
-                .parent,
+            target.parent(suffix.refresh_node_id(super::DispatchNodeId(5))),
             Some(prefix.refresh_node_id(old_root)),
         );
         assert_eq!(target.active_node_id(), Some(new_child));
+    }
+
+    #[gpui::test]
+    fn replay_keeps_focus_view_and_old_dispatch_paths(cx: &mut App) {
+        let parent_focus = cx.focus_handle();
+        let child_focus = cx.focus_handle();
+        let parent_view = cx.new(|_| ());
+        let child_view = cx.new(|_| ());
+        let mut source = test_dispatch_tree(Vec::new());
+        let root = source.push_node();
+        source.set_focus_id(parent_focus.id);
+        source.set_view_id(parent_view.entity_id());
+        source.set_key_context(KeyContext::parse("Parent").expect("valid context"));
+        let child = source.push_node();
+        source.set_focus_id(child_focus.id);
+        source.set_view_id(child_view.entity_id());
+        source.set_key_context(KeyContext::parse("Child").expect("valid context"));
+        source.on_key_event(Rc::new(|_, _, _, _| {}));
+        source.pop_node();
+        source.pop_node();
+        let old_path = source.dispatch_path(child);
+        let old_focus_path = source.focus_path(child_focus.id);
+        let old_views: Vec<_> = source.view_path_reversed(child_view.entity_id()).collect();
+
+        let mut target = test_dispatch_tree(Vec::new());
+        let attachment = target.push_node();
+        let mut stats = crate::ViewReuseStats::default();
+        let replay = target.reuse_subtree(
+            0..2,
+            &mut source,
+            Some(child_focus.id),
+            |_| None,
+            &mut stats,
+        );
+        let new_root = replay.refresh_node_id(root);
+        let new_child = replay.refresh_node_id(child);
+        assert!(replay.contains_focus());
+        assert_eq!(target.focusable_node_id(child_focus.id), Some(new_child));
+        assert_eq!(
+            target.dispatch_path(new_child).as_slice(),
+            &[attachment, new_root, new_child]
+        );
+        assert_eq!(target.focus_path(child_focus.id), old_focus_path);
+        assert!(target.focus_contains(parent_focus.id, child_focus.id));
+        assert_eq!(
+            target
+                .view_path_reversed(child_view.entity_id())
+                .collect::<Vec<_>>(),
+            old_views
+        );
+        assert_eq!(source.dispatch_path(child), old_path);
+        assert_eq!(source.focus_path(child_focus.id), old_focus_path);
+        assert_eq!(
+            source
+                .view_path_reversed(child_view.entity_id())
+                .collect::<Vec<_>>(),
+            old_views
+        );
+        assert!(source.node(child).key_listeners.is_empty());
+        assert_eq!(target.node(new_child).key_listeners.len(), 1);
+        assert_eq!(source.node(child).context, target.node(new_child).context);
+        assert_eq!(stats.dispatch_nodes.rebuilt_elements, 0);
+        assert_eq!(stats.dispatch_nodes.copied_elements, 2);
+        assert_eq!(stats.index_fixups, 1);
+
+        let mut next = test_dispatch_tree(Vec::new());
+        let next_attachment = next.push_node();
+        let nested = next.reuse_subtree(
+            new_root.0..new_child.0 + 1,
+            &mut target,
+            Some(child_focus.id),
+            |_| Some(next_attachment),
+            &mut stats,
+        );
+        assert_eq!(next.focus_path(child_focus.id), old_focus_path);
+        assert_eq!(
+            next.dispatch_path(nested.refresh_node_id(new_child)).len(),
+            3
+        );
+        assert_eq!(
+            next.node(nested.refresh_node_id(new_child))
+                .key_listeners
+                .len(),
+            1
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "dispatch segment consumed twice")]
+    fn replay_rejects_overlapping_segment_consumption() {
+        let mut source = test_dispatch_tree(Vec::new());
+        source.push_node();
+        source.push_node();
+        let mut target = test_dispatch_tree(Vec::new());
+        let mut stats = crate::ViewReuseStats::default();
+        target.reuse_subtree(0..2, &mut source, None, |_| None, &mut stats);
+        target.reuse_subtree(1..2, &mut source, None, |_| None, &mut stats);
     }
 
     struct PendingInputTestView {

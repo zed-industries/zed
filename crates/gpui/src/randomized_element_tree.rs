@@ -1557,7 +1557,7 @@ mod tests {
                 .expect("reused window exists");
             assert!(stats.cached_hits > 0, "fixture exercises reuse");
             assert!(
-                stats.hitboxes.cloned_elements > 0,
+                stats.hitboxes.copied_elements > 0,
                 "fixture replays hitboxes"
             );
             cx.update_window(reused.into(), |_, window, _| window.remove_window())

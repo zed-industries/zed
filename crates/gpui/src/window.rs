@@ -733,7 +733,7 @@ type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(crate) struct CursorStyleRequest {
     pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
@@ -1062,6 +1062,8 @@ pub(crate) struct Frame {
     pub(crate) tab_stops: TabStopMap,
     pub(crate) prepaint_views: Vec<crate::view::ViewOccurrenceId>,
     pub(crate) paint_views: Vec<crate::view::ViewOccurrenceId>,
+    #[cfg(debug_assertions)]
+    consumed_segments: [Vec<Range<usize>>; 6],
 }
 
 #[derive(Clone, Default)]
@@ -1192,6 +1194,8 @@ impl Frame {
             tab_stops: TabStopMap::default(),
             prepaint_views: Vec::new(),
             paint_views: Vec::new(),
+            #[cfg(debug_assertions)]
+            consumed_segments: Default::default(),
         }
     }
 
@@ -1211,6 +1215,10 @@ impl Frame {
         self.focus = None;
         self.prepaint_views.clear();
         self.paint_views.clear();
+        #[cfg(debug_assertions)]
+        for ranges in &mut self.consumed_segments {
+            ranges.clear();
+        }
 
         #[cfg(any(test, feature = "test-support"))]
         {
@@ -1271,15 +1279,28 @@ impl Frame {
     }
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        for element_state_key in &self.accessed_element_states {
-            if let Some((element_state_key, element_state)) =
-                prev_frame.element_states.remove_entry(element_state_key)
-            {
-                self.element_states.insert(element_state_key, element_state);
-            }
-        }
+        let accessed: FxHashSet<_> = self.accessed_element_states.iter().copied().collect();
+        self.element_states.extend(
+            prev_frame
+                .element_states
+                .extract_if(|key, _| accessed.contains(key)),
+        );
 
         self.scene.finish();
+    }
+
+    #[cfg(debug_assertions)]
+    fn consume_segment(&mut self, array: usize, range: Range<usize>) {
+        if !range.is_empty() {
+            let consumed = &mut self.consumed_segments[array];
+            debug_assert!(
+                consumed
+                    .iter()
+                    .all(|prior| range.end <= prior.start || prior.end <= range.start),
+                "frame segment consumed twice"
+            );
+            consumed.push(range);
+        }
     }
 }
 
@@ -1334,6 +1355,7 @@ pub struct ViewReuseStats {
     pub tooltips: ReuseArrayStats,
     pub element_state_keys: ReuseArrayStats,
     pub dispatch_nodes: ReuseArrayStats,
+    pub dispatch_contexts: ReuseArrayStats,
     pub deferred_draws: ReuseArrayStats,
     pub cursor_styles: ReuseArrayStats,
     pub input_handlers: ReuseArrayStats,
@@ -1401,6 +1423,8 @@ impl ViewReuseSnapshot {
 pub struct ReuseArrayStats {
     pub cloned_elements: usize,
     pub cloned_bytes: usize,
+    pub copied_elements: usize,
+    pub copied_bytes: usize,
     pub moved_elements: usize,
     pub moved_bytes: usize,
     pub rebuilt_elements: usize,
@@ -1414,9 +1438,19 @@ impl ReuseArrayStats {
         self.cloned_bytes += std::mem::size_of_val(records);
     }
 
-    fn moved<T>(&mut self, records: &[T]) {
+    pub(crate) fn copied<T>(&mut self, records: &[T]) {
+        self.copied_elements += records.len();
+        self.copied_bytes += std::mem::size_of_val(records);
+    }
+
+    pub(crate) fn moved<T>(&mut self, records: &[T]) {
         self.moved_elements += records.len();
         self.moved_bytes += std::mem::size_of_val(records);
+    }
+
+    pub(crate) fn moved_count<T>(&mut self, count: usize) {
+        self.moved_elements += count;
+        self.moved_bytes += count * std::mem::size_of::<T>();
     }
 
     pub(crate) fn rebuilt<T>(&mut self, count: usize) {
@@ -4605,39 +4639,42 @@ impl Window {
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
         let new_start = self.prepaint_index();
+        #[cfg(debug_assertions)]
+        {
+            self.rendered_frame
+                .consume_segment(0, range.start.hitboxes_index..range.end.hitboxes_index);
+            self.rendered_frame
+                .consume_segment(1, range.start.tooltips_index..range.end.tooltips_index);
+            self.rendered_frame.consume_segment(
+                2,
+                range.start.deferred_draws_index..range.end.deferred_draws_index,
+            );
+        }
         #[cfg(any(test, feature = "bench-support"))]
         {
             let stats = &mut self.view_reuse_stats;
             stats.prepaint_reuse_calls += 1;
-            stats.hitboxes.cloned(
+            stats.hitboxes.copied(
                 &self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index],
             );
             stats.tooltips.moved(
                 &self.rendered_frame.tooltip_requests
                     [range.start.tooltips_index..range.end.tooltips_index],
             );
-            stats.element_state_keys.cloned(
+            stats.element_state_keys.copied(
                 &self.rendered_frame.accessed_element_states[range
                     .start
                     .accessed_element_states_index
                     ..range.end.accessed_element_states_index],
             );
-            stats
-                .dispatch_nodes
-                .rebuilt::<crate::key_dispatch::DispatchNode>(
-                    range.end.dispatch_tree_index - range.start.dispatch_tree_index,
-                );
-            stats.deferred_draws.rebuilt::<DeferredDraw>(
-                range.end.deferred_draws_index - range.start.deferred_draws_index,
+            stats.deferred_draws.moved(
+                &self.rendered_frame.deferred_draws
+                    [range.start.deferred_draws_index..range.end.deferred_draws_index],
             );
-            stats.index_fixups += range.end.dispatch_tree_index - range.start.dispatch_tree_index
-                + range.end.deferred_draws_index
-                - range.start.deferred_draws_index;
+            stats.index_fixups += range.end.deferred_draws_index - range.start.deferred_draws_index;
         }
-        self.next_frame.hitboxes.extend(
-            self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
-                .iter()
-                .cloned(),
+        self.next_frame.hitboxes.extend_from_slice(
+            &self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index],
         );
         self.next_frame.tooltip_requests.extend(
             self.rendered_frame.tooltip_requests
@@ -4645,11 +4682,9 @@ impl Window {
                 .iter_mut()
                 .map(|request| request.take()),
         );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .copied(),
+        self.next_frame.accessed_element_states.extend_from_slice(
+            &self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index],
         );
         self.text_system.reuse_layouts(
             range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
@@ -4668,6 +4703,8 @@ impl Window {
                     .rev()
                     .find_map(|range| range.remap_node_id(node))
             },
+            #[cfg(any(test, feature = "bench-support"))]
+            &mut self.view_reuse_stats,
         );
 
         if reused_subtree.contains_focus() {
@@ -4677,14 +4714,18 @@ impl Window {
         self.next_frame.deferred_draws.extend(
             self.rendered_frame.deferred_draws
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
-                .iter()
+                .iter_mut()
                 .map(|deferred_draw| DeferredDraw {
                     current_view: deferred_draw.current_view,
                     parent_occurrence: deferred_draw.parent_occurrence,
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
-                    element_id_stack: deferred_draw.element_id_stack.clone(),
-                    text_style_stack: deferred_draw.text_style_stack.clone(),
-                    text_style_base: deferred_draw.text_style_base.clone(),
+                    element_id_stack: ElementIdStack {
+                        ids: mem::take(&mut deferred_draw.element_id_stack.ids),
+                        handles: mem::take(&mut deferred_draw.element_id_stack.handles),
+                        root: deferred_draw.element_id_stack.root,
+                    },
+                    text_style_stack: mem::take(&mut deferred_draw.text_style_stack),
+                    text_style_base: deferred_draw.text_style_base.take(),
                     content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
@@ -4692,7 +4733,7 @@ impl Window {
                     absolute_offset: deferred_draw.absolute_offset,
                     prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
-                    accessed_entities: deferred_draw.accessed_entities.clone(),
+                    accessed_entities: mem::take(&mut deferred_draw.accessed_entities),
                 }),
         );
         for occurrence in
@@ -4726,11 +4767,26 @@ impl Window {
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
         let new_start = self.paint_index();
+        #[cfg(debug_assertions)]
+        {
+            self.rendered_frame.consume_segment(
+                3,
+                range.start.cursor_styles_index..range.end.cursor_styles_index,
+            );
+            self.rendered_frame.consume_segment(
+                4,
+                range.start.input_handlers_index..range.end.input_handlers_index,
+            );
+            self.rendered_frame.consume_segment(
+                5,
+                range.start.mouse_listeners_index..range.end.mouse_listeners_index,
+            );
+        }
         #[cfg(any(test, feature = "bench-support"))]
         {
             let stats = &mut self.view_reuse_stats;
             stats.paint_reuse_calls += 1;
-            stats.cursor_styles.cloned(
+            stats.cursor_styles.copied(
                 &self.rendered_frame.cursor_styles
                     [range.start.cursor_styles_index..range.end.cursor_styles_index],
             );
@@ -4742,7 +4798,7 @@ impl Window {
                 &self.rendered_frame.mouse_listeners
                     [range.start.mouse_listeners_index..range.end.mouse_listeners_index],
             );
-            stats.element_state_keys.cloned(
+            stats.element_state_keys.copied(
                 &self.rendered_frame.accessed_element_states[range
                     .start
                     .accessed_element_states_index
@@ -4762,11 +4818,9 @@ impl Window {
             self.next_frame
                 .record_debug_bounds(selector.clone(), *bounds);
         }
-        self.next_frame.cursor_styles.extend(
-            self.rendered_frame.cursor_styles
-                [range.start.cursor_styles_index..range.end.cursor_styles_index]
-                .iter()
-                .cloned(),
+        self.next_frame.cursor_styles.extend_from_slice(
+            &self.rendered_frame.cursor_styles
+                [range.start.cursor_styles_index..range.end.cursor_styles_index],
         );
         self.next_frame.input_handlers.extend(
             self.rendered_frame.input_handlers
@@ -4780,11 +4834,9 @@ impl Window {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .copied(),
+        self.next_frame.accessed_element_states.extend_from_slice(
+            &self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index],
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
@@ -4798,7 +4850,7 @@ impl Window {
         );
         self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
-            &self.rendered_frame.scene,
+            &mut self.rendered_frame.scene,
             #[cfg(any(test, feature = "bench-support"))]
             &mut self.view_reuse_stats,
         );
@@ -9308,7 +9360,280 @@ mod tests {
             .unwrap();
     }
 
+    struct ReplayQueryLeaf {
+        focus: FocusHandle,
+    }
+
+    impl Render for ReplayQueryLeaf {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("replay-query-leaf")
+                .size_full()
+                .track_focus(&self.focus)
+                .key_context("ReplayQueryLeaf")
+                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .child(canvas(
+                    |_, _, _| {},
+                    |_, _, window, _| {
+                        window.set_window_cursor_style(crate::CursorStyle::PointingHand);
+                    },
+                ))
+        }
+    }
+
+    struct ReplayQueries {
+        child: crate::Entity<ReplayQueryLeaf>,
+        expected: Rc<RefCell<Option<ReplayQuerySnapshot>>>,
+        checked: Rc<Cell<usize>>,
+    }
+
+    struct ReplayQuerySnapshot {
+        focus: Vec<super::FocusId>,
+        hitboxes: Vec<super::HitboxId>,
+        cursor: Option<crate::CursorStyle>,
+    }
+
+    impl ReplayQuerySnapshot {
+        fn capture(window: &Window) -> Self {
+            Self {
+                focus: window.rendered_frame.focus_path().to_vec(),
+                hitboxes: window
+                    .rendered_frame
+                    .hit_test(point(px(10.), px(10.)))
+                    .ids
+                    .to_vec(),
+                cursor: window.rendered_frame.cursor_style(window),
+            }
+        }
+    }
+
+    impl Render for ReplayQueries {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let expected = self.expected.clone();
+            let checked = self.checked.clone();
+            div()
+                .size_full()
+                .child(
+                    self.child
+                        .clone()
+                        .cached(crate::StyleRefinement::default().size_full()),
+                )
+                .child(canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        if let Some(expected) = expected.borrow().as_ref() {
+                            let actual = ReplayQuerySnapshot::capture(window);
+                            assert_eq!(actual.focus, expected.focus);
+                            assert_eq!(actual.hitboxes, expected.hitboxes);
+                            assert_eq!(actual.cursor, expected.cursor);
+                            assert!(
+                                window
+                                    .rendered_frame
+                                    .mouse_listeners
+                                    .iter()
+                                    .all(Option::is_none)
+                            );
+                            assert!(
+                                window
+                                    .next_frame
+                                    .mouse_listeners
+                                    .iter()
+                                    .any(Option::is_some)
+                            );
+                            checked.set(checked.get() + 1);
+                        }
+                    },
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn old_frame_queries_survive_segment_moves_during_draw(cx: &mut TestAppContext) {
+        for splice in [false, true] {
+            let expected = Rc::new(RefCell::new(None));
+            let checked = Rc::new(Cell::new(0));
+            let window = cx.open_window(size(px(100.), px(100.)), {
+                let expected = expected.clone();
+                let checked = checked.clone();
+                move |window, cx| {
+                    window.set_view_splicing(splice);
+                    let child = cx.new(|cx| ReplayQueryLeaf {
+                        focus: cx.focus_handle(),
+                    });
+                    let focus = child.read(cx).focus.clone();
+                    window.focus(&focus, cx);
+                    ReplayQueries {
+                        child,
+                        expected,
+                        checked,
+                    }
+                }
+            });
+            cx.run_until_parked();
+            window
+                .update(cx, |_, window, _| {
+                    let snapshot = ReplayQuerySnapshot::capture(window);
+                    assert!(!snapshot.focus.is_empty());
+                    assert!(!snapshot.hitboxes.is_empty());
+                    assert_eq!(snapshot.cursor, Some(crate::CursorStyle::PointingHand));
+                    expected.replace(Some(snapshot));
+                })
+                .expect("query window exists");
+            for _ in 0..2 {
+                window
+                    .update(cx, |_, _, cx| cx.notify())
+                    .expect("query window exists");
+                cx.run_until_parked();
+            }
+            assert_eq!(checked.get(), 2);
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("query window exists");
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "frame segment consumed twice")]
+    fn replay_rejects_overlapping_frame_segments() {
+        let mut frame = super::Frame::new(crate::DispatchTree::new(
+            Rc::new(RefCell::new(crate::Keymap::default())),
+            Rc::new(crate::ActionRegistry::default()),
+        ));
+        frame.consume_segment(0, 1..4);
+        frame.consume_segment(0, 3..5);
+    }
+
+    #[test]
+    fn finish_transfers_accessed_states_without_dropping_old_unaccessed_states() {
+        struct DropCounter(Rc<Cell<usize>>);
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let new_frame = || {
+            super::Frame::new(crate::DispatchTree::new(
+                Rc::new(RefCell::new(crate::Keymap::default())),
+                Rc::new(crate::ActionRegistry::default()),
+            ))
+        };
+        let interner = crate::ElementIdInterner::default();
+        let accessed = (interner.root(), std::any::TypeId::of::<u32>());
+        let unaccessed = (interner.root(), std::any::TypeId::of::<DropCounter>());
+        let drops = Rc::new(Cell::new(0));
+        let mut source = new_frame();
+        source.element_states.insert(
+            accessed,
+            super::ElementStateBox {
+                inner: Box::new(42_u32),
+                #[cfg(debug_assertions)]
+                type_name: "u32",
+            },
+        );
+        source.element_states.insert(
+            unaccessed,
+            super::ElementStateBox {
+                inner: Box::new(DropCounter(drops.clone())),
+                #[cfg(debug_assertions)]
+                type_name: "DropCounter",
+            },
+        );
+        let mut target = new_frame();
+        target
+            .accessed_element_states
+            .extend_from_slice(&[accessed, accessed]);
+        target.finish(&mut source);
+        assert_eq!(target.element_states.len(), 1);
+        assert_eq!(
+            target.element_states[&accessed].inner.downcast_ref::<u32>(),
+            Some(&42)
+        );
+        assert_eq!(source.element_states.len(), 1);
+        assert!(source.element_states.contains_key(&unaccessed));
+        assert_eq!(drops.get(), 0);
+        source.clear();
+        assert_eq!(drops.get(), 1);
+    }
+
     struct EmptyView;
+
+    struct ReplayDeferredQueries {
+        child: crate::Entity<DeferredTextStyleView>,
+        check_moves: Rc<Cell<bool>>,
+    }
+
+    impl Render for ReplayDeferredQueries {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let check_moves = self.check_moves.clone();
+            div()
+                .size_full()
+                .child(
+                    self.child
+                        .clone()
+                        .cached(crate::StyleRefinement::default().size_full()),
+                )
+                .child(canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        if check_moves.get() {
+                            assert_eq!(window.rendered_frame.deferred_draws.len(), 4);
+                            assert_eq!(window.next_frame.deferred_draws.len(), 4);
+                            for draw in &window.rendered_frame.deferred_draws {
+                                assert!(draw.element_id_stack.ids.is_empty());
+                                assert!(draw.text_style_stack.is_empty());
+                                assert!(draw.text_style_base.is_none());
+                                assert!(draw.accessed_entities.is_empty());
+                                assert!(
+                                    !window
+                                        .rendered_frame
+                                        .dispatch_tree
+                                        .dispatch_path(draw.parent_node)
+                                        .is_empty()
+                                );
+                            }
+                            assert!(
+                                window
+                                    .next_frame
+                                    .deferred_draws
+                                    .iter()
+                                    .any(|draw| !draw.text_style_stack.is_empty())
+                            );
+                        }
+                    },
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn nested_deferred_segments_move_payloads_and_keep_old_parent_paths(cx: &mut TestAppContext) {
+        let check_moves = Rc::new(Cell::new(false));
+        let window = cx.open_window(size(px(100.), px(100.)), {
+            let check_moves = check_moves.clone();
+            move |_, cx| ReplayDeferredQueries {
+                child: cx.new(|_| DeferredTextStyleView {
+                    observations: Rc::default(),
+                }),
+                check_moves,
+            }
+        });
+        cx.run_until_parked();
+        check_moves.set(true);
+        for _ in 0..2 {
+            window
+                .update(cx, |_, _, cx| cx.notify())
+                .expect("deferred window exists");
+            cx.run_until_parked();
+        }
+        window
+            .update(cx, |_, window, _| {
+                assert!(window.view_reuse_stats().deferred_draws.moved_elements >= 8);
+                assert_eq!(window.view_reuse_stats().deferred_draws.cloned_elements, 0);
+            })
+            .expect("deferred window exists");
+    }
 
     impl Render for EmptyView {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
