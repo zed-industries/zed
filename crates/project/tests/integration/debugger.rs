@@ -299,6 +299,429 @@ mod python_locator {
     }
 }
 
+mod hover {
+    use std::{path::Path, sync::Arc};
+
+    use dap::{
+        DapRegistry, EvaluateArgumentsContext, Variable,
+        adapters::{DebugAdapterName, DebugTaskDefinition},
+        client::DebugAdapterClient,
+        requests::{Evaluate, Variables},
+    };
+    use fs::FakeFs;
+    use futures::StreamExt as _;
+    use gpui::{BackgroundExecutor, Entity, TestAppContext};
+    use language::{Buffer, FakeLspAdapter, ToPointUtf16, rust_lang};
+    use parking_lot::Mutex;
+    use project::{
+        Project,
+        debugger::{
+            breakpoint_store::ActiveStackFrame,
+            session::{Session, SessionQuirks, ThreadId},
+        },
+    };
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use task::SharedTaskContext;
+    use util::path;
+
+    use crate::init_test;
+
+    const SOURCE: &str = "fn main() {
+    let value = 42;
+    let x = value + 1;
+    let a = 7;
+    let c = a;
+    // a here is not an expression
+    println!(\"{}\", x);
+}
+";
+
+    async fn init_project(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) -> Entity<Project> {
+        init_test(cx);
+        cx.executor().allow_parking();
+        cx.update(|cx| DapRegistry::global(cx).add_adapter(Arc::new(dap::FakeAdapter::new())));
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(path!("/project"), json!({ "main.rs": SOURCE }))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        project
+            .read_with(cx, |project, _| project.languages().clone())
+            .add(rust_lang());
+        project
+    }
+
+    async fn boot_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
+        project: &Entity<Project>,
+        configure: T,
+        cx: &mut TestAppContext,
+    ) -> Entity<Session> {
+        let worktree = project.update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("test project should have one worktree")
+        });
+        let _subscription = project::debugger::test::intercept_debug_sessions(cx, configure);
+        let dap_store = project.read_with(cx, |project, _| project.dap_store());
+        let (session, boot_task) = dap_store.update(cx, |dap_store, cx| {
+            let session = dap_store.new_session(
+                None,
+                DebugAdapterName(dap::FakeAdapter::ADAPTER_NAME.into()),
+                SharedTaskContext::default(),
+                None,
+                SessionQuirks::default(),
+                cx,
+            );
+            let boot_task = dap_store.boot_session(
+                session.clone(),
+                DebugTaskDefinition {
+                    adapter: dap::FakeAdapter::ADAPTER_NAME.into(),
+                    label: "test".into(),
+                    config: json!({ "request": "launch" }),
+                    tcp_connection: None,
+                },
+                worktree,
+                cx,
+            );
+            (session, boot_task)
+        });
+        boot_task.await.expect("session should boot");
+        cx.run_until_parked();
+        session
+    }
+
+    fn set_active_stack_frame(
+        project: &Entity<Project>,
+        session: &Entity<Session>,
+        buffer: &Entity<Buffer>,
+        cx: &mut TestAppContext,
+    ) {
+        let session_id = session.read_with(cx, |session, _| session.session_id());
+        let position = buffer.read_with(cx, |buffer, _| buffer.snapshot().anchor_before(0));
+        project.update(cx, |project, cx| {
+            project.breakpoint_store().update(cx, |store, cx| {
+                store.set_active_position(
+                    ActiveStackFrame {
+                        session_id,
+                        thread_id: ThreadId(1),
+                        stack_frame_id: 1,
+                        path: Arc::<Path>::from(Path::new(path!("/project/main.rs"))),
+                        position,
+                    },
+                    cx,
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_debug_value_does_not_wait_for_lsp(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let project = init_project(executor, cx).await;
+        let evaluation_contexts = Arc::new(Mutex::new(Vec::new()));
+        let evaluation_succeeds = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        let mut fake_servers = languages.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
+        let session = boot_session(
+            &project,
+            {
+                let evaluation_contexts = evaluation_contexts.clone();
+                let evaluation_succeeds = evaluation_succeeds.clone();
+                move |client| {
+                    let evaluation_contexts = evaluation_contexts.clone();
+                    let evaluation_succeeds = evaluation_succeeds.clone();
+                    client.on_request::<Evaluate, _>(move |_, args| {
+                        let context = args.context.clone();
+                        evaluation_contexts
+                            .lock()
+                            .push((args.expression.clone(), context.clone()));
+
+                        match context {
+                            Some(EvaluateArgumentsContext::Hover) => Err(dap::ErrorResponse {
+                                error: Some(dap::Message {
+                                    id: 1,
+                                    format: "hover unsupported".into(),
+                                    variables: None,
+                                    send_telemetry: None,
+                                    show_user: None,
+                                    url: None,
+                                    url_label: None,
+                                }),
+                            }),
+                            Some(EvaluateArgumentsContext::Variables) => {
+                                if !evaluation_succeeds.load(Ordering::SeqCst) {
+                                    return Err(dap::ErrorResponse { error: None });
+                                }
+                                Ok(dap::EvaluateResponse {
+                                    result: "42".into(),
+                                    type_: Some("i32".into()),
+                                    presentation_hint: None,
+                                    variables_reference: 0,
+                                    named_variables: None,
+                                    indexed_variables: None,
+                                    memory_reference: None,
+                                    value_location_reference: None,
+                                })
+                            }
+                            other => panic!("unexpected evaluate context: {other:?}"),
+                        }
+                    });
+                }
+            },
+            cx,
+        )
+        .await;
+
+        let (buffer, _handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        let (release_lsp, wait_for_release) = async_channel::unbounded::<()>();
+        fake_servers
+            .next()
+            .await
+            .expect("failed to get language server")
+            .set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _| {
+                let wait_for_release = wait_for_release.clone();
+                async move {
+                    wait_for_release.recv().await.unwrap();
+                    Ok(Some(lsp::Hover {
+                        contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
+                            "lsp hover".to_string(),
+                        )),
+                        range: None,
+                    }))
+                }
+            });
+
+        set_active_stack_frame(&project, &session, &buffer, cx);
+        let hover_offset = SOURCE.find("value + 1").unwrap();
+        let hover_position = buffer.read_with(cx, |buffer, _| hover_offset.to_point_utf16(buffer));
+        let lsp_hover =
+            project.update(cx, |project, cx| project.hover(&buffer, hover_position, cx));
+        let debugger_hover = project.update(cx, |project, cx| {
+            project.debugger_hover(&buffer, hover_position, cx)
+        });
+        cx.run_until_parked();
+        let debugger_hover = futures::FutureExt::now_or_never(debugger_hover)
+            .expect("debug hover must complete while the LSP request is blocked")
+            .expect("expected debugger hover payload");
+        let debugger_value = debugger_hover.data;
+
+        release_lsp.send(()).await.unwrap();
+        let lsp_hover = lsp_hover
+            .await
+            .and_then(|mut hovers| hovers.pop())
+            .expect("expected independent LSP hover");
+        assert_eq!(lsp_hover.contents[0].text, "lsp hover");
+        assert_eq!(debugger_value.root.name, "value");
+        assert_eq!(debugger_value.root.evaluate_name.as_deref(), Some("value"));
+        assert_eq!(debugger_value.root.value, "42");
+        assert_eq!(debugger_value.root.type_name.as_deref(), Some("i32"));
+        assert_eq!(debugger_value.root.variables_reference, 0);
+        assert_eq!(
+            *evaluation_contexts.lock(),
+            vec![
+                ("value".to_string(), Some(EvaluateArgumentsContext::Hover),),
+                (
+                    "value".to_string(),
+                    Some(EvaluateArgumentsContext::Variables),
+                ),
+            ]
+        );
+        evaluation_succeeds.store(false, Ordering::SeqCst);
+        let fallback = project
+            .update(cx, |project, cx| {
+                project.debugger_hover(&buffer, hover_position, cx)
+            })
+            .await;
+        assert!(fallback.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_hover_children_are_loaded_on_demand_and_cached(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let project = init_project(executor, cx).await;
+        let variables_request_count = Arc::new(AtomicUsize::new(0));
+        let session = boot_session(
+            &project,
+            {
+                let variables_request_count = variables_request_count.clone();
+                move |client| {
+                    client.on_request::<Evaluate, _>(move |_, args| {
+                        assert_eq!(args.expression, "value");
+                        assert_eq!(args.context, Some(EvaluateArgumentsContext::Hover));
+                        Ok(dap::EvaluateResponse {
+                            result: "Point { x: 42 }".into(),
+                            type_: Some("Point".into()),
+                            presentation_hint: None,
+                            variables_reference: 1,
+                            named_variables: Some(1),
+                            indexed_variables: None,
+                            memory_reference: None,
+                            value_location_reference: None,
+                        })
+                    });
+
+                    let variables_request_count = variables_request_count.clone();
+                    client.on_request::<Variables, _>(move |_, args| {
+                        variables_request_count.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(args.variables_reference, 1);
+                        Ok(dap::VariablesResponse {
+                            variables: vec![Variable {
+                                name: "x".into(),
+                                value: "42".into(),
+                                type_: Some("i32".into()),
+                                presentation_hint: None,
+                                evaluate_name: Some("value.x".into()),
+                                variables_reference: 0,
+                                named_variables: None,
+                                indexed_variables: None,
+                                memory_reference: None,
+                                declaration_location_reference: None,
+                                value_location_reference: None,
+                            }],
+                        })
+                    });
+                }
+            },
+            cx,
+        )
+        .await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+        set_active_stack_frame(&project, &session, &buffer, cx);
+        let hover_offset = SOURCE.find("value + 1").unwrap();
+        let hover_position = buffer.read_with(cx, |buffer, _| hover_offset.to_point_utf16(buffer));
+        let debugger_value = project
+            .update(cx, |project, cx| {
+                project.debugger_hover(&buffer, hover_position, cx)
+            })
+            .await
+            .map(|hover| hover.data)
+            .expect("expected debugger hover payload");
+
+        let children = project
+            .update(cx, |project, cx| {
+                project.load_debugger_hover_children(
+                    debugger_value.session_id,
+                    debugger_value.root.variables_reference,
+                    cx,
+                )
+            })
+            .await
+            .expect("expected first child load to succeed");
+        assert_eq!(variables_request_count.load(Ordering::SeqCst), 1);
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "x");
+        assert_eq!(children[0].evaluate_name.as_deref(), Some("value.x"));
+        assert_eq!(children[0].value, "42");
+        assert_eq!(children[0].type_name.as_deref(), Some("i32"));
+        assert_eq!(children[0].variables_reference, 0);
+
+        let cached_children = project
+            .update(cx, |project, cx| {
+                project.load_debugger_hover_children(
+                    debugger_value.session_id,
+                    debugger_value.root.variables_reference,
+                    cx,
+                )
+            })
+            .await
+            .expect("expected cached child load to succeed");
+        assert_eq!(variables_request_count.load(Ordering::SeqCst), 1);
+        assert_eq!(cached_children, children);
+    }
+
+    #[gpui::test]
+    async fn test_hover_identifier_on_assignment_rhs(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let project = init_project(executor, cx).await;
+        let session = boot_session(
+            &project,
+            |client| {
+                client.on_request::<Evaluate, _>(|_, args| {
+                    assert_eq!(args.expression, "a");
+                    assert_eq!(args.context, Some(EvaluateArgumentsContext::Hover));
+                    Ok(dap::EvaluateResponse {
+                        result: "7".into(),
+                        type_: Some("i32".into()),
+                        presentation_hint: None,
+                        variables_reference: 0,
+                        named_variables: None,
+                        indexed_variables: None,
+                        memory_reference: None,
+                        value_location_reference: None,
+                    })
+                });
+            },
+            cx,
+        )
+        .await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+        set_active_stack_frame(&project, &session, &buffer, cx);
+
+        let offset = SOURCE.find("c = a;").unwrap() + 4;
+        let position = buffer.read_with(cx, |buffer, _| offset.to_point_utf16(buffer));
+        let hover = project
+            .update(cx, |project, cx| {
+                project.debugger_hover(&buffer, position, cx)
+            })
+            .await
+            .expect("hovering the right-hand identifier should evaluate it");
+        assert_eq!(hover.data.root.name, "a");
+        assert_eq!(hover.data.root.value, "7");
+
+        let comment_offset = SOURCE.find("a here is not").unwrap();
+        let comment_position =
+            buffer.read_with(cx, |buffer, _| comment_offset.to_point_utf16(buffer));
+        assert!(
+            project
+                .update(cx, |project, cx| {
+                    project.debugger_hover(&buffer, comment_position, cx)
+                })
+                .await
+                .is_none(),
+            "comment text is not an evaluatable identifier"
+        );
+    }
+}
+
 mod memory {
     use project::debugger::{
         MemoryCell,
