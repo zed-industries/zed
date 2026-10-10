@@ -2434,7 +2434,8 @@ impl Window {
             view_splicing: std::env::var("GPUI_VIEW_SPLICE")
                 .is_ok_and(|value| value == "1" || value == "all"),
             implicit_view_splicing: std::env::var("GPUI_VIEW_SPLICE")
-                .is_ok_and(|value| value == "all"),
+                .is_ok_and(|value| value == "all")
+                && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1"),
             root_view_changed: false,
             view_store: crate::view::ViewStore::default(),
             current_view_occurrence: None,
@@ -2749,7 +2750,11 @@ impl Window {
     #[cfg(any(test, feature = "bench-support"))]
     pub fn set_implicit_view_splicing(&mut self, enabled: bool) {
         self.set_view_splicing(enabled);
-        self.implicit_view_splicing = enabled;
+        self.implicit_view_splicing = enabled
+            && self
+                .layout_engine
+                .as_ref()
+                .is_some_and(|engine| engine.cache_enabled());
         self.refresh();
     }
 
@@ -9666,11 +9671,14 @@ mod tests {
         let check_moves = Rc::new(Cell::new(false));
         let window = cx.open_window(size(px(100.), px(100.)), {
             let check_moves = check_moves.clone();
-            move |_, cx| ReplayDeferredQueries {
-                child: cx.new(|_| DeferredTextStyleView {
-                    observations: Rc::default(),
-                }),
-                check_moves,
+            move |window, cx| {
+                window.set_view_splicing(true);
+                ReplayDeferredQueries {
+                    child: cx.new(|_| DeferredTextStyleView {
+                        observations: Rc::default(),
+                    }),
+                    check_moves,
+                }
             }
         });
         cx.run_until_parked();
