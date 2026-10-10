@@ -22918,6 +22918,7 @@ dependencies = [
  "feature_flags",
  "feedback",
  "file_finder",
+ "flate2",
  "fs",
  "futures 0.3.34",
  "git",

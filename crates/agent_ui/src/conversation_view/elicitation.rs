@@ -360,11 +360,163 @@ impl ElicitationFormSubmission {
     }
 }
 
+/// Validates form values supplied as JSON outside the desktop form (a paired phone, for example)
+/// with the same rules the desktop form applies, so both paths produce identical content.
+pub fn validate_elicitation_values(
+    schema: &acp::ElicitationSchema,
+    values: &serde_json::Map<String, serde_json::Value>,
+) -> Result<BTreeMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
+    let mut fields = HashMap::default();
+    let mut errors: HashMap<String, SharedString> = HashMap::default();
+
+    for (name, property) in &schema.properties {
+        let value = values.get(name).filter(|value| !value.is_null());
+        let field = match (property, value) {
+            (acp::ElicitationPropertySchema::String(string_schema), value) => {
+                let text = match value {
+                    None => None,
+                    Some(serde_json::Value::String(text)) => Some(text.clone()),
+                    Some(_) => {
+                        errors.insert(
+                            name.clone(),
+                            format!("{} must be text", property_title(name, property)).into(),
+                        );
+                        continue;
+                    }
+                };
+                if single_select_options(string_schema).is_empty() {
+                    ElicitationFieldValue::Text(text.unwrap_or_default())
+                } else {
+                    ElicitationFieldValue::SingleSelect { value: text }
+                }
+            }
+            (
+                acp::ElicitationPropertySchema::Number(_)
+                | acp::ElicitationPropertySchema::Integer(_),
+                value,
+            ) => match value {
+                None => ElicitationFieldValue::Text(String::new()),
+                Some(serde_json::Value::String(text)) => ElicitationFieldValue::Text(text.clone()),
+                Some(serde_json::Value::Number(number)) => {
+                    ElicitationFieldValue::Text(number.to_string())
+                }
+                Some(_) => {
+                    errors.insert(
+                        name.clone(),
+                        format!("{} must be a number", property_title(name, property)).into(),
+                    );
+                    continue;
+                }
+            },
+            (acp::ElicitationPropertySchema::Boolean(boolean_schema), value) => match value {
+                None => ElicitationFieldValue::Boolean(boolean_schema.default.unwrap_or(false)),
+                Some(serde_json::Value::Bool(value)) => ElicitationFieldValue::Boolean(*value),
+                Some(_) => {
+                    errors.insert(
+                        name.clone(),
+                        format!("{} must be true or false", property_title(name, property)).into(),
+                    );
+                    continue;
+                }
+            },
+            (acp::ElicitationPropertySchema::Array(_), value) => {
+                let items = match value {
+                    None => Some(HashSet::default()),
+                    Some(serde_json::Value::Array(items)) => items
+                        .iter()
+                        .map(|item| item.as_str().map(str::to_string))
+                        .collect::<Option<HashSet<_>>>(),
+                    Some(_) => None,
+                };
+                let Some(items) = items else {
+                    errors.insert(
+                        name.clone(),
+                        format!(
+                            "{} must be a list of choices",
+                            property_title(name, property)
+                        )
+                        .into(),
+                    );
+                    continue;
+                };
+                ElicitationFieldValue::MultiSelect(items)
+            }
+            _ => continue,
+        };
+        fields.insert(name.clone(), field);
+    }
+
+    let submission = ElicitationFormSubmission { fields };
+    match submission.validate(schema) {
+        Ok(content) if errors.is_empty() => Ok(content),
+        Ok(_) => Err(errors),
+        Err(validation_errors) => {
+            errors.extend(validation_errors);
+            Err(errors)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::{KeyUpEvent, Keystroke, PlatformInput, TestAppContext, VisualTestContext};
     use std::cell::RefCell;
+
+    #[test]
+    fn validates_json_values_with_desktop_form_rules() {
+        let schema: acp::ElicitationSchema = serde_json::from_value(serde_json::json!({
+            "type": "object",
+            "required": ["strategy", "retries"],
+            "properties": {
+                "strategy": {"type": "string", "oneOf": [
+                    {"const": "fail", "title": "Fail fast"},
+                    {"const": "verbatim", "title": "Verbatim"}
+                ]},
+                "retries": {"type": "integer", "minimum": 0, "maximum": 5},
+                "dry_run": {"type": "boolean"},
+                "targets": {"type": "array", "items": {"type": "string", "enum": ["linux", "mac"]}}
+            }
+        }))
+        .expect("schema");
+
+        let values = |value: serde_json::Value| value.as_object().cloned().expect("object");
+        let content = validate_elicitation_values(
+            &schema,
+            &values(serde_json::json!({
+                "strategy": "fail",
+                "retries": "2",
+                "dry_run": true,
+                "targets": ["mac", "linux"],
+            })),
+        )
+        .expect("valid answer");
+        assert_eq!(content.get("strategy"), Some(&"fail".to_string().into()));
+        assert_eq!(content.get("retries"), Some(&2i64.into()));
+        assert_eq!(content.get("dry_run"), Some(&true.into()));
+        assert_eq!(
+            content.get("targets"),
+            Some(&vec!["linux".to_string(), "mac".to_string()].into())
+        );
+
+        let errors = validate_elicitation_values(
+            &schema,
+            &values(serde_json::json!({
+                "strategy": "unknown",
+                "retries": 9,
+                "dry_run": "yes",
+            })),
+        )
+        .expect_err("invalid answer");
+        assert!(errors.contains_key("strategy"));
+        assert!(errors.contains_key("retries"));
+        assert!(errors.contains_key("dry_run"));
+
+        let errors = validate_elicitation_values(&schema, &values(serde_json::json!({})))
+            .expect_err("missing required fields");
+        assert!(errors.contains_key("strategy"));
+        assert!(errors.contains_key("retries"));
+    }
 
     struct TestElicitationView {
         elicitation: Elicitation,

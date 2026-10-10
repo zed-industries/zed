@@ -2749,7 +2749,7 @@ impl ThreadView {
         cx.notify();
     }
 
-    fn respond_to_elicitation(
+    pub fn respond_to_elicitation(
         &mut self,
         elicitation_id: ElicitationEntryId,
         response: acp::CreateElicitationResponse,
@@ -9080,6 +9080,19 @@ impl ThreadView {
     /// the user hasn't acknowledged yet. While true, the prompt's allow buttons
     /// stay disabled so the user can't grant access to a lookalike target
     /// without first ticking the acknowledgement checkbox.
+    /// Whether the desktop currently withholds every allow option for this tool call because its
+    /// sandbox request contains suspicious Unicode the user has not acknowledged on desktop.
+    pub fn tool_call_allow_blocked_by_confusables(
+        &self,
+        tool_call_id: &acp::ToolCallId,
+        cx: &App,
+    ) -> bool {
+        self.thread
+            .read(cx)
+            .tool_call(tool_call_id)
+            .is_some_and(|(_, call)| self.sandbox_confusables_block_allow(call, cx))
+    }
+
     fn sandbox_confusables_block_allow(&self, tool_call: &ToolCall, cx: &App) -> bool {
         if !Self::confusable_warning_enabled(cx) {
             return false;

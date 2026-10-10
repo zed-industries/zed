@@ -34,7 +34,6 @@ visual-tests = [
     "gpui_platform/test-support",
     "dep:image",
     "dep:tempfile",
-    "dep:action_log",
     "dep:agent_servers",
     "workspace/test-support",
     "project/test-support",
@@ -65,7 +64,7 @@ required-features = ["visual-tests"]
 [dependencies]
 acp_thread.workspace = true
 acp_tools.workspace = true
-action_log = { workspace = true, optional = true }
+action_log.workspace = true
 activity_indicator.workspace = true
 agent-client-protocol.workspace = true
 agent.workspace = true
@@ -115,6 +114,7 @@ feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
 fs.workspace = true
+flate2.workspace = true
 futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
