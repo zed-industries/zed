@@ -8114,7 +8114,7 @@ fn terminal_page() -> SettingsPage {
 }
 
 fn version_control_page() -> SettingsPage {
-    fn git_integration_section() -> [SettingsPageItem; 2] {
+    fn git_integration_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Git Integration"),
             SettingsPageItem::DynamicItem(DynamicItem {
@@ -8213,6 +8213,76 @@ fn version_control_page() -> SettingsPage {
                             metadata: None,
                         },
                     ],
+                ],
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Auto Fetch",
+                    description: "Automatically fetch from all remotes in the background.",
+                    field: Box::new(SettingField::<bool> {
+                        organization_override: None,
+                        json_path: Some("git.auto_fetch.enabled"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .auto_fetch
+                                .as_ref()?
+                                .enabled
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .auto_fetch
+                                .get_or_insert_default()
+                                .enabled = value;
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        *settings_content
+                            .git
+                            .as_ref()?
+                            .auto_fetch
+                            .as_ref()?
+                            .enabled
+                            .as_ref()? as usize,
+                    )
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        files: USER,
+                        title: "Auto Fetch Interval",
+                        description: "How often to fetch from all remotes, in seconds. (min: 15)",
+                        field: Box::new(SettingField::<u64> {
+                            organization_override: None,
+                            json_path: Some("git.auto_fetch.interval_secs"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .git
+                                    .as_ref()?
+                                    .auto_fetch
+                                    .as_ref()?
+                                    .interval_secs
+                                    .as_ref()
+                            },
+                            write: |settings_content, value, _| {
+                                settings_content
+                                    .git
+                                    .get_or_insert_default()
+                                    .auto_fetch
+                                    .get_or_insert_default()
+                                    .interval_secs = value;
+                            },
+                        }),
+                        metadata: None,
+                    }],
                 ],
             }),
         ]

@@ -503,6 +503,21 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: String,
+    /// Settings for automatically fetching from all remotes in the background.
+    pub auto_fetch: AutoFetchSettings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoFetchSettings {
+    /// Whether to automatically fetch from all remotes in the background.
+    ///
+    /// Default: false
+    pub enabled: bool,
+    /// How often to automatically fetch from all remotes, in seconds.
+    /// Only applies when `enabled` is true. (min: 15)
+    ///
+    /// Default: 60
+    pub interval_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -719,6 +734,13 @@ impl Settings for ProjectSettings {
                 .worktree_directory
                 .clone()
                 .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
+            auto_fetch: {
+                let auto_fetch = git.auto_fetch.unwrap_or_default();
+                AutoFetchSettings {
+                    enabled: auto_fetch.enabled.unwrap_or(false),
+                    interval_secs: auto_fetch.interval_secs.unwrap_or(60).max(15),
+                }
+            },
         };
         Self {
             context_servers: project

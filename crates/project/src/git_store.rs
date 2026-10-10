@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
-use async_lock::Semaphore;
+use async_lock::{Semaphore, SemaphoreGuardArc};
 use buffer_diff::{
     BufferDiff, DiffHunk, DiffHunkSecondaryStatus, DiffOperations, PendingHunk, PendingSense,
 };
@@ -40,10 +40,10 @@ use git::{
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitFileStatus, CommitOptions,
         CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions, FileHistoryChangedFileSets,
-        GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
-        LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
-        SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
-        is_binary_content,
+        GitCaller, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
+        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
+        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
+        delete_branch_flag, is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -709,6 +709,38 @@ pub struct Repository {
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
+    auto_fetch: AutoFetchState,
+    /// Held for the duration of a fetch so that at most one runs per repository.
+    /// Auto-fetch acquires it without blocking and skips its tick when a fetch is
+    /// already in flight; the manual fetch waits, so an explicit user action is
+    /// never dropped. Concurrent fetches would otherwise contend for the same
+    /// remote-tracking ref locks, and the loser fails with `cannot lock ref`.
+    fetch_lock: Arc<Semaphore>,
+}
+
+struct AutoFetchState {
+    enabled: bool,
+    interval_secs: u64,
+    task: Option<Task<()>>,
+    /// Cancels the fetch that is currently in flight, if any. The fetch task
+    /// itself is detached, so this is the only thing bounding its lifetime:
+    /// dropping it, including by dropping the repository, asks git to stop and
+    /// lets it remove its lockfiles first, whereas dropping the task would kill
+    /// git outright. User-initiated remote operations drop it to preempt
+    /// background work, so they wait only for that fetch to tear down rather than
+    /// for it to finish.
+    cancel: Option<oneshot::Sender<()>>,
+}
+
+impl Default for AutoFetchState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 60,
+            task: None,
+            cancel: None,
+        }
+    }
 }
 
 type RemoteAskPassDelegates = Arc<Mutex<HashMap<u64, RemoteAskPassDelegate>>>;
@@ -6620,6 +6652,19 @@ impl Repository {
             PathStyle::local(),
         );
 
+        cx.observe_global::<SettingsStore>(|this: &mut Self, cx| {
+            this.restart_auto_fetch_timer(cx);
+        })
+        .detach();
+
+        let weak = cx.weak_entity();
+        cx.defer(move |cx| {
+            weak.update(cx, |this, cx| {
+                this.restart_auto_fetch_timer(cx);
+            })
+            .ok();
+        });
+
         let mut repo = Repository {
             this: cx.weak_entity(),
             git_store,
@@ -6640,6 +6685,8 @@ impl Repository {
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
+            auto_fetch: AutoFetchState::default(),
+            fetch_lock: Arc::new(Semaphore::new(1)),
         };
         repo.respawn_local_worker(project_environment, fs, is_trusted, cx);
         cx.subscribe_self(Self::handle_subscribe_self).detach();
@@ -6692,6 +6739,8 @@ impl Repository {
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
+            auto_fetch: AutoFetchState::default(),
+            fetch_lock: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -8673,7 +8722,13 @@ impl Repository {
                         ..
                     }) => {
                         backend
-                            .commit(message, name_and_email, options, askpass, environment)
+                            .commit(
+                                message,
+                                name_and_email,
+                                options,
+                                GitCaller::User(askpass),
+                                environment,
+                            )
                             .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
@@ -8738,6 +8793,121 @@ impl Repository {
         Ok(())
     }
 
+    fn restart_auto_fetch_timer(&mut self, cx: &mut Context<Self>) {
+        let git_settings = &ProjectSettings::get_global(cx).git;
+        let enabled = git_settings.auto_fetch.enabled;
+        let interval_secs = git_settings.auto_fetch.interval_secs;
+
+        if self.auto_fetch.enabled == enabled && self.auto_fetch.interval_secs == interval_secs {
+            return;
+        }
+
+        self.auto_fetch.enabled = enabled;
+        self.auto_fetch.interval_secs = interval_secs;
+
+        // The in-flight fetch is detached from the timer, so replacing the timer
+        // below would leave it running. Stopping it here makes disabling
+        // auto-fetch take effect immediately.
+        self.auto_fetch.cancel = None;
+
+        if !enabled {
+            self.auto_fetch.task = None;
+            return;
+        }
+
+        let interval = Duration::from_secs(interval_secs);
+
+        self.auto_fetch.task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(interval).await;
+                // Re-checked every tick rather than once up front, because a
+                // repository can be trusted (or restricted) at any point in the
+                // session.
+                let updated = this.update(cx, |this, cx| {
+                    if !this.is_trusted() {
+                        return;
+                    }
+                    // Skipped rather than queued: a fetch, pull, or push is already
+                    // in flight, so waiting would only contend for the same ref locks
+                    // to learn what that operation is about to report anyway.
+                    let Some(permit) = this.fetch_lock.clone().try_acquire_arc() else {
+                        return;
+                    };
+                    this.auto_fetch(permit, cx);
+                });
+                if updated.is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// Runs outside the repository's serial job queue, unlike every other git
+    /// operation. A fetch is bounded by the network, not by local work, so
+    /// occupying the queue for its duration would stall status refreshes and
+    /// index writes (staging) behind it once per interval. Doing so is safe
+    /// specifically because auto-fetch mutates no `Repository` state: it only
+    /// downloads objects and updates remote-tracking refs, which git guards with
+    /// its own lockfiles, and the results reach the UI when the resulting git
+    /// directory change triggers a rescan.
+    ///
+    /// The manual `fetch` deliberately stays on the queue, since it also writes
+    /// snapshot state via `refresh_branch_list`.
+    fn auto_fetch(&mut self, permit: SemaphoreGuardArc, cx: &mut Context<Self>) {
+        let repository_state = self.repository_state.clone();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        self.auto_fetch.cancel = Some(cancel_tx);
+        cx.spawn(async move |_, cx| {
+            // Moved into the task so the permit is released once the fetch settles.
+            let _permit = permit;
+            // Reported here because the task is detached, with `cancel` rather
+            // than the task handle controlling when it stops.
+            let fetch = async {
+                let state = repository_state.await.map_err(|error| anyhow!(error))?;
+                // Callers gate on `Repository::is_trusted`, which only ever reports
+                // true for local repositories.
+                let RepositoryState::Local(LocalRepositoryState {
+                    backend,
+                    environment,
+                    ..
+                }) = state
+                else {
+                    anyhow::bail!("auto-fetch is only supported for local repositories");
+                };
+                backend
+                    .fetch(
+                        FetchOptions::All,
+                        GitCaller::background_cancelled_by(cancel_rx),
+                        environment,
+                        cx.clone(),
+                    )
+                    .await
+            };
+            if let Err(error) = fetch.await {
+                log::debug!("auto-fetch failed: {error:#}");
+            }
+        })
+        .detach();
+    }
+
+    /// Cancels any in-flight auto-fetch and returns the lock that a
+    /// user-initiated remote operation must hold while it runs.
+    ///
+    /// Remote operations update the same remote-tracking refs as a fetch, so
+    /// running alongside one fails with "cannot lock ref". The background fetch
+    /// is preempted rather than waited on: the user asked for this operation, and
+    /// a background fetch has nothing to report that it will not. Dropping the
+    /// sender asks git to terminate, so it releases the ref locks it holds instead
+    /// of leaving them behind.
+    ///
+    /// Waiting on the lock occupies the repository's serial job queue, which is
+    /// only acceptable because of that preemption: the wait is bounded by a
+    /// cancelled fetch shutting down rather than by the network.
+    fn preempt_auto_fetch(&mut self) -> Arc<Semaphore> {
+        self.auto_fetch.cancel = None;
+        self.fetch_lock.clone()
+    }
+
     pub fn unshallow_state(&self) -> UnshallowState {
         self.unshallow_state
     }
@@ -8791,10 +8961,12 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
+        let fetch_lock = self.preempt_auto_fetch();
         self.send_job(
             "fetch",
             Some("git fetch".into()),
             move |git_repo, mut cx| async move {
+                let _permit = fetch_lock.acquire_arc().await;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,
@@ -8802,7 +8974,12 @@ impl Repository {
                         ..
                     }) => {
                         let result = backend
-                            .fetch(fetch_options, askpass, environment, cx.clone())
+                            .fetch(
+                                fetch_options,
+                                GitCaller::User(askpass),
+                                environment,
+                                cx.clone(),
+                            )
                             .await;
                         if result.is_ok() {
                             Self::refresh_branch_list(&this, backend, updates_tx, &mut cx).await?;
@@ -8863,10 +9040,12 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
+        let fetch_lock = self.preempt_auto_fetch();
         self.send_job(
             "push",
             Some(format!("git push {} {} {}:{}", args, remote, branch, remote_branch).into()),
             move |git_repo, mut cx| async move {
+                let _permit = fetch_lock.acquire_arc().await;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,
@@ -8879,7 +9058,7 @@ impl Repository {
                                 remote_branch.to_string(),
                                 remote.to_string(),
                                 options,
-                                askpass,
+                                GitCaller::User(askpass),
                                 environment.clone(),
                                 cx.clone(),
                             )
@@ -8942,10 +9121,12 @@ impl Repository {
             status.push_str(&format!(" {}", b));
         }
 
+        let fetch_lock = self.preempt_auto_fetch();
         self.send_job(
             "pull",
             Some(status.into()),
             move |git_repo, cx| async move {
+                let _permit = fetch_lock.acquire_arc().await;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,
@@ -8957,7 +9138,7 @@ impl Repository {
                                 branch.as_ref().map(|b| b.to_string()),
                                 remote.to_string(),
                                 rebase,
-                                askpass,
+                                GitCaller::User(askpass),
                                 environment.clone(),
                                 cx,
                             )
