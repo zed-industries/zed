@@ -1,11 +1,18 @@
 use crate::Bounds;
-use std::{fmt::Debug, ops::Add};
+use std::{
+    fmt::Debug,
+    ops::Add,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 // Glyphs and decorations are usually a few dozen scaled pixels across. A 64-pixel
 // cell keeps their duplication small without making every text line one long list.
 const CELL_SIZE: f64 = 64.0;
 const MAX_CELLS: usize = 256;
+const MAX_CELLS_PER_BOUNDS: usize = 16;
 const NONE: usize = usize::MAX;
+const REPLAY_COMPARISONS: usize = 32_768;
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// Assigns one plus the greatest order of previously inserted intersecting bounds.
 #[derive(Debug)]
@@ -15,8 +22,13 @@ pub(crate) struct BoundsTree<U: Clone + Debug + Default + PartialEq> {
     cells: Vec<Cell>,
     links: Vec<Link>,
     bounds: Vec<(Bounds<U>, u32)>,
-    exceptional: Vec<usize>,
+    exceptional: Vec<Exceptional>,
     maximum: Option<usize>,
+    generation: u64,
+    replay_generation: u64,
+    compared: usize,
+    changed: Vec<Bounds<U>>,
+    comparisons_left: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -38,6 +50,12 @@ impl Cell {
 struct Link {
     bounds: usize,
     next: usize,
+    maximum: u32,
+}
+
+#[derive(Debug)]
+struct Exceptional {
+    bounds: usize,
     maximum: u32,
 }
 
@@ -79,6 +97,61 @@ where
         self.bounds.clear();
         self.exceptional.clear();
         self.maximum = None;
+        self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        self.replay_generation = 0;
+        self.compared = 0;
+        self.changed.clear();
+        self.comparisons_left = REPLAY_COMPARISONS;
+    }
+
+    pub fn len(&self) -> usize {
+        self.bounds.len()
+    }
+
+    /// An unchanged bounds has its old order if no difference in the preceding
+    /// insertion stream intersects it. Both sides of each difference count:
+    /// removing an overlap can lower the answer just as adding one can raise it.
+    /// Prefix entries include their orders, so propagation through earlier reused
+    /// bounds is covered too. Layers enter this stream once, not per primitive;
+    /// nothing here assumes that primitives sharing a layer order are disjoint.
+    pub fn insert_replayed(&mut self, bounds: Bounds<U>, previous: &Self, index: usize) -> u32 {
+        if self.replay_generation != previous.generation {
+            self.replay_generation = previous.generation;
+            self.compared = 0;
+            self.changed.clear();
+        }
+        if index == self.bounds.len()
+            && self.comparisons_left > 0
+            && let Some((old_bounds, old_order)) = previous.bounds.get(index)
+            && *old_bounds == bounds
+        {
+            for position in self.compared..index {
+                let old = &previous.bounds[position];
+                let current = &self.bounds[position];
+                if old != current {
+                    self.changed.push(old.0.clone());
+                    self.changed.push(current.0.clone());
+                }
+            }
+            self.compared = index;
+            // Bound the cumulative cost of checking differences. Once exhausted,
+            // the grid answers all remaining inserts without more replay work.
+            if let Some(remaining) = self.comparisons_left.checked_sub(self.changed.len()) {
+                self.comparisons_left = remaining;
+                if !self
+                    .changed
+                    .iter()
+                    .any(|changed| bounds.intersects(changed))
+                {
+                    let order = *old_order;
+                    self.register(bounds, order);
+                    return order;
+                }
+            } else {
+                self.comparisons_left = 0;
+            }
+        }
+        self.insert(bounds)
     }
 
     fn extent(bounds: &Bounds<U>) -> Option<Extent> {
@@ -138,8 +211,23 @@ where
 
     fn add_to_cells(&mut self, index: usize) {
         let (bounds, order) = &self.bounds[index];
-        let Some(extent) = Self::extent(bounds) else {
-            self.exceptional.push(index);
+        let extent = Self::extent(bounds);
+        let extent = extent.filter(|extent| {
+            let columns =
+                cell_at(extent.right, self.columns) - cell_at(extent.left, self.columns) + 1;
+            let rows = cell_at(extent.bottom, self.rows) - cell_at(extent.top, self.rows) + 1;
+            columns * rows <= MAX_CELLS_PER_BOUNDS
+        });
+        let Some(extent) = extent else {
+            // Large overlays would duplicate their boundary lists across the grid.
+            // Keep them once, with prefix maxima so reverse searches can stop early.
+            self.exceptional.push(Exceptional {
+                bounds: index,
+                maximum: self
+                    .exceptional
+                    .last()
+                    .map_or(*order, |entry| entry.maximum.max(*order)),
+            });
             return;
         };
         for row in cell_at(extent.top, self.rows)..=cell_at(extent.bottom, self.rows) {
@@ -183,14 +271,16 @@ where
                 .max()
                 .unwrap_or(0);
         };
-        let mut maximum = self
-            .exceptional
-            .iter()
-            .map(|&index| &self.bounds[index])
-            .filter(|(bounds, _)| query.intersects(bounds))
-            .map(|(_, order)| *order)
-            .max()
-            .unwrap_or(0);
+        let mut maximum = 0;
+        for entry in self.exceptional.iter().rev() {
+            if entry.maximum <= maximum {
+                break;
+            }
+            let (bounds, order) = &self.bounds[entry.bounds];
+            if *order > maximum && query.intersects(bounds) {
+                maximum = *order;
+            }
+        }
         for row in cell_at(extent.top, self.rows)..=cell_at(extent.bottom, self.rows) {
             for column in cell_at(extent.left, self.columns)..=cell_at(extent.right, self.columns) {
                 let cell = &self.cells[row * self.columns + column];
@@ -232,6 +322,11 @@ impl<U: Clone + Debug + Default + PartialEq> Default for BoundsTree<U> {
             bounds: Vec::new(),
             exceptional: Vec::new(),
             maximum: None,
+            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
+            replay_generation: 0,
+            compared: 0,
+            changed: Vec::new(),
+            comparisons_left: REPLAY_COMPARISONS,
         }
     }
 }
@@ -554,5 +649,69 @@ mod tests {
                 .collect();
             assert_orders(&mut BoundsTree::default(), &bounds, &format!("seed={seed}"));
         }
+    }
+
+    #[test]
+    fn replay_matches_fresh_orders_across_changed_prefixes() {
+        for seed in 0..32 {
+            let mut random = rand::rngs::StdRng::seed_from_u64(seed);
+            let mut frame: Vec<_> = (0..256)
+                .map(|_| {
+                    rectangle(
+                        random.random_range(-128.0..512.0),
+                        random.random_range(-128.0..512.0),
+                        random.random_range(-8.0..256.0),
+                        random.random_range(-8.0..256.0),
+                    )
+                })
+                .collect();
+            let mut previous = BoundsTree::default();
+            for bounds in &frame {
+                previous.insert(*bounds);
+            }
+            for iteration in 0..8 {
+                let mut replayed = BoundsTree::default();
+                let mut fresh = BoundsTree::default();
+                if iteration == 4 {
+                    replayed.comparisons_left = 1;
+                }
+                for (index, bounds) in frame.iter_mut().enumerate() {
+                    let retained = random.random_range(0..8) != 0;
+                    if !retained {
+                        bounds.origin.x += random.random_range(-64.0..64.0);
+                    }
+                    let expected = fresh.insert(*bounds);
+                    let actual = if retained {
+                        replayed.insert_replayed(*bounds, &previous, index)
+                    } else {
+                        replayed.insert(*bounds)
+                    };
+                    assert_eq!(
+                        actual, expected,
+                        "seed={seed} frame={iteration} index={index}"
+                    );
+                }
+                previous = replayed;
+            }
+        }
+    }
+
+    #[test]
+    fn replay_handles_removal_addition_and_a_different_source() {
+        let bounds = rectangle(0.0, 0.0, 128.0, 128.0);
+        let mut previous = BoundsTree::default();
+        let mut other = BoundsTree::default();
+        for _ in 0..8 {
+            previous.insert(bounds);
+            other.insert(bounds);
+        }
+        let mut target = BoundsTree::default();
+        assert_eq!(target.insert_replayed(bounds, &previous, 0), 1);
+        assert_eq!(target.insert_replayed(bounds, &other, 1), 2);
+        assert_eq!(target.insert_replayed(bounds, &previous, 3), 3);
+        assert_eq!(target.insert_replayed(bounds, &previous, 4), 4);
+        target.insert(bounds);
+        assert_eq!(target.insert_replayed(bounds, &previous, 5), 6);
+        assert!(target.changed.is_empty());
     }
 }
