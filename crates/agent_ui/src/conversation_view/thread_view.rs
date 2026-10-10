@@ -1306,6 +1306,17 @@ impl ThreadView {
         !self.message_queue.is_empty()
     }
 
+    /// Re-syncs a single entry, materializing its tool-call content views when
+    /// the card is expanded. Called after toggling a tool call's expansion so
+    /// that cards restored in a collapsed state build their diff editors and
+    /// terminal views lazily instead of eagerly on thread load.
+    fn resync_entry(&mut self, entry_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let thread = self.thread.clone();
+        self.entry_view_state.update(cx, |state, cx| {
+            state.sync_entry(entry_ix, &thread, window, cx);
+        });
+    }
+
     // events
 
     pub fn handle_entry_view_event(
@@ -8584,6 +8595,7 @@ impl ThreadView {
                 this.entry_view_state.update(cx, |state, _cx| {
                     state.toggle_tool_call_expansion(&id);
                 });
+                this.resync_entry(entry_ix, window, cx);
                 this.refresh_thread_search(window, cx);
                 cx.notify();
             }
@@ -9180,6 +9192,7 @@ impl ThreadView {
                                                                             );
                                                                     },
                                                                 );
+                                                                this.resync_entry(entry_ix, window, cx);
                                                                 this.refresh_thread_search(window, cx);
                                                                 cx.notify();
                                                             }
@@ -11585,6 +11598,7 @@ impl ThreadView {
                                                     state.toggle_tool_call_expansion(&tool_call_id);
                                                     state.is_tool_call_expanded(&tool_call_id)
                                                 });
+                                            this.resync_entry(entry_ix, window, cx);
                                             this.refresh_thread_search(window, cx);
                                             telemetry::event!("Subagent Toggled", expanded);
                                             cx.notify();

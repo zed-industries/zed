@@ -11,7 +11,7 @@ use language::{
 };
 use markdown::Markdown;
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
-use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use std::{cell::OnceCell, cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
 #[derive(Debug)]
@@ -284,68 +284,39 @@ impl Diff {
         old_text: Option<String>,
         new_text: String,
         language_registry: Arc<LanguageRegistry>,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Self {
-        let multibuffer = cx.new(|_cx| MultiBuffer::without_headers(Capability::ReadOnly));
-        let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
-        let base_text_exists = old_text.is_some();
-        let base_text = old_text.clone().unwrap_or(String::new()).into();
-        let task = cx.spawn({
-            let multibuffer = multibuffer.clone();
-            let path = path.clone();
-            let buffer = new_buffer.clone();
-            async move |_, cx| {
-                let language = language_registry
-                    .load_language_for_file_path(Path::new(&path))
-                    .await
-                    .log_err();
-
-                buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
-                buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
-
-                let diff = build_buffer_diff(
-                    old_text.unwrap_or("".into()).into(),
-                    base_text_exists,
-                    &buffer,
-                    cx,
-                )
-                .await?;
-
-                multibuffer.update(cx, |multibuffer, cx| {
-                    let hunk_ranges = {
-                        let buffer = buffer.read(cx);
-                        diff.read(cx)
-                            .snapshot(cx)
-                            .hunks_intersecting_range(
-                                Anchor::min_for_buffer(buffer.remote_id())
-                                    ..Anchor::max_for_buffer(buffer.remote_id()),
-                                buffer,
-                            )
-                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
-                            .collect::<Vec<_>>()
-                    };
-
-                    multibuffer.set_excerpts_for_path(
-                        PathKey::for_buffer(&buffer, cx),
-                        buffer.clone(),
-                        hunk_ranges,
-                        excerpt_context_lines(cx),
-                        cx,
-                    );
-                    multibuffer.add_diff(diff, cx);
-                });
-
-                anyhow::Ok(())
-            }
-        });
-
+        // Building the diff body (buffer, multibuffer, tree-sitter parse) is
+        // deferred to `resolve`, which the UI calls once the card is first
+        // shown. Restoring a thread therefore never builds a diff for an edit
+        // the user has not opened, which is the dominant cost of a long thread.
         Self::Finalized(FinalizedDiff {
-            multibuffer,
             path,
-            base_text,
-            new_buffer,
-            _update_diff: task,
+            base_text: old_text.clone().unwrap_or_default().into(),
+            base_text_exists: old_text.is_some(),
+            new_text,
+            language_registry: Some(language_registry),
+            resolved: OnceCell::new(),
         })
+    }
+
+    /// Builds the diff's buffer, multibuffer and syntax tree if not already
+    /// built. Cheap and idempotent. Call this before `multibuffer`, `buffer` or
+    /// `has_revealed_range` on a finalized diff.
+    pub(crate) fn resolve(&self, cx: &mut Context<Self>) {
+        let Self::Finalized(finalized) = self else {
+            return;
+        };
+        finalized.resolved.get_or_init(|| {
+            build_finalized(
+                finalized.path.clone(),
+                finalized.base_text_exists,
+                finalized.base_text.clone(),
+                finalized.new_text.clone(),
+                finalized.language_registry.clone(),
+                cx,
+            )
+        });
     }
 
     pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
@@ -404,7 +375,13 @@ impl Diff {
     pub fn buffer(&self) -> &Entity<Buffer> {
         match self {
             Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer,
-            Self::Finalized(FinalizedDiff { new_buffer, .. }) => new_buffer,
+            Self::Finalized(finalized) => {
+                &finalized
+                    .resolved
+                    .get()
+                    .expect("finalized diff accessed before resolve")
+                    .new_buffer
+            }
         }
     }
 
@@ -421,26 +398,48 @@ impl Diff {
     pub fn multibuffer(&self) -> &Entity<MultiBuffer> {
         match self {
             Self::Pending(PendingDiff { multibuffer, .. }) => multibuffer,
-            Self::Finalized(FinalizedDiff { multibuffer, .. }) => multibuffer,
+            Self::Finalized(finalized) => {
+                &finalized
+                    .resolved
+                    .get()
+                    .expect("finalized diff accessed before resolve")
+                    .multibuffer
+            }
         }
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
-        let buffer_text = self
-            .multibuffer()
-            .read(cx)
-            .all_buffers()
-            .iter()
-            .map(|buffer| buffer.read(cx).text())
-            .join("\n");
-        let path = match self {
-            Diff::Pending(PendingDiff {
-                new_buffer: buffer, ..
-            }) => buffer
-                .read(cx)
-                .file()
-                .map(|file| file.path().display(file.path_style(cx))),
-            Diff::Finalized(FinalizedDiff { path, .. }) => Some(path.as_str().into()),
+        let (path, buffer_text) = match self {
+            Self::Pending(PendingDiff { new_buffer, .. }) => {
+                let buffer_text = self
+                    .multibuffer()
+                    .read(cx)
+                    .all_buffers()
+                    .iter()
+                    .map(|buffer| buffer.read(cx).text())
+                    .join("\n");
+                let path = new_buffer
+                    .read(cx)
+                    .file()
+                    .map(|file| file.path().display(file.path_style(cx)));
+                (path, buffer_text)
+            }
+            Self::Finalized(finalized) => match finalized.resolved.get() {
+                Some(resolved) => {
+                    let buffer_text = resolved
+                        .multibuffer
+                        .read(cx)
+                        .all_buffers()
+                        .iter()
+                        .map(|buffer| buffer.read(cx).text())
+                        .join("\n");
+                    (Some(finalized.path.as_str().into()), buffer_text)
+                }
+                None => (
+                    Some(finalized.path.as_str().into()),
+                    finalized.new_text.clone(),
+                ),
+            },
         };
         format!(
             "Diff: {}\n```\n{}\n```\n",
@@ -450,12 +449,18 @@ impl Diff {
     }
 
     pub fn has_revealed_range(&self, cx: &App) -> bool {
-        !self.multibuffer().read(cx).is_empty()
+        match self {
+            Self::Pending(PendingDiff { .. }) => !self.multibuffer().read(cx).is_empty(),
+            Self::Finalized(finalized) => finalized
+                .resolved
+                .get()
+                .is_some_and(|resolved| !resolved.multibuffer.read(cx).is_empty()),
+        }
     }
 
     pub fn needs_update(&self, old_text: &str, new_text: &str, cx: &App) -> bool {
         match self {
-            Diff::Pending(PendingDiff {
+            Self::Pending(PendingDiff {
                 base_text,
                 new_buffer,
                 ..
@@ -463,13 +468,17 @@ impl Diff {
                 base_text.as_ref() != old_text
                     || !new_buffer.read(cx).as_rope().chunks().equals_str(new_text)
             }
-            Diff::Finalized(FinalizedDiff {
-                base_text,
-                new_buffer,
-                ..
-            }) => {
-                base_text.as_ref() != old_text
-                    || !new_buffer.read(cx).as_rope().chunks().equals_str(new_text)
+            Self::Finalized(finalized) => {
+                let Some(resolved) = finalized.resolved.get() else {
+                    return true;
+                };
+                finalized.base_text.as_ref() != old_text
+                    || !resolved
+                        .new_buffer
+                        .read(cx)
+                        .as_rope()
+                        .chunks()
+                        .equals_str(new_text)
             }
         }
     }
@@ -573,12 +582,20 @@ impl PendingDiff {
             })
         });
 
+        let new_text = self.new_buffer.read(cx).text();
+        let language_registry = self.new_buffer.read(cx).language_registry();
+
         FinalizedDiff {
             path,
             base_text: self.base_text.clone(),
-            multibuffer: self.multibuffer.clone(),
-            new_buffer: self.new_buffer.clone(),
-            _update_diff: update_diff,
+            base_text_exists: true,
+            new_text,
+            language_registry,
+            resolved: OnceCell::from(ResolvedFinalized {
+                new_buffer: self.new_buffer.clone(),
+                multibuffer: self.multibuffer.clone(),
+                _update_diff: update_diff,
+            }),
         }
     }
 
@@ -640,9 +657,79 @@ impl PendingDiff {
 pub struct FinalizedDiff {
     path: String,
     base_text: Arc<str>,
+    base_text_exists: bool,
+    new_text: String,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    resolved: OnceCell<ResolvedFinalized>,
+}
+
+struct ResolvedFinalized {
     new_buffer: Entity<Buffer>,
     multibuffer: Entity<MultiBuffer>,
     _update_diff: Task<Result<()>>,
+}
+
+/// Builds a finalized diff's buffer, multibuffer and syntax tree. Split out of
+/// `Diff::finalized` so it only runs when the diff is first shown.
+fn build_finalized(
+    path: String,
+    base_text_exists: bool,
+    base_text: Arc<str>,
+    new_text: String,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    cx: &mut Context<Diff>,
+) -> ResolvedFinalized {
+    let multibuffer = cx.new(|_cx| MultiBuffer::without_headers(Capability::ReadOnly));
+    let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
+    let task = cx.spawn({
+        let multibuffer = multibuffer.clone();
+        let path = path.clone();
+        let buffer = new_buffer.clone();
+        async move |_, cx| {
+            if let Some(language_registry) = language_registry {
+                let language = language_registry
+                    .load_language_for_file_path(Path::new(&path))
+                    .await
+                    .log_err();
+                buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
+                buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
+            }
+
+            let diff = build_buffer_diff(base_text, base_text_exists, &buffer, cx).await?;
+
+            multibuffer.update(cx, |multibuffer, cx| {
+                let hunk_ranges = {
+                    let buffer = buffer.read(cx);
+                    diff.read(cx)
+                        .snapshot(cx)
+                        .hunks_intersecting_range(
+                            Anchor::min_for_buffer(buffer.remote_id())
+                                ..Anchor::max_for_buffer(buffer.remote_id()),
+                            buffer,
+                        )
+                        .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
+                        .collect::<Vec<_>>()
+                };
+
+                multibuffer.set_excerpts_for_path(
+                    PathKey::for_buffer(&buffer, cx),
+                    buffer.clone(),
+                    hunk_ranges,
+                    excerpt_context_lines(cx),
+                    cx,
+                );
+                multibuffer.add_diff(diff, cx);
+            });
+
+            anyhow::Ok(())
+        }
+    });
+
+    ResolvedFinalized {
+        new_buffer,
+        multibuffer,
+        _update_diff: task,
+    }
 }
 
 async fn build_buffer_diff(
