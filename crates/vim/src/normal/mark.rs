@@ -221,6 +221,7 @@ impl Vim {
                     Motion::Jump {
                         anchor: *anchor,
                         line,
+                        inclusive: false,
                     },
                     window,
                     cx,
@@ -259,7 +260,15 @@ impl Vim {
             });
 
             if should_jump && let Some(anchor) = anchor {
-                self.motion(Motion::Jump { anchor, line }, window, cx)
+                self.motion(
+                    Motion::Jump {
+                        anchor,
+                        line,
+                        inclusive: false,
+                    },
+                    window,
+                    cx,
+                )
             }
         }
     }
