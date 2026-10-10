@@ -1,13 +1,14 @@
 use crate::{
-    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, cursor_excerpt,
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, cursor_excerpt, deepseek_fim,
     open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
     prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, AppContext as _, Entity, Task};
+use gpui::{App, AppContext as _, Entity, Task, http_client};
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, ToOffset, ToPoint as _,
-    ZetaVersion, language_settings::all_language_settings,
+    ZetaVersion,
+    language_settings::{OpenAiCompatibleEditPredictionSettings, all_language_settings},
 };
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{Zeta2PromptInput, compute_editable_and_context_ranges};
@@ -97,20 +98,12 @@ pub fn request_prediction(
         let cursor_in_editable = cursor_offset_in_excerpt.saturating_sub(editable_range.start);
         let prefix = editable_text[..cursor_in_editable].to_string();
         let suffix = editable_text[cursor_in_editable..].to_string();
-        let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
-        let stop_tokens = fim_stop_tokens(prompt_format)
-            .iter()
-            .map(|token| token.to_string())
-            .collect();
-
-        let max_tokens = settings.max_output_tokens;
-
-        let (response_text, request_id) = open_ai_compatible::send_custom_server_request(
+        let (response_text, request_id) = send_fim_request(
             provider,
+            prompt_format,
             &settings,
-            prompt,
-            max_tokens,
-            stop_tokens,
+            &prefix,
+            &suffix,
             api_key,
             &http_client,
         )
@@ -168,6 +161,51 @@ pub fn request_prediction(
     })
 }
 
+pub(crate) async fn send_fim_request(
+    provider: settings::EditPredictionProvider,
+    prompt_format: EditPredictionPromptFormat,
+    settings: &OpenAiCompatibleEditPredictionSettings,
+    prefix: &str,
+    suffix: &str,
+    api_key: Option<Arc<str>>,
+    http_client: &Arc<dyn http_client::HttpClient>,
+) -> Result<(String, String)> {
+    if provider == settings::EditPredictionProvider::OpenAiCompatibleApi {
+        // Official DeepSeek APIs use a native suffix instead of the legacy Coder markers.
+        if let Some(response) =
+            deepseek_fim::try_request(settings, prefix, suffix, api_key.clone(), http_client)
+                .await?
+        {
+            return Ok(response);
+        }
+    }
+
+    open_ai_compatible::send_custom_server_request(
+        provider,
+        settings,
+        format_fim_prompt(prompt_format, prefix, suffix),
+        settings.max_output_tokens,
+        fim_stop_tokens(prompt_format)
+            .iter()
+            .map(|token| token.to_string())
+            .collect(),
+        api_key,
+        http_client,
+    )
+    .await
+}
+
+pub fn infer_prompt_format_for_api(
+    model: &str,
+    api_url: &str,
+) -> Option<EditPredictionPromptFormat> {
+    if deepseek_fim::is_supported_api_url(api_url) {
+        Some(EditPredictionPromptFormat::DeepseekCoder)
+    } else {
+        infer_prompt_format(model)
+    }
+}
+
 /// Infers the FIM prompt format from an Ollama/OpenAI-compatible model name.
 /// Returns `None` if the model isn't a known FIM-capable model.
 pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
@@ -181,7 +219,9 @@ pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
         }
         "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
         "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
-        "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
+        "deepseek-coder" | "deepseek-coder-v2" | "deepseek-flash" => {
+            EditPredictionPromptFormat::DeepseekCoder
+        }
         "qwen2.5-coder" | "qwen-coder" | "qwen" => EditPredictionPromptFormat::Qwen,
         "codegemma" => EditPredictionPromptFormat::CodeGemma,
         "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
@@ -290,7 +330,6 @@ fn clean_fim_completion(response: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn infer_prompt_format_matches_known_model_families() {
         assert_eq!(
@@ -303,6 +342,10 @@ mod tests {
         );
         assert_eq!(
             infer_prompt_format("deepseek-coder-v2:16b"),
+            Some(EditPredictionPromptFormat::DeepseekCoder)
+        );
+        assert_eq!(
+            infer_prompt_format("deepseek-flash"),
             Some(EditPredictionPromptFormat::DeepseekCoder)
         );
         assert_eq!(
