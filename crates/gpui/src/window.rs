@@ -9696,6 +9696,60 @@ mod inspector_tests {
         }
     }
 
+    #[gpui::test]
+    fn cached_view_inherits_opacity(cx: &mut TestAppContext) {
+        struct Child {
+            renders: usize,
+        }
+
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders += 1;
+                div().size_full().bg(crate::rgb(0xff0000))
+            }
+        }
+
+        struct Root {
+            opacity: f32,
+            child: Entity<Child>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().opacity(self.opacity).child(
+                    self.child
+                        .clone()
+                        .cached(StyleRefinement::default().size(px(100.))),
+                )
+            }
+        }
+
+        let window = cx.add_window(|_, cx| Root {
+            opacity: 1.,
+            child: cx.new(|_| Child { renders: 0 }),
+        });
+        for (opacity, expected_renders) in [(1., 1), (1., 1), (0.5, 2), (0.5, 2), (1., 3)] {
+            window
+                .update(cx, |root, _, cx| {
+                    root.opacity = opacity;
+                    cx.notify();
+                })
+                .expect("update wrapper opacity");
+            cx.update_window(window.into(), |root, window, cx| {
+                let root = root.downcast::<Root>().expect("test root");
+                window.draw(cx).clear(cx);
+                let quads = &window.rendered_frame.scene.quads;
+                assert_eq!(quads.len(), 1);
+                assert_eq!(
+                    quads.first().expect("child quad").background.solid.a,
+                    opacity
+                );
+                assert_eq!(root.read(cx).child.read(cx).renders, expected_renders);
+            })
+            .expect("draw cached child");
+        }
+    }
+
     struct InspectorTestRoot {
         child: Entity<InspectorTestView>,
     }
