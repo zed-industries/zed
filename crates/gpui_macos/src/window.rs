@@ -106,6 +106,10 @@ const NSPopUpWindowLevel: NSInteger = 101;
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
+#[allow(non_upper_case_globals)]
+const NSWindowTabbingModeAutomatic: NSInteger = 0;
+#[allow(non_upper_case_globals)]
+const NSWindowTabbingModeDisallowed: NSInteger = 2;
 // https://developer.apple.com/documentation/appkit/nsdragoperation
 type NSDragOperation = NSUInteger;
 #[allow(non_upper_case_globals)]
@@ -985,10 +989,12 @@ impl MacWindow {
             let pool = NSAutoreleasePool::new(nil);
 
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
+            // Only enable tabbing here. Disabling it is global, so a later window
+            // opened without an identifier (prompts, notifications) would turn tabbing
+            // off for the whole app and Merge All Windows would no-op. The off state
+            // is applied once at startup, and again via `set_tabbing_identifier(None)`.
             if allows_automatic_window_tabbing {
                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
-            } else {
-                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
             }
 
             let mut style_mask;
@@ -1206,6 +1212,16 @@ impl MacWindow {
             // SAFETY: This is the live GPUIView (an NSView subclass) added to the
             // content view above, and window creation runs on the main thread.
             let tracking_view = &*native_view.cast::<Objc2NSView>();
+
+            if tabbing_identifier.is_none() {
+                // Automatic tabbing stays on for the app once any window opts in, and
+                // a nil identifier falls back to a shared class-based one. Utility windows
+                // without an identifier must remain separate from document windows.
+                let _: () = msg_send![
+                    native_window,
+                    setTabbingMode: NSWindowTabbingModeDisallowed
+                ];
+            }
 
             match kind {
                 WindowKind::Normal | WindowKind::Floating => {
@@ -1507,8 +1523,10 @@ impl PlatformWindow for MacWindow {
             if let Some(tabbing_identifier) = tabbing_identifier {
                 let tabbing_id = ns_string(tabbing_identifier.as_str());
                 let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
+                let _: () = msg_send![native_window, setTabbingMode: NSWindowTabbingModeAutomatic];
             } else {
                 let _: () = msg_send![native_window, setTabbingIdentifier:nil];
+                let _: () = msg_send![native_window, setTabbingMode: NSWindowTabbingModeDisallowed];
             }
         }
     }

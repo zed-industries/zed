@@ -503,10 +503,17 @@ impl SystemWindowTab {
 }
 
 /// A controller for managing window tabs.
-#[derive(Default)]
 pub struct SystemWindowTabController {
+    enabled: bool,
     visible: Option<bool>,
+    user_visible: Option<bool>,
     tab_groups: FxHashMap<usize, Vec<SystemWindowTab>>,
+}
+
+impl Default for SystemWindowTabController {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Global for SystemWindowTabController {}
@@ -515,7 +522,9 @@ impl SystemWindowTabController {
     /// Create a new instance of the window tab controller.
     pub fn new() -> Self {
         Self {
+            enabled: true,
             visible: None,
+            user_visible: None,
             tab_groups: FxHashMap::default(),
         }
     }
@@ -591,6 +600,25 @@ impl SystemWindowTabController {
             .find(|tabs| tabs.iter().any(|tab| tab.id == id))
     }
 
+    /// Returns whether system window tabs are enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Enable or disable system window tabs.
+    pub fn set_enabled(cx: &mut App, enabled: bool) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        controller.enabled = enabled;
+        if !enabled {
+            // Disallowing native tabbing does not detach existing tabs, so keep their
+            // controls available until those groups are closed or split apart.
+            controller.tab_groups.retain(|_, tabs| tabs.len() > 1);
+            if controller.tab_groups.is_empty() {
+                controller.visible = Some(false);
+            }
+        }
+    }
+
     /// Initialize the visibility of the system window tab controller.
     pub fn init_visible(cx: &mut App, visible: bool) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
@@ -608,10 +636,26 @@ impl SystemWindowTabController {
     pub fn set_visible(cx: &mut App, visible: bool) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
         controller.visible = Some(visible);
+        controller.user_visible = Some(visible);
+    }
+
+    /// Show the custom tab bar when a native tab group is detected, unless the user
+    /// explicitly hid it.
+    pub fn show_for_tab_group(cx: &mut App) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        if controller.user_visible != Some(false) {
+            controller.visible = Some(true);
+        }
     }
 
     /// Update the last active of a window.
     pub fn update_last_active(cx: &mut App, id: WindowId) {
+        // `global_mut` notifies every observer of the controller, so avoid it on each
+        // window activation when the window is not tabbed at all.
+        if cx.global::<SystemWindowTabController>().tabs(id).is_none() {
+            return;
+        }
+
         let mut controller = cx.global_mut::<SystemWindowTabController>();
         for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
@@ -688,9 +732,62 @@ impl SystemWindowTabController {
                 tabs.push(tab);
             }
         } else {
-            let new_group_id = controller.tab_groups.len();
+            // Not `len()`: after a group is removed, `len()` can equal a live key.
+            let new_group_id = controller.tab_groups.keys().max().map_or(0, |key| key + 1);
             controller.tab_groups.insert(new_group_id, tabs);
         }
+    }
+
+    /// Replace any groups that contain these windows with a single group.
+    ///
+    /// `add_tab` matches an existing group by "every tab except this window", so
+    /// calling it once per window with the full merged list creates duplicate
+    /// groups. `tabs()` then returns whichever group the map yields first, which
+    /// may still be a single window.
+    ///
+    /// Returns whether the groups changed. Nothing is updated, and observers are not
+    /// notified, when these windows already form one group.
+    pub fn sync_tabs(cx: &mut App, mut tabs: Vec<SystemWindowTab>) -> bool {
+        if tabs.is_empty() {
+            return false;
+        }
+
+        let ids: FxHashSet<_> = tabs.iter().map(|tab| tab.id).collect();
+        let controller = cx.global::<SystemWindowTabController>();
+        let groups_containing_tabs = controller
+            .tab_groups
+            .values()
+            .filter(|group| group.iter().any(|tab| ids.contains(&tab.id)))
+            .collect::<Vec<_>>();
+        let already_grouped = groups_containing_tabs.len() == 1
+            && groups_containing_tabs[0].len() == ids.len()
+            && groups_containing_tabs[0]
+                .iter()
+                .all(|tab| ids.contains(&tab.id));
+        if already_grouped {
+            return false;
+        }
+
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        // Tabs from the platform are freshly created, so keep the known activation
+        // times; tab group navigation picks the most recently active tab.
+        for tab in &mut tabs {
+            if let Some(existing) = controller
+                .tab_groups
+                .values()
+                .flatten()
+                .find(|existing| existing.id == tab.id)
+            {
+                tab.last_active_at = existing.last_active_at;
+            }
+        }
+        controller.tab_groups.retain(|_, group| {
+            group.retain(|tab| !ids.contains(&tab.id));
+            !group.is_empty()
+        });
+        let new_group_id = controller.tab_groups.keys().max().map_or(0, |key| key + 1);
+        controller.tab_groups.insert(new_group_id, tabs);
+        true
     }
 
     /// Remove a tab from a tab group.
@@ -1711,6 +1808,15 @@ impl App {
     /// the system. On other platforms this is a no-op.
     pub fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {
         self.platform.set_window_appearance(appearance);
+    }
+
+    /// Sets whether macOS may automatically place new windows into tabs.
+    ///
+    /// Process-global, and a no-op on other platforms. Window creation only
+    /// enables this, so call it at startup when system window tabs are disabled
+    /// to override the system "Prefer tabs" preference.
+    pub fn set_allows_automatic_window_tabbing(&self, allows: bool) {
+        self.platform.set_allows_automatic_window_tabbing(allows);
     }
 
     /// Returns the window button layout configuration when supported.
