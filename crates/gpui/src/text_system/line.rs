@@ -1113,6 +1113,59 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_wrapped_text_decoration_runs(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let text_system = crate::WindowTextSystem::new(cx.text_system().clone());
+            let line_text = "word word ".repeat(6);
+            let text = format!("{line_text}\n{line_text}\n");
+            let runs: Vec<TextRun> = (0..12)
+                .filter(|index| *index != 6)
+                .map(|index| TextRun {
+                    len: match index {
+                        5 => 21,
+                        11 => 11,
+                        _ => 10,
+                    },
+                    font: font("Helvetica"),
+                    color: hsla(index as f32 / 12., 1., 0.5, 1.),
+                    background_color: Some(hsla(index as f32 / 12., 0.5, 0.5, 1.)),
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: None,
+                        wavy: index % 2 == 0,
+                    }),
+                    ..Default::default()
+                })
+                .collect();
+            let lines = text_system
+                .shape_text(text.into(), px(16.), &runs, Some(px(40.)), None)
+                .unwrap();
+
+            assert_eq!(lines.len(), 3);
+            for (line, expected_runs) in lines.iter().zip([&runs[..6], &runs[5..]]) {
+                assert_eq!(line.text.as_ref(), line_text);
+                assert!(!line.wrap_boundaries.is_empty());
+                assert_eq!(line.decoration_runs.len(), 6);
+                assert_eq!(
+                    line.decoration_runs.iter().map(|run| run.len).sum::<u32>(),
+                    line_text.len() as u32,
+                );
+                for (decoration, expected) in line.decoration_runs.iter().zip(expected_runs) {
+                    assert_eq!(decoration.len, 10);
+                    assert_eq!(decoration.color, expected.color);
+                    assert_eq!(decoration.background_color, expected.background_color);
+                    assert_eq!(decoration.underline, expected.underline);
+                    assert_eq!(decoration.strikethrough, expected.strikethrough);
+                }
+            }
+            let empty_line = lines.last().unwrap();
+            assert!(empty_line.text.is_empty());
+            assert!(empty_line.decoration_runs.is_empty());
+            assert_eq!(empty_line.decoration_runs.capacity(), 0);
+        });
+    }
+
+    #[gpui::test]
     fn test_underline_handler_matches_default_paint(cx: &mut TestAppContext) {
         test_underline_handler_at_scales(cx, |window, cx| {
             let first_style = UnderlineStyle {

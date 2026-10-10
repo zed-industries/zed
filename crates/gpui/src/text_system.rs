@@ -765,7 +765,7 @@ impl WindowTextSystem {
         let mut process_line = |line_text: SharedString, line_start, line_end| {
             font_runs.clear();
 
-            let mut decoration_runs = <Vec<DecorationRun>>::with_capacity(32);
+            let mut decoration_runs = <Vec<DecorationRun>>::new();
             let mut run_start = line_start;
             while run_start < line_end {
                 let Some(run) = runs.peek_mut() else {
