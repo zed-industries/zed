@@ -7405,6 +7405,10 @@ impl GitPanel {
     }
 
     fn preload_commit_history(&mut self, cx: &mut Context<Self>) {
+        if !self.project.read(cx).is_local() {
+            return;
+        }
+
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
