@@ -92,6 +92,8 @@ struct RetainedLayouts {
     layouts: SecondaryMap<DefaultKey, taffy::Layout>,
     previous_layouts: FxHashMap<NodeId, taffy::Layout>,
     boundaries: FxHashMap<NodeId, BoundaryLayout>,
+    #[cfg(feature = "bench-support")]
+    phase_timers: bool,
 }
 
 #[derive(Default)]
@@ -103,8 +105,9 @@ struct BoundaryLayout {
 impl RetainedLayouts {
     fn set_layout(&mut self, node: NodeId, layout: taffy::Layout) {
         #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture);
+        let _timer = self.phase_timers.then(|| {
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture)
+        });
         if let Some(previous) = self.layouts.insert(node.into(), layout)
             && previous != layout
         {
@@ -179,8 +182,9 @@ where
         block: Option<&mut taffy::BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
         #[cfg(feature = "bench-support")]
-        let timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture);
+        let timer = self.retained.phase_timers.then(|| {
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture)
+        });
         if input.run_mode == taffy::RunMode::PerformLayout
             && let Some(boundary) = self.retained.boundaries.get_mut(&node)
         {
@@ -211,8 +215,9 @@ where
             }
         });
         #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture);
+        let _timer = self.retained.phase_timers.then(|| {
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture)
+        });
         if input.run_mode == taffy::RunMode::PerformLayout
             && let Some(boundary) = self.retained.boundaries.get_mut(&node)
         {
@@ -384,6 +389,11 @@ impl TaffyLayoutEngine {
     pub(crate) fn enable_retention(&mut self) {
         if self.retained.is_none() {
             self.retained = Some(Box::default());
+            #[cfg(feature = "bench-support")]
+            {
+                self.retained.as_mut().expect("retention").phase_timers =
+                    crate::window::RenderPhaseTimer::enabled();
+            }
         }
     }
 

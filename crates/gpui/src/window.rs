@@ -1355,14 +1355,16 @@ pub(crate) struct RenderPhaseTimer {
 
 #[cfg(feature = "bench-support")]
 impl RenderPhaseTimer {
-    pub(crate) fn start(phase: RenderPhase) -> Option<Self> {
+    pub(crate) fn enabled() -> bool {
         static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        ENABLED
-            .get_or_init(|| std::env::var("GPUI_RENDER_PHASE_TIMERS").as_deref() == Ok("1"))
-            .then(|| Self {
-                phase,
-                start: std::time::Instant::now(),
-            })
+        *ENABLED.get_or_init(|| std::env::var("GPUI_RENDER_PHASE_TIMERS").as_deref() == Ok("1"))
+    }
+
+    pub(crate) fn start(phase: RenderPhase) -> Option<Self> {
+        Self::enabled().then(|| Self {
+            phase,
+            start: std::time::Instant::now(),
+        })
     }
 }
 
