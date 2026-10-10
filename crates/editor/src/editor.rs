@@ -4980,7 +4980,9 @@ impl Editor {
         *context_menu = Some(CodeContextMenu::Completions(
             CompletionsMenu::new_snippet_choices(
                 id,
-                true,
+                // Keep the snippet-defined choice order: the first choice is the default
+                // pre-filled in the buffer and must stay at the top of the menu.
+                false,
                 choices,
                 selection.start,
                 range,
