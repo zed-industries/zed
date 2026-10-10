@@ -22,8 +22,6 @@ use crate::sandboxing::{
 };
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
-const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
-
 /// Executes a shell one-liner and returns the combined output.
 ///
 /// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
@@ -451,10 +449,12 @@ async fn run_terminal_tool(
     let want_unsandboxed = sandboxing && sandbox_input.unsandboxed == Some(true);
     let want_all_hosts = sandboxing && sandbox_input.allow_all_hosts == Some(true);
 
-    let persistent = cx.update(|cx| {
-        agent_settings::AgentSettings::get_global(cx)
-            .sandbox_permissions
-            .clone()
+    let (persistent, output_limit) = cx.update(|cx| {
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        (
+            settings.sandbox_permissions.clone(),
+            settings.terminal_output_limit,
+        )
     });
 
     // Standing permissions the user already approved — in settings or "for this
@@ -845,7 +845,7 @@ async fn run_terminal_tool(
     let output_byte_limit = if selection.is_enabled() {
         None
     } else {
-        Some(COMMAND_OUTPUT_LIMIT)
+        Some(output_limit)
     };
 
     // Create the terminal. On Windows the WSL sandbox can only report whether
@@ -1034,7 +1034,14 @@ async fn run_terminal_tool(
 
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
-    let result = process_content(output, &input.command, timed_out, user_stopped, selection);
+    let result = process_content(
+        output,
+        &input.command,
+        timed_out,
+        user_stopped,
+        selection,
+        output_byte_limit,
+    );
     let notes = sandbox_note.into_iter().collect::<Vec<_>>();
     Ok(if notes.is_empty() {
         result
@@ -1251,6 +1258,7 @@ fn process_content(
     timed_out: bool,
     user_stopped: bool,
     selection: TerminalOutputSelection,
+    output_byte_limit: Option<u64>,
 ) -> String {
     let content = output.output.trim();
     let content = select_terminal_output_lines(content, selection);
@@ -1267,9 +1275,9 @@ fn process_content(
 
     let content = format!("```\n{content}\n```");
     let content = if output.truncated {
+        let limit = output_byte_limit.unwrap_or(content.len() as u64);
         format!(
-            "Command output too long. The first {} bytes:\n\n{content}",
-            content.len(),
+            "Command output too long: showing only the first {limit} bytes. \n\n\n{content}\n\nIf the part you need appears later in the output, re-run the command with tail_lines."
         )
     } else {
         content
@@ -1577,6 +1585,7 @@ mod tests {
             false,
             true,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -1592,6 +1601,37 @@ mod tests {
         assert!(
             result.contains("ask them what they would like to do"),
             "Should instruct agent to ask user, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_content_truncated_message_reports_configured_limit() {
+        let output = acp::TerminalOutputResponse::new("partial output".to_string(), true)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+
+        let result = process_content(
+            output,
+            "noisy command",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+            Some(4096),
+        );
+
+        assert!(
+            result.contains("showing only the first 4096 bytes"),
+            "Expected truncation notice with the configured limit, got: {}",
+            result
+        );
+        assert!(
+            result.contains("tail_lines"),
+            "Expected a hint to re-run with tail_lines, got: {}",
+            result
+        );
+        assert!(
+            result.contains("partial output"),
+            "Expected output to be included, got: {}",
             result
         );
     }
@@ -1817,6 +1857,7 @@ mod tests {
                 head_lines: Some(1),
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert_eq!(result, "```\none\n\nfour\n```");
@@ -1836,6 +1877,7 @@ mod tests {
                 head_lines: None,
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert!(result.contains("failed with exit code 1"));
@@ -1857,6 +1899,7 @@ mod tests {
                 head_lines: Some(1),
                 tail_lines: None,
             },
+            None,
         );
 
         assert!(result.contains("timed out"));
@@ -1878,6 +1921,7 @@ mod tests {
                 head_lines: None,
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert!(result.contains("user stopped"));
@@ -1901,6 +1945,7 @@ mod tests {
                 head_lines: Some(1),
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert!(!result.contains("Showing"));
@@ -1918,6 +1963,7 @@ mod tests {
             false,
             true,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -1942,6 +1988,7 @@ mod tests {
             true,
             false,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -1966,6 +2013,7 @@ mod tests {
             true,
             false,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -1991,6 +2039,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -2016,6 +2065,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -2036,6 +2086,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -2061,6 +2112,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -2080,6 +2132,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -2104,6 +2157,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT),
         );
 
         assert!(
@@ -2500,8 +2554,56 @@ mod tests {
         assert_eq!(result, "```\ncommand output\n```");
         assert_eq!(
             environment.terminal_output_limits(),
-            vec![Some(COMMAND_OUTPUT_LIMIT)]
+            vec![Some(agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT)]
         );
+    }
+
+    #[gpui::test]
+    async fn test_run_uses_configured_terminal_output_limit(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let output = acp::TerminalOutputResponse::new("command output".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
+                    .with_output(output),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            settings.terminal_output_limit = 4096;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo output".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        rx.expect_update_fields().await;
+        let result = task.await.expect("terminal command should succeed");
+        assert_eq!(result, "```\ncommand output\n```");
+        assert_eq!(environment.terminal_output_limits(), vec![Some(4096)]);
     }
 
     #[gpui::test]
