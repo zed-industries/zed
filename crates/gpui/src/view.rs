@@ -275,6 +275,7 @@ pub struct ViewElement<V: View> {
     cached_style: Option<StyleRefinement>,
     implicit: bool,
     retained_view: Option<AnyWeakView>,
+    retained_occurrence: Option<ViewOccurrenceId>,
     #[cfg(debug_assertions)]
     source: &'static core::panic::Location<'static>,
 }
@@ -289,6 +290,7 @@ impl<V: View> ViewElement<V> {
             cached_style: None,
             implicit: false,
             retained_view: None,
+            retained_occurrence: None,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -448,6 +450,7 @@ impl<V: View> Element for ViewElement<V> {
                 bounds,
                 element,
                 retained_view.as_ref(),
+                &mut self.retained_occurrence,
                 window,
                 cx,
                 &mut |window, cx| {
@@ -481,6 +484,7 @@ impl<V: View> Element for ViewElement<V> {
                 self.cached_style.is_some() || self.implicit,
                 global_id,
                 element,
+                self.retained_occurrence,
                 window,
                 cx,
             );
@@ -560,6 +564,7 @@ fn prepaint_view(
     bounds: Bounds<Pixels>,
     element: &mut Option<AnyElement>,
     retained_view: Option<&AnyWeakView>,
+    retained_occurrence: &mut Option<ViewOccurrenceId>,
     window: &mut Window,
     cx: &mut App,
     render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
@@ -569,6 +574,7 @@ fn prepaint_view(
     }
     window.set_view_id(entity_id);
     let occurrence = window.begin_view_occurrence(entity_id, global_id, retained_view);
+    *retained_occurrence = occurrence;
     let parent_occurrence = mem::replace(&mut window.current_view_occurrence, occurrence);
     let mut scope = retained_view.is_some().then(|| {
         let mut scope = window.capture_view_scope();
@@ -586,8 +592,9 @@ fn prepaint_view(
             return Some(element);
         }
 
-        window.with_element_state::<ViewElementHandle, _>(global_id.unwrap(), |_handle, window| {
-            let occurrence = occurrence.expect("cached views have an occurrence");
+        let occurrence = occurrence.expect("cached views have an occurrence");
+        let implicit = window.is_implicit_view(occurrence);
+        let mut prepaint = |window: &mut Window| {
             let constraints_unchanged = window.implicit_prepaint_layout(occurrence);
             let content_mask = window.content_mask();
             let text_style = window.retained_text_style_handle();
@@ -729,7 +736,15 @@ fn prepaint_view(
             );
             window.view_store.set_own_access(occurrence, own, false);
             (Some(element), ViewElementHandle(occurrence))
-        })
+        };
+        if implicit {
+            prepaint(window).0
+        } else {
+            window.with_element_state::<ViewElementHandle, _>(
+                global_id.unwrap(),
+                |_handle, window| prepaint(window),
+            )
+        }
     });
     window.current_view_occurrence = parent_occurrence;
     result
@@ -754,6 +769,7 @@ fn paint_view(
     cached: bool,
     global_id: Option<&GlobalElementId>,
     element: &mut Option<AnyElement>,
+    retained_occurrence: Option<ViewOccurrenceId>,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -765,43 +781,48 @@ fn paint_view(
     let mut scope = (cached && !caching_disabled).then(|| window.capture_view_scope());
     window.with_rendered_view(entity_id, |window| {
         if cached && !caching_disabled {
-            window.with_element_state::<ViewElementHandle, _>(
-                global_id.unwrap(),
-                |element_state, window| {
-                    let handle = element_state.unwrap();
-                    let occurrence = handle.0;
+            let mut paint = |handle: ViewElementHandle, window: &mut Window| {
+                let occurrence = handle.0;
 
-                    window.next_frame.paint_views.push(occurrence);
-                    let paint_start = window.paint_index();
+                window.next_frame.paint_views.push(occurrence);
+                let paint_start = window.paint_index();
 
-                    if let Some(element) = element {
-                        let parent_occurrence = window.current_view_occurrence.replace(occurrence);
-                        let previous_access = window.begin_view_entity_access(cx);
-                        let refreshing = window.refreshing;
-                        window.refreshing |= !window.is_implicit_view(occurrence);
-                        element.paint(window, cx);
-                        window.refreshing = refreshing;
-                        let (own, _) = window.end_cached_entity_access(previous_access, cx);
-                        window.view_store.set_own_access(occurrence, own, true);
-                        window.current_view_occurrence = parent_occurrence;
-                    } else {
-                        #[cfg(any(test, feature = "bench-support"))]
-                        {
-                            window.view_reuse_stats.reused_view_boundary_visits[2] += 1;
-                        }
-                        window.splice_view_paint(occurrence, cx);
+                if let Some(element) = element {
+                    let parent_occurrence = window.current_view_occurrence.replace(occurrence);
+                    let previous_access = window.begin_view_entity_access(cx);
+                    let refreshing = window.refreshing;
+                    window.refreshing |= !window.is_implicit_view(occurrence);
+                    element.paint(window, cx);
+                    window.refreshing = refreshing;
+                    let (own, _) = window.end_cached_entity_access(previous_access, cx);
+                    window.view_store.set_own_access(occurrence, own, true);
+                    window.current_view_occurrence = parent_occurrence;
+                } else {
+                    #[cfg(any(test, feature = "bench-support"))]
+                    {
+                        window.view_reuse_stats.reused_view_boundary_visits[2] += 1;
                     }
+                    window.splice_view_paint(occurrence, cx);
+                }
 
-                    let paint_end = window.paint_index();
-                    window.view_store.painted_view(
-                        occurrence,
-                        paint_start..paint_end,
-                        scope.take().expect("cached views have a paint scope"),
-                    );
+                let paint_end = window.paint_index();
+                window.view_store.painted_view(
+                    occurrence,
+                    paint_start..paint_end,
+                    scope.take().expect("cached views have a paint scope"),
+                );
 
-                    ((), handle)
-                },
-            )
+                ((), handle)
+            };
+            if let Some(occurrence) = retained_occurrence.filter(|id| window.is_implicit_view(*id))
+            {
+                paint(ViewElementHandle(occurrence), window);
+            } else {
+                window.with_element_state::<ViewElementHandle, _>(
+                    global_id.unwrap(),
+                    |element_state, window| paint(element_state.expect("view handle"), window),
+                )
+            }
         } else {
             element.as_mut().unwrap().paint(window, cx);
         }

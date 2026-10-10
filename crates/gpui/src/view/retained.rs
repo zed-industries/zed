@@ -1137,11 +1137,14 @@ impl Window {
             let state = retained.state.as_ref().expect("cached child state");
             let mut child_range = state.prepaint_range.clone();
             child_range.start.views_index -= 1;
-            child_range.start.accessed_element_states_index -= 1;
             let mut old_paint_range = state.paint_range.clone();
             old_paint_range.start.views_index -= 1;
-            // The cached-state access is outside the content range in both phases.
-            old_paint_range.start = old_paint_range.start.with_cached_state_access();
+            // Explicit cached views access a handle outside their content range.
+            // Implicit views already carry their occurrence through the frame.
+            if retained.layout.is_none() {
+                child_range.start.accessed_element_states_index -= 1;
+                old_paint_range.start = old_paint_range.start.with_cached_state_access();
+            }
             let cache_key: RetainedViewCacheKey = state.cache_key.clone();
             let global_id = self.element_id_interner.global_id(retained.element_path);
             let entity = retained.entity;
@@ -1168,6 +1171,7 @@ impl Window {
                     cache_key.bounds,
                     &mut element,
                     Some(&view),
+                    &mut None,
                     window,
                     cx,
                     &mut |window, cx| {
@@ -1228,6 +1232,7 @@ impl Window {
                     true,
                     Some(&global_id),
                     &mut child.element,
+                    Some(child.occurrence),
                     window,
                     cx,
                 );
