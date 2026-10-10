@@ -30,7 +30,7 @@ use project::{
 use language::{LanguageName, Toolchain, ToolchainScope};
 use remote::{
     DockerConnectionOptions, RemoteConnectionIdentity, RemoteConnectionOptions,
-    SshConnectionOptions, WslConnectionOptions, remote_connection_identity,
+    SshConnectionOptions, WslConnectionOptions,
 };
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -1701,7 +1701,7 @@ impl WorkspaceDb {
         this: &Connection,
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
-        let identity = remote_connection_identity(&options);
+        let identity = RemoteConnectionIdentity::from(&options);
         let kind;
         let user: Option<String>;
         let mut host = None;
@@ -1733,12 +1733,10 @@ impl WorkspaceDb {
             }
             RemoteConnectionIdentity::Docker {
                 container_id: identity_container_id,
-                name: identity_name,
                 remote_user,
             } => {
                 kind = RemoteConnectionKind::Docker;
                 container_id = Some(identity_container_id);
-                name = Some(identity_name);
                 user = Some(remote_user);
             }
             #[cfg(any(test, feature = "test-support"))]
@@ -1750,6 +1748,7 @@ impl WorkspaceDb {
         }
 
         if let RemoteConnectionOptions::Docker(options) = options {
+            name = Some(options.name);
             use_podman = Some(options.use_podman);
             remote_env = serde_json::to_string(&options.remote_env).ok();
         }
@@ -2120,7 +2119,7 @@ impl WorkspaceDb {
         let target_remote_connection = match &target.location {
             SerializedWorkspaceLocation::Local => None,
             SerializedWorkspaceLocation::Remote(connection) => {
-                Some(remote_connection_identity(connection))
+                Some(RemoteConnectionIdentity::from(connection))
             }
         };
 
@@ -2134,7 +2133,7 @@ impl WorkspaceDb {
                 let Some(connection_options) = remote_connections.get(&id) else {
                     continue;
                 };
-                Some(remote_connection_identity(connection_options))
+                Some(RemoteConnectionIdentity::from(connection_options))
             } else {
                 None
             };
@@ -2757,7 +2756,7 @@ fn dedupe_recent_workspaces(
         let location_identity = match &workspace.location {
             SerializedWorkspaceLocation::Local => None,
             SerializedWorkspaceLocation::Remote(connection) => {
-                Some(remote_connection_identity(connection))
+                Some(RemoteConnectionIdentity::from(connection))
             }
         };
         let key = (location_identity, workspace.identity_paths.paths().to_vec());

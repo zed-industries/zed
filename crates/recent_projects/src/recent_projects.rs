@@ -17,7 +17,7 @@ use fs::Fs;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use remote::RemoteConnectionOptions;
 pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
@@ -246,7 +246,7 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
                 path,
                 branch,
                 is_active,
-                connection_options: connection_options.clone(),
+                connection_options: connection_options.cloned(),
             }
         })
         .collect();
@@ -586,6 +586,7 @@ pub fn add_wsl_distro(
 
     let distro_name = connection_options.distro_name.clone();
     let user = connection_options.user.clone();
+    let identity = remote::RemoteConnectionIdentity::from(connection_options);
     SettingsStore::global(cx).update_settings_file(fs, move |setting, _| {
         let connections = setting
             .remote
@@ -594,7 +595,7 @@ pub fn add_wsl_distro(
 
         if !connections
             .iter()
-            .any(|conn| conn.distro_name == distro_name && conn.user == user)
+            .any(|conn| remote::RemoteConnectionIdentity::from(conn) == identity)
         {
             use std::collections::BTreeSet;
 
@@ -1173,7 +1174,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .log_err();
                         } else {
                             let path_list = key.path_list().clone();
-                            let host = key.host();
+                            let host = key.host().cloned();
                             if let Some(task) = handle
                                 .update(cx, |multi_workspace, window, cx| {
                                     let modal_workspace = multi_workspace.workspace().clone();
@@ -1991,7 +1992,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
 fn icon_for_project_group(key: &ProjectGroupKey) -> IconName {
     let host = key.host();
-    icon_for_remote_connection(host.as_ref())
+    icon_for_remote_connection(host)
 }
 
 pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> IconName {
@@ -2449,7 +2450,7 @@ impl RecentProjectsDelegate {
     fn is_in_current_window_groups(&self, workspace: &RecentWorkspace) -> bool {
         self.window_project_groups
             .iter()
-            .any(|key| key.matches(&workspace.project_group_key()))
+            .any(|key| *key == workspace.project_group_key())
     }
 
     fn is_open_folder(&self, workspace: &RecentWorkspace) -> bool {
@@ -2465,10 +2466,11 @@ impl RecentProjectsDelegate {
         for workspace_path in workspace.paths.paths() {
             for open_folder in &self.open_folders {
                 if workspace_path == &open_folder.path
-                    && same_remote_connection_identity(
-                        workspace_host,
-                        open_folder.connection_options.as_ref(),
-                    )
+                    && workspace_host.map(|o| o.identity())
+                        == open_folder
+                            .connection_options
+                            .as_ref()
+                            .map(|o| o.identity())
                 {
                     return true;
                 }

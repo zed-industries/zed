@@ -7,7 +7,7 @@ use gpui::{
     WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
-use project::{DisableAiSettings, Project};
+use project::{DisableAiSettings, Project, ProjectHost};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
@@ -593,7 +593,8 @@ impl MultiWorkspace {
                             .read(cx)
                             .project()
                             .read(cx)
-                            .remote_connection_options(cx);
+                            .remote_connection_options(cx)
+                            .cloned();
                         let old_key =
                             ProjectGroupKey::from_worktree_paths(old_worktree_paths, host);
                         this.handle_project_group_key_change(&workspace, &old_key, cx);
@@ -851,7 +852,10 @@ impl MultiWorkspace {
             .iter()
             .map(|group| ProjectGroup {
                 key: group.key.clone(),
-                workspaces: self.workspaces_for_project_group(&group.key, cx),
+                workspaces: self
+                    .workspaces_for_project_group(&group.key, cx)
+                    .cloned()
+                    .collect(),
                 expanded: group.expanded,
             })
             .collect()
@@ -929,17 +933,16 @@ impl MultiWorkspace {
         true
     }
 
-    pub fn workspaces_for_project_group(
-        &self,
-        key: &ProjectGroupKey,
-        cx: &App,
-    ) -> Vec<Entity<Workspace>> {
+    pub fn workspaces_for_project_group<'a>(
+        &'a self,
+        key: &'a ProjectGroupKey,
+        cx: &'a App,
+    ) -> impl Iterator<Item = &'a Entity<Workspace>> {
         self.held
             .iter()
             .filter(|held| held.pinned)
-            .map(|held| held.workspace.clone())
-            .filter(|workspace| workspace.read(cx).project_group_key(cx) == *key)
-            .collect()
+            .map(|held| &held.workspace)
+            .filter(move |workspace| workspace.read(cx).project_group_key(cx) == *key)
     }
 
     pub fn remove_project_group(
@@ -961,7 +964,10 @@ impl MultiWorkspace {
             self.pin(index, group_key.clone(), cx);
         }
 
-        let workspaces = self.workspaces_for_project_group(group_key, cx);
+        let workspaces: Vec<_> = self
+            .workspaces_for_project_group(group_key, cx)
+            .cloned()
+            .collect();
 
         let task = self.remove(workspaces, RemovalIntent::CloseProject, window, cx);
 
@@ -1026,7 +1032,10 @@ impl MultiWorkspace {
 
         let app_state = self.workspace().read(cx).app_state().clone();
 
-        let workspaces: Vec<_> = self.workspaces_for_project_group(key, cx);
+        let workspaces: Vec<_> = self
+            .workspaces_for_project_group(key, cx)
+            .cloned()
+            .collect();
         let mut serialization_tasks = Vec::new();
         for workspace in &workspaces {
             serialization_tasks.push(workspace.update(cx, |workspace, inner_cx| {
@@ -1054,16 +1063,26 @@ impl MultiWorkspace {
     }
 
     /// Finds an existing workspace whose root paths and host exactly match.
+    /// When `host` is `None`, only local workspaces are considered.
     pub fn workspace_for_paths(
         &self,
         path_list: &PathList,
         host: Option<&RemoteConnectionOptions>,
         cx: &App,
     ) -> Option<Entity<Workspace>> {
+        let requested_host = host.map_or(ProjectHost::Local, |connection| {
+            ProjectHost::Remote(connection.into())
+        });
+
         for workspace in self.workspaces() {
-            let root_paths = PathList::new(&workspace.read(cx).root_paths(cx));
-            let key = workspace.read(cx).project_group_key(cx);
-            let host_matches = key.host().as_ref() == host;
+            let workspace_state = workspace.read(cx);
+            let root_paths = PathList::new(&workspace_state.root_paths(cx));
+            let host_matches = workspace_state
+                .project()
+                .read(cx)
+                .host_identity(cx)
+                .as_ref()
+                == Some(&requested_host);
             let paths_match = root_paths == *path_list;
             if host_matches && paths_match {
                 return Some(workspace.clone());
@@ -1103,11 +1122,6 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(workspace) = self.workspace_for_paths(&paths, host.as_ref(), cx) {
-            self.activate(workspace.clone(), source_workspace, window, cx);
-            return Task::ready(Ok(workspace));
-        }
-
         let Some(connection_options) = host else {
             return self.find_or_create_local_workspace(
                 paths,
@@ -1119,6 +1133,11 @@ impl MultiWorkspace {
                 cx,
             );
         };
+
+        if let Some(workspace) = self.workspace_for_paths(&paths, Some(&connection_options), cx) {
+            self.activate(workspace.clone(), source_workspace, window, cx);
+            return Task::ready(Ok(workspace));
+        }
 
         let app_state = self.workspace().read(cx).app_state().clone();
         let window_handle = window.window_handle().downcast::<MultiWorkspace>();

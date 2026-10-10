@@ -11,7 +11,7 @@ use project::{
     git_store::{Repository, resolve_git_worktree_to_main_repo, worktrees_directory_for_repo},
     project_settings::ProjectSettings,
 };
-use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use remote::RemoteConnectionOptions;
 use settings::Settings;
 use util::{ResultExt, paths::PathStyle};
 use workspace::{AppState, MultiWorkspace, Workspace};
@@ -118,10 +118,11 @@ pub fn build_root_plan(
     let path = path.to_path_buf();
 
     let matches_target_connection = |project: &Entity<Project>, cx: &App| {
-        same_remote_connection_identity(
-            project.read(cx).remote_connection_options(cx).as_ref(),
-            remote_connection,
-        )
+        project
+            .read(cx)
+            .remote_connection_options(cx)
+            .map(|o| o.identity())
+            == remote_connection.map(|o| o.identity())
     };
 
     let affected_projects = workspaces
@@ -370,10 +371,9 @@ async fn find_or_create_repository(
             .filter_map(|workspace| {
                 let project = workspace.read(cx).project().clone();
                 let project_connection = project.read(cx).remote_connection_options(cx);
-                if !same_remote_connection_identity(
-                    project_connection.as_ref(),
-                    remote_connection_owned.as_ref(),
-                ) {
+                if project_connection.map(|o| o.identity())
+                    != remote_connection_owned.as_ref().map(|o| o.identity())
+                {
                     return None;
                 }
                 Some((

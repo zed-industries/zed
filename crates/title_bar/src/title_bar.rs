@@ -617,7 +617,7 @@ impl TitleBar {
 
         let (nickname, tooltip_title, icon) = match options {
             RemoteConnectionOptions::Ssh(options) => (
-                options.nickname.map(|nick| nick.into()),
+                options.nickname.clone().map(|nick| nick.into()),
                 "Remote Project",
                 IconName::Server,
             ),
