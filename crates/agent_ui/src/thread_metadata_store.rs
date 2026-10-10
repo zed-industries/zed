@@ -830,6 +830,27 @@ impl ThreadMetadataStore {
             if thread.archived {
                 continue;
             }
+            // Only re-home threads that already belong to this project: a thread
+            // whose stored folder paths are a subset of the new worktree set.
+            // Threads from other projects (or other remotes) must keep their own
+            // paths - otherwise any worktree event re-groups every retained
+            // thread into the active project.
+            let new_folder_paths = worktree_paths.folder_path_list();
+            let belongs_to_project =
+                thread
+                    .worktree_paths
+                    .folder_path_list()
+                    .paths()
+                    .iter()
+                    .all(|path| {
+                        new_folder_paths
+                            .paths()
+                            .iter()
+                            .any(|new_path| new_path.as_path() == path.as_path())
+                    });
+            if !belongs_to_project {
+                continue;
+            }
             self.save_internal(ThreadMetadata {
                 worktree_paths: worktree_paths.clone(),
                 ..thread.clone()
