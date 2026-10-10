@@ -3541,6 +3541,43 @@ impl GitGraph {
             .into_any_element()
     }
 
+    // Graph-column clicks focus `graph_focus_handle`; other columns focus the table
+    // handle. `contains_focused` on the tracked root also matches the search editor
+    // and commit-detail editors, which should keep the lighter selection color.
+    fn selection_is_focused(
+        graph_focus_handle: &FocusHandle,
+        table_focus_handle: &FocusHandle,
+        window: &Window,
+    ) -> bool {
+        graph_focus_handle.is_focused(window) || table_focus_handle.is_focused(window)
+    }
+
+    fn commit_row_highlight_color(
+        selection_focused: bool,
+        is_hovered: bool,
+        is_selected: bool,
+        is_context_menu_target: bool,
+        cx: &App,
+    ) -> Option<Hsla> {
+        if !is_hovered && !is_selected && !is_context_menu_target {
+            return None;
+        }
+
+        let colors = cx.theme().colors();
+        let hover_background = colors.element_hover.opacity(0.6);
+        let selected_background = if selection_focused {
+            colors.element_selected
+        } else {
+            colors.element_hover
+        };
+
+        Some(if is_selected || is_context_menu_target {
+            selected_background
+        } else {
+            hover_background
+        })
+    }
+
     fn render_graph_canvas(&self, window: &Window, cx: &mut Context<GitGraph>) -> impl IntoElement {
         let row_height = Self::row_height(window, cx);
         let visible_row_count = self.visible_row_count(window, cx);
@@ -3591,7 +3628,8 @@ impl GitGraph {
             .context_menu
             .as_ref()
             .and_then(|menu| menu.target_entry_index);
-        let is_focused = self.focus_handle.is_focused(window);
+        let selection_focused =
+            Self::selection_is_focused(&self.focus_handle, &table_state.focus_handle, window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
 
         gpui::canvas(
@@ -3600,16 +3638,8 @@ impl GitGraph {
                 graph_canvas_bounds.set(Some(bounds));
 
                 window.paint_layer(bounds, |window| {
-                    let theme = cx.theme();
-                    let accent_colors = theme.accents();
-                    let background = theme.colors().editor_background;
-
-                    let hover_bg = theme.colors().element_hover.opacity(0.6);
-                    let selected_bg = if is_focused {
-                        theme.colors().element_selected
-                    } else {
-                        theme.colors().element_hover
-                    };
+                    let accent_colors = cx.theme().accents().clone();
+                    let background = cx.theme().colors().editor_background;
 
                     for visible_row_idx in 0..rows.len() {
                         let absolute_row_idx = first_visible_row + visible_row_idx;
@@ -3618,24 +3648,26 @@ impl GitGraph {
                         let is_context_menu_target =
                             context_menu_target_index == Some(absolute_row_idx);
 
-                        if is_hovered || is_selected || is_context_menu_target {
-                            let row_y = bounds.origin.y + visible_row_idx as f32 * row_height
-                                - vertical_scroll_offset;
-                            let row_bounds = Bounds::new(
-                                point(bounds.origin.x, row_y),
-                                gpui::Size {
-                                    width: bounds.size.width,
-                                    height: row_height,
-                                },
-                            );
+                        let Some(background_color) = Self::commit_row_highlight_color(
+                            selection_focused,
+                            is_hovered,
+                            is_selected,
+                            is_context_menu_target,
+                            cx,
+                        ) else {
+                            continue;
+                        };
 
-                            let bg_color = if is_selected || is_context_menu_target {
-                                selected_bg
-                            } else {
-                                hover_bg
-                            };
-                            window.paint_quad(gpui::fill(row_bounds, bg_color));
-                        }
+                        let row_y = bounds.origin.y + visible_row_idx as f32 * row_height
+                            - vertical_scroll_offset;
+                        let row_bounds = Bounds::new(
+                            point(bounds.origin.x, row_y),
+                            gpui::Size {
+                                width: bounds.size.width,
+                                height: row_height,
+                            },
+                        );
+                        window.paint_quad(gpui::fill(row_bounds, background_color));
                     }
 
                     for line in commit_lines {
@@ -3825,15 +3857,15 @@ impl GitGraph {
 
                         // Match the node halo to the row's effective background so
                         // the ring blends seamlessly on hovered/selected rows.
-                        let node_background = if selected_entry_idx == Some(absolute_row_idx)
-                            || context_menu_target_index == Some(absolute_row_idx)
-                        {
-                            background.blend(selected_bg)
-                        } else if hovered_entry_idx == Some(absolute_row_idx) {
-                            background.blend(hover_bg)
-                        } else {
-                            background
-                        };
+                        let node_background = Self::commit_row_highlight_color(
+                            selection_focused,
+                            hovered_entry_idx == Some(absolute_row_idx),
+                            selected_entry_idx == Some(absolute_row_idx),
+                            context_menu_target_index == Some(absolute_row_idx),
+                            cx,
+                        )
+                        .map(|highlight| background.blend(highlight))
+                        .unwrap_or(background);
 
                         draw_commit_circle(
                             commit_x,
@@ -3894,37 +3926,34 @@ impl GitGraph {
         let accent_colors = theme.accents().clone();
         let background = theme.colors().editor_background;
 
-        // Hover/selected highlight colors, matching `render_graph_canvas` so the
-        // band painted behind the labels in the gutter lines up with the rest of
-        // the row.
         let hovered_entry_idx = self.hovered_entry_idx;
         let selected_entry_idx = self.selected_entry_idx;
         let context_menu_entry_idx = self
             .context_menu
             .as_ref()
             .and_then(|menu| menu.target_entry_index);
-        let is_focused = self.focus_handle.is_focused(window);
-        let hover_bg = theme.colors().element_hover.opacity(0.6);
-        let selected_bg = if is_focused {
-            theme.colors().element_selected
-        } else {
-            theme.colors().element_hover
-        };
+        let selection_focused =
+            Self::selection_is_focused(&self.focus_handle, &table_state.focus_handle, window);
 
         // Background highlight bands for hovered/selected rows, painted first so
         // the labels render on top of them.
         let mut elements = Vec::with_capacity(viewport_range.len());
         for absolute_idx in viewport_range.clone() {
-            let is_selected = selected_entry_idx == Some(absolute_idx)
-                || context_menu_entry_idx == Some(absolute_idx);
+            let is_selected = selected_entry_idx == Some(absolute_idx);
             let is_hovered = hovered_entry_idx == Some(absolute_idx);
-            if !is_selected && !is_hovered {
+            let is_context_menu_target = context_menu_entry_idx == Some(absolute_idx);
+            let Some(background_color) = Self::commit_row_highlight_color(
+                selection_focused,
+                is_hovered,
+                is_selected,
+                is_context_menu_target,
+                cx,
+            ) else {
                 continue;
-            }
+            };
 
             let visible_row_idx = absolute_idx - first_visible_row;
             let top = visible_row_idx as f32 * row_height - vertical_scroll_offset;
-            let bg_color = if is_selected { selected_bg } else { hover_bg };
 
             elements.push(
                 div()
@@ -3933,7 +3962,7 @@ impl GitGraph {
                     .left_0()
                     .w(gutter_width)
                     .h(row_height)
-                    .bg(bg_color)
+                    .bg(background_color)
                     .into_any_element(),
             );
         }
@@ -4476,28 +4505,27 @@ impl Render for GitGraph {
                                     let is_context_menu_target =
                                         context_menu_target_index == Some(index);
                                     let table_focus_handle = table_focus_handle.clone();
-                                    let is_focused = focus_handle.is_focused(window)
-                                        || table_focus_handle.is_focused(window);
+                                    let selection_focused = Self::selection_is_focused(
+                                        &focus_handle,
+                                        &table_focus_handle,
+                                        window,
+                                    );
                                     let weak = weak_self.clone();
                                     let weak_for_hover = weak.clone();
                                     let weak_for_context_menu = weak.clone();
-
-                                    let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
-                                    let selected_bg = if is_focused {
-                                        cx.theme().colors().element_selected
-                                    } else {
-                                        cx.theme().colors().element_hover
-                                    };
+                                    let background_color = Self::commit_row_highlight_color(
+                                        selection_focused,
+                                        is_hovered,
+                                        is_selected,
+                                        is_context_menu_target,
+                                        cx,
+                                    );
 
                                     row.h(row_height)
                                         .cursor_pointer()
-                                        .when(is_selected || is_context_menu_target, |row| {
-                                            row.bg(selected_bg)
+                                        .when_some(background_color, |row, background_color| {
+                                            row.bg(background_color)
                                         })
-                                        .when(
-                                            is_hovered && !is_selected && !is_context_menu_target,
-                                            |row| row.bg(hover_bg),
-                                        )
                                         .on_hover(move |&is_hovered, _, cx| {
                                             weak_for_hover
                                                 .update(cx, |this, cx| {
@@ -7303,6 +7331,120 @@ mod tests {
                     .is_focused(window),
                 "focusing the git graph item should focus the search editor"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_selection_highlight_follows_graph_or_table_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            let focused_selected = cx.theme().colors().element_selected;
+            let unfocused_selected = cx.theme().colors().element_hover;
+            let hover_background = unfocused_selected.opacity(0.6);
+            let table_focus_handle = graph.table_interaction_state.read(cx).focus_handle.clone();
+
+            let assert_row_colors = |selection_focused: bool, cx: &App| {
+                let selected_background = if selection_focused {
+                    focused_selected
+                } else {
+                    unfocused_selected
+                };
+                assert_eq!(
+                    GitGraph::commit_row_highlight_color(selection_focused, true, false, false, cx),
+                    Some(hover_background),
+                );
+                assert_eq!(
+                    GitGraph::commit_row_highlight_color(selection_focused, false, true, false, cx),
+                    Some(selected_background),
+                );
+                assert_eq!(
+                    GitGraph::commit_row_highlight_color(selection_focused, true, true, false, cx),
+                    Some(selected_background),
+                );
+                assert_eq!(
+                    GitGraph::commit_row_highlight_color(selection_focused, false, false, true, cx),
+                    Some(selected_background),
+                );
+                assert_eq!(
+                    GitGraph::commit_row_highlight_color(selection_focused, true, false, true, cx),
+                    Some(selected_background),
+                );
+            };
+
+            window.focus(&table_focus_handle, cx);
+            assert!(!graph.focus_handle.is_focused(window));
+            let selection_focused =
+                GitGraph::selection_is_focused(&graph.focus_handle, &table_focus_handle, window);
+            assert!(selection_focused);
+            assert_row_colors(selection_focused, cx);
+
+            window.focus(&graph.focus_handle, cx);
+            assert!(graph.focus_handle.is_focused(window));
+            assert!(!table_focus_handle.is_focused(window));
+            assert!(
+                !graph
+                    .search_state
+                    .editor
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+            let selection_focused =
+                GitGraph::selection_is_focused(&graph.focus_handle, &table_focus_handle, window);
+            assert!(selection_focused);
+            assert_row_colors(selection_focused, cx);
+
+            window.focus(&graph.focus_handle(cx), cx);
+            assert!(
+                graph
+                    .search_state
+                    .editor
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+            let selection_focused =
+                GitGraph::selection_is_focused(&graph.focus_handle, &table_focus_handle, window);
+            assert!(!selection_focused);
+            assert_row_colors(selection_focused, cx);
         });
     }
 
