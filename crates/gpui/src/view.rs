@@ -451,7 +451,7 @@ fn request_layout_view(
             _ => {
                 #[cfg(any(test, feature = "bench-support"))]
                 {
-                    window.record_view_render(entity_id, caching_disabled);
+                    window.record_view_render(entity_id, caching_disabled, cached_style.is_some());
                     if cached_style.is_some() {
                         window.view_reuse_stats.cached_misses += 1;
                         window.view_reuse_stats.miss_inspector += 1;
@@ -597,7 +597,7 @@ fn prepaint_view(
                 } else {
                     stats.miss_first_mount += 1;
                 }
-                window.record_view_render(entity_id, false);
+                window.record_view_render(entity_id, false, true);
                 window.cached_reconstruction_depth += 1;
             }
             let refreshing = mem::replace(&mut window.refreshing, true);

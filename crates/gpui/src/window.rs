@@ -1306,6 +1306,7 @@ pub struct ViewReuseStats {
     pub render_first_mount: usize,
     pub render_refresh_or_inspector: usize,
     pub render_cache_context: usize,
+    pub render_uncached: usize,
     pub render_entity_dependency: usize,
     pub splice_prepaint_calls: usize,
     pub splice_paint_calls: usize,
@@ -2672,7 +2673,16 @@ impl Window {
     }
 
     #[cfg(any(test, feature = "bench-support"))]
-    pub(crate) fn record_view_render(&mut self, entity_id: EntityId, inspector: bool) {
+    pub(crate) fn record_view_render(
+        &mut self,
+        entity_id: EntityId,
+        inspector: bool,
+        cached: bool,
+    ) {
+        if !cached && !inspector && self.cached_reconstruction_depth == 0 {
+            self.view_reuse_stats.render_uncached += 1;
+            return;
+        }
         if self
             .rendered_frame
             .dispatch_tree
