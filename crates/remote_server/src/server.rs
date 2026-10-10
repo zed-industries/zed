@@ -738,10 +738,10 @@ pub fn execute_run(
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach();
-        Some(shell_env_loaded_rx)
+        Some(shell_env_loaded_rx.shared())
     };
     #[cfg(windows)]
-    let shell_env_loaded_rx: Option<oneshot::Receiver<()>> = None;
+    let shell_env_loaded_rx = None;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let run = move |cx: &mut App| {
