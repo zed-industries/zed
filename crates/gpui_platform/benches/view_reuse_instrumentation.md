@@ -383,3 +383,50 @@ Correctness evidence in the implementation worktree:
 Builds/tests used the private reflink-seeded `target/private`, shared experiment
 lock, CPU 16, six Cargo jobs, and 900-second build / 300-second run timeouts.
 No timing comparison was performed at this stage.
+
+## Root retention and global dependencies
+
+With the layout cache enabled, `=all` now includes the window root. `global` and
+`try_global` reads are isolated across boundary Render/request-layout, prepaint
+and paint scopes. The existing global notification effect dirties occurrences
+that read the changed TypeId and propagates descendant dirtiness to ancestors.
+Absent `try_global` reads count too. Replayed dependencies remain in the sidecar;
+deferred callbacks attribute their reads to their enclosing occurrence.
+
+Mutable global access is deliberately not a read dependency: GPUI uses
+`default_global` for transient execution stacks, including group-hitbox get,
+push and pop. Treating these as readers causes self-invalidating redraw loops.
+Disabled-mode immutable global reads add one predictable tracking guard, but do
+not allocate or collect dependencies. Global notification effects check windows
+for retained readers.
+
+Resize, scale, actual appearance changes, active/focus changes, accessibility
+activation/deactivation and font installation preserve refresh behavior. Input
+changes mark the next redraw as a refresh, without scheduling extra redraws for
+mouse movement that previously did not invalidate the window.
+
+The final stage-2b/root + stage-3 source passed:
+
+- All six library mode combinations: 446 passed, 2 ignored.
+- Cached off/on and implicit/root four-topology × twelve-seed × sixteen-frame
+  differential sweeps, including structural edits and reorder.
+- Root global dependencies in all three phases, set/update and absent-global
+  installation, nearest-boundary attribution, resize, equal-size style fallback,
+  equal-style intrinsic-size fallback, and Render-once fallback.
+- Installed-Noto 96-panel independent-window differential verification over
+  sixteen frames, plus untimed original text and five leaf-style tree smokes.
+- Clippy, the exact formatting check, and the gpui/ui/workspace/editor check.
+
+The one-frame Noto smoke rendered **two own-dirty panels, zero ancestors and zero
+window roots**, versus stage 1's 95 ancestor-caused Render calls per frame. All
+eleven fallback counters were zero. The initial populated frame retained 97
+occurrences. Inline metadata sizes were hot record 32 B, cold slot 504 B, cache
+box 408 B, implicit-layout box 800 B: **1,744 B per implicit occurrence**,
+169,168 B for 97 occurrences. This excludes map/set capacity, layout-engine
+records, shared text styles and retained frame payloads; it is not total heap
+ownership or RSS. The benchmark's live-heap probe reports the broader setup
+footprint separately.
+
+Stage 3 merged with one conflict in the differential test helper; both its
+cached off/on sweep and the uncached sweep were retained. No replay algorithm was
+changed by the root work. No timing comparisons were run before integration.

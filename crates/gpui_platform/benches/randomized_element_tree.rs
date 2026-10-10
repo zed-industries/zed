@@ -798,7 +798,7 @@ impl Render for TextPanelRoot {
     }
 }
 
-struct CachedTextPanelRoot(TextPanelRoot);
+struct CachedTextPanelRoot(TextPanelRoot, bool);
 
 impl Render for CachedTextPanelRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -814,35 +814,49 @@ impl Render for CachedTextPanelRoot {
                 let mut style = gpui::StyleRefinement::default();
                 style.size.width = Some(gpui::px(220.).into());
                 style.size.height = Some(gpui::px(192.).into());
-                panel.cached(style)
+                if self.1 {
+                    panel.cached(style).into_any_element()
+                } else {
+                    panel.into_any_element()
+                }
             }))
     }
 }
 
 fn verify_text_reuse(panel_count: usize, font_family: &'static str, cx: &mut BenchAppContext) {
+    let implicit = std::env::var("GPUI_VIEW_SPLICE").as_deref() == Ok("all")
+        && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1");
     let mut reused_window = cx.add_empty_window();
     let mut fresh_window = cx.add_empty_window();
     let create = |window: &mut Window, cx: &mut gpui::App, force| {
         window.set_force_view_reconstruction(force);
+        if implicit {
+            window.set_implicit_view_splicing(!force);
+        } else {
+            window.set_view_splicing(!force);
+        }
         window.replace_root(cx, |_, cx| {
-            CachedTextPanelRoot(TextPanelRoot {
-                panels: (0..panel_count)
-                    .map(|index| {
-                        cx.new(|_| TextPanel {
-                            index,
-                            value: 0,
-                            renders: Rc::new(Cell::new(0)),
+            CachedTextPanelRoot(
+                TextPanelRoot {
+                    panels: (0..panel_count)
+                        .map(|index| {
+                            cx.new(|_| TextPanel {
+                                index,
+                                value: 0,
+                                renders: Rc::new(Cell::new(0)),
+                            })
                         })
-                    })
-                    .collect(),
-                renders: Rc::new(Cell::new(0)),
-                font_family: font_family.into(),
-            })
+                        .collect(),
+                    renders: Rc::new(Cell::new(0)),
+                    font_family: font_family.into(),
+                },
+                !implicit,
+            )
         })
     };
     let reused = reused_window.update(|window, cx| create(window, cx, false));
     let fresh = fresh_window.update(|window, cx| create(window, cx, true));
-    for frame in 0..4 {
+    for frame in 0..16 {
         if frame > 0 {
             for root in [&reused, &fresh] {
                 root.update(cx, |root, cx| {
@@ -980,9 +994,14 @@ fn measure_text_panel_updates(
                 root_renders.get(),
                 panel_renders.get()
             );
+            eprintln!(
+                "retained metadata (occurrences, hot, cold, cache, layout bytes): {:?}",
+                window.retained_view_storage_sizes()
+            );
         }
     });
     let initial_panel_renders = panel_renders.get();
+    let initial_root_renders = root_renders.get();
     window.update(|window, _| {
         window.take_view_reuse_stats();
     });
@@ -1001,7 +1020,9 @@ fn measure_text_panel_updates(
     });
     window.update(|window, _| {
         let stats = window.take_view_reuse_stats();
-        eprintln!("view-reuse TextPanels/{font_family}/{panel_count}: {stats:?}");
+        eprintln!("view-reuse TextPanels/{font_family}/{panel_count}: root renders {}, panel renders {}, {stats:?}",
+            root_renders.get() - initial_root_renders,
+            panel_renders.get() - initial_panel_renders);
     });
     assert!(updates > 0);
     assert!(

@@ -372,7 +372,6 @@ impl<V: View> Element for ViewElement<V> {
         if let Some(entity_id) = self.entity_id {
             self.implicit = window.implicit_view_splicing
                 && self.cached_style.is_none()
-                && !window.rendered_entity_stack.is_empty()
                 && window
                     .layout_engine
                     .as_ref()
@@ -771,12 +770,14 @@ fn paint_view(
                     let paint_start = window.paint_index();
 
                     if let Some(element) = element {
+                        let parent_occurrence = window.current_view_occurrence.replace(occurrence);
                         let previous_access = window.begin_cached_entity_access(cx);
                         let refreshing = mem::replace(&mut window.refreshing, true);
                         element.paint(window, cx);
                         window.refreshing = refreshing;
                         let (own, _) = window.end_cached_entity_access(previous_access, cx);
                         window.view_store.set_own_access(occurrence, own, true);
+                        window.current_view_occurrence = parent_occurrence;
                     } else {
                         #[cfg(any(test, feature = "bench-support"))]
                         {

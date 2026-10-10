@@ -1510,11 +1510,19 @@ pub struct Window {
     pub(crate) view_splicing: bool,
     pub(crate) implicit_view_splicing: bool,
     root_view_changed: bool,
+    retained_a11y_active: bool,
+    retained_font_generation: Option<usize>,
+    retained_input_changed: bool,
     pub(crate) view_store: crate::view::ViewStore,
     pub(crate) current_view_occurrence: Option<crate::view::ViewOccurrenceId>,
     pub(crate) retained_scope_fallback: Option<crate::view::retained::SpliceFallback>,
     pub(crate) dispatch_replay: Vec<crate::ReusedSubtree>,
     pub(crate) cached_entity_access_stack: Vec<FxHashSet<EntityId>>,
+    cached_global_access_stack: Vec<(
+        bool,
+        FxHashSet<TypeId>,
+        Option<crate::view::ViewOccurrenceId>,
+    )>,
     #[cfg(any(test, feature = "bench-support"))]
     own_dirty_views: FxHashSet<EntityId>,
     #[cfg(any(test, feature = "bench-support"))]
@@ -2437,11 +2445,15 @@ impl Window {
                 .is_ok_and(|value| value == "all")
                 && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1"),
             root_view_changed: false,
+            retained_a11y_active: false,
+            retained_font_generation: None,
+            retained_input_changed: false,
             view_store: crate::view::ViewStore::default(),
             current_view_occurrence: None,
             retained_scope_fallback: None,
             dispatch_replay: Vec::new(),
             cached_entity_access_stack: Vec::new(),
+            cached_global_access_stack: Vec::new(),
             #[cfg(any(test, feature = "bench-support"))]
             own_dirty_views: FxHashSet::default(),
             #[cfg(any(test, feature = "bench-support"))]
@@ -2547,6 +2559,13 @@ impl ContentMask<Pixels> {
 
 impl Window {
     pub(crate) fn begin_cached_entity_access(&mut self, cx: &mut App) -> FxHashSet<EntityId> {
+        if self.implicit_view_splicing {
+            self.cached_global_access_stack.push((
+                cx.tracking_retained_globals.replace(true),
+                mem::take(cx.accessed_retained_globals.get_mut()),
+                self.current_view_occurrence,
+            ));
+        }
         self.cached_entity_access_stack.push(FxHashSet::default());
         mem::take(cx.entities.accessed_entities.get_mut().deref_mut())
     }
@@ -2556,6 +2575,17 @@ impl Window {
         previous: FxHashSet<EntityId>,
         cx: &mut App,
     ) -> (FxHashSet<EntityId>, FxHashSet<EntityId>) {
+        if self.implicit_view_splicing {
+            let (tracking, previous, occurrence) = self
+                .cached_global_access_stack
+                .pop()
+                .expect("global access scope");
+            let globals = mem::replace(cx.accessed_retained_globals.get_mut(), previous);
+            cx.tracking_retained_globals.set(tracking);
+            if let Some(occurrence) = occurrence {
+                self.view_store.append_global_access(occurrence, globals);
+            }
+        }
         let own = mem::replace(
             cx.entities.accessed_entities.get_mut().deref_mut(),
             previous,
@@ -2839,7 +2869,11 @@ impl Window {
                 && self.view_store.is_own_dirty(occurrence)
         }) {
             self.view_reuse_stats.render_entity_dependency += 1;
-        } else if self.cached_reconstruction_depth > 0 {
+        } else if self.cached_reconstruction_depth > 0
+            || self
+                .current_view_occurrence
+                .is_some_and(|occurrence| self.view_store.has_own_dirty_ancestor(occurrence))
+        {
             self.view_reuse_stats.render_ancestor_caused += 1;
         } else if inspector || self.refreshing {
             self.view_reuse_stats.render_refresh_or_inspector += 1;
@@ -3558,7 +3592,12 @@ impl Window {
     }
 
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {
-        self.appearance = self.platform_window.appearance();
+        let appearance = self.platform_window.appearance();
+        let changed = self.appearance != appearance;
+        self.appearance = appearance;
+        if self.implicit_view_splicing && changed {
+            self.refresh();
+        }
 
         self.appearance_observers
             .clone()
@@ -3566,6 +3605,9 @@ impl Window {
     }
 
     pub(crate) fn button_layout_changed(&mut self, cx: &mut App) {
+        if self.implicit_view_splicing {
+            self.refresh();
+        }
         self.button_layout_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
@@ -4093,6 +4135,10 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
+        if self.implicit_view_splicing && self.retained_input_changed {
+            self.refreshing = true;
+            self.retained_input_changed = false;
+        }
         if self.view_splicing {
             self.view_store.begin_frame();
             self.dispatch_replay.clear();
@@ -4344,6 +4390,16 @@ impl Window {
         self.tooltip_bounds.take();
 
         self.a11y.sync_active_flag();
+        if self.implicit_view_splicing {
+            let a11y_active = self.a11y.is_active();
+            let font_generation = self.text_system.font_generation();
+            self.refreshing |= a11y_active != self.retained_a11y_active
+                || self
+                    .retained_font_generation
+                    .is_some_and(|previous| previous != font_generation);
+            self.retained_a11y_active = a11y_active;
+            self.retained_font_generation = Some(font_generation);
+        }
         if self.a11y.is_active() {
             self.a11y.begin_frame();
         }
@@ -4653,6 +4709,10 @@ impl Window {
             let paint_start = self.paint_index();
             let content_mask = deferred_draw.content_mask;
             if let Some(element) = deferred_draw.element.as_mut() {
+                let parent_occurrence = mem::replace(
+                    &mut self.current_view_occurrence,
+                    deferred_draw.parent_occurrence,
+                );
                 let previous_access = self.begin_cached_entity_access(cx);
                 self.with_rendered_view(deferred_draw.current_view, |window| {
                     window.with_content_mask(content_mask, |window| {
@@ -4665,6 +4725,7 @@ impl Window {
                 deferred_draw.accessed_entities.extend(all.iter().copied());
                 self.view_store
                     .append_own_access(deferred_draw.parent_occurrence, own, true);
+                self.current_view_occurrence = parent_occurrence;
             } else {
                 cx.entities
                     .extend_accessed(&deferred_draw.accessed_entities);
@@ -6449,6 +6510,21 @@ impl Window {
     /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        if self.implicit_view_splicing
+            && matches!(
+                &event,
+                PlatformInput::MouseMove(_)
+                    | PlatformInput::MouseDown(_)
+                    | PlatformInput::MouseUp(_)
+                    | PlatformInput::MouseExited(_)
+                    | PlatformInput::ModifiersChanged(_)
+                    | PlatformInput::ScrollWheel(_)
+                    | PlatformInput::Pinch(_)
+            )
+        {
+            // Canvases can read pointer/modifier state without notifying an entity.
+            self.retained_input_changed = true;
+        }
         #[cfg(feature = "profiler")]
         self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
@@ -9011,6 +9087,7 @@ mod tests {
         });
         observations.borrow_mut().clear();
         cx.update_window(window.into(), |_, window, cx| {
+            window.refresh();
             window.draw(cx).clear(cx);
             assert!(window.text_style_stack.is_empty());
             assert_eq!(

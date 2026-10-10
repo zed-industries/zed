@@ -5,6 +5,7 @@ use crate::{
     ReusedSubtree, Window, window::ViewExecutionScope,
 };
 use collections::FxHashMap;
+use std::any::TypeId;
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -58,6 +59,7 @@ struct RetainedView {
     own_prepaint_entities: collections::FxHashSet<EntityId>,
     own_paint_entities: collections::FxHashSet<EntityId>,
     own_layout_entities: collections::FxHashSet<EntityId>,
+    own_globals: collections::FxHashSet<TypeId>,
     layout: Option<Box<ViewLayout>>,
     prepared: Option<(LayoutId, AnyElement)>,
 }
@@ -77,6 +79,7 @@ pub(crate) struct ViewStore {
     by_occurrence: FxHashMap<(EntityId, InternedHandle), ViewOccurrenceId>,
     by_entity: FxHashMap<EntityId, Vec<ViewOccurrenceId>>,
     by_dependency: FxHashMap<EntityId, Vec<ViewOccurrenceId>>,
+    by_global: FxHashMap<TypeId, Vec<ViewOccurrenceId>>,
     epoch: u64,
 }
 
@@ -166,6 +169,7 @@ impl ViewStore {
                 own_prepaint_entities: Default::default(),
                 own_paint_entities: Default::default(),
                 own_layout_entities: Default::default(),
+                own_globals: Default::default(),
                 layout: None,
                 prepared: None,
             });
@@ -204,6 +208,14 @@ impl ViewStore {
             }
             if record.last_drawn != self.epoch {
                 let retained = self.cold[index].take().expect("live occurrence");
+                for global in &retained.own_globals {
+                    if let Some(occurrences) = self.by_global.get_mut(global) {
+                        occurrences.retain(|id| id.index as usize != index);
+                        if occurrences.is_empty() {
+                            self.by_global.remove(global);
+                        }
+                    }
+                }
                 for entity in retained
                     .own_prepaint_entities
                     .union(&retained.own_paint_entities)
@@ -262,6 +274,57 @@ impl ViewStore {
         retained
     }
 
+    pub(crate) fn dirty_global_readers(&mut self, global: TypeId) -> bool {
+        let occurrences = self.by_global.get(&global).cloned().unwrap_or_default();
+        for id in &occurrences {
+            self.record_mut(*id).own_dirty = true;
+            let mut parent = self.record(*id).parent;
+            let mut blocked = self.record(*id).blocked;
+            while let Some(id) = parent {
+                let record = self.record_mut(id);
+                record.descendant_dirty = true;
+                blocked = blocked.or(record.blocked);
+                record.dirty_path_blocked = record.dirty_path_blocked.or(blocked);
+                parent = record.parent;
+            }
+        }
+        !occurrences.is_empty()
+    }
+
+    pub(crate) fn append_global_access(
+        &mut self,
+        id: ViewOccurrenceId,
+        globals: collections::FxHashSet<TypeId>,
+    ) {
+        for global in globals {
+            if self.retained_mut(id).own_globals.insert(global) {
+                self.by_global.entry(global).or_default().push(id);
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    fn storage_sizes(&self) -> (usize, usize, usize, usize, usize) {
+        (
+            self.by_occurrence.len(),
+            std::mem::size_of::<ViewRecord>(),
+            std::mem::size_of::<Option<RetainedView>>(),
+            std::mem::size_of::<RetainedViewState>(),
+            std::mem::size_of::<ViewLayout>(),
+        )
+    }
+
+    fn clear_global_access(&mut self, id: ViewOccurrenceId) {
+        for global in std::mem::take(&mut self.retained_mut(id).own_globals) {
+            if let Some(occurrences) = self.by_global.get_mut(&global) {
+                occurrences.retain(|occurrence| *occurrence != id);
+                if occurrences.is_empty() {
+                    self.by_global.remove(&global);
+                }
+            }
+        }
+    }
+
     pub(crate) fn mark_unretained_descendant(&mut self, entity: EntityId) {
         for id in self.by_entity.get(&entity).cloned().unwrap_or_default() {
             let mut current = Some(id);
@@ -281,6 +344,7 @@ impl ViewStore {
     }
 
     pub(super) fn invalidate_state(&mut self, id: ViewOccurrenceId) {
+        self.clear_global_access(id);
         let retained = self.retained_mut(id);
         let dependencies = retained
             .own_prepaint_entities
@@ -426,11 +490,26 @@ impl ViewStore {
         self.retained(id).entity == entity
     }
 
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn has_own_dirty_ancestor(&self, id: ViewOccurrenceId) -> bool {
+        let mut parent = self.record(id).parent;
+        while let Some(id) = parent {
+            if self.record(id).own_dirty {
+                return true;
+            }
+            parent = self.record(id).parent;
+        }
+        false
+    }
+
     pub(super) fn begin_reconstruction(
         &mut self,
         id: ViewOccurrenceId,
         scope: &ViewExecutionScope,
     ) {
+        if self.retained(id).layout.is_none() {
+            self.clear_global_access(id);
+        }
         self.record_mut(id).blocked = scope.fallback;
     }
 
@@ -534,6 +613,19 @@ impl ViewStore {
 }
 
 impl Window {
+    /// Live occurrences and inline bytes for hot records, cold slots, cache boxes
+    /// and implicit-layout boxes. Excludes map/set capacity and shared payloads.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn retained_view_storage_sizes(&self) -> (usize, usize, usize, usize, usize) {
+        self.view_store.storage_sizes()
+    }
+
+    pub(crate) fn invalidate_retained_global(&mut self, global: TypeId) {
+        if self.implicit_view_splicing && self.view_store.dirty_global_readers(global) {
+            self.invalidator.set_dirty(true);
+        }
+    }
+
     pub(super) fn request_implicit_view_layout(
         &mut self,
         entity: EntityId,
@@ -605,9 +697,10 @@ impl Window {
         self.record_view_render(
             entity,
             false,
-            false,
+            true,
             self.view_store.state(occurrence).is_none(),
         );
+        self.view_store.clear_global_access(occurrence);
         let previous_access = self.begin_cached_entity_access(cx);
         let mut element = self.with_rendered_view(entity, |window| render(window, cx));
         let layout = self.with_rendered_view(entity, |window| element.request_layout(window, cx));
@@ -696,7 +789,13 @@ impl Window {
     }
 
     pub(super) fn implicit_prepaint_layout(&mut self, id: ViewOccurrenceId) -> bool {
-        let geometry_unchanged = self.implicit_geometry_unchanged(id);
+        let geometry_unchanged = self
+            .view_store
+            .retained(id)
+            .layout
+            .as_ref()
+            .is_none_or(|layout| layout.input.is_none())
+            || self.implicit_geometry_unchanged(id);
         let Some(layout) = self.view_store.retained_mut(id).layout.as_mut() else {
             return true;
         };
@@ -1046,16 +1145,20 @@ mod tests {
         width: Pixels,
         margin: Pixels,
         color: u32,
+        intrinsic: bool,
     }
 
     impl Render for ImplicitLeaf {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             self.renders.set(self.renders.get() + 1);
             div()
-                .w(self.width)
+                .when(!self.intrinsic, |element| element.w(self.width))
                 .h(px(20.))
                 .ml(self.margin)
                 .bg(crate::rgb(self.color))
+                .when(self.intrinsic, |element| {
+                    element.child(div().w(self.width).h(px(20.)))
+                })
         }
     }
 
@@ -1088,6 +1191,7 @@ mod tests {
             width: px(20.),
             margin: px(0.),
             color: 0xff0000,
+            intrinsic: false,
         });
         let branch = cx.new(|_| ImplicitBranch {
             renders: branch_renders.clone(),
@@ -1105,14 +1209,20 @@ mod tests {
         }
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .expect("initial draw");
+        let initial_leaf_renders = leaf_renders.get();
+        let initial_branch_renders = branch_renders.get();
         leaf.update(cx, |leaf, cx| {
             leaf.color ^= 0xffffff;
             cx.notify();
         });
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .expect("color draw");
-        assert_eq!(leaf_renders.get(), 2);
-        assert_eq!(branch_renders.get(), 1, "unchanged layout must splice");
+        assert_eq!(leaf_renders.get(), initial_leaf_renders + 1);
+        assert_eq!(
+            branch_renders.get(),
+            initial_branch_renders,
+            "unchanged layout must splice"
+        );
 
         leaf.update(cx, |leaf, cx| {
             leaf.margin = px(3.);
@@ -1122,12 +1232,12 @@ mod tests {
             .expect("margin draw");
         assert_eq!(
             leaf_renders.get(),
-            3,
+            initial_leaf_renders + 2,
             "speculative Render must be consumed by fallback"
         );
         assert_eq!(
             branch_renders.get(),
-            2,
+            initial_branch_renders + 1,
             "equal-size parent-facing style change must fall back"
         );
 
@@ -1137,8 +1247,197 @@ mod tests {
         });
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .expect("size draw");
-        assert_eq!(leaf_renders.get(), 4);
-        assert_eq!(branch_renders.get(), 3);
+        assert_eq!(leaf_renders.get(), initial_leaf_renders + 3);
+        assert_eq!(branch_renders.get(), initial_branch_renders + 2);
+
+        leaf.update(cx, |leaf, cx| {
+            leaf.intrinsic = true;
+            cx.notify();
+        });
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.take_view_reuse_stats();
+        })
+        .expect("intrinsic mount");
+        let previous = leaf_renders.get();
+        leaf.update(cx, |leaf, cx| {
+            leaf.width = px(40.);
+            cx.notify();
+        });
+        let fallbacks = cx
+            .update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.view_reuse_stats().splice_fallbacks
+            })
+            .expect("intrinsic size draw");
+        assert_eq!(leaf_renders.get(), previous + 1);
+        assert!(
+            fallbacks[super::SpliceFallback::LayoutSize as usize] > 0,
+            "an intrinsic size change must fall back even with an identical root style"
+        );
+    }
+
+    struct ProbeGlobal(u32);
+    impl crate::Global for ProbeGlobal {}
+    struct AbsentGlobal;
+    impl crate::Global for AbsentGlobal {}
+
+    struct GlobalRoot {
+        renders: Rc<Cell<usize>>,
+        observed: Rc<Cell<u32>>,
+        phase: DependencyPhase,
+    }
+
+    struct GlobalBoundaryRoot {
+        renders: Rc<Cell<usize>>,
+        child: Entity<GlobalRoot>,
+    }
+
+    impl Render for GlobalBoundaryRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div().child(self.child.clone())
+        }
+    }
+
+    impl Render for GlobalRoot {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let color = if matches!(self.phase, DependencyPhase::Render) {
+                cx.global::<ProbeGlobal>().0
+            } else {
+                0
+            };
+            std::hint::black_box(cx.try_global::<AbsentGlobal>());
+            let phase = self.phase;
+            let prepaint_observed = self.observed.clone();
+            let paint_observed = self.observed.clone();
+            div().size_full().bg(crate::rgb(color)).child(crate::canvas(
+                move |_, _, cx| {
+                    if matches!(phase, DependencyPhase::Prepaint) {
+                        prepaint_observed.set(cx.global::<ProbeGlobal>().0);
+                    }
+                },
+                move |_, _, _, cx| {
+                    if matches!(phase, DependencyPhase::Paint) {
+                        paint_observed.set(cx.global::<ProbeGlobal>().0);
+                    }
+                },
+            ))
+        }
+    }
+
+    #[crate::test]
+    fn retained_root_tracks_globals_in_all_phases(cx: &mut TestAppContext) {
+        for phase in [
+            DependencyPhase::Render,
+            DependencyPhase::Prepaint,
+            DependencyPhase::Paint,
+        ] {
+            cx.set_global(ProbeGlobal(0xff0000));
+            let renders = Rc::new(Cell::new(0));
+            let observed = Rc::new(Cell::new(0));
+            let window = cx.add_window(|window, _| {
+                window.set_implicit_view_splicing(true);
+                GlobalRoot {
+                    renders: renders.clone(),
+                    observed: observed.clone(),
+                    phase,
+                }
+            });
+            let retained = cx
+                .update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.implicit_view_splicing
+                })
+                .expect("initial draw");
+            if !retained {
+                return;
+            }
+            let initial = renders.get();
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("clean draw");
+            assert_eq!(renders.get(), initial, "unchanged root must retain");
+
+            cx.set_global(ProbeGlobal(0x00ff00));
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("global draw");
+            assert_eq!(
+                renders.get(),
+                initial + 1,
+                "global readers must render once"
+            );
+            if !matches!(phase, DependencyPhase::Render) {
+                assert_eq!(observed.get(), 0x00ff00);
+            }
+
+            let previous = renders.get();
+            cx.update_global::<ProbeGlobal, _>(|global, _| global.0 = 0x0000ff);
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("updated global draw");
+            assert_eq!(renders.get(), previous + 1);
+            if !matches!(phase, DependencyPhase::Render) {
+                assert_eq!(observed.get(), 0x0000ff);
+            }
+
+            let previous = renders.get();
+            cx.set_global(AbsentGlobal);
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("absent global installed");
+            assert_eq!(
+                renders.get(),
+                previous + 1,
+                "absent try_global reads are dependencies too"
+            );
+            let previous = renders.get();
+            cx.update_window(window.into(), |_, window, cx| {
+                window.resize(crate::size(px(640.), px(480.)));
+                window.bounds_changed(cx);
+                window.draw(cx).clear(cx);
+            })
+            .expect("resize draw");
+            assert_eq!(renders.get(), previous + 1, "resize must refresh the root");
+            cx.update_window(window.into(), |_, window, _| window.remove_window())
+                .expect("remove window");
+        }
+    }
+
+    #[crate::test]
+    fn global_reads_belong_to_the_nearest_boundary(cx: &mut TestAppContext) {
+        cx.set_global(ProbeGlobal(0xff0000));
+        let root_renders = Rc::new(Cell::new(0));
+        let child_renders = Rc::new(Cell::new(0));
+        let window = cx.add_window(|window, cx| {
+            window.set_implicit_view_splicing(true);
+            GlobalBoundaryRoot {
+                renders: root_renders.clone(),
+                child: cx.new(|_| GlobalRoot {
+                    renders: child_renders.clone(),
+                    observed: Rc::default(),
+                    phase: DependencyPhase::Render,
+                }),
+            }
+        });
+        let retained = cx
+            .update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.implicit_view_splicing
+            })
+            .expect("initial draw");
+        if !retained {
+            return;
+        }
+        let initial_root = root_renders.get();
+        let initial_child = child_renders.get();
+        cx.set_global(ProbeGlobal(0x00ff00));
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("global draw");
+        assert_eq!(
+            root_renders.get(),
+            initial_root,
+            "nested reads must not dirty the ancestor's own output"
+        );
+        assert_eq!(child_renders.get(), initial_child + 1);
     }
 
     #[derive(Default)]
