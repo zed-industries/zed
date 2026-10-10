@@ -573,7 +573,6 @@ impl TaffyLayoutEngine {
                                 .expect(EXPECT_MESSAGE);
                             self.taffy.remove(id.0).expect(EXPECT_MESSAGE);
                             self.absolute_layout.remove(id.0.into());
-                            self.layout_changes += 1;
                             if let Some(retained) = self.retained.as_mut() {
                                 retained.layouts.remove(&id.0);
                                 retained.inputs.remove(&id.0);
