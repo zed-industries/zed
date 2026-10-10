@@ -1909,6 +1909,7 @@ impl Workspace {
                 None,
                 NewFile.boxed_clone(),
                 true,
+                PaneNavigation::Enabled,
                 window,
                 cx,
             );
@@ -4911,6 +4912,7 @@ impl Workspace {
                 None,
                 NewFile.boxed_clone(),
                 true,
+                PaneNavigation::Enabled,
                 window,
                 cx,
             );
