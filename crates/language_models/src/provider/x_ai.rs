@@ -10,8 +10,8 @@ use language_model::{
     LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
     LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView,
-    RateLimiter, env_var, unavailable_error,
+    LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters,
+    PromptCompactionStrategy, ProviderSettingsView, RateLimiter, env_var, unavailable_error,
 };
 pub use settings::XaiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -391,6 +391,7 @@ fn language_model(model: &x_ai::Model) -> LanguageModel {
         supports_images: model.supports_images(),
         supports_streaming_tools: true,
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
         supports_thinking: model.supports_reasoning_effort(),
         supported_effort_levels: supported_thinking_effort_levels(model).into(),
         max_output_tokens: model.max_output_tokens(),
