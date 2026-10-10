@@ -1469,18 +1469,32 @@ mod tests {
     const WINDOW_SIZE: Size<Pixels> = size(px(1200.0), px(900.0));
 
     #[gpui::test(iterations = 12)]
-    fn cached_views_match_forced_reconstruction(mut rng: StdRng, cx: &mut TestAppContext) {
+    fn cached_views_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
+        views_match_forced_reconstruction(rng, cx, true);
+    }
+
+    #[gpui::test(iterations = 12)]
+    fn implicit_views_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
+        views_match_forced_reconstruction(rng, cx, false);
+    }
+
+    fn views_match_forced_reconstruction(mut rng: StdRng, cx: &mut TestAppContext, cached: bool) {
         for topology in RandomizedElementTreeTopology::ALL {
             let config = RandomizedElementTreeConfig::new(rng.random(), ELEMENT_COUNT)
                 .with_topology(topology)
                 .with_entity_density(0.5)
                 .with_handler_density(0.5)
-                .with_cached_views(true);
+                .with_cached_views(cached);
             let reused = cx.open_window(WINDOW_SIZE, move |window, cx| {
-                window.set_view_splicing(true);
+                if cached {
+                    window.set_view_splicing(true);
+                } else {
+                    window.set_implicit_view_splicing(true);
+                }
                 RandomizedElementTree::new_with_config(config, cx)
             });
             let reconstructed = cx.open_window(WINDOW_SIZE, move |window, cx| {
+                window.set_view_splicing(false);
                 window.set_force_view_reconstruction(true);
                 RandomizedElementTree::new_with_config(config, cx)
             });
@@ -1555,11 +1569,17 @@ mod tests {
             let stats = cx
                 .update_window(reused.into(), |_, window, _| window.take_view_reuse_stats())
                 .expect("reused window exists");
-            assert!(stats.cached_hits > 0, "fixture exercises reuse");
-            assert!(
-                stats.hitboxes.cloned_elements > 0,
-                "fixture replays hitboxes"
-            );
+            if cached
+                || cx
+                    .update_window(reused.into(), |_, window, _| window.layout_cache_enabled())
+                    .expect("window")
+            {
+                assert!(stats.cached_hits > 0, "fixture exercises reuse");
+                assert!(
+                    stats.hitboxes.cloned_elements > 0,
+                    "fixture replays hitboxes"
+                );
+            }
             cx.update_window(reused.into(), |_, window, _| window.remove_window())
                 .expect("reused window exists");
             cx.update_window(reconstructed.into(), |_, window, _| window.remove_window())

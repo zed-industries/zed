@@ -1151,7 +1151,7 @@ pub(crate) struct ViewExecutionScope {
     opacity: f32,
     rem_size: Pixels,
     scale_factor: f32,
-    pub(crate) dispatch_node: DispatchNodeId,
+    pub(crate) dispatch_node: Option<DispatchNodeId>,
     pub(crate) parent_occurrence: Option<crate::view::ViewOccurrenceId>,
     pub(crate) fallback: Option<crate::view::retained::SpliceFallback>,
 }
@@ -1315,7 +1315,7 @@ pub struct ViewReuseStats {
     pub spliced_children: usize,
     /// Uncached view, deferred draw, transaction, autoscroll, accessibility,
     /// inspector, execution scope, missing view.
-    pub splice_fallbacks: [usize; 8],
+    pub splice_fallbacks: [usize; 11],
     pub cached_hits: usize,
     pub cached_misses: usize,
     pub miss_first_mount: usize,
@@ -1445,7 +1445,7 @@ pub struct Window {
     /// a given rem size.
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
-    layout_engine: Option<TaffyLayoutEngine>,
+    pub(crate) layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
     pub(crate) element_id_interner: ElementIdInterner,
@@ -1474,6 +1474,8 @@ pub struct Window {
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) view_splicing: bool,
+    pub(crate) implicit_view_splicing: bool,
+    root_view_changed: bool,
     pub(crate) view_store: crate::view::ViewStore,
     pub(crate) current_view_occurrence: Option<crate::view::ViewOccurrenceId>,
     pub(crate) retained_scope_fallback: Option<crate::view::retained::SpliceFallback>,
@@ -2395,7 +2397,11 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
-            view_splicing: std::env::var("GPUI_VIEW_SPLICE").is_ok_and(|value| value == "1"),
+            view_splicing: std::env::var("GPUI_VIEW_SPLICE")
+                .is_ok_and(|value| value == "1" || value == "all"),
+            implicit_view_splicing: std::env::var("GPUI_VIEW_SPLICE")
+                .is_ok_and(|value| value == "all"),
+            root_view_changed: false,
             view_store: crate::view::ViewStore::default(),
             current_view_occurrence: None,
             retained_scope_fallback: None,
@@ -2563,11 +2569,7 @@ impl Window {
             opacity: self.element_opacity,
             rem_size: self.rem_size,
             scale_factor: self.scale_factor,
-            dispatch_node: self
-                .next_frame
-                .dispatch_tree
-                .active_node_id()
-                .expect("view dispatch node"),
+            dispatch_node: self.next_frame.dispatch_tree.active_node_id(),
             parent_occurrence: self.current_view_occurrence,
             fallback: self.retained_scope_fallback,
         }
@@ -2577,15 +2579,46 @@ impl Window {
         self.rem_size == scope.rem_size && self.scale_factor == scope.scale_factor
     }
 
+    pub(crate) fn view_layout_scope_matches(
+        &self,
+        old: &ViewExecutionScope,
+        new: &ViewExecutionScope,
+    ) -> bool {
+        self.view_scope_is_current(old)
+            && old.text_style == new.text_style
+            && old.rem_override == new.rem_override
+            && old.image_cache.as_ref().map(|cache| cache.entity_id())
+                == new.image_cache.as_ref().map(|cache| cache.entity_id())
+            && old.opacity == new.opacity
+            && old.content_mask == new.content_mask
+    }
+
     pub(crate) fn with_view_scope<R>(
         &mut self,
+        scope: ViewExecutionScope,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.with_execution_scope(scope, true, f)
+    }
+
+    pub(crate) fn with_view_layout_scope<R>(
+        &mut self,
+        scope: ViewExecutionScope,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.with_execution_scope(scope, false, f)
+    }
+
+    fn with_execution_scope<R>(
+        &mut self,
         mut scope: ViewExecutionScope,
+        dispatch: bool,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         let dispatch_node = self.next_frame.dispatch_tree.active_node_id();
-        self.next_frame
-            .dispatch_tree
-            .set_active_node(scope.dispatch_node);
+        if dispatch && let Some(node) = scope.dispatch_node {
+            self.next_frame.dispatch_tree.set_active_node(node);
+        }
         let global_id = self.element_id_interner.global_id(scope.element_path);
         let mut element_ids = ElementIdStack::new(&self.element_id_interner);
         for id in &*global_id {
@@ -2638,7 +2671,7 @@ impl Window {
         );
         mem::swap(&mut self.retained_scope_fallback, &mut scope.fallback);
         self.invalidate_text_style();
-        if let Some(dispatch_node) = dispatch_node {
+        if dispatch && let Some(dispatch_node) = dispatch_node {
             self.next_frame.dispatch_tree.set_active_node(dispatch_node);
         }
         result
@@ -2671,10 +2704,19 @@ impl Window {
     /// `GPUI_VIEW_SPLICE=1` is set. Untracked shared state can invalidate retained output.
     #[cfg(any(test, feature = "bench-support"))]
     pub fn set_view_splicing(&mut self, enabled: bool) {
+        self.implicit_view_splicing = false;
         if self.view_splicing != enabled {
             self.view_splicing = enabled;
             self.refresh();
         }
+    }
+
+    /// Opt into implicit entity-view boundaries as well as explicit cached views.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn set_implicit_view_splicing(&mut self, enabled: bool) {
+        self.set_view_splicing(enabled);
+        self.implicit_view_splicing = enabled;
+        self.refresh();
     }
 
     /// Snapshot the completed frame outside benchmark timing.
@@ -2775,6 +2817,14 @@ impl Window {
     }
 
     fn mark_view_dirty(&mut self, view_id: EntityId) {
+        if self.implicit_view_splicing
+            && self
+                .root
+                .as_ref()
+                .is_some_and(|root| root.entity_id() == view_id)
+        {
+            self.root_view_changed = true;
+        }
         let retained = !self.view_splicing || self.view_store.mark_dirty(view_id);
         #[cfg(any(test, feature = "bench-support"))]
         self.own_dirty_views.insert(view_id);
@@ -4044,6 +4094,7 @@ impl Window {
             }
         }
         self.dirty_views.clear();
+        self.root_view_changed = false;
         if self.view_splicing {
             self.view_store.finish_frame();
             self.scope_image_caches
@@ -4248,6 +4299,8 @@ impl Window {
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
+        let refreshing = self.refreshing;
+        self.refreshing |= self.implicit_view_splicing && self.root_view_changed;
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
@@ -4362,6 +4415,7 @@ impl Window {
                 self.platform_window.a11y_tree_update(tree_update);
             }
         }
+        self.refreshing = refreshing;
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {

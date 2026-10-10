@@ -273,6 +273,8 @@ pub struct ViewElement<V: View> {
     view: Option<V>,
     entity_id: Option<EntityId>,
     cached_style: Option<StyleRefinement>,
+    implicit: bool,
+    retained_view: Option<AnyWeakView>,
     #[cfg(debug_assertions)]
     source: &'static core::panic::Location<'static>,
 }
@@ -285,6 +287,8 @@ impl<V: View> ViewElement<V> {
         ViewElement {
             entity_id,
             cached_style: None,
+            implicit: false,
+            retained_view: None,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -360,12 +364,44 @@ impl<V: View> Element for ViewElement<V> {
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         if let Some(entity_id) = self.entity_id {
+            self.implicit = window.implicit_view_splicing
+                && self.cached_style.is_none()
+                && !window.rendered_entity_stack.is_empty()
+                && window
+                    .layout_engine
+                    .as_ref()
+                    .is_some_and(|engine| engine.cache_enabled())
+                && !window.is_inspector_picking(cx);
+            if self.implicit {
+                window
+                    .layout_engine
+                    .as_mut()
+                    .expect("layout engine")
+                    .enable_retention();
+                self.retained_view = self.view.as_ref().and_then(View::retained_view);
+                if let Some(retained_view) = self.retained_view.as_ref() {
+                    return window.request_implicit_view_layout(
+                        entity_id,
+                        id.expect("entity view id"),
+                        retained_view,
+                        cx,
+                        &mut |window, cx| {
+                            self.view
+                                .take()
+                                .expect("unrendered view")
+                                .render(window, cx)
+                                .into_any_element()
+                        },
+                    );
+                }
+                self.implicit = false;
+            }
             // Stateful path: create a reactive boundary.
             let view = &mut self.view;
             request_layout_view(
@@ -398,11 +434,14 @@ impl<V: View> Element for ViewElement<V> {
     ) -> Option<AnyElement> {
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
-            let retained_view = if window.view_splicing && self.cached_style.is_some() {
-                self.view.as_ref().and_then(View::retained_view)
-            } else {
-                None
-            };
+            let retained_view =
+                if window.view_splicing && (self.cached_style.is_some() || self.implicit) {
+                    self.retained_view
+                        .clone()
+                        .or_else(|| self.view.as_ref().and_then(View::retained_view))
+                } else {
+                    None
+                };
             prepaint_view(
                 entity_id,
                 global_id,
@@ -439,7 +478,7 @@ impl<V: View> Element for ViewElement<V> {
             // Stateful path.
             paint_view(
                 entity_id,
-                self.cached_style.is_some(),
+                self.cached_style.is_some() || self.implicit,
                 global_id,
                 element,
                 window,
@@ -531,13 +570,15 @@ fn prepaint_view(
     window.set_view_id(entity_id);
     let occurrence = window.begin_view_occurrence(entity_id, global_id, retained_view);
     let parent_occurrence = mem::replace(&mut window.current_view_occurrence, occurrence);
-    let mut scope = (retained_view.is_some() && element.is_none()).then(|| {
+    let mut scope = retained_view.is_some().then(|| {
         let mut scope = window.capture_view_scope();
         scope.parent_occurrence = parent_occurrence;
         scope
     });
     let result = window.with_rendered_view(entity_id, |window| {
-        if let Some(mut element) = element.take() {
+        if retained_view.is_none()
+            && let Some(mut element) = element.take()
+        {
             if let Some(occurrence) = occurrence {
                 window.view_store.invalidate_state(occurrence);
             }
@@ -547,6 +588,7 @@ fn prepaint_view(
 
         window.with_element_state::<ViewElementHandle, _>(global_id.unwrap(), |_handle, window| {
             let occurrence = occurrence.expect("cached views have an occurrence");
+            let constraints_unchanged = window.implicit_prepaint_layout(occurrence);
             let content_mask = window.content_mask();
             let text_style = window.retained_text_style_handle();
 
@@ -565,7 +607,8 @@ fn prepaint_view(
                     state.cache_key.text_style != text_style,
                 )
             });
-            if let Some(element_state) = element_state
+            if element.is_none()
+                && let Some(element_state) = element_state
                 && element_state.cache_key.bounds == bounds
                 && element_state.cache_key.content_mask == content_mask
                 && element_state.cache_key.text_style == text_style
@@ -575,6 +618,7 @@ fn prepaint_view(
                 && window.retained_scope_fallback != Some(retained::SpliceFallback::Transaction)
                 && !window.refreshing
                 && !force_reconstruction
+                && constraints_unchanged
             {
                 let prepaint_range = element_state.prepaint_range.clone();
                 let can_reuse = !window.view_store.is_descendant_dirty(occurrence)
@@ -627,7 +671,9 @@ fn prepaint_view(
                 } else {
                     stats.miss_first_mount += 1;
                 }
-                window.record_view_render(entity_id, false, true, cache_changes.is_none());
+                if element.is_none() && !window.is_implicit_view(occurrence) {
+                    window.record_view_render(entity_id, false, true, cache_changes.is_none());
+                }
                 if synthetic_refresh {
                     window.cached_reconstruction_depth += 1;
                 }
@@ -638,9 +684,21 @@ fn prepaint_view(
                 .view_store
                 .begin_reconstruction(occurrence, scope.as_ref().expect("cached view scope"));
             let prepaint_start = window.prepaint_index();
-            let mut element = render(window, cx);
-            element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
-            element.prepaint_at(bounds.origin, window, cx);
+            let implicit = window.is_implicit_view(occurrence);
+            let mut element = if let Some(element) = element.take() {
+                element
+            } else if implicit {
+                window.reconstruct_implicit_view(occurrence, cx, render)
+            } else {
+                let mut element = render(window, cx);
+                element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
+                element
+            };
+            if implicit {
+                element.prepaint(window, cx);
+            } else {
+                element.prepaint_at(bounds.origin, window, cx);
+            }
 
             let prepaint_end = window.prepaint_index();
             let (own, _) = window.end_cached_entity_access(previous_access, cx);

@@ -336,3 +336,50 @@ tab-stop index-fixup accounting, exact owning-view attribution of primitive
 mismatches, and deep owned-payload byte accounting if that is required rather
 than inline-array record sizes. The current counters already provide the
 ancestor-refresh and segment-replay evidence needed for stages 2 and 3.
+
+## Stage 2b: implicit boundaries
+
+`GPUI_VIEW_SPLICE=all` enables uncached entity occurrences as well as explicit
+cached views. Implicit layout retention requires `GPUI_LAYOUT_CACHE=1`; without
+persistent nodes it conservatively follows the cached-only path. `=1` remains
+cached-only, and an unset switch leaves the original layout and replay paths.
+
+Uncached Render/request-layout scopes are stored independently of prepaint and
+paint scopes. The opt-in Taffy adapter uses the same block, float, flex, grid,
+leaf and cache algorithms as TaffyTree, but records the exact `LayoutInput` and
+`LayoutOutput` at container nodes. Dispatch identity is absent during layout.
+Dirty children request layout in their recorded execution scope before the
+containing root is computed. The child is computed under its stored inputs; its
+full Taffy style, assigned size and output (including baselines and collapsing
+margins) must match. A prepared element stays in the occurrence only for this
+frame, and an ancestor fallback consumes it without another Render invocation.
+
+After the containing root is computed, reuse rechecks actual inputs and
+geometry. Geometry comparisons share the engine's layout records; only changed
+nodes need a transient previous-layout entry, rather than allocating a subtree
+snapshot per occurrence. Speculative absolute bounds cannot survive a containing
+root computation: flex redistribution can invalidate a child's cached bounds on
+the root's *first* computation in the frame.
+
+Conservative implementation choices: the exact style comparison includes
+container-facing fields as well as parent-facing fields. A changed non-view
+layout on a retained splice path falls back rather than relocating individual
+element callbacks. Direct root notifications still reconstruct the root and its
+descendants in stage 2b, preserving inherited opacity and visibility changes;
+root retention is the subsequent stage.
+
+Correctness evidence in the implementation worktree:
+
+- Six `cargo test --locked -p gpui --lib` combinations (layout cache 0/1 and
+  splice off/1/all): 434 passed, 2 ignored in each. The all/cache-1 run exposed
+  inherited root opacity/visibility invalidation; it passed after that fix.
+- Uncached differential sweep: four topologies, twelve scheduler seeds, sixteen
+  frames, including style, bounds, insert/remove and reorder.
+- Targeted equal-size margin/style fallback, size fallback, and a mutating
+  Render counter asserting exactly one child Render on fallback frames.
+- `./script/clippy --locked -p gpui`, `cargo fmt --all -- --check`, and
+  `cargo check --locked -p gpui -p ui -p workspace -p editor` passed.
+
+Builds/tests used the private reflink-seeded `target/private`, shared experiment
+lock, CPU 16, six Cargo jobs, and 900-second build / 300-second run timeouts.
+No timing comparison was performed at this stage.

@@ -1,8 +1,8 @@
 use super::{AnyWeakView, RetainedViewCacheKey, RetainedViewState, paint_view, prepaint_view};
 use crate::element::InternedHandle;
 use crate::{
-    AnyElement, App, EntityId, GlobalElementId, PaintIndex, PrepaintStateIndex, ReusedSubtree,
-    Window, window::ViewExecutionScope,
+    AnyElement, App, EntityId, GlobalElementId, LayoutId, PaintIndex, PrepaintStateIndex,
+    ReusedSubtree, Window, window::ViewExecutionScope,
 };
 use collections::FxHashMap;
 use std::ops::Range;
@@ -24,6 +24,17 @@ pub(crate) enum SpliceFallback {
     Inspector,
     ExecutionScope,
     MissingView,
+    LayoutStyle,
+    LayoutSize,
+    LayoutConstraints,
+}
+
+struct ViewLayout {
+    id: LayoutId,
+    style: taffy::Style,
+    input: Option<taffy::LayoutInput>,
+    output: Option<taffy::LayoutOutput>,
+    scope: ViewExecutionScope,
 }
 
 struct ViewRecord {
@@ -46,6 +57,9 @@ struct RetainedView {
     pending_paint: Option<Vec<SpliceChild>>,
     own_prepaint_entities: collections::FxHashSet<EntityId>,
     own_paint_entities: collections::FxHashSet<EntityId>,
+    own_layout_entities: collections::FxHashSet<EntityId>,
+    layout: Option<Box<ViewLayout>>,
+    prepared: Option<(LayoutId, AnyElement)>,
 }
 
 struct SpliceChild {
@@ -80,6 +94,7 @@ impl ViewStore {
         entities.insert(retained.entity);
         entities.extend(retained.own_prepaint_entities.iter().copied());
         entities.extend(retained.own_paint_entities.iter().copied());
+        entities.extend(retained.own_layout_entities.iter().copied());
     }
 
     fn record(&self, id: ViewOccurrenceId) -> &ViewRecord {
@@ -150,6 +165,9 @@ impl ViewStore {
                 pending_paint: None,
                 own_prepaint_entities: Default::default(),
                 own_paint_entities: Default::default(),
+                own_layout_entities: Default::default(),
+                layout: None,
+                prepared: None,
             });
             self.by_occurrence.insert(key, id);
             self.by_entity.entry(entity).or_default().push(id);
@@ -189,6 +207,7 @@ impl ViewStore {
                 for entity in retained
                     .own_prepaint_entities
                     .union(&retained.own_paint_entities)
+                    .chain(retained.own_layout_entities.iter())
                 {
                     if let Some(occurrences) = self.by_dependency.get_mut(entity) {
                         occurrences.retain(|id| id.index as usize != index);
@@ -213,6 +232,7 @@ impl ViewStore {
                 record.own_dirty = false;
                 record.descendant_dirty = false;
                 record.dirty_path_blocked = None;
+                self.cold[index].as_mut().expect("live occurrence").prepared = None;
             }
         }
     }
@@ -265,6 +285,7 @@ impl ViewStore {
         let dependencies = retained
             .own_prepaint_entities
             .union(&retained.own_paint_entities)
+            .chain(retained.own_layout_entities.iter())
             .copied()
             .collect::<Vec<_>>();
         retained.state = None;
@@ -273,6 +294,9 @@ impl ViewStore {
         retained.pending_paint = None;
         retained.own_prepaint_entities.clear();
         retained.own_paint_entities.clear();
+        retained.own_layout_entities.clear();
+        retained.layout = None;
+        retained.prepared = None;
         for entity in dependencies {
             if let Some(occurrences) = self.by_dependency.get_mut(&entity) {
                 occurrences.retain(|occurrence| *occurrence != id);
@@ -330,12 +354,14 @@ impl ViewStore {
         if own.is_empty()
             && retained.own_prepaint_entities.is_empty()
             && retained.own_paint_entities.is_empty()
+            && retained.own_layout_entities.is_empty()
         {
             return;
         }
         let old_dependencies = retained
             .own_prepaint_entities
             .union(&retained.own_paint_entities)
+            .chain(retained.own_layout_entities.iter())
             .copied()
             .collect::<Vec<_>>();
         if paint {
@@ -347,6 +373,7 @@ impl ViewStore {
         let dependencies = retained
             .own_prepaint_entities
             .union(&retained.own_paint_entities)
+            .chain(retained.own_layout_entities.iter())
             .copied()
             .collect::<Vec<_>>();
         for entity in old_dependencies {
@@ -360,6 +387,25 @@ impl ViewStore {
         for entity in dependencies {
             self.by_dependency.entry(entity).or_default().push(id);
         }
+    }
+
+    fn set_layout_access(
+        &mut self,
+        id: ViewOccurrenceId,
+        mut own: collections::FxHashSet<EntityId>,
+    ) {
+        let retained = self.retained_mut(id);
+        own.remove(&retained.entity);
+        let previous = std::mem::replace(&mut retained.own_layout_entities, own);
+        for entity in previous {
+            if let Some(occurrences) = self.by_dependency.get_mut(&entity) {
+                occurrences.retain(|occurrence| *occurrence != id);
+                if occurrences.is_empty() {
+                    self.by_dependency.remove(&entity);
+                }
+            }
+        }
+        self.set_own_access(id, Default::default(), false);
     }
 
     pub(crate) fn block_splicing(&mut self, id: ViewOccurrenceId, reason: SpliceFallback) {
@@ -409,6 +455,7 @@ impl ViewStore {
             retained.state = Some(Box::new(state));
         }
         retained.prepaint_scope = Some(scope);
+        retained.paint_scope = None;
         retained.pending_paint = None;
     }
 
@@ -452,7 +499,9 @@ impl ViewStore {
                 ..state.prepaint_range.end.rebase(old, new);
         }
         if let Some(scope) = retained.prepaint_scope.as_mut() {
-            scope.dispatch_node = dispatch.refresh_node_id(scope.dispatch_node);
+            scope.dispatch_node = scope
+                .dispatch_node
+                .map(|node| dispatch.refresh_node_id(node));
         }
     }
 
@@ -469,16 +518,266 @@ impl ViewStore {
                 state.paint_range.start.rebase(old, new)..state.paint_range.end.rebase(old, new);
         }
         if let Some(scope) = retained.paint_scope.as_mut() {
-            scope.dispatch_node = dispatch
-                .iter()
-                .rev()
-                .find_map(|range| range.remap_node_id(scope.dispatch_node))
-                .expect("paint scope was replayed during prepaint");
+            scope.dispatch_node = Some(
+                dispatch
+                    .iter()
+                    .rev()
+                    .find_map(|range| {
+                        scope
+                            .dispatch_node
+                            .and_then(|node| range.remap_node_id(node))
+                    })
+                    .expect("paint scope was replayed during prepaint"),
+            );
         }
     }
 }
 
 impl Window {
+    pub(super) fn request_implicit_view_layout(
+        &mut self,
+        entity: EntityId,
+        _global_id: &GlobalElementId,
+        view: &AnyWeakView,
+        cx: &mut App,
+        render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
+    ) -> (LayoutId, Option<AnyElement>) {
+        let occurrence = self.view_store.insert(
+            entity,
+            self.element_id_stack.handle(),
+            self.current_view_occurrence,
+            Some(view),
+            self.retained_scope_fallback,
+        );
+        if let Some((layout, element)) = self.view_store.retained_mut(occurrence).prepared.take() {
+            self.layout_engine
+                .as_mut()
+                .expect("layout engine")
+                .retain_subtree(layout);
+            return (layout, Some(element));
+        }
+        let scope = self.capture_view_scope();
+        let previous_parent = self.current_view_occurrence.replace(occurrence);
+        #[cfg(any(test, feature = "bench-support"))]
+        let force = self.force_view_reconstruction;
+        #[cfg(not(any(test, feature = "bench-support")))]
+        let force = false;
+        let can_retain = self.view_store.retained(occurrence).layout.is_some()
+            && self.view_store.state(occurrence).is_some()
+            && !self.view_store.is_own_dirty(occurrence)
+            && !self.refreshing
+            && !force
+            && self.retained_scope_fallback.is_none()
+            && self
+                .view_store
+                .retained(occurrence)
+                .layout
+                .as_ref()
+                .is_some_and(|layout| self.view_layout_scope_matches(&layout.scope, &scope))
+            && !self.a11y.is_active();
+        if can_retain {
+            let result = if self.view_store.is_descendant_dirty(occurrence) {
+                self.prepare_implicit_layout(occurrence, cx)
+            } else {
+                Ok(())
+            };
+            if result.is_ok() {
+                let layout = self
+                    .view_store
+                    .retained(occurrence)
+                    .layout
+                    .as_ref()
+                    .expect("retained layout")
+                    .id;
+                self.layout_engine
+                    .as_mut()
+                    .expect("layout engine")
+                    .retain_subtree(layout);
+                self.current_view_occurrence = previous_parent;
+                return (layout, None);
+            }
+            #[cfg(any(test, feature = "bench-support"))]
+            if let Err(reason) = result {
+                self.view_reuse_stats.splice_fallbacks[reason as usize] += 1;
+            }
+        }
+        #[cfg(any(test, feature = "bench-support"))]
+        self.record_view_render(
+            entity,
+            false,
+            false,
+            self.view_store.state(occurrence).is_none(),
+        );
+        let previous_access = self.begin_cached_entity_access(cx);
+        let mut element = self.with_rendered_view(entity, |window| render(window, cx));
+        let layout = self.with_rendered_view(entity, |window| element.request_layout(window, cx));
+        let (own, _) = self.end_cached_entity_access(previous_access, cx);
+        self.view_store.set_layout_access(occurrence, own);
+        let style = self
+            .layout_engine
+            .as_ref()
+            .expect("layout engine")
+            .retained_style(layout);
+        self.view_store.retained_mut(occurrence).layout = Some(Box::new(ViewLayout {
+            id: layout,
+            style,
+            input: None,
+            output: None,
+            scope,
+        }));
+        self.current_view_occurrence = previous_parent;
+        (layout, Some(element))
+    }
+
+    fn prepare_implicit_layout(
+        &mut self,
+        id: ViewOccurrenceId,
+        cx: &mut App,
+    ) -> Result<(), SpliceFallback> {
+        self.validate_view_splice(id)?;
+        for child in self.dirty_view_children(id) {
+            if self.view_store.retained(child).layout.is_none() {
+                continue;
+            }
+            if !self.view_store.is_own_dirty(child) {
+                self.prepare_implicit_layout(child, cx)?;
+                continue;
+            }
+            let retained = self.view_store.retained(child);
+            let layout = retained.layout.as_ref().expect("implicit layout");
+            let old_id = layout.id;
+            let old_style = layout.style.clone();
+            let input = layout.input.ok_or(SpliceFallback::LayoutConstraints)?;
+            let old_output = layout.output;
+            let scope = layout.scope.clone();
+            let old_size = retained
+                .state
+                .as_ref()
+                .expect("retained state")
+                .cache_key
+                .bounds
+                .size;
+            let view = retained.view.clone().ok_or(SpliceFallback::MissingView)?;
+            let global_id = self.element_id_interner.global_id(retained.element_path);
+            let entity = retained.entity;
+            let (layout, element) = self.with_view_layout_scope(scope, |window| {
+                window.request_implicit_view_layout(
+                    entity,
+                    &global_id,
+                    &view,
+                    cx,
+                    &mut |window, cx| {
+                        let view = view.upgrade().expect("validated retained renderer");
+                        (view.render)(&view, window, cx)
+                    },
+                )
+            });
+            self.view_store.retained_mut(child).prepared = element.map(|element| (layout, element));
+            let engine = self.layout_engine.as_ref().expect("layout engine");
+            if engine.retained_style(layout) != old_style {
+                return Err(SpliceFallback::LayoutStyle);
+            }
+            let mut engine = self.layout_engine.take().expect("layout engine");
+            engine.compute_retained_layout(layout, input, self, cx);
+            let size = engine.layout_bounds(layout, self.scale_factor()).size;
+            let output = engine.retained_output(layout);
+            self.layout_engine = Some(engine);
+            if layout != old_id || size != old_size || output != old_output {
+                return Err(SpliceFallback::LayoutSize);
+            }
+            self.view_store
+                .retained_mut(child)
+                .layout
+                .as_mut()
+                .expect("implicit layout")
+                .input = Some(input);
+        }
+        Ok(())
+    }
+
+    pub(super) fn implicit_prepaint_layout(&mut self, id: ViewOccurrenceId) -> bool {
+        let geometry_unchanged = self.implicit_geometry_unchanged(id);
+        let Some(layout) = self.view_store.retained_mut(id).layout.as_mut() else {
+            return true;
+        };
+        let input = self
+            .layout_engine
+            .as_ref()
+            .expect("layout engine")
+            .retained_input(layout.id);
+        let unchanged = layout.input.is_none() || (layout.input == input && geometry_unchanged);
+        layout.input = input;
+        layout.output = self
+            .layout_engine
+            .as_ref()
+            .expect("layout engine")
+            .retained_output(layout.id);
+        unchanged
+    }
+
+    fn implicit_geometry_unchanged(&self, id: ViewOccurrenceId) -> bool {
+        let Some(layout) = self.view_store.retained(id).layout.as_ref() else {
+            return true;
+        };
+        let boundaries = self
+            .view_store
+            .records
+            .iter()
+            .enumerate()
+            .filter(|(_, record)| record.parent == Some(id))
+            .filter_map(|(index, _)| {
+                self.view_store.cold[index]
+                    .as_ref()?
+                    .layout
+                    .as_ref()
+                    .map(|layout| layout.id)
+            })
+            .collect::<Vec<_>>();
+        self.layout_engine
+            .as_ref()
+            .expect("layout engine")
+            .retained_geometry_unchanged(layout.id, &boundaries)
+    }
+
+    pub(super) fn is_implicit_view(&self, id: ViewOccurrenceId) -> bool {
+        self.view_store.retained(id).layout.is_some()
+    }
+
+    pub(super) fn reconstruct_implicit_view(
+        &mut self,
+        id: ViewOccurrenceId,
+        cx: &mut App,
+        render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
+    ) -> AnyElement {
+        let retained = self.view_store.retained(id);
+        let layout = retained.layout.as_ref().expect("implicit layout");
+        let input = layout.input.expect("computed layout input");
+        let layout_id = layout.id;
+        let scope = layout.scope.clone();
+        let entity = retained.entity;
+        let view = retained.view.clone().expect("retained renderer");
+        let global_id = self.element_id_interner.global_id(retained.element_path);
+        self.layout_engine
+            .as_mut()
+            .expect("layout engine")
+            .reset_retained_subtree(layout_id);
+        let (layout, element) = self.with_view_layout_scope(scope, |window| {
+            window.request_implicit_view_layout(entity, &global_id, &view, cx, render)
+        });
+        let mut engine = self.layout_engine.take().expect("layout engine");
+        engine.compute_retained_layout(layout, input, self, cx);
+        self.layout_engine = Some(engine);
+        element.expect("fresh implicit output")
+    }
+
+    pub(super) fn take_prepared_view(&mut self, id: ViewOccurrenceId) -> Option<AnyElement> {
+        self.view_store
+            .retained_mut(id)
+            .prepared
+            .take()
+            .map(|(_, element)| element)
+    }
+
     pub(super) fn begin_view_occurrence(
         &mut self,
         entity: EntityId,
@@ -501,6 +800,12 @@ impl Window {
     }
 
     pub(crate) fn register_retained_access(&mut self, id: ViewOccurrenceId, cx: &mut App) {
+        if let Some(layout) = self.view_store.retained(id).layout.as_ref() {
+            self.layout_engine
+                .as_mut()
+                .expect("layout engine")
+                .retain_subtree(layout.id);
+        }
         if let Some(entities) = self.cached_entity_access_stack.last_mut() {
             self.view_store.extend_accessed(id, entities);
         } else {
@@ -555,6 +860,9 @@ impl Window {
             return Err(SpliceFallback::Inspector);
         }
         let record = self.view_store.record(id);
+        if !record.own_dirty && !self.implicit_geometry_unchanged(id) {
+            return Err(SpliceFallback::LayoutSize);
+        }
         if let Some(reason) = record.dirty_path_blocked.or(record.blocked) {
             return Err(reason);
         }
@@ -605,7 +913,8 @@ impl Window {
             .prepaint_scope
             .as_ref()
             .expect("prepaint scope")
-            .dispatch_node;
+            .dispatch_node
+            .expect("prepaint dispatch node");
         let new_root = self
             .next_frame
             .dispatch_tree
@@ -632,18 +941,24 @@ impl Window {
             let mut scope = retained.prepaint_scope.clone().expect("prepaint scope");
             let paint_scope = retained.paint_scope.clone().expect("paint scope");
             self.reuse_retained_prepaint(cursor..child_range.start, cx);
-            scope.dispatch_node = self
-                .dispatch_replay
-                .iter()
-                .rev()
-                .find_map(|range| range.remap_node_id(scope.dispatch_node))
-                .expect("child root was replayed in prefix");
+            scope.dispatch_node = Some(
+                self.dispatch_replay
+                    .iter()
+                    .rev()
+                    .find_map(|range| {
+                        scope
+                            .dispatch_node
+                            .and_then(|node| range.remap_node_id(node))
+                    })
+                    .expect("child root was replayed in prefix"),
+            );
             let element = self.with_view_scope(scope, |window| {
+                let mut element = window.take_prepared_view(child);
                 prepaint_view(
                     entity,
                     Some(&global_id),
                     cache_key.bounds,
-                    &mut None,
+                    &mut element,
                     Some(&view),
                     window,
                     cx,
@@ -687,12 +1002,18 @@ impl Window {
             let retained = self.view_store.retained(child.occurrence);
             let global_id = self.element_id_interner.global_id(retained.element_path);
             let entity = retained.entity;
-            child.paint_scope.dispatch_node = self
-                .dispatch_replay
-                .iter()
-                .rev()
-                .find_map(|range| range.remap_node_id(child.paint_scope.dispatch_node))
-                .expect("child root was replayed during prepaint");
+            child.paint_scope.dispatch_node = Some(
+                self.dispatch_replay
+                    .iter()
+                    .rev()
+                    .find_map(|range| {
+                        child
+                            .paint_scope
+                            .dispatch_node
+                            .and_then(|node| range.remap_node_id(node))
+                    })
+                    .expect("child root was replayed during prepaint"),
+            );
             self.with_view_scope(child.paint_scope, |window| {
                 paint_view(
                     entity,
@@ -719,6 +1040,106 @@ mod tests {
     use std::{cell::Cell, rc::Rc, time::Duration};
 
     crate::actions!(retained_test, [ProbeAction]);
+
+    struct ImplicitLeaf {
+        renders: Rc<Cell<usize>>,
+        width: Pixels,
+        margin: Pixels,
+        color: u32,
+    }
+
+    impl Render for ImplicitLeaf {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .w(self.width)
+                .h(px(20.))
+                .ml(self.margin)
+                .bg(crate::rgb(self.color))
+        }
+    }
+
+    struct ImplicitBranch {
+        renders: Rc<Cell<usize>>,
+        children: Vec<Entity<ImplicitLeaf>>,
+    }
+
+    impl Render for ImplicitBranch {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div().flex().size(px(100.)).children(self.children.clone())
+        }
+    }
+
+    struct ImplicitRoot(Entity<ImplicitBranch>);
+
+    impl Render for ImplicitRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.0.clone())
+        }
+    }
+
+    #[crate::test]
+    fn implicit_boundaries_render_once_on_layout_fallback(cx: &mut TestAppContext) {
+        let leaf_renders = Rc::new(Cell::new(0));
+        let branch_renders = Rc::new(Cell::new(0));
+        let leaf = cx.new(|_| ImplicitLeaf {
+            renders: leaf_renders.clone(),
+            width: px(20.),
+            margin: px(0.),
+            color: 0xff0000,
+        });
+        let branch = cx.new(|_| ImplicitBranch {
+            renders: branch_renders.clone(),
+            children: vec![leaf.clone()],
+        });
+        let window = cx.add_window(|window, _| {
+            window.set_implicit_view_splicing(true);
+            ImplicitRoot(branch)
+        });
+        if !cx
+            .update_window(window.into(), |_, window, _| window.layout_cache_enabled())
+            .expect("window")
+        {
+            return;
+        }
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("initial draw");
+        leaf.update(cx, |leaf, cx| {
+            leaf.color ^= 0xffffff;
+            cx.notify();
+        });
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("color draw");
+        assert_eq!(leaf_renders.get(), 2);
+        assert_eq!(branch_renders.get(), 1, "unchanged layout must splice");
+
+        leaf.update(cx, |leaf, cx| {
+            leaf.margin = px(3.);
+            cx.notify();
+        });
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("margin draw");
+        assert_eq!(
+            leaf_renders.get(),
+            3,
+            "speculative Render must be consumed by fallback"
+        );
+        assert_eq!(
+            branch_renders.get(),
+            2,
+            "equal-size parent-facing style change must fall back"
+        );
+
+        leaf.update(cx, |leaf, cx| {
+            leaf.width = px(30.);
+            cx.notify();
+        });
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("size draw");
+        assert_eq!(leaf_renders.get(), 4);
+        assert_eq!(branch_renders.get(), 3);
+    }
 
     #[derive(Default)]
     struct Leaf {
@@ -1156,7 +1577,7 @@ mod tests {
                 let stats = window.view_reuse_stats();
                 assert!(stats.splice_prepaint_calls > 0);
                 assert_eq!(stats.render_ancestor_caused, 0);
-                assert_eq!(stats.splice_fallbacks, [0; 8]);
+                assert_eq!(stats.splice_fallbacks, [0; 11]);
             })
             .expect("splice counters");
         }
