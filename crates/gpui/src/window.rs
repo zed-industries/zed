@@ -6157,7 +6157,11 @@ impl Window {
         let occurrence = self.current_view_occurrence;
         let engine = self.layout_engine.as_mut().unwrap();
         engine.set_request_scope(&self.element_id_stack.handle());
-        engine.request_owned_measured_layout(style, rem_size, scale_factor, occurrence, measure)
+        if occurrence.is_some() {
+            engine.request_owned_measured_layout(style, rem_size, scale_factor, occurrence, measure)
+        } else {
+            engine.request_measured_layout(style, rem_size, scale_factor, measure)
+        }
     }
 
     pub(crate) fn request_text_layout(

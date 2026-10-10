@@ -472,7 +472,11 @@ impl ViewStore {
         self.set_own_access(id, Default::default(), false);
     }
 
-    fn append_layout_access(&mut self, id: ViewOccurrenceId, mut own: collections::FxHashSet<EntityId>) {
+    fn append_layout_access(
+        &mut self,
+        id: ViewOccurrenceId,
+        mut own: collections::FxHashSet<EntityId>,
+    ) {
         let retained = self.retained_mut(id);
         own.remove(&retained.entity);
         let mut dependencies = Vec::new();
@@ -1502,36 +1506,64 @@ mod tests {
 
     impl IntoElement for MeasuredElement {
         type Element = Self;
-        fn into_element(self) -> Self { self }
+        fn into_element(self) -> Self {
+            self
+        }
     }
 
     impl crate::Element for MeasuredElement {
         type RequestLayoutState = ();
         type PrepaintState = ();
-        fn id(&self) -> Option<crate::ElementId> { None }
-        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
+        fn id(&self) -> Option<crate::ElementId> {
+            None
+        }
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
         fn request_layout(
-            &mut self, _: Option<&crate::GlobalElementId>, _: Option<&crate::InspectorElementId>,
-            window: &mut Window, _: &mut crate::App,
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            window: &mut Window,
+            _: &mut crate::App,
         ) -> (crate::LayoutId, ()) {
             let observed = self.observed.clone();
             let entity = self.entity.clone();
             let global = self.global;
-            (window.request_measured_layout(crate::Style::default(), move |_, _, _, cx| {
-                let value = if global { cx.global::<MeasureGlobal>().0 }
-                    else { entity.as_ref().map_or(0, |entity| entity.read(cx).get()) };
-                observed.set(value);
-                crate::size(px(20.), px(20.))
-            }), ())
+            (
+                window.request_measured_layout(crate::Style::default(), move |_, _, _, cx| {
+                    let value = if global {
+                        cx.global::<MeasureGlobal>().0
+                    } else {
+                        entity.as_ref().map_or(0, |entity| entity.read(cx).get())
+                    };
+                    observed.set(value);
+                    crate::size(px(20.), px(20.))
+                }),
+                (),
+            )
         }
         fn prepaint(
-            &mut self, _: Option<&crate::GlobalElementId>, _: Option<&crate::InspectorElementId>,
-            _: crate::Bounds<Pixels>, _: &mut (), _: &mut Window, _: &mut crate::App,
-        ) {}
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<Pixels>,
+            _: &mut (),
+            _: &mut Window,
+            _: &mut crate::App,
+        ) {
+        }
         fn paint(
-            &mut self, _: Option<&crate::GlobalElementId>, _: Option<&crate::InspectorElementId>,
-            _: crate::Bounds<Pixels>, _: &mut (), _: &mut (), _: &mut Window, _: &mut crate::App,
-        ) {}
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<Pixels>,
+            _: &mut (),
+            _: &mut (),
+            _: &mut Window,
+            _: &mut crate::App,
+        ) {
+        }
     }
 
     struct MeasureRoot {
@@ -1556,34 +1588,63 @@ mod tests {
             let sibling_renders = Rc::new(Cell::new(0));
             let observed = Rc::new(Cell::new(0));
             let owner = cx.new(|_| MeasuredView {
-                renders: owner_renders.clone(), observed: observed.clone(),
-                entity: (!global).then(|| source.clone()), global,
+                renders: owner_renders.clone(),
+                observed: observed.clone(),
+                entity: (!global).then(|| source.clone()),
+                global,
             });
             let sibling = cx.new(|_| MeasuredView {
-                renders: sibling_renders.clone(), observed: Rc::default(), entity: None, global: false,
+                renders: sibling_renders.clone(),
+                observed: Rc::default(),
+                entity: None,
+                global: false,
             });
             let window = cx.add_window(|window, _| {
                 window.set_implicit_view_splicing(true);
-                MeasureRoot { renders: root_renders.clone(), children: vec![owner, sibling] }
+                MeasureRoot {
+                    renders: root_renders.clone(),
+                    children: vec![owner, sibling],
+                }
             });
-            let retained = cx.update_window(window.into(), |_, window, cx| {
-                window.draw(cx).clear(cx);
-                window.implicit_view_splicing
-            }).expect("initial draw");
-            if !retained { return; }
+            let retained = cx
+                .update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.implicit_view_splicing
+                })
+                .expect("initial draw");
+            if !retained {
+                return;
+            }
             assert_eq!(observed.get(), 1);
-            let initial = (root_renders.get(), owner_renders.get(), sibling_renders.get());
+            let initial = (
+                root_renders.get(),
+                owner_renders.get(),
+                sibling_renders.get(),
+            );
             if global {
                 cx.set_global(MeasureGlobal(2));
             } else {
-                source.update(cx, |source, cx| { source.set(2); cx.notify(); });
+                source.update(cx, |source, cx| {
+                    source.set(2);
+                    cx.notify();
+                });
             }
-            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx)).expect("measured dependency draw");
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("measured dependency draw");
             assert_eq!(observed.get(), 2);
             assert_eq!(owner_renders.get(), initial.1 + 1);
-            assert_eq!(sibling_renders.get(), initial.2, "unrelated sibling must retain");
-            assert_eq!(root_renders.get(), initial.0, "measure reads must not belong to the root");
-            cx.update_window(window.into(), |_, window, _| window.remove_window()).expect("remove measured window");
+            assert_eq!(
+                sibling_renders.get(),
+                initial.2,
+                "unrelated sibling must retain"
+            );
+            assert_eq!(
+                root_renders.get(),
+                initial.0,
+                "measure reads must not belong to the root"
+            );
+            cx.update_window(window.into(), |_, window, _| window.remove_window())
+                .expect("remove measured window");
         }
     }
 

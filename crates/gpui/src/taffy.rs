@@ -91,7 +91,6 @@ struct RetainedLayouts {
     previous_layouts: FxHashMap<NodeId, taffy::Layout>,
     inputs: FxHashMap<NodeId, taffy::LayoutInput>,
     outputs: FxHashMap<NodeId, taffy::LayoutOutput>,
-    node_scopes: SecondaryMap<DefaultKey, (usize, usize)>,
 }
 
 impl RetainedLayouts {
@@ -405,19 +404,21 @@ impl TaffyLayoutEngine {
             epochs.last_computed = cache.epoch;
             cache.computed_roots.push(id);
         }
-        if cache.nodes[node_index(id.0)].last_requested == cache.epoch {
-            return;
-        }
-        let retained = self.retained.as_ref().expect("retained layout ownership");
-        let stack = &mut self.layout_bounds_scratch_space;
-        stack.push(id);
+        let mut nodes = FxHashSet::default();
+        let mut stack = vec![id.0];
         while let Some(node) = stack.pop() {
-            cache.nodes[node_index(node.0)].last_requested = cache.epoch;
-            let &(scope, ordinal) = retained.node_scopes.get(node.0.into()).expect("layout node owner");
-            let scope = cache.scopes[scope].as_mut().expect("live layout scope");
-            scope.last_requested_epoch = cache.epoch;
-            scope.cursor = scope.cursor.max(ordinal + 1);
-            stack.extend(self.taffy.child_ids(node.0).map(LayoutId));
+            if nodes.insert(LayoutId(node)) {
+                cache.nodes[node_index(node)].last_requested = cache.epoch;
+                stack.extend(self.taffy.child_ids(node));
+            }
+        }
+        for scope in cache.scopes.iter_mut().flatten() {
+            for (ordinal, node) in scope.nodes.iter().enumerate() {
+                if node.is_some_and(|id| nodes.contains(&id)) {
+                    scope.last_requested_epoch = cache.epoch;
+                    scope.cursor = scope.cursor.max(ordinal + 1);
+                }
+            }
         }
     }
 
@@ -528,7 +529,6 @@ impl TaffyLayoutEngine {
                                 retained.layouts.remove(&id.0);
                                 retained.inputs.remove(&id.0);
                                 retained.outputs.remove(&id.0);
-                                retained.node_scopes.remove(id.0.into());
                             }
                             *node = None;
                         }
@@ -615,9 +615,6 @@ impl TaffyLayoutEngine {
                 cache.nodes[slot] = NodeEpochs::default();
             }
             cache.nodes[slot].last_requested = cache.epoch;
-            if let Some(retained) = self.retained.as_mut() {
-                retained.node_scopes.insert(id.0.into(), (index, ordinal));
-            }
         }
         (id, existing.is_some())
     }
@@ -687,7 +684,13 @@ impl TaffyLayoutEngine {
         rem_size: Pixels,
         scale_factor: f32,
         occurrence: Option<crate::view::ViewOccurrenceId>,
-        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels> + 'static,
+        measure: impl FnMut(
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            &mut Window,
+            &mut App,
+        ) -> Size<Pixels>
+        + 'static,
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
         let measure = Box::new(measure) as Box<MeasureFn>;
@@ -695,7 +698,10 @@ impl TaffyLayoutEngine {
         let measure = StackSafe::new(measure);
 
         let context = if let Some(occurrence) = occurrence {
-            NodeContext::OwnedCustom(Box::new(OwnedMeasure { measure, occurrence }))
+            NodeContext::OwnedCustom(Box::new(OwnedMeasure {
+                measure,
+                occurrence,
+            }))
         } else {
             NodeContext::Custom(measure)
         };
@@ -1686,7 +1692,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn layout_cache_reuses_ordinals_and_preserves_reachable_measurements(cx: &mut crate::TestAppContext) {
+    fn layout_cache_reuses_ordinals_and_preserves_reachable_measurements(
+        cx: &mut crate::TestAppContext,
+    ) {
         use std::{cell::Cell, rc::Rc};
 
         cx.add_empty_window().update(|window, cx| {
@@ -1732,7 +1740,12 @@ mod tests {
             }
             engine.set_request_scope(&scope);
             let unmeasured = engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[]);
-            assert!(previous_capture.expect("previous capture").upgrade().is_none());
+            assert!(
+                previous_capture
+                    .expect("previous capture")
+                    .upgrade()
+                    .is_none()
+            );
             assert_eq!(unmeasured, previous.expect("previous frame").0);
             engine.compute_layout(unmeasured, AvailableSpace::min_size(), window, cx);
             assert_eq!(engine.layout_bounds(unmeasured, 1.0).size, Size::default());

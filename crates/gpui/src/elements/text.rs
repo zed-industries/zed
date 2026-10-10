@@ -1699,7 +1699,7 @@ mod tests {
             engine.compute_layout(id, available, window, cx);
             assert!(weak.upgrade().is_some());
             engine.clear();
-            assert!(weak.upgrade().is_none());
+            assert!(weak.upgrade().is_some());
 
             let fresh = TextLayout::default();
             engine.set_request_scope(&scope);
@@ -1707,6 +1707,7 @@ mod tests {
                 engine.request_text_layout(fresh.measurement(text, None, window)),
                 id
             );
+            assert!(weak.upgrade().is_none());
             assert!(engine.text_context_identity_and_dirty(id).0.is_some());
             assert!(engine.text_context_identity_and_dirty(id).1);
             assert!(fresh.0.borrow().is_none());
