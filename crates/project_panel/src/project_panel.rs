@@ -1,7 +1,6 @@
 pub mod project_panel_settings;
 mod undo;
 mod utils;
-
 use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
@@ -58,6 +57,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use svg_preview::svg_preview_view::SvgPreviewView;
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind, IndentGuideColors,
@@ -449,6 +449,8 @@ actions!(
         OpenMarkdownPreview,
         /// Opens the context menu for the selected entry.
         OpenContextMenu,
+        /// Opens an SVG preview for the selected file.
+        OpenSvgPreview,
     ]
 );
 
@@ -1152,7 +1154,7 @@ impl ProjectPanel {
                     entry.path.as_std_path(),
                     project.languages(),
                 );
-
+            let is_svg = !is_dir && SvgPreviewView::is_svg_path(entry.path.as_std_path());
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
             let should_hide_rename = is_root
@@ -1183,6 +1185,9 @@ impl ProjectPanel {
                         menu.when(is_markdown, |menu| {
                             menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
                         })
+                        .when(is_svg, |menu| {
+                            menu.action("Open SVG Preview", Box::new(OpenSvgPreview))
+                        })
                         .when(is_dir, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
                         })
@@ -1202,6 +1207,9 @@ impl ProjectPanel {
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_markdown, |menu| {
                                 menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                            })
+                            .when(is_svg, |menu| {
+                                menu.action("Open SVG Preview", Box::new(OpenSvgPreview))
                             })
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -2013,6 +2021,33 @@ impl ProjectPanel {
         self.workspace
             .update(cx, |workspace, cx| {
                 MarkdownPreviewView::open_for_project_path(project_path, workspace, window, cx);
+            })
+            .ok();
+    }
+
+    fn open_svg_preview(
+        &mut self,
+        _: &OpenSvgPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((worktree, entry)) = self.selected_entry(cx) else {
+            return;
+        };
+        let is_svg = SvgPreviewView::is_svg_path(entry.path.as_std_path());
+
+        if !entry.is_file() || !is_svg {
+            return;
+        }
+
+        let project_path = ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        };
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                SvgPreviewView::open_for_project_path(project_path, workspace, window, cx)
             })
             .ok();
     }
@@ -7606,6 +7641,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))
                 .on_action(cx.listener(Self::open_markdown_preview))
+                .on_action(cx.listener(Self::open_svg_preview))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
