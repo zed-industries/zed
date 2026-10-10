@@ -487,7 +487,6 @@ pub struct ButtonLike {
     pub(super) selected: bool,
     pub(super) selected_style: Option<ButtonStyle>,
     pub(super) hover_background: Option<Hsla>,
-    pub(super) hover_opacity: Option<f32>,
     pub(super) active_background: Option<Hsla>,
     pub(super) width: Option<DefiniteLength>,
     pub(super) height: Option<DefiniteLength>,
@@ -525,7 +524,6 @@ impl ButtonLike {
             selected: false,
             selected_style: None,
             hover_background: None,
-            hover_opacity: None,
             active_background: None,
             width: None,
             height: None,
@@ -833,13 +831,7 @@ impl RenderOnce for ButtonLike {
                 let focus_color = |refinement: StyleRefinement| refinement.bg(hover_background);
 
                 this.cursor(self.cursor_style)
-                    .hover(|style| {
-                        let style = focus_color(style);
-                        match self.hover_opacity {
-                            Some(opacity) => style.opacity(opacity),
-                            None => style,
-                        }
-                    })
+                    .hover(focus_color)
                     .map(|this| {
                         if is_outlined {
                             this.focus_visible(|s| {

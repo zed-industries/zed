@@ -6806,8 +6806,8 @@ impl GitPanel {
             .child(
                 IconButton::new("expand-commit-editor", IconName::MaximizeAlt)
                     .icon_size(IconSize::Small)
-                    .opacity(0.6)
-                    .hover_opacity(1.0)
+                    .icon_color(Color::Hidden)
+                    .hover_color(Color::Muted)
                     .tooltip({
                         move |_window, cx| {
                             Tooltip::for_action_in(
@@ -6834,8 +6834,8 @@ impl GitPanel {
 
                 IconButton::new("fill-commit-editor", icon)
                     .icon_size(IconSize::Small)
-                    .opacity(0.6)
-                    .hover_opacity(1.0)
+                    .icon_color(Color::Hidden)
+                    .hover_color(Color::Muted)
                     .tooltip({
                         move |_window, cx| {
                             Tooltip::for_action_in(
