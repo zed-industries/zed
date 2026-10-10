@@ -2419,7 +2419,7 @@ fn initialize_new_window(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    if WorkspaceSettings::get_global(cx).on_new_window == settings::OnNewWindow::Launchpad {
+    if WorkspaceSettings::get_global(cx).on_new_window != settings::OnNewWindow::EmptyTab {
         return;
     }
     // Create buffer synchronously to avoid flicker
@@ -3801,47 +3801,412 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_new_window_launchpad_opens_without_items(cx: &mut TestAppContext) {
+    async fn test_new_window_initial_items(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.workspace.on_new_window = Some(settings::OnNewWindow::Launchpad);
-                });
-            });
-        });
-
-        cx.update(|cx| {
-            open_new(
-                Default::default(),
-                app_state.clone(),
-                cx,
-                |workspace, window, cx| initialize_new_window(workspace, window, cx),
-            )
-        })
-        .await
-        .unwrap();
-        cx.run_until_parked();
-
-        let multi_workspace = cx
-            .update(|cx| cx.windows().first().unwrap().downcast::<MultiWorkspace>())
-            .unwrap();
-
-        multi_workspace
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.workspace().update(cx, |workspace, cx| {
-                    assert!(
-                        workspace.active_item(cx).is_none(),
-                        "launchpad window should not open any items"
-                    );
-                    assert_eq!(
-                        workspace.active_pane().read(cx).items_len(),
-                        0,
-                        "launchpad window should have an empty pane so the launchpad is shown"
-                    );
-                });
+        for on_new_window in [
+            settings::OnNewWindow::Launchpad,
+            settings::OnNewWindow::Readme,
+            settings::OnNewWindow::EmptyTab,
+        ] {
+            set_on_new_window(Some(on_new_window), cx);
+            cx.update(|cx| {
+                open_new(
+                    OpenOptions::default(),
+                    app_state.clone(),
+                    cx,
+                    initialize_new_window,
+                )
             })
-            .unwrap();
+            .await
+            .expect("open blank window");
+            cx.run_until_parked();
+
+            let window = cx
+                .windows()
+                .first()
+                .expect("blank window")
+                .downcast::<MultiWorkspace>()
+                .expect("workspace window");
+            window
+                .update(cx, |multi_workspace, window, cx| {
+                    let workspace = multi_workspace.workspace().read(cx);
+                    let expected_items =
+                        usize::from(on_new_window == settings::OnNewWindow::EmptyTab);
+                    assert_eq!(workspace.items(cx).count(), expected_items);
+                    assert_eq!(workspace.active_pane().read(cx).items_len(), expected_items);
+                    if expected_items == 1 {
+                        let editor = workspace
+                            .active_item_as::<Editor>(cx)
+                            .expect("empty editor");
+                        assert_eq!(editor.read(cx).text(cx), "");
+                    }
+                    window.remove_window();
+                })
+                .expect("read blank window");
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_paths_readme_selection(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "default": {"README.md": ""},
+                    "empty_tab": {"README.md": ""},
+                    "markdown": {"README": "", "README.txt": "", "readme.md": ""},
+                    "extensionless": {"Readme": ""},
+                    "fallback": {
+                        "README.md": {"file.md": ""},
+                        "Readme.txt": ""
+                    },
+                    "invalid": {
+                        "README.md": {"file.md": ""},
+                        "README": {},
+                        "README-extra.md": "",
+                        "readme.template.md": "",
+                        "rEaDmE.Md": "",
+                        "README.adoc": "",
+                        "prefix-readme.md": "",
+                        "docs": {"README.md": ""}
+                    },
+                    "first": {"README.txt": ""},
+                    "second": {"README.md": ""},
+                    "parent": {"README.md": "", "src": {"README.md": ""}},
+                    "local_settings": {
+                        "README.md": "",
+                        ".zed": {
+                            "settings.json": r#"{"on_new_window": "readme"}"#
+                        }
+                    },
+                    "none": {"code.rs": ""},
+                    "explicit": {"README.md": "", "code.rs": ""},
+                    "missing": {"README.md": ""}
+                }),
+            )
+            .await;
+
+        let readme = Some(settings::OnNewWindow::Readme);
+        for (on_new_window, paths, expected_path, preview) in [
+            (None, vec!["default"], None, false),
+            (
+                Some(settings::OnNewWindow::EmptyTab),
+                vec!["empty_tab"],
+                None,
+                false,
+            ),
+            (readme, vec!["markdown"], Some("markdown/readme.md"), true),
+            (
+                readme,
+                vec!["extensionless"],
+                Some("extensionless/Readme"),
+                true,
+            ),
+            (readme, vec!["fallback"], Some("fallback/Readme.txt"), true),
+            (readme, vec!["invalid"], None, false),
+            (
+                readme,
+                vec!["none", "first", "second"],
+                Some("first/README.txt"),
+                true,
+            ),
+            (
+                readme,
+                vec!["parent", "parent/src"],
+                Some("parent/README.md"),
+                true,
+            ),
+            (None, vec!["local_settings"], None, false),
+            (
+                readme,
+                vec!["explicit", "explicit/code.rs"],
+                Some("explicit/code.rs"),
+                false,
+            ),
+            (
+                readme,
+                vec!["missing/new.rs", "missing"],
+                Some("missing/new.rs"),
+                false,
+            ),
+        ] {
+            set_on_new_window(on_new_window, cx);
+            let paths = paths
+                .iter()
+                .map(|path| Path::new(path!("/root")).join(path))
+                .collect::<Vec<_>>();
+            let expected_paths = expected_path
+                .into_iter()
+                .map(|path| Path::new(path!("/root")).join(path))
+                .collect::<Vec<_>>();
+            let result = open_test_workspace_paths(paths, app_state.clone(), cx).await;
+            assert_workspace_item_paths(&result.workspace, &expected_paths, cx);
+            result.workspace.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                let expected_preview = if preview {
+                    Some(pane.active_item().expect("README item").item_id())
+                } else {
+                    None
+                };
+                assert_eq!(pane.preview_item_id(), expected_preview);
+            });
+            result
+                .window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close workspace");
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_remote_project_readme(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        set_on_new_window(Some(settings::OnNewWindow::Readme), cx);
+        server_cx.update(|cx| {
+            release_channel::init(Version::new(0, 0, 0), cx);
+            HeadlessProject::init(cx);
+        });
+        let remote_fs = FakeFs::new(server_cx.executor());
+        for (name, explicit_file, expected_file) in [
+            ("directory", None, Some("README.md")),
+            ("explicit", Some("code.rs"), Some("code.rs")),
+            ("failed", Some(path!("/missing-parent/code.rs")), None),
+        ] {
+            let root = Path::new(path!("/root")).join(name);
+            remote_fs
+                .insert_tree(&root, json!({"README.md": "", "code.rs": ""}))
+                .await;
+            let (connection_options, server_session, connect_guard) =
+                RemoteClient::fake_server(cx, server_cx);
+            let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+            let _headless = server_cx.new(|cx| {
+                HeadlessProject::new(
+                    HeadlessAppState {
+                        session: server_session,
+                        fs: remote_fs.clone(),
+                        http_client: Arc::new(BlockedHttpClient),
+                        node_runtime: NodeRuntime::unavailable(),
+                        languages,
+                        extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                        startup_time: std::time::Instant::now(),
+                    },
+                    false,
+                    cx,
+                )
+            });
+            drop(connect_guard);
+            let mut paths = vec![root.clone()];
+            if let Some(explicit_file) = explicit_file {
+                paths.push(root.join(explicit_file));
+            }
+            let window = open_remote_project(
+                connection_options,
+                paths,
+                app_state.clone(),
+                OpenOptions {
+                    workspace_matching: workspace::WorkspaceMatching::None,
+                    ..OpenOptions::default()
+                },
+                &mut cx.to_async(),
+            )
+            .await
+            .expect("open remote project");
+            cx.run_until_parked();
+            let workspace = window
+                .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                .expect("remote workspace");
+            let expected_paths = expected_file
+                .into_iter()
+                .map(|path| root.join(path))
+                .collect::<Vec<_>>();
+            assert_workspace_item_paths(&workspace, &expected_paths, cx);
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close remote workspace");
+            drop(workspace);
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_paths_readme_after_restoration(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        for restore_item in [false, true] {
+            set_on_new_window(Some(settings::OnNewWindow::Launchpad), cx);
+            let root = Path::new(path!("/root")).join(format!("restore-{restore_item}"));
+            app_state
+                .fs
+                .as_fake()
+                .insert_tree(&root, json!({"README.md": "", "code.rs": ""}))
+                .await;
+            let mut paths = vec![root.clone()];
+            if restore_item {
+                paths.push(root.join("code.rs"));
+            }
+            let result = open_test_workspace_paths(paths, app_state.clone(), cx).await;
+            let database_id = result
+                .workspace
+                .read_with(cx, |workspace, _| workspace.database_id())
+                .expect("persisted workspace id");
+            flush_workspace_serialization(&result.window, cx).await;
+            result
+                .window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close workspace");
+            drop(result);
+            cx.run_until_parked();
+
+            set_on_new_window(Some(settings::OnNewWindow::Readme), cx);
+            let result = open_test_workspace_paths(vec![root.clone()], app_state.clone(), cx).await;
+            assert_eq!(
+                result
+                    .workspace
+                    .read_with(cx, |workspace, _| workspace.database_id()),
+                Some(database_id)
+            );
+            let expected_path = root.join(if restore_item { "code.rs" } else { "README.md" });
+            assert_workspace_item_paths(&result.workspace, &[expected_path], cx);
+            result
+                .window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close workspace");
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_add_folder_readme_respects_panes(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        set_on_new_window(Some(settings::OnNewWindow::Readme), cx);
+        for (has_item, explicit_pane, focus) in [
+            (false, false, true),
+            (true, false, true),
+            (false, true, false),
+        ] {
+            let root =
+                Path::new(path!("/root")).join(format!("add-folder-{has_item}-{explicit_pane}"));
+            app_state
+                .fs
+                .as_fake()
+                .insert_tree(
+                    &root,
+                    json!({
+                        "existing": {},
+                        "first": {"README.txt": ""}
+                    }),
+                )
+                .await;
+            let result =
+                open_test_workspace_paths(vec![root.join("existing")], app_state.clone(), cx).await;
+            let original_item = if has_item {
+                let editor = result
+                    .window
+                    .update(cx, |_, window, cx| {
+                        result.workspace.update(cx, |workspace, cx| {
+                            Editor::new_in_workspace(workspace, window, cx)
+                        })
+                    })
+                    .expect("create untitled item")
+                    .await
+                    .expect("load untitled item");
+                Some(editor.entity_id())
+            } else {
+                None
+            };
+            let destination = result
+                .window
+                .update(cx, |_, window, cx| {
+                    result.workspace.update(cx, |workspace, cx| {
+                        let original_pane = workspace.active_pane().clone();
+                        if has_item || explicit_pane {
+                            workspace.split_pane(
+                                original_pane.clone(),
+                                SplitDirection::Right,
+                                window,
+                                cx,
+                            );
+                        }
+                        if explicit_pane {
+                            original_pane
+                        } else {
+                            workspace.active_pane().clone()
+                        }
+                    })
+                })
+                .expect("prepare destination pane");
+            cx.run_until_parked();
+            result.workspace.read_with(cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane().read(cx).items_len(), 0);
+            });
+            let focused = result
+                .window
+                .update(cx, |_, window, cx| window.focused(cx))
+                .expect("read focused element");
+            result
+                .window
+                .update(cx, |_, window, cx| {
+                    result.workspace.update(cx, |workspace, cx| {
+                        workspace.open_paths(
+                            vec![root.join("first")],
+                            OpenOptions {
+                                visible: Some(workspace::OpenVisible::All),
+                                focus: Some(focus),
+                                ..OpenOptions::default()
+                            },
+                            explicit_pane.then(|| destination.downgrade()),
+                            window,
+                            cx,
+                        )
+                    })
+                })
+                .expect("add folder")
+                .await;
+            cx.run_until_parked();
+            result.workspace.read_with(cx, |workspace, cx| {
+                assert_eq!(
+                    workspace
+                        .root_paths(cx)
+                        .iter()
+                        .map(|path| path.to_path_buf())
+                        .collect::<Vec<_>>(),
+                    vec![root.join("existing"), root.join("first")]
+                );
+                if let Some(item_id) = original_item {
+                    assert_eq!(
+                        workspace
+                            .items(cx)
+                            .map(|item| item.item_id())
+                            .collect::<Vec<_>>(),
+                        vec![item_id]
+                    );
+                    assert_eq!(workspace.active_pane().read(cx).items_len(), 0);
+                } else {
+                    assert_eq!(
+                        workspace.open_item_abs_paths(cx),
+                        vec![root.join("first/README.txt")]
+                    );
+                    assert_eq!(workspace.items(cx).count(), 1);
+                    assert_eq!(destination.read(cx).items_len(), 1);
+                }
+            });
+            result
+                .window
+                .update(cx, |_, window, cx| {
+                    if !focus {
+                        assert_eq!(window.focused(cx), focused);
+                    }
+                    window.remove_window();
+                })
+                .expect("close workspace");
+            cx.run_until_parked();
+        }
     }
 
     #[gpui::test]
@@ -8303,6 +8668,55 @@ mod tests {
                 has_view_item(cx, "Diagnostics"),
                 "expected Diagnostics to remain in the View menu"
             );
+        });
+    }
+
+    fn set_on_new_window(on_new_window: Option<settings::OnNewWindow>, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.on_new_window = on_new_window;
+                });
+            });
+        });
+    }
+
+    async fn open_test_workspace_paths(
+        paths: Vec<PathBuf>,
+        app_state: Arc<AppState>,
+        cx: &mut TestAppContext,
+    ) -> workspace::OpenResult {
+        let result = cx
+            .update(|cx| {
+                open_paths(
+                    &paths,
+                    app_state,
+                    OpenOptions {
+                        workspace_matching: workspace::WorkspaceMatching::None,
+                        ..OpenOptions::default()
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("open workspace paths");
+        cx.run_until_parked();
+        result
+    }
+
+    fn assert_workspace_item_paths(
+        workspace: &Entity<Workspace>,
+        expected_paths: &[PathBuf],
+        cx: &TestAppContext,
+    ) {
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.open_item_abs_paths(cx), expected_paths);
+            assert_eq!(workspace.items(cx).count(), expected_paths.len());
+            let active_path = workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .and_then(|path| workspace.project().read(cx).absolute_path(&path, cx));
+            assert_eq!(active_path.as_ref(), expected_paths.last());
         });
     }
 

@@ -110,7 +110,7 @@ pub struct WorkspaceSettingsContent {
     /// Default: none
     pub max_tabs: Option<NonZeroUsize>,
     /// What to show when opening a new window.
-    /// Values: empty_tab, launchpad
+    /// Values: empty_tab, launchpad, readme
     /// Default: launchpad
     pub on_new_window: Option<OnNewWindow>,
     /// What to do when the last window is closed
@@ -734,6 +734,9 @@ pub enum OnNewWindow {
     /// Show the launchpad with recent projects when opening a new window
     #[default]
     Launchpad,
+    /// Open a root-level README in a preview tab when opening a project with no open items.
+    /// Leave the pane empty if no README is found.
+    Readme,
 }
 
 #[derive(

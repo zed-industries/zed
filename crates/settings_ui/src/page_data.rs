@@ -174,7 +174,7 @@ fn general_page(cx: &App) -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "On New Window",
-                description: "What to show when opening a new window.",
+                description: "What to show when opening a new window; Readme opens a project's README when no items are open, leaving the pane empty if none is found.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("on_new_window"),
