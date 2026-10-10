@@ -1589,6 +1589,7 @@ pub struct Window {
     pub(crate) retained_scope_fallback: Option<crate::view::retained::SpliceFallback>,
     pub(crate) dispatch_replay: Vec<crate::ReusedSubtree>,
     pub(crate) cached_entity_access_stack: Vec<Option<FxHashSet<EntityId>>>,
+    pub(crate) cached_entity_access_collectors: Vec<usize>,
     pub(crate) frame_accessed_entities: FxHashSet<EntityId>,
     cached_global_access_stack: Vec<(
         bool,
@@ -2526,6 +2527,7 @@ impl Window {
             retained_scope_fallback: None,
             dispatch_replay: Vec::new(),
             cached_entity_access_stack: Vec::new(),
+            cached_entity_access_collectors: Vec::new(),
             frame_accessed_entities: FxHashSet::default(),
             cached_global_access_stack: Vec::new(),
             #[cfg(any(test, feature = "bench-support"))]
@@ -2688,9 +2690,16 @@ impl Window {
                 self.current_view_occurrence,
             ));
         }
+        if collect_descendants {
+            self.cached_entity_access_collectors
+                .push(self.cached_entity_access_stack.len());
+        }
         self.cached_entity_access_stack
             .push(collect_descendants.then(FxHashSet::default));
-        mem::take(cx.entities.accessed_entities.get_mut().deref_mut())
+        mem::replace(
+            cx.entities.accessed_entities.get_mut().deref_mut(),
+            self.view_store.take_access_set(),
+        )
     }
 
     pub(crate) fn end_cached_entity_access(
@@ -2721,13 +2730,16 @@ impl Window {
             .expect("cached access scope");
         self.frame_accessed_entities.extend(own.iter().copied());
         let collect_descendants = descendants.is_some();
+        if collect_descendants {
+            self.cached_entity_access_collectors
+                .pop()
+                .expect("descendant access collector");
+        }
         let mut all = descendants.unwrap_or_default();
         if let Some(parent) = self
-            .cached_entity_access_stack
-            .iter_mut()
-            .rev()
-            .flatten()
-            .next()
+            .cached_entity_access_collectors
+            .last()
+            .and_then(|index| self.cached_entity_access_stack[*index].as_mut())
         {
             parent.extend(own.iter().copied());
             parent.extend(all.iter().copied());

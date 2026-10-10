@@ -80,10 +80,22 @@ pub(crate) struct ViewStore {
     by_entity: FxHashMap<EntityId, Vec<ViewOccurrenceId>>,
     by_dependency: FxHashMap<EntityId, Vec<ViewOccurrenceId>>,
     by_global: FxHashMap<TypeId, Vec<ViewOccurrenceId>>,
+    access_pool: Vec<collections::FxHashSet<EntityId>>,
     epoch: u64,
 }
 
 impl ViewStore {
+    pub(crate) fn take_access_set(&mut self) -> collections::FxHashSet<EntityId> {
+        self.access_pool.pop().unwrap_or_default()
+    }
+
+    fn recycle_access_set(&mut self, mut entities: collections::FxHashSet<EntityId>) {
+        if entities.capacity() > 0 {
+            entities.clear();
+            self.access_pool.push(entities);
+        }
+    }
+
     pub(crate) fn element_path(&self, id: ViewOccurrenceId) -> InternedHandle {
         self.retained(id).element_path
     }
@@ -431,11 +443,12 @@ impl ViewStore {
         #[cfg(feature = "bench-support")]
         let _timer =
             crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
-        let retained = self.retained_mut(id);
-        own.remove(&retained.entity);
+        own.remove(&self.retained(id).entity);
         if own.is_empty() {
+            self.recycle_access_set(own);
             own = Default::default();
         }
+        let retained = self.retained_mut(id);
         if own.is_empty()
             && retained.own_prepaint_entities.is_empty()
             && retained.own_paint_entities.is_empty()
@@ -479,8 +492,12 @@ impl ViewStore {
         id: ViewOccurrenceId,
         mut own: collections::FxHashSet<EntityId>,
     ) {
+        own.remove(&self.retained(id).entity);
+        if own.is_empty() {
+            self.recycle_access_set(own);
+            own = Default::default();
+        }
         let retained = self.retained_mut(id);
-        own.remove(&retained.entity);
         let previous = std::mem::replace(&mut retained.own_layout_entities, own);
         for entity in previous {
             if let Some(occurrences) = self.by_dependency.get_mut(&entity) {
@@ -1006,11 +1023,9 @@ impl Window {
                 .retain_subtree(layout.id);
         }
         if let Some(entities) = self
-            .cached_entity_access_stack
-            .iter_mut()
-            .rev()
-            .flatten()
-            .next()
+            .cached_entity_access_collectors
+            .last()
+            .and_then(|index| self.cached_entity_access_stack[*index].as_mut())
         {
             self.view_store.extend_accessed(id, entities);
         } else {
