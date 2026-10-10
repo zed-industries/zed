@@ -195,7 +195,7 @@ async fn test_escape_code_processing(executor: BackgroundExecutor, cx: &mut Test
     client
         .fake_event(dap::messages::Events::Output(dap::OutputEvent {
             category: None,
-            output: "Checking latest version of JavaScript...".to_string(),
+            output: "Checking latest version of JavaScript…".to_string(),
             data: None,
             variables_reference: None,
             source: None,
@@ -319,7 +319,7 @@ async fn test_escape_code_processing(executor: BackgroundExecutor, cx: &mut Test
                     .editor().clone();
 
             assert_eq!(
-                "Checking latest version of JavaScript...\n   ▲ Next.js 15.1.5\n   - Local:        http://localhost:3000\n   - Network:      http://192.168.1.144:3000\n\n ✓ Starting...\nSomething else...\n ✓ Ready in 1009ms\nBoth background and foreground!\nEven more...\n",
+                "Checking latest version of JavaScript…\n   ▲ Next.js 15.1.5\n   - Local:        http://localhost:3000\n   - Network:      http://192.168.1.144:3000\n\n ✓ Starting...\nSomething else...\n ✓ Ready in 1009ms\nBoth background and foreground!\nEven more...\n",
                 editor
                     .read(cx)
                     .text(cx)
