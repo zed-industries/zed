@@ -69,6 +69,14 @@ pub struct MockRemoteConnection {
     options: MockConnectionOptions,
     server_channel: Arc<ChannelClient>,
     server_cx: SendableCx,
+    pub(crate) proxy_tx: parking_lot::Mutex<
+        Option<
+            mpsc::UnboundedSender<(
+                mpsc::UnboundedSender<Envelope>,
+                mpsc::UnboundedReceiver<Envelope>,
+            )>,
+        >,
+    >,
 }
 
 /// Wrapper to pass `AsyncApp` across thread boundaries in tests.
@@ -172,6 +180,7 @@ impl MockConnection {
             options: opts.clone(),
             server_channel: server_client.clone(),
             server_cx: SendableCx::new(server_cx),
+            proxy_tx: Default::default(),
         });
 
         let (tx, rx) = oneshot::channel();
@@ -251,8 +260,14 @@ impl RemoteConnection for MockRemoteConnection {
     fn simulate_disconnect(&self, cx: &AsyncApp) {
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-        self.server_channel
-            .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(cx));
+        self.server_channel.reconnect(
+            outgoing_tx,
+            ChannelClient::start_handling_messages(
+                Arc::downgrade(&self.server_channel),
+                incoming_rx,
+                &self.server_cx.get(cx),
+            ),
+        );
     }
 
     fn start_proxy(
@@ -265,13 +280,26 @@ impl RemoteConnection for MockRemoteConnection {
         _delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
+        if let Some(proxy_tx) = self.proxy_tx.lock().as_ref() {
+            proxy_tx
+                .unbounded_send((client_incoming_tx, client_outgoing_rx))
+                .unwrap();
+            return cx.background_spawn(async move {
+                let _connection_activity_tx = connection_activity_tx;
+                futures::future::pending().await
+            });
+        }
+
         let (mut server_incoming_tx, server_incoming_rx) = mpsc::unbounded::<Envelope>();
         let (server_outgoing_tx, mut server_outgoing_rx) = mpsc::unbounded::<Envelope>();
 
         self.server_channel.reconnect(
-            server_incoming_rx,
             server_outgoing_tx,
-            &self.server_cx.get(cx),
+            ChannelClient::start_handling_messages(
+                Arc::downgrade(&self.server_channel),
+                server_incoming_rx,
+                &self.server_cx.get(cx),
+            ),
         );
 
         cx.background_spawn(async move {
