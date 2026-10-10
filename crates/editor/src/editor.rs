@@ -11951,6 +11951,38 @@ impl SemanticsProvider for WeakEntity<Project> {
         kind: GotoDefinitionKind,
         cx: &mut App,
     ) -> Option<Task<Result<Option<Vec<LocationLink>>>>> {
+        let git_store = self.upgrade()?.read(cx).git_store().clone();
+        if let Some(worktree_position) = git_store.update(cx, |git_store, cx| {
+            git_store.worktree_position_for_index_text(buffer, position, cx)
+        }) {
+            let project = self.clone();
+            return Some(cx.spawn(async move |cx| {
+                let (buffer, position) = worktree_position.await?;
+                let _lsp_handle = project.update(cx, |project, cx| {
+                    project.register_buffer_with_language_servers(&buffer, cx)
+                })?;
+                let Some(definitions) =
+                    cx.update(|cx| project.definitions(&buffer, position, kind, cx))
+                else {
+                    return Ok(None);
+                };
+                let definitions = definitions.await?;
+                // The editor drops links pointing back at the cursor by comparing
+                // against the index text buffer, which they never point into.
+                Ok(cx.update(|cx| {
+                    definitions.map(|definitions| {
+                        definitions
+                            .into_iter()
+                            .filter(|definition| {
+                                hover_links::exclude_link_to_position(
+                                    &buffer, &position, definition, cx,
+                                )
+                            })
+                            .collect()
+                    })
+                }))
+            }));
+        }
         self.update(cx, |project, cx| match kind {
             GotoDefinitionKind::Symbol => project.definitions(buffer, position, cx),
             GotoDefinitionKind::Declaration => project.declarations(buffer, position, cx),
