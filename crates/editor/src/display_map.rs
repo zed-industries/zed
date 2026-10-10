@@ -1946,9 +1946,6 @@ impl DisplaySnapshot {
                                 color
                             }
                         }),
-                        underline: chunk_highlight
-                            .underline
-                            .filter(|_| editor_style.show_underlines),
                         ..chunk_highlight
                     }
                 });
