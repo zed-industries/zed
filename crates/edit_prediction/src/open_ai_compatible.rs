@@ -95,30 +95,7 @@ pub(crate) async fn send_custom_server_request(
             };
 
             let request_body = serde_json::to_string(&request)?;
-            let mut http_request_builder = http_client::Request::builder()
-                .method(http_client::Method::POST)
-                .uri(settings.api_url.as_ref())
-                .header("Content-Type", "application/json");
-
-            if let Some(api_key) = api_key {
-                http_request_builder =
-                    http_request_builder.header("Authorization", format!("Bearer {}", api_key));
-            }
-
-            let http_request =
-                http_request_builder.body(http_client::AsyncBody::from(request_body))?;
-
-            let mut response = http_client.send(http_request).await?;
-            let status = response.status();
-
-            if !status.is_success() {
-                let mut body = String::new();
-                response.body_mut().read_to_string(&mut body).await?;
-                anyhow::bail!("custom server error: {} - {}", status, body);
-            }
-
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
+            let body = send_request(&settings.api_url, request_body, api_key, http_client).await?;
 
             let parsed: RawCompletionResponse =
                 serde_json::from_str(&body).context("Failed to parse completion response")?;
@@ -130,5 +107,80 @@ pub(crate) async fn send_custom_server_request(
                 .unwrap_or_default();
             Ok((text, parsed.id))
         }
+    }
+}
+
+pub(crate) async fn send_request(
+    api_url: &str,
+    request_body: String,
+    api_key: Option<Arc<str>>,
+    http_client: &Arc<dyn http_client::HttpClient>,
+) -> Result<String> {
+    let mut http_request_builder = http_client::Request::builder()
+        .method(http_client::Method::POST)
+        .uri(api_url)
+        .header("Content-Type", "application/json");
+
+    if let Some(api_key) = api_key {
+        http_request_builder =
+            http_request_builder.header("Authorization", format!("Bearer {}", api_key));
+    }
+
+    let http_request = http_request_builder.body(http_client::AsyncBody::from(request_body))?;
+    let mut response = http_client.send(http_request).await?;
+    let status = response.status();
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+
+    if !status.is_success() {
+        anyhow::bail!("custom server error: {} - {}", status, body);
+    }
+
+    Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::http_client::FakeHttpClient;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn raw_completion_requests_keep_the_existing_protocol() -> Result<()> {
+        futures::executor::block_on(async {
+            let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::create(
+                |mut request| async move {
+                    let mut body = String::new();
+                    request.body_mut().read_to_string(&mut body).await?;
+                    let body: Value = serde_json::from_str(&body)?;
+                    assert_eq!(
+                        body,
+                        json!({"model": "test-completion-model", "prompt": "raw completion prompt", "max_tokens": 64, "stop": ["completion-stop"]})
+                    );
+                    Ok(http_client::Response::builder().status(200).body(json!({
+                    "id": "raw-test", "object": "text_completion", "created": 0, "model": "test-completion-model",
+                    "choices": [{"text": "missing", "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                }).to_string().into())?)
+                },
+            );
+            let settings = OpenAiCompatibleEditPredictionSettings {
+                model: "test-completion-model".into(),
+                api_url: "http://localhost:8080/v1/completions".into(),
+                ..Default::default()
+            };
+            let result = send_custom_server_request(
+                settings::EditPredictionProvider::OpenAiCompatibleApi,
+                &settings,
+                "raw completion prompt".into(),
+                64,
+                vec!["completion-stop".into()],
+                None,
+                &http_client,
+            )
+            .await?;
+            assert_eq!(result, ("missing".into(), "raw-test".into()));
+            Ok(())
+        })
     }
 }
