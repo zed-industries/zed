@@ -11169,7 +11169,7 @@ async fn test_dynamic_formatting_registrations_honor_document_selectors(
 }
 
 #[gpui::test]
-async fn test_dynamic_formatting_registration_with_pattern_only_selector_fails_open(
+async fn test_dynamic_formatting_registration_with_pattern_only_selector(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
@@ -11216,40 +11216,55 @@ async fn test_dynamic_formatting_registration_with_pattern_only_selector_fails_o
         }
     });
 
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "pattern-only-formatting".to_string(),
-                    method: "textDocument/formatting".to_string(),
-                    register_options: Some(json!({
-                        "documentSelector": [{ "pattern": "**/*.nomatch" }],
-                    })),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    project
-        .update(cx, |project, cx| {
-            project.format(
-                HashSet::from_iter([buffer.clone()]),
-                project::lsp_store::LspFormatTarget::Buffers,
-                false,
-                project::lsp_store::FormatTrigger::Manual,
-                cx,
+    let register_formatting = async |id: &str, pattern: &str| {
+        fake_server
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: id.to_string(),
+                        method: "textDocument/formatting".to_string(),
+                        register_options: Some(json!({
+                            "documentSelector": [{ "pattern": pattern }],
+                        })),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
             )
-        })
-        .await
-        .unwrap();
+            .await
+            .into_response()
+            .unwrap();
+    };
+    let format = async |cx: &mut gpui::TestAppContext| {
+        project
+            .update(cx, |project, cx| {
+                project.format(
+                    HashSet::from_iter([buffer.clone()]),
+                    project::lsp_store::LspFormatTarget::Buffers,
+                    false,
+                    project::lsp_store::FormatTrigger::Manual,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+    };
+
+    register_formatting("pattern-only-formatting", "**/*.nomatch").await;
+    cx.executor().run_until_parked();
+    format(cx).await;
+    assert_eq!(
+        format_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected a pattern-only filter not matching the buffer's path not to route the formatting request",
+    );
+
+    register_formatting("matching-pattern-formatting", "**/*.rs").await;
+    cx.executor().run_until_parked();
+    format(cx).await;
     assert_eq!(
         format_request_count.load(atomic::Ordering::SeqCst),
         1,
-        "expected a pattern-only filter to fail open and route the formatting request",
+        "expected a pattern-only filter matching the buffer's path to route the formatting request",
     );
 }
 
