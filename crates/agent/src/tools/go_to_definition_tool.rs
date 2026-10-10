@@ -67,11 +67,10 @@ impl AgentTool for GoToDefinitionTool {
 
             let resolved = input.symbol.resolve(&project, cx).await?;
 
-            let definitions_task = project.update(cx, |project, cx| {
-                project.definitions(&resolved.buffer, resolved.position, cx)
-            });
-
-            let definitions = definitions_task
+            let definitions = project
+                .update(cx, |project, cx| {
+                    project.definitions(&resolved.buffer, resolved.position, cx)
+                })
                 .await
                 .map_err(|e| format!("Go to definition failed: {e}"))?
                 .unwrap_or_default();
