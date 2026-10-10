@@ -1767,6 +1767,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         json!({
             "test.rs": "const A: i32 = 1;",
             "test2.rs": "",
+            "later.rs": "fn later() {}",
             "Cargo.toml": "a = 1",
             "package.json": "{\"a\": 1}",
         }),
@@ -1814,6 +1815,26 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
                 ..Default::default()
             },
             ..Default::default()
+        },
+    );
+
+    let (initialize_sender, initialize_receiver) = async_channel::unbounded();
+    let mut replacement_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "replacement-rust-server",
+            opt_in_languages: HashSet::from_iter([LanguageName::new_static("Rust")]),
+            initializer: Some(Box::new(move |server| {
+                let initialize_sender = initialize_sender.clone();
+                server.set_request_handler::<lsp::request::Initialize, _, _>(move |params, _| {
+                    initialize_sender.try_send(params).unwrap();
+                    future::ready(Ok(lsp::InitializeResult {
+                        capabilities: lsp::LanguageServer::full_capabilities(),
+                        server_info: None,
+                    }))
+                });
+            })),
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -2090,7 +2111,6 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         project.restart_language_servers_for_buffers(
             vec![rust_buffer.clone(), json_buffer.clone()],
             HashSet::default(),
-            true,
             cx,
         );
     });
@@ -2159,6 +2179,128 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await,
         close_message,
     );
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |lsp_store, cx| lsp_store.stop_all_language_servers(cx));
+    cx.run_until_parked();
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 0)
+    });
+
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store
+            .set_user_settings(
+                r#"{"semantic_tokens":"combined","languages":{"Rust":{"language_servers":["replacement-rust-server"]}}}"#,
+                cx,
+            )
+            .unwrap();
+    });
+    cx.run_until_parked();
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 0)
+    });
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(
+            vec![rust_buffer.clone()],
+            HashSet::default(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 1)
+    });
+    let mut replacement_rust_server = replacement_rust_servers.next().await.unwrap();
+    assert_eq!(
+        initialize_receiver
+            .try_recv()
+            .unwrap()
+            .initialization_options,
+        None
+    );
+
+    let _json_handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&json_buffer, cx)
+    });
+    for (path, text) in [
+        (path!("/dir/test.rs"), "const A: i32 = 12;"),
+        (path!("/dir/later.rs"), "fn later() {}"),
+    ] {
+        let _registration = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            replacement_rust_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Uri::from_file_path(path).unwrap(),
+                version: 0,
+                text: text.to_owned(),
+                language_id: "rust".to_owned(),
+            }
+        );
+    }
+    let mut server_id = replacement_rust_server.server.server_id();
+    for semantic_tokens in ["combined", "full"] {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store
+                .set_user_settings(
+                    &json!({
+                        "semantic_tokens": semantic_tokens,
+                        "languages": { "Rust": { "language_servers": ["replacement-rust-server"] } },
+                        "lsp": { "replacement-rust-server": { "initialization_options": { "check": true } } }
+                    })
+                    .to_string(),
+                    cx,
+                )
+                .unwrap();
+        });
+        cx.run_until_parked();
+        lsp_store.read_with(cx, |store, _| {
+            assert_eq!(store.language_server_statuses().count(), 1);
+        });
+        let server = replacement_rust_servers
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("resumed server was not restarted after changing settings");
+        assert_ne!(server.server.server_id(), server_id);
+        server_id = server.server.server_id();
+        let params = initialize_receiver.try_recv().unwrap();
+        assert_eq!(
+            params.initialization_options,
+            Some(json!({ "check": true }))
+        );
+        assert_eq!(
+            params
+                .capabilities
+                .text_document
+                .unwrap()
+                .semantic_tokens
+                .unwrap()
+                .augments_syntax_tokens,
+            Some(semantic_tokens == "combined")
+        );
+    }
+    for servers in [
+        &mut fake_rust_servers,
+        &mut fake_json_servers,
+        &mut replacement_rust_servers,
+    ] {
+        assert_eq!(
+            servers
+                .next()
+                .now_or_never()
+                .flatten()
+                .map(|server| server.server.name()),
+            None,
+        );
+    }
 }
 
 #[gpui::test]
@@ -3298,7 +3440,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
     });
     let mut events = cx.events(&project);
 
@@ -3416,12 +3558,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        );
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     // The diagnostics are cleared.
@@ -3476,12 +3613,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     });
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        );
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -4995,12 +5127,7 @@ async fn test_diagnostic_summaries_cleared_on_server_restart(cx: &mut gpui::Test
     let mut events = cx.events(&project);
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        );
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
     cx.executor().run_until_parked();
 
