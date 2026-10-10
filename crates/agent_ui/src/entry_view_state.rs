@@ -236,6 +236,34 @@ impl EntryViewState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_entry_inner(index, thread, window, true, cx);
+    }
+
+    /// Like [`Self::sync_entry`], but does not materialize the diff/terminal
+    /// views of tool calls whose content is not currently visible.
+    ///
+    /// This is used when restoring a thread's history. Opening a long thread
+    /// should not eagerly build a full diff [`Editor`] and [`TerminalView`] for
+    /// every past tool call; those views are materialized later via
+    /// [`Self::sync_entry`] once the corresponding card is expanded.
+    pub fn sync_entry_initial(
+        &mut self,
+        index: usize,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_entry_inner(index, thread, window, false, cx);
+    }
+
+    fn sync_entry_inner(
+        &mut self,
+        index: usize,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        materialize_tool_calls: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some(thread_entry) = thread.read(cx).entries().get(index) else {
             return;
         };
@@ -311,6 +339,12 @@ impl EntryViewState {
             }
             AgentThreadEntry::ToolCall(tool_call) => {
                 let id = tool_call.id.clone();
+                // When restoring history we skip building the (potentially very
+                // expensive) diff editors and terminal views for tool calls the
+                // user cannot see yet. They are created on demand by a later
+                // `sync_entry` call once the card is expanded.
+                let materialize_content =
+                    materialize_tool_calls || self.is_tool_call_content_visible(tool_call);
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
                 let patch_hunk_buffers = tool_call
@@ -350,93 +384,103 @@ impl EntryViewState {
                 let is_tool_call_completed =
                     matches!(tool_call.status(), acp_thread::ToolCallStatus::Completed);
 
-                for terminal in terminals {
-                    match views.entry(terminal.entity_id()) {
-                        collections::hash_map::Entry::Vacant(entry) => {
-                            let element = create_terminal(
-                                self.workspace.clone(),
-                                self.project.clone(),
-                                terminal.clone(),
-                                window,
-                                cx,
-                            )
-                            .into_any();
-                            cx.emit(EntryViewEvent {
-                                entry_index: index,
-                                view_event: ViewEvent::NewTerminal(id.clone()),
-                            });
-                            entry.insert(element);
-                        }
-                        collections::hash_map::Entry::Occupied(_entry) => {
-                            let terminal = terminal.read(cx);
-                            if is_tool_call_completed
-                                && terminal.is_process_backed()
-                                && terminal.output().is_none()
-                            {
+                if materialize_content {
+                    thread.update(cx, |thread, cx| {
+                        thread.resolve_tool_call_diffs(index, cx);
+                    });
+                    for terminal in terminals {
+                        match views.entry(terminal.entity_id()) {
+                            collections::hash_map::Entry::Vacant(entry) => {
+                                let element = create_terminal(
+                                    self.workspace.clone(),
+                                    self.project.clone(),
+                                    terminal.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .into_any();
                                 cx.emit(EntryViewEvent {
                                     entry_index: index,
-                                    view_event: ViewEvent::TerminalMovedToBackground(id.clone()),
+                                    view_event: ViewEvent::NewTerminal(id.clone()),
                                 });
+                                entry.insert(element);
+                            }
+                            collections::hash_map::Entry::Occupied(_entry) => {
+                                let terminal = terminal.read(cx);
+                                if is_tool_call_completed
+                                    && terminal.is_process_backed()
+                                    && terminal.output().is_none()
+                                {
+                                    cx.emit(EntryViewEvent {
+                                        entry_index: index,
+                                        view_event: ViewEvent::TerminalMovedToBackground(
+                                            id.clone(),
+                                        ),
+                                    });
+                                }
                             }
                         }
                     }
-                }
 
-                for diff in diffs {
-                    views.entry(diff.entity_id()).or_insert_with(|| {
-                        let editor = create_editor_diff(diff.clone(), window, cx);
-                        cx.subscribe(&editor, {
-                            let diff = diff.clone();
-                            let entry_index = index;
-                            move |_this, _editor, event: &EditorEvent, cx| {
-                                if let EditorEvent::OpenExcerptsRequested {
-                                    selections_by_buffer,
-                                    split,
-                                } = event
-                                {
-                                    let multibuffer = diff.read(cx).multibuffer();
-                                    if let Some((buffer_id, (ranges, _))) =
-                                        selections_by_buffer.iter().next()
+                    for diff in diffs {
+                        views.entry(diff.entity_id()).or_insert_with(|| {
+                            let editor = create_editor_diff(diff.clone(), window, cx);
+                            cx.subscribe(&editor, {
+                                let diff = diff.clone();
+                                let entry_index = index;
+                                move |_this, _editor, event: &EditorEvent, cx| {
+                                    if let EditorEvent::OpenExcerptsRequested {
+                                        selections_by_buffer,
+                                        split,
+                                    } = event
                                     {
-                                        if let Some(buffer) =
-                                            multibuffer.read(cx).buffer(*buffer_id)
+                                        let multibuffer = diff.read(cx).multibuffer();
+                                        if let Some((buffer_id, (ranges, _))) =
+                                            selections_by_buffer.iter().next()
                                         {
-                                            if let Some(range) = ranges.first() {
-                                                let point =
-                                                    buffer.read(cx).offset_to_point(range.start.0);
-                                                if let Some(path) = diff.read(cx).file_path(cx) {
-                                                    cx.emit(EntryViewEvent {
-                                                        entry_index,
-                                                        view_event: ViewEvent::OpenDiffLocation {
-                                                            path,
-                                                            position: point,
-                                                            split: *split,
-                                                        },
-                                                    });
+                                            if let Some(buffer) =
+                                                multibuffer.read(cx).buffer(*buffer_id)
+                                            {
+                                                if let Some(range) = ranges.first() {
+                                                    let point = buffer
+                                                        .read(cx)
+                                                        .offset_to_point(range.start.0);
+                                                    if let Some(path) = diff.read(cx).file_path(cx)
+                                                    {
+                                                        cx.emit(EntryViewEvent {
+                                                            entry_index,
+                                                            view_event:
+                                                                ViewEvent::OpenDiffLocation {
+                                                                    path,
+                                                                    position: point,
+                                                                    split: *split,
+                                                                },
+                                                        });
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            }
-                        })
-                        .detach();
-                        cx.emit(EntryViewEvent {
-                            entry_index: index,
-                            view_event: ViewEvent::NewDiff(id.clone()),
+                            })
+                            .detach();
+                            cx.emit(EntryViewEvent {
+                                entry_index: index,
+                                view_event: ViewEvent::NewDiff(id.clone()),
+                            });
+                            editor.into_any()
                         });
-                        editor.into_any()
-                    });
-                }
-                for buffer in patch_hunk_buffers {
-                    views.entry(buffer.entity_id()).or_insert_with(|| {
-                        let editor = create_multibuffer_diff_editor(buffer, window, cx);
-                        cx.emit(EntryViewEvent {
-                            entry_index: index,
-                            view_event: ViewEvent::NewDiff(id.clone()),
+                    }
+                    for buffer in patch_hunk_buffers {
+                        views.entry(buffer.entity_id()).or_insert_with(|| {
+                            let editor = create_multibuffer_diff_editor(buffer, window, cx);
+                            cx.emit(EntryViewEvent {
+                                entry_index: index,
+                                view_event: ViewEvent::NewDiff(id.clone()),
+                            });
+                            editor.into_any()
                         });
-                        editor.into_any()
-                    });
+                    }
                 }
                 if let Some(Entry::ToolCall(entry)) = self.entries.get_mut(index) {
                     for stale_id in entry.patch_hunk_ids.difference(&patch_hunk_ids) {
@@ -896,7 +940,7 @@ mod tests {
         });
 
         view_state.update_in(cx, |view_state, window, cx| {
-            view_state.sync_entry(0, &thread, window, cx)
+            view_state.sync_entry_initial(0, &thread, window, cx)
         });
 
         let diff = thread.read_with(cx, |thread, _| {
@@ -908,6 +952,23 @@ mod tests {
                 .next()
                 .unwrap()
                 .clone()
+        });
+
+        // Restoring a thread must not eagerly materialize tool-call diff views.
+        view_state.read_with(cx, |view_state, _cx| {
+            assert!(
+                view_state
+                    .entry(0)
+                    .unwrap()
+                    .editor_for_diff(&diff)
+                    .is_none(),
+                "restoring history should not build a diff editor for a collapsed tool call"
+            );
+        });
+
+        // Expanding the card materializes its views.
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry(0, &thread, window, cx)
         });
 
         cx.run_until_parked();

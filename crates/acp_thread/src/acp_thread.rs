@@ -5378,6 +5378,19 @@ impl AcpThread {
         Ok(())
     }
 
+    /// Builds the diffs of the tool call at `index`. Called when the entry's
+    /// card first becomes visible, so restoring a thread does not build diffs
+    /// (buffers, ropes, syntax trees) for edits the user never opens.
+    pub fn resolve_tool_call_diffs(&self, index: usize, cx: &mut App) {
+        let diffs: Vec<Entity<Diff>> = match self.entries().get(index) {
+            Some(AgentThreadEntry::ToolCall(call)) => call.diffs().cloned().collect(),
+            _ => return,
+        };
+        for diff in diffs {
+            diff.update(cx, |diff, cx| diff.resolve(cx));
+        }
+    }
+
     /// Updates a tool call if id matches an existing entry, otherwise inserts a new one.
     pub fn upsert_tool_call(
         &mut self,
