@@ -163,6 +163,8 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_CONNECTION_TIMEOUT: Duration =
     Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
+const RECONNECT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+const RESYNC_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub const MAX_RECONNECT_ATTEMPTS: usize = 3;
 
@@ -715,9 +717,28 @@ impl RemoteClient {
             };
 
             let multiplex_task = Self::monitor(this.clone(), io_task, cx);
-            client.reconnect(incoming_rx, outgoing_tx, cx);
+            let (connection_ready_tx, connection_ready_rx) = oneshot::channel();
+            client.reconnect(
+                outgoing_tx,
+                ChannelClient::start_reconnecting_messages(
+                    Arc::downgrade(&client),
+                    incoming_rx,
+                    connection_ready_tx,
+                    cx,
+                ),
+            );
 
-            if let Err(error) = client.resync(HEARTBEAT_TIMEOUT).await {
+            if let Err(error) = async {
+                connection_ready_rx
+                    .with_timeout(RECONNECT_HANDSHAKE_TIMEOUT, cx.background_executor())
+                    .await
+                    .context("Timed out waiting for remote connection")?
+                    .context("Remote connection closed before becoming ready")?;
+
+                client.resync(RESYNC_TIMEOUT).await
+            }
+            .await
+            {
                 failed!(error, attempts, remote_connection, delegate);
             };
 
@@ -1401,208 +1422,6 @@ impl RemoteConnectionOptions {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::TestAppContext;
-    use rpc::{ErrorCodeExt, proto::ErrorCode};
-
-    #[test]
-    fn test_ssh_display_name_prefers_nickname() {
-        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-            host: "1.2.3.4".into(),
-            nickname: Some("My Cool Project".to_string()),
-            ..Default::default()
-        });
-
-        assert_eq!(options.display_name(), "My Cool Project");
-    }
-
-    #[test]
-    fn test_ssh_display_name_falls_back_to_host() {
-        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-            host: "1.2.3.4".into(),
-            ..Default::default()
-        });
-
-        assert_eq!(options.display_name(), "1.2.3.4");
-    }
-
-    #[test]
-    fn test_connection_type() {
-        assert_eq!(
-            RemoteConnectionOptions::Ssh(SshConnectionOptions::default()).connection_type(),
-            "ssh"
-        );
-        assert_eq!(
-            RemoteConnectionOptions::Wsl(WslConnectionOptions {
-                distro_name: "Ubuntu".to_string(),
-                user: None,
-            })
-            .connection_type(),
-            "wsl"
-        );
-        assert_eq!(
-            RemoteConnectionOptions::Docker(DockerConnectionOptions {
-                use_podman: false,
-                ..Default::default()
-            })
-            .connection_type(),
-            "docker"
-        );
-        assert_eq!(
-            RemoteConnectionOptions::Docker(DockerConnectionOptions {
-                use_podman: true,
-                ..Default::default()
-            })
-            .connection_type(),
-            "podman"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_channel_client_request_stream_terminates_on_error(cx: &mut TestAppContext) {
-        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
-
-        let client =
-            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
-
-        // The client sends RemoteStarted on startup; drain the outgoing channel
-        // so it doesn't block.
-        let _drain_outgoing = cx
-            .executor()
-            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
-
-        let mut stream = client
-            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
-            .await
-            .unwrap();
-
-        let request_id = 0;
-
-        incoming_tx
-            .unbounded_send(proto::Test { id: 1 }.into_envelope(100, Some(request_id), None))
-            .unwrap();
-
-        let first = stream.next().await.unwrap().unwrap();
-        assert_eq!(
-            proto::Test::from_envelope(first).unwrap(),
-            proto::Test { id: 1 }
-        );
-
-        // Send an Error without a trailing EndStream. The Error alone should
-        // terminate the stream.
-        incoming_tx
-            .unbounded_send(
-                ErrorCode::Internal
-                    .message("boom".to_string())
-                    .to_proto()
-                    .into_envelope(101, Some(request_id), None),
-            )
-            .unwrap();
-
-        let second = stream.next().await.unwrap();
-        let error = second.unwrap_err();
-        assert!(
-            format!("{error}").contains("boom"),
-            "expected error to surface server message, got: {error}"
-        );
-
-        assert!(stream.next().await.is_none());
-        assert_eq!(client.stream_response_channels.lock().len(), 0);
-    }
-
-    #[gpui::test]
-    async fn test_channel_client_dropping_stream_request_before_response_cleans_up_channel(
-        cx: &mut TestAppContext,
-    ) {
-        let (_incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
-
-        let client =
-            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
-
-        let _drain_outgoing = cx
-            .executor()
-            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
-
-        let stream = client
-            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
-            .await
-            .unwrap();
-
-        assert_eq!(client.stream_response_channels.lock().len(), 1);
-
-        drop(stream);
-        cx.run_until_parked();
-
-        assert_eq!(
-            client.stream_response_channels.lock().len(),
-            0,
-            "dropping a stream before any responses arrive should remove response channel bookkeeping"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_channel_client_dropping_stream_request_before_completion(
-        cx: &mut TestAppContext,
-    ) {
-        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
-
-        let client =
-            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
-
-        let _drain_outgoing = cx
-            .executor()
-            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
-
-        let mut stream = client
-            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
-            .await
-            .unwrap();
-
-        let request_id = 0;
-
-        incoming_tx
-            .unbounded_send(proto::Test { id: 1 }.into_envelope(100, Some(request_id), None))
-            .unwrap();
-        let _ = stream.next().await.unwrap().unwrap();
-
-        assert_eq!(client.stream_response_channels.lock().len(), 1);
-
-        drop(stream);
-
-        // Inject an orphaned non-terminal response. The read loop should detect
-        // that the consumer has been dropped and clean up its bookkeeping (no
-        // EndStream sent here on purpose, otherwise the cleanup would happen
-        // via the terminal-response path and mask the bug under test).
-        incoming_tx
-            .unbounded_send(proto::Test { id: 2 }.into_envelope(101, Some(request_id), None))
-            .unwrap();
-
-        cx.run_until_parked();
-
-        assert_eq!(
-            client.stream_response_channels.lock().len(),
-            0,
-            "stream channel should be removed once the consumer has dropped the stream"
-        );
-    }
-
-    #[test]
-    fn test_ssh_host_ignores_nickname() {
-        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-            host: "1.2.3.4".into(),
-            nickname: Some("My Cool Project".to_string()),
-            ..Default::default()
-        });
-
-        assert_eq!(options.host(), "1.2.3.4");
-    }
-}
-
 impl From<SshConnectionOptions> for RemoteConnectionOptions {
     fn from(opts: SshConnectionOptions) -> Self {
         RemoteConnectionOptions::Ssh(opts)
@@ -1769,163 +1588,219 @@ impl ChannelClient {
         self.remote_started.wait()
     }
 
-    fn start_handling_messages(
+    fn send_handshake(&self) -> Result<u32> {
+        let handshake_id = self.next_message_id.fetch_add(1, SeqCst);
+        let envelope = proto::RemoteStarted {}.into_envelope(handshake_id, None, None);
+        self.outgoing_tx.lock().unbounded_send(envelope)?;
+        Ok(handshake_id)
+    }
+
+    pub(crate) fn start_handling_messages(
         this: Weak<Self>,
-        mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
+        incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         cx: &AsyncApp,
     ) -> Task<Result<()>> {
         cx.spawn(async move |cx| {
-            if let Some(this) = this.upgrade() {
-                let envelope = proto::RemoteStarted {}.into_envelope(0, None, None);
-                this.outgoing_tx.lock().unbounded_send(envelope).ok();
+            let handshake_id = if let Some(this) = this.upgrade() {
+                this.send_handshake()?
+            } else {
+                return anyhow::Ok(());
             };
 
-            let peer_id = PeerId { owner_id: 0, id: 0 };
-            while let Some(incoming) = incoming_rx.next().await {
+            Self::read_messages(this, incoming_rx, handshake_id, cx).await
+        })
+    }
+
+    fn start_reconnecting_messages(
+        this: Weak<Self>,
+        mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
+        connection_ready_tx: oneshot::Sender<()>,
+        cx: &AsyncApp,
+    ) -> Task<Result<()>> {
+        cx.spawn(async move |cx| {
+            let handshake_id = if let Some(this) = this.upgrade() {
+                this.send_handshake()?
+            } else {
+                return anyhow::Ok(());
+            };
+
+            loop {
+                let Some(incoming) = incoming_rx.next().await else {
+                    return anyhow::Ok(());
+                };
                 let Some(this) = this.upgrade() else {
                     return anyhow::Ok(());
                 };
-                if let Some(ack_id) = incoming.ack_id {
-                    let mut buffer = this.buffer.lock();
-                    while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
-                        buffer.pop_front();
-                    }
-                }
-                if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) = &incoming.payload
+                if incoming.responding_to == Some(handshake_id)
+                    && matches!(incoming.payload, Some(proto::envelope::Payload::Ack(_)))
                 {
-                    log::debug!(
-                        "{}:remote message received. name:FlushBufferedMessages",
-                        this.name
-                    );
-                    {
-                        let buffer = this.buffer.lock();
-                        for envelope in buffer.iter() {
-                            this.outgoing_tx
-                                .lock()
-                                .unbounded_send(envelope.clone())
-                                .ok();
-                        }
-                    }
-                    let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
-                    envelope.id = this.next_message_id.fetch_add(1, SeqCst);
-                    this.outgoing_tx.lock().unbounded_send(envelope).ok();
-                    continue;
+                    connection_ready_tx.send(()).ok();
+                    break;
                 }
+                Self::handle_message(this, incoming, cx).await;
+            }
 
-                if let Some(proto::envelope::Payload::RemoteStarted(_)) = &incoming.payload {
-                    this.remote_started.set(());
-                    let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
-                    envelope.id = this.next_message_id.fetch_add(1, SeqCst);
-                    this.outgoing_tx.lock().unbounded_send(envelope).ok();
-                    continue;
-                }
+            Self::read_messages(this, incoming_rx, handshake_id, cx).await
+        })
+    }
 
-                this.max_received.store(incoming.id, SeqCst);
+    async fn read_messages(
+        this: Weak<Self>,
+        mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
+        handshake_id: u32,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        while let Some(incoming) = incoming_rx.next().await {
+            let Some(this) = this.upgrade() else {
+                return anyhow::Ok(());
+            };
+            if incoming.responding_to == Some(handshake_id)
+                && matches!(incoming.payload, Some(proto::envelope::Payload::Ack(_)))
+            {
+                // Handshake replies do not acknowledge buffered messages that still need replay.
+                continue;
+            }
+            Self::handle_message(this, incoming, cx).await;
+        }
+        anyhow::Ok(())
+    }
 
-                if let Some(request_id) = incoming.responding_to {
-                    let request_id = MessageId(request_id);
-                    // An incoming response with no payload is malformed; drop
-                    // it. The request future and any stream consumers will
-                    // remain pending until either a real response arrives or
-                    // the connection is torn down.
-                    if incoming.payload.is_none() {
-                        continue;
-                    }
-                    let sender = this.response_channels.lock().remove(&request_id);
-                    if let Some(sender) = sender {
-                        let (tx, rx) = oneshot::channel();
-                        sender.send((incoming, tx)).ok();
-                        rx.await.ok();
-                    } else {
-                        let terminal_stream_response = matches!(
-                            &incoming.payload,
-                            Some(proto::envelope::Payload::Error(_))
-                                | Some(proto::envelope::Payload::EndStream(_))
-                        );
-                        let sender = if terminal_stream_response {
-                            this.stream_response_channels.lock().remove(&request_id)
-                        } else {
-                            this.stream_response_channels
-                                .lock()
-                                .get(&request_id)
-                                .cloned()
-                        };
-                        if let Some(sender) = sender {
-                            let (tx, rx) = oneshot::channel();
-                            if sender.unbounded_send((Ok(incoming), tx)).is_err() {
-                                this.stream_response_channels.lock().remove(&request_id);
-                                continue;
-                            }
-                            rx.await.ok();
-                        }
-                    }
-                } else if let Some(envelope) =
-                    build_typed_envelope(peer_id, Instant::now(), incoming)
-                {
-                    let type_name = envelope.payload_type_name();
-                    let message_id = envelope.message_id();
-                    if let Some(future) = ProtoMessageHandlerSet::handle_message(
-                        &this.message_handlers,
-                        envelope,
-                        this.clone().into(),
-                        cx.clone(),
-                    ) {
-                        log::debug!("{}:remote message received. name:{type_name}", this.name);
-                        cx.foreground_executor()
-                            .spawn(async move {
-                                match future.await {
-                                    Ok(_) => {
-                                        log::debug!(
-                                            "{}:remote message handled. name:{type_name}",
-                                            this.name
-                                        );
-                                    }
-                                    Err(error) => {
-                                        log::error!(
-                                            "{}:error handling message. type:{}, error:{:#}",
-                                            this.name,
-                                            type_name,
-                                            format!("{error:#}").lines().fold(
-                                                String::new(),
-                                                |mut message, line| {
-                                                    if !message.is_empty() {
-                                                        message.push(' ');
-                                                    }
-                                                    message.push_str(line);
-                                                    message
-                                                }
-                                            )
-                                        );
-                                    }
-                                }
-                            })
-                            .detach()
-                    } else {
-                        log::error!("{}:unhandled remote message name:{type_name}", this.name);
-                        if let Err(e) = AnyProtoClient::from(this.clone()).send_response(
-                            message_id,
-                            anyhow::anyhow!("no handler registered for {type_name}").to_proto(),
-                        ) {
-                            log::error!(
-                                "{}:error sending error response for {type_name}:{e:#}",
-                                this.name
-                            );
-                        }
-                    }
+    async fn handle_message(this: Arc<Self>, incoming: Envelope, cx: &mut AsyncApp) {
+        let peer_id = PeerId { owner_id: 0, id: 0 };
+        if let Some(ack_id) = incoming.ack_id {
+            let mut buffer = this.buffer.lock();
+            while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
+                buffer.pop_front();
+            }
+        }
+        if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) = &incoming.payload {
+            log::debug!(
+                "{}:remote message received. name:FlushBufferedMessages",
+                this.name
+            );
+            {
+                let buffer = this.buffer.lock();
+                for envelope in buffer.iter() {
+                    this.outgoing_tx
+                        .lock()
+                        .unbounded_send(envelope.clone())
+                        .ok();
                 }
             }
-            anyhow::Ok(())
-        })
+            let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
+            envelope.id = this.next_message_id.fetch_add(1, SeqCst);
+            this.outgoing_tx.lock().unbounded_send(envelope).ok();
+            return;
+        }
+
+        if let Some(proto::envelope::Payload::RemoteStarted(_)) = &incoming.payload {
+            this.remote_started.set(());
+            let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
+            envelope.id = this.next_message_id.fetch_add(1, SeqCst);
+            this.outgoing_tx.lock().unbounded_send(envelope).ok();
+            return;
+        }
+
+        this.max_received.store(incoming.id, SeqCst);
+
+        if let Some(request_id) = incoming.responding_to {
+            let request_id = MessageId(request_id);
+            // An incoming response with no payload is malformed; drop
+            // it. The request future and any stream consumers will
+            // remain pending until either a real response arrives or
+            // the connection is torn down.
+            if incoming.payload.is_none() {
+                return;
+            }
+            let sender = this.response_channels.lock().remove(&request_id);
+            if let Some(sender) = sender {
+                let (tx, rx) = oneshot::channel();
+                sender.send((incoming, tx)).ok();
+                rx.await.ok();
+            } else {
+                let terminal_stream_response = matches!(
+                    &incoming.payload,
+                    Some(proto::envelope::Payload::Error(_))
+                        | Some(proto::envelope::Payload::EndStream(_))
+                );
+                let sender = if terminal_stream_response {
+                    this.stream_response_channels.lock().remove(&request_id)
+                } else {
+                    this.stream_response_channels
+                        .lock()
+                        .get(&request_id)
+                        .cloned()
+                };
+                if let Some(sender) = sender {
+                    let (tx, rx) = oneshot::channel();
+                    if sender.unbounded_send((Ok(incoming), tx)).is_err() {
+                        this.stream_response_channels.lock().remove(&request_id);
+                        return;
+                    }
+                    rx.await.ok();
+                }
+            }
+        } else if let Some(envelope) = build_typed_envelope(peer_id, Instant::now(), incoming) {
+            let type_name = envelope.payload_type_name();
+            let message_id = envelope.message_id();
+            if let Some(future) = ProtoMessageHandlerSet::handle_message(
+                &this.message_handlers,
+                envelope,
+                this.clone().into(),
+                cx.clone(),
+            ) {
+                log::debug!("{}:remote message received. name:{type_name}", this.name);
+                cx.foreground_executor()
+                    .spawn(async move {
+                        match future.await {
+                            Ok(_) => {
+                                log::debug!(
+                                    "{}:remote message handled. name:{type_name}",
+                                    this.name
+                                );
+                            }
+                            Err(error) => {
+                                log::error!(
+                                    "{}:error handling message. type:{}, error:{:#}",
+                                    this.name,
+                                    type_name,
+                                    format!("{error:#}").lines().fold(
+                                        String::new(),
+                                        |mut message, line| {
+                                            if !message.is_empty() {
+                                                message.push(' ');
+                                            }
+                                            message.push_str(line);
+                                            message
+                                        }
+                                    )
+                                );
+                            }
+                        }
+                    })
+                    .detach()
+            } else {
+                log::error!("{}:unhandled remote message name:{type_name}", this.name);
+                if let Err(e) = AnyProtoClient::from(this.clone()).send_response(
+                    message_id,
+                    anyhow::anyhow!("no handler registered for {type_name}").to_proto(),
+                ) {
+                    log::error!(
+                        "{}:error sending error response for {type_name}:{e:#}",
+                        this.name
+                    );
+                }
+            }
+        }
     }
 
     pub(crate) fn reconnect(
         self: &Arc<Self>,
-        incoming_rx: UnboundedReceiver<Envelope>,
         outgoing_tx: UnboundedSender<Envelope>,
-        cx: &AsyncApp,
+        task: Task<Result<()>>,
     ) {
         *self.outgoing_tx.lock() = outgoing_tx;
-        *self.task.lock() = Self::start_handling_messages(Arc::downgrade(self), incoming_rx, cx);
+        *self.task.lock() = task;
     }
 
     fn request<T: RequestMessage>(
@@ -2127,5 +2002,326 @@ impl ProtoClient for ChannelClient {
 
     fn has_wsl_interop(&self) -> bool {
         self.has_wsl_interop
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::mock::{MockConnection, MockConnectionRegistry, MockDelegate};
+    use gpui::TestAppContext;
+    use rpc::{ErrorCodeExt, proto::ErrorCode};
+
+    #[test]
+    fn test_ssh_display_name_prefers_nickname() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            nickname: Some("My Cool Project".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "My Cool Project");
+    }
+
+    #[test]
+    fn test_ssh_display_name_falls_back_to_host() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "1.2.3.4");
+    }
+
+    #[test]
+    fn test_connection_type() {
+        assert_eq!(
+            RemoteConnectionOptions::Ssh(SshConnectionOptions::default()).connection_type(),
+            "ssh"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: None,
+            })
+            .connection_type(),
+            "wsl"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: false,
+                ..Default::default()
+            })
+            .connection_type(),
+            "docker"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: true,
+                ..Default::default()
+            })
+            .connection_type(),
+            "podman"
+        );
+    }
+
+    #[gpui::test]
+    async fn resync_timeout_starts_after_the_handshake(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (options, _, connect_guard) = MockConnection::new(cx, server_cx);
+        drop(connect_guard);
+        let connection = cx
+            .update(|cx| {
+                cx.default_global::<MockConnectionRegistry>()
+                    .take(&options)
+                    .unwrap()
+            })
+            .await;
+
+        let (proxy_tx, mut proxy_rx) = mpsc::unbounded();
+        *connection.proxy_tx.lock() = Some(proxy_tx);
+        let connection: Arc<dyn RemoteConnection> = connection;
+
+        let (_cancellation_tx, cancellation_rx) = oneshot::channel();
+        let initial_connection = cx.update(|cx| {
+            release_channel::init_test(Version::new(0, 0, 0), ReleaseChannel::Dev, cx);
+            cx.default_global::<ConnectionPool>().connections.insert(
+                connection.connection_options(),
+                ConnectionPoolEntry::Connected(Arc::downgrade(&connection)),
+            );
+            RemoteClient::new(
+                ConnectionIdentifier::setup(),
+                connection,
+                cancellation_rx,
+                Arc::new(MockDelegate),
+                cx,
+            )
+        });
+
+        let (incoming_tx, mut outgoing_rx) = proxy_rx.next().await.unwrap();
+        let initial_handshake = outgoing_rx.next().await.unwrap();
+        assert!(matches!(
+            initial_handshake.payload,
+            Some(proto::envelope::Payload::RemoteStarted(_))
+        ));
+        incoming_tx
+            .unbounded_send(proto::RemoteStarted {}.into_envelope(0, None, None))
+            .unwrap();
+        outgoing_rx.next().await.unwrap();
+
+        let ping = outgoing_rx.next().await.unwrap();
+        let last_response_id = 2;
+        let mut ping_response = proto::Ack {}.into_envelope(last_response_id, Some(ping.id), None);
+        ping_response.ack_id = Some(ping.id);
+        incoming_tx.unbounded_send(ping_response).unwrap();
+        let remote = initial_connection.await.unwrap().unwrap();
+
+        remote.update(cx, |remote, _| {
+            remote.client.send(proto::Test { id: 1 }).unwrap();
+            remote.client.send(proto::Test { id: 2 }).unwrap();
+        });
+        let unacknowledged_messages = [
+            outgoing_rx.next().await.unwrap(),
+            outgoing_rx.next().await.unwrap(),
+        ];
+
+        remote.update(cx, |remote, cx| remote.reconnect(cx).unwrap());
+        let (incoming_tx, mut outgoing_rx) = proxy_rx.next().await.unwrap();
+        let reconnect_handshake = outgoing_rx.next().await.unwrap();
+        assert!(matches!(
+            reconnect_handshake.payload,
+            Some(proto::envelope::Payload::RemoteStarted(_))
+        ));
+        assert_ne!(reconnect_handshake.id, initial_handshake.id);
+
+        // Each phase takes less than 15s, but 12s + 6s exceeds a shared 15s timeout.
+        cx.background_executor.timer(Duration::from_secs(12)).await;
+
+        // The server greeting alone must not start resync; the server must ACK our reconnect handshake.
+        let server_greeting_id = 99;
+        incoming_tx
+            .unbounded_send(proto::RemoteStarted {}.into_envelope(server_greeting_id, None, None))
+            .unwrap();
+        let greeting_ack = outgoing_rx.next().await.unwrap();
+        assert_eq!(greeting_ack.responding_to, Some(server_greeting_id));
+        assert!(matches!(
+            greeting_ack.payload,
+            Some(proto::envelope::Payload::Ack(_))
+        ));
+        assert!(outgoing_rx.next().now_or_never().is_none());
+
+        incoming_tx
+            .unbounded_send(proto::Ack {}.into_envelope(100, Some(reconnect_handshake.id), None))
+            .unwrap();
+        let flush_request = outgoing_rx.next().await.unwrap();
+        assert!(matches!(
+            flush_request.payload,
+            Some(proto::envelope::Payload::FlushBufferedMessages(_))
+        ));
+        assert_eq!(flush_request.ack_id, Some(last_response_id));
+
+        cx.background_executor.timer(Duration::from_secs(6)).await;
+        assert_eq!(
+            remote.read_with(cx, |remote, _| remote.connection_state()),
+            ConnectionState::Reconnecting
+        );
+
+        incoming_tx
+            .unbounded_send(proto::Ack {}.into_envelope(101, Some(flush_request.id), None))
+            .unwrap();
+
+        cx.condition(&remote, |remote, _| {
+            remote.connection_state() == ConnectionState::Connected
+        })
+        .await;
+
+        for expected in unacknowledged_messages {
+            assert_eq!(outgoing_rx.next().await.unwrap(), expected);
+        }
+        assert!(outgoing_rx.next().now_or_never().is_none());
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_request_stream_terminates_on_error(cx: &mut TestAppContext) {
+        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        // The client sends RemoteStarted on startup; drain the outgoing channel
+        // so it doesn't block.
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let mut stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        let request_id = 0;
+
+        incoming_tx
+            .unbounded_send(proto::Test { id: 1 }.into_envelope(100, Some(request_id), None))
+            .unwrap();
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(
+            proto::Test::from_envelope(first).unwrap(),
+            proto::Test { id: 1 }
+        );
+
+        // Send an Error without a trailing EndStream. The Error alone should
+        // terminate the stream.
+        incoming_tx
+            .unbounded_send(
+                ErrorCode::Internal
+                    .message("boom".to_string())
+                    .to_proto()
+                    .into_envelope(101, Some(request_id), None),
+            )
+            .unwrap();
+
+        let second = stream.next().await.unwrap();
+        let error = second.unwrap_err();
+        assert!(
+            format!("{error}").contains("boom"),
+            "expected error to surface server message, got: {error}"
+        );
+
+        assert!(stream.next().await.is_none());
+        assert_eq!(client.stream_response_channels.lock().len(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_dropping_stream_request_before_response_cleans_up_channel(
+        cx: &mut TestAppContext,
+    ) {
+        let (_incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        assert_eq!(client.stream_response_channels.lock().len(), 1);
+
+        drop(stream);
+        cx.run_until_parked();
+
+        assert_eq!(
+            client.stream_response_channels.lock().len(),
+            0,
+            "dropping a stream before any responses arrive should remove response channel bookkeeping"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_dropping_stream_request_before_completion(
+        cx: &mut TestAppContext,
+    ) {
+        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let mut stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        let request_id = 0;
+
+        incoming_tx
+            .unbounded_send(proto::Test { id: 1 }.into_envelope(100, Some(request_id), None))
+            .unwrap();
+        let _ = stream.next().await.unwrap().unwrap();
+
+        assert_eq!(client.stream_response_channels.lock().len(), 1);
+
+        drop(stream);
+
+        // Inject an orphaned non-terminal response. The read loop should detect
+        // that the consumer has been dropped and clean up its bookkeeping (no
+        // EndStream sent here on purpose, otherwise the cleanup would happen
+        // via the terminal-response path and mask the bug under test).
+        incoming_tx
+            .unbounded_send(proto::Test { id: 2 }.into_envelope(101, Some(request_id), None))
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            client.stream_response_channels.lock().len(),
+            0,
+            "stream channel should be removed once the consumer has dropped the stream"
+        );
+    }
+
+    #[test]
+    fn test_ssh_host_ignores_nickname() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            nickname: Some("My Cool Project".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(options.host(), "1.2.3.4");
     }
 }
