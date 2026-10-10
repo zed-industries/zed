@@ -208,6 +208,7 @@ fn measure_in_window(
     );
     window.update(|window, _| {
         window.take_view_reuse_stats();
+        window.take_render_phase_timings();
     });
 
     // Each iteration reads what the previous frame rendered before resetting for its own
@@ -247,6 +248,7 @@ fn measure_in_window(
     window.update(|window, _| {
         let stats = window.take_view_reuse_stats();
         eprintln!("view-reuse {group}/{}: {stats:?}", input.family);
+        report_render_phases(window, &format!("{group}/{}", input.family));
     });
     assert!(
         frames_that_rendered * 2 >= frames,
@@ -1004,6 +1006,7 @@ fn measure_text_panel_updates(
     let initial_root_renders = root_renders.get();
     window.update(|window, _| {
         window.take_view_reuse_stats();
+        window.take_render_phase_timings();
     });
     let mut updates = 0usize;
     cx.bench_renderer(root, |root, _, cx| {
@@ -1023,6 +1026,7 @@ fn measure_text_panel_updates(
         eprintln!("view-reuse TextPanels/{font_family}/{panel_count}: root renders {}, panel renders {}, {stats:?}",
             root_renders.get() - initial_root_renders,
             panel_renders.get() - initial_panel_renders);
+        report_render_phases(window, &format!("TextPanels/{font_family}/{panel_count}"));
     });
     assert!(updates > 0);
     assert!(
@@ -1037,6 +1041,13 @@ fn measure_text_panel_updates(
         window.update(|window, _| snapshot_glyphs(window)),
         "updated glyph output must match a full redraw of the final model"
     );
+}
+
+fn report_render_phases(window: &Window, label: &str) {
+    let phases = window.take_render_phase_timings();
+    if std::env::var("GPUI_RENDER_PHASE_TIMERS").as_deref() == Ok("1") {
+        eprintln!("render phases {label} (inclusive totals): {phases:?}");
+    }
 }
 
 fn assert_layout_cache_mode(window: &Window) {
@@ -1189,6 +1200,7 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
         let mut window = cx.add_empty_window();
         let before_population = bench_metrics::allocation_stats();
         let mut populated = window.update(|window, cx| {
+            window.take_render_phase_timings();
             FirstPopulatedFrame::attach(
                 window,
                 cx,
@@ -1214,6 +1226,7 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
                 std::env::var_os("GPUI_LAYOUT_CACHE"),
                 window.layout_cache_enabled(),
             );
+            report_render_phases(window, "first populated");
         });
         match before_window.zip(before_population).zip(after_population) {
             Some(((before, empty), after)) => eprintln!(

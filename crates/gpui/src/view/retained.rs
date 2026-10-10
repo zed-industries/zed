@@ -826,6 +826,9 @@ impl Window {
     }
 
     pub(super) fn implicit_prepaint_layout(&mut self, id: ViewOccurrenceId) -> bool {
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryChecks);
         let geometry_unchanged = self
             .view_store
             .retained(id)
@@ -988,6 +991,9 @@ impl Window {
     }
 
     fn validate_view_splice(&self, id: ViewOccurrenceId) -> Result<(), SpliceFallback> {
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryChecks);
         if self.a11y.is_active() {
             return Err(SpliceFallback::Accessibility);
         }

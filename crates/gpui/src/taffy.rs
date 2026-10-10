@@ -70,6 +70,8 @@ struct NodeEpochs {
     last_requested: u64,
     last_reachable: u64,
     last_computed: u64,
+    last_retained: u64,
+    owner: (usize, usize),
 }
 
 fn node_index(id: NodeId) -> usize {
@@ -396,6 +398,8 @@ impl TaffyLayoutEngine {
     }
 
     pub(crate) fn retain_subtree(&mut self, id: LayoutId) {
+        #[cfg(feature = "bench-support")]
+        let _timer = crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::Retain);
         let Some(cache) = self.cache.as_mut() else {
             return;
         };
@@ -404,43 +408,37 @@ impl TaffyLayoutEngine {
             epochs.last_computed = cache.epoch;
             cache.computed_roots.push(id);
         }
-        let mut nodes = FxHashSet::default();
-        let mut stack = vec![id.0];
+        let stack = &mut self.layout_bounds_scratch_space;
+        stack.push(id);
         while let Some(node) = stack.pop() {
-            if nodes.insert(LayoutId(node)) {
-                cache.nodes[node_index(node)].last_requested = cache.epoch;
-                stack.extend(self.taffy.child_ids(node));
+            let epochs = &mut cache.nodes[node_index(node.0)];
+            if epochs.last_retained == cache.epoch {
+                continue;
             }
-        }
-        for scope in cache.scopes.iter_mut().flatten() {
-            for (ordinal, node) in scope.nodes.iter().enumerate() {
-                if node.is_some_and(|id| nodes.contains(&id)) {
-                    scope.last_requested_epoch = cache.epoch;
-                    scope.cursor = scope.cursor.max(ordinal + 1);
-                }
-            }
+            epochs.last_retained = cache.epoch;
+            epochs.last_requested = cache.epoch;
+            let (scope, ordinal) = epochs.owner;
+            let scope = cache.scopes[scope].as_mut().expect("live layout scope");
+            scope.last_requested_epoch = cache.epoch;
+            scope.cursor = scope.cursor.max(ordinal + 1);
+            stack.extend(self.taffy.child_ids(node.0).map(LayoutId));
         }
     }
 
     pub(crate) fn reset_retained_subtree(&mut self, id: LayoutId) {
-        let mut nodes = FxHashSet::default();
-        let mut stack = vec![id.0];
+        let Some(cache) = self.cache.as_mut() else {
+            return;
+        };
+        let stack = &mut self.layout_bounds_scratch_space;
+        stack.push(id);
         while let Some(node) = stack.pop() {
-            if nodes.insert(LayoutId(node)) {
-                stack.extend(self.taffy.child_ids(node));
-            }
-        }
-        if let Some(cache) = self.cache.as_mut() {
-            for scope in cache.scopes.iter_mut().flatten() {
-                if scope
-                    .nodes
-                    .iter()
-                    .flatten()
-                    .any(|node| nodes.contains(node))
-                {
-                    scope.cursor = 0;
-                }
-            }
+            let epochs = &mut cache.nodes[node_index(node.0)];
+            epochs.last_retained = 0;
+            cache.scopes[epochs.owner.0]
+                .as_mut()
+                .expect("live layout scope")
+                .cursor = 0;
+            stack.extend(self.taffy.child_ids(node.0).map(LayoutId));
         }
     }
 
@@ -613,8 +611,10 @@ impl TaffyLayoutEngine {
             }
             if existing.is_none() {
                 cache.nodes[slot] = NodeEpochs::default();
+                cache.nodes[slot].owner = (index, ordinal);
             }
             cache.nodes[slot].last_requested = cache.epoch;
+            cache.nodes[slot].last_retained = 0;
         }
         (id, existing.is_some())
     }
@@ -855,6 +855,8 @@ impl TaffyLayoutEngine {
         window: &mut Window,
         cx: &mut App,
     ) {
+        #[cfg(feature = "bench-support")]
+        let _timer = crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::Layout);
         if let Some(cache) = self.cache.as_mut() {
             let generation = window.text_system().font_generation();
             if cache.font_generation != Some(generation) {
@@ -1767,6 +1769,49 @@ mod tests {
             engine.clear();
             assert!(weak_capture.upgrade().is_none());
             assert_eq!(engine.taffy.total_node_count(), 0);
+        });
+    }
+
+    #[gpui::test]
+    fn retained_nodes_mark_only_their_owners_and_survive_repeated_marking(
+        cx: &mut crate::TestAppContext,
+    ) {
+        cx.add_empty_window().update(|window, cx| {
+            let mut engine = TaffyLayoutEngine::new();
+            engine.enable_cache();
+            let child_scope = crate::element::InternedHandle::for_test(0, 0);
+            let root_scope = crate::element::InternedHandle::for_test(1, 0);
+            let unrelated_scope = crate::element::InternedHandle::for_test(2, 0);
+            engine.set_request_scope(&child_scope);
+            let child = engine.request_layout(Style::default(), Pixels(16.), 1., &[]);
+            engine.set_request_scope(&root_scope);
+            let root = engine.request_layout(Style::default(), Pixels(16.), 1., &[child]);
+            engine.set_request_scope(&unrelated_scope);
+            let unrelated = engine.request_layout(Style::default(), Pixels(16.), 1., &[]);
+            engine.compute_layout(root, AvailableSpace::min_size(), window, cx);
+            engine.compute_layout(unrelated, AvailableSpace::min_size(), window, cx);
+            engine.clear();
+            for _ in 0..3 {
+                engine.retain_subtree(root);
+                engine.retain_subtree(child);
+                engine.retain_subtree(root);
+                engine.clear();
+                assert_eq!(engine.cache_counts(), (2, 0, 2));
+            }
+            engine.reset_retained_subtree(root);
+            engine.set_request_scope(&child_scope);
+            assert_eq!(
+                engine.request_layout(Style::default(), Pixels(16.), 1., &[]),
+                child
+            );
+            engine.set_request_scope(&root_scope);
+            assert_eq!(
+                engine.request_layout(Style::default(), Pixels(16.), 1., &[child]),
+                root
+            );
+            engine.retain_subtree(root);
+            engine.clear();
+            assert_eq!(engine.cache_counts(), (2, 0, 2));
         });
     }
 

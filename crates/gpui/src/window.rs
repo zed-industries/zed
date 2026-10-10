@@ -1286,6 +1286,8 @@ impl Frame {
                 .extract_if(|key, _| accessed.contains(key)),
         );
 
+        #[cfg(feature = "bench-support")]
+        let _timer = RenderPhaseTimer::start(RenderPhase::SceneFinish);
         self.scene.finish();
     }
 
@@ -1309,6 +1311,60 @@ enum InputModality {
     Mouse,
     Keyboard,
     Touch,
+}
+
+#[cfg(feature = "bench-support")]
+#[derive(Clone, Copy)]
+pub(crate) enum RenderPhase {
+    Layout,
+    Retain,
+    BoundaryChecks,
+    PrepaintReplay,
+    PaintReplay,
+    DispatchReplay,
+    SceneFinish,
+    SceneInsert,
+    RootRequest,
+    RootPrepaint,
+    RootPaint,
+}
+
+#[cfg(feature = "bench-support")]
+thread_local! {
+    static RENDER_PHASE_TIMINGS: std::cell::Cell<[(Duration, usize); 11]> =
+        const { std::cell::Cell::new([(Duration::ZERO, 0); 11]) };
+}
+
+#[cfg(feature = "bench-support")]
+pub(crate) struct RenderPhaseTimer {
+    phase: RenderPhase,
+    start: std::time::Instant,
+}
+
+#[cfg(feature = "bench-support")]
+impl RenderPhaseTimer {
+    pub(crate) fn start(phase: RenderPhase) -> Option<Self> {
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        ENABLED
+            .get_or_init(|| std::env::var("GPUI_RENDER_PHASE_TIMERS").as_deref() == Ok("1"))
+            .then(|| Self {
+                phase,
+                start: std::time::Instant::now(),
+            })
+    }
+}
+
+#[cfg(feature = "bench-support")]
+impl Drop for RenderPhaseTimer {
+    fn drop(&mut self) {
+        let elapsed = self.start.elapsed();
+        RENDER_PHASE_TIMINGS.with(|timings| {
+            let mut values = timings.get();
+            values[self.phase as usize].0 += elapsed;
+            values[self.phase as usize].1 += 1;
+            timings.set(values);
+        });
+    }
 }
 
 /// Work performed by view caching since the last explicit reset.
@@ -2558,6 +2614,28 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
+    /// Takes opt-in foreground phase totals. Timings are inclusive: replay and
+    /// layout totals are also included in the enclosing root phase.
+    #[cfg(feature = "bench-support")]
+    pub fn take_render_phase_timings(&self) -> [(&'static str, Duration, usize); 11] {
+        let values =
+            RENDER_PHASE_TIMINGS.with(|timings| timings.replace([(Duration::ZERO, 0); 11]));
+        let names = [
+            "layout",
+            "retain",
+            "boundary checks",
+            "prepaint replay",
+            "paint replay",
+            "dispatch replay",
+            "scene finish",
+            "scene insert (includes BoundsTree)",
+            "root request",
+            "root prepaint",
+            "root paint",
+        ];
+        std::array::from_fn(|index| (names[index], values[index].0, values[index].1))
+    }
+
     pub(crate) fn begin_cached_entity_access(&mut self, cx: &mut App) -> FxHashSet<EntityId> {
         if self.implicit_view_splicing {
             self.cached_global_access_stack.push((
@@ -2604,6 +2682,8 @@ impl Window {
     }
 
     pub(crate) fn capture_view_scope(&mut self) -> ViewExecutionScope {
+        #[cfg(feature = "bench-support")]
+        let _timer = RenderPhaseTimer::start(RenderPhase::BoundaryChecks);
         let image_cache = self.image_cache_stack.last().map(|cache| {
             let entity = cache.entity_id();
             if let Some(cache) = self
@@ -4427,12 +4507,20 @@ impl Window {
         // fill the window when their size is `auto`.
         let scale_factor = self.scale_factor();
         let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
+        #[cfg(feature = "bench-support")]
+        let timer = RenderPhaseTimer::start(RenderPhase::RootRequest);
         let root_layout_id = root_element.request_layout(self, cx);
         self.layout_engine
             .as_mut()
             .unwrap()
             .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
+        #[cfg(feature = "bench-support")]
+        drop(timer);
+        #[cfg(feature = "bench-support")]
+        let timer = RenderPhaseTimer::start(RenderPhase::RootPrepaint);
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+        #[cfg(feature = "bench-support")]
+        drop(timer);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_element = self.prepaint_inspector(_inspector_width, cx);
@@ -4466,7 +4554,11 @@ impl Window {
 
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
+        #[cfg(feature = "bench-support")]
+        let timer = RenderPhaseTimer::start(RenderPhase::RootPaint);
         root_element.paint(self, cx);
+        #[cfg(feature = "bench-support")]
+        drop(timer);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
@@ -4758,6 +4850,8 @@ impl Window {
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+        #[cfg(feature = "bench-support")]
+        let _timer = RenderPhaseTimer::start(RenderPhase::PrepaintReplay);
         let new_start = self.prepaint_index();
         #[cfg(debug_assertions)]
         {
@@ -4813,6 +4907,8 @@ impl Window {
         );
 
         let replay = &self.dispatch_replay;
+        #[cfg(feature = "bench-support")]
+        let timer = RenderPhaseTimer::start(RenderPhase::DispatchReplay);
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut self.rendered_frame.dispatch_tree,
@@ -4827,6 +4923,8 @@ impl Window {
             &mut self.view_reuse_stats,
         );
 
+        #[cfg(feature = "bench-support")]
+        drop(timer);
         if reused_subtree.contains_focus() {
             self.next_frame.focus = self.focus;
         }
@@ -4886,6 +4984,8 @@ impl Window {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        #[cfg(feature = "bench-support")]
+        let _timer = RenderPhaseTimer::start(RenderPhase::PaintReplay);
         let new_start = self.paint_index();
         #[cfg(debug_assertions)]
         {
@@ -4968,12 +5068,16 @@ impl Window {
             #[cfg(any(test, feature = "bench-support"))]
             &mut self.view_reuse_stats.text_layout_usage_indices,
         );
+        #[cfg(feature = "bench-support")]
+        let timer = RenderPhaseTimer::start(RenderPhase::SceneInsert);
         self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
             &mut self.rendered_frame.scene,
             #[cfg(any(test, feature = "bench-support"))]
             &mut self.view_reuse_stats,
         );
+        #[cfg(feature = "bench-support")]
+        drop(timer);
         for occurrence in
             &self.rendered_frame.paint_views[range.start.views_index..range.end.views_index]
         {
