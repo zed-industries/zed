@@ -88,6 +88,7 @@ pub struct Scene {
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
     sprite_sort_keys: Vec<u128>,
+    sprite_sort_counts: Vec<usize>,
     path_indices: Vec<usize>,
     surface_indices: Vec<usize>,
     replay_arrays: ReplayArrays,
@@ -562,19 +563,26 @@ impl Scene {
         if self.sprite_sort_keys.capacity() > sprite_count.saturating_mul(2) {
             self.sprite_sort_keys.shrink_to(sprite_count);
         }
+        if self.sprite_sort_counts.capacity() > sprite_count.saturating_mul(8) {
+            self.sprite_sort_counts
+                .shrink_to(sprite_count.saturating_mul(4).min(65_536));
+        }
         sort_sprites(
             &mut self.monochrome_sprites,
             &mut self.sprite_sort_keys,
+            &mut self.sprite_sort_counts,
             |sprite| (sprite.order, sprite.tile.tile_id.0),
         );
         sort_sprites(
             &mut self.subpixel_sprites,
             &mut self.sprite_sort_keys,
+            &mut self.sprite_sort_counts,
             |sprite| (sprite.order, sprite.tile.tile_id.0),
         );
         sort_sprites(
             &mut self.polychrome_sprites,
             &mut self.sprite_sort_keys,
+            &mut self.sprite_sort_counts,
             |sprite| (sprite.order, sprite.tile.tile_id.0),
         );
         if !self.surfaces.is_empty() {
@@ -631,6 +639,7 @@ fn sort_if_needed<T, K: Ord>(primitives: &mut [T], key: impl Fn(&T) -> K) {
 fn sort_sprites<T: Copy>(
     primitives: &mut [T],
     keys: &mut Vec<u128>,
+    counts: &mut Vec<usize>,
     key: impl Fn(&T) -> (u32, u32),
 ) {
     if primitives.is_sorted_by_key(&key) {
@@ -641,14 +650,51 @@ fn sort_sprites<T: Copy>(
         return;
     }
 
+    let mut minimum = (u32::MAX, u32::MAX);
+    let mut maximum = (0, 0);
+    for primitive in primitives.iter() {
+        let (order, tile) = key(primitive);
+        minimum = (minimum.0.min(order), minimum.1.min(tile));
+        maximum = (maximum.0.max(order), maximum.1.max(tile));
+    }
+    let orders = u64::from(maximum.0) - u64::from(minimum.0) + 1;
+    let tiles = u64::from(maximum.1) - u64::from(minimum.1) + 1;
+    let buckets = orders
+        .checked_mul(tiles)
+        .filter(|buckets| *buckets <= primitives.len().saturating_mul(4).min(65_536) as u64);
     keys.clear();
-    keys.extend(primitives.iter().enumerate().map(|(index, primitive)| {
-        let (order, tile_id) = key(primitive);
-        // Equal-key sprites can overlap, so the insertion index must remain
-        // the final tie-breaker even though the compact keys use an unstable sort.
-        ((order as u128) << 64) | ((tile_id as u128) << 32) | index as u128
-    }));
-    keys.sort_unstable();
+    if let Some(buckets) = buckets {
+        let bucket = |primitive: &T| {
+            let (order, tile) = key(primitive);
+            ((u64::from(order - minimum.0) * tiles) + u64::from(tile - minimum.1)) as usize
+        };
+        counts.clear();
+        counts.resize(buckets as usize, 0);
+        for primitive in primitives.iter() {
+            counts[bucket(primitive)] += 1;
+        }
+        let mut offset = 0;
+        for count in counts.iter_mut() {
+            let length = *count;
+            *count = offset;
+            offset += length;
+        }
+        keys.resize(primitives.len(), 0);
+        for (index, primitive) in primitives.iter().enumerate() {
+            let destination = &mut counts[bucket(primitive)];
+            keys[*destination] = index as u128;
+            *destination += 1;
+        }
+        counts.clear();
+    } else {
+        keys.extend(primitives.iter().enumerate().map(|(index, primitive)| {
+            let (order, tile_id) = key(primitive);
+            // Equal-key sprites can overlap, so the insertion index must remain
+            // the final tie-breaker even though the compact keys use an unstable sort.
+            ((order as u128) << 64) | ((tile_id as u128) << 32) | index as u128
+        }));
+        keys.sort_unstable();
+    }
     for start in 0..keys.len() {
         if keys[start] as u32 as usize == start {
             continue;
@@ -694,6 +740,7 @@ mod sort_tests {
         use rand::{Rng, SeedableRng, rngs::StdRng};
 
         let mut keys = Vec::new();
+        let mut counts = Vec::new();
         for seed in 0..32 {
             let mut random = StdRng::seed_from_u64(seed);
             for count in [0, 1, 16, 255, 256, 257, 8192] {
@@ -703,11 +750,11 @@ mod sort_tests {
                 let mut expected = original.clone();
                 expected.sort_by_key(|primitive| (primitive.0, primitive.1));
                 let mut actual = original;
-                sort_sprites(&mut actual, &mut keys, |primitive| {
+                sort_sprites(&mut actual, &mut keys, &mut counts, |primitive| {
                     (primitive.0, primitive.1)
                 });
                 assert_eq!(actual, expected);
-                sort_sprites(&mut actual, &mut keys, |primitive| {
+                sort_sprites(&mut actual, &mut keys, &mut counts, |primitive| {
                     (primitive.0, primitive.1)
                 });
                 assert_eq!(actual, expected);
@@ -717,11 +764,43 @@ mod sort_tests {
     }
 
     #[test]
+    fn sprite_counting_sort_handles_high_and_sparse_keys() {
+        let mut keys = Vec::new();
+        let mut counts = Vec::new();
+        for sparse in [false, true] {
+            let original = (0..4096)
+                .map(|index| {
+                    let order = if sparse && index % 2 == 0 {
+                        0
+                    } else {
+                        u32::MAX - index % 8
+                    };
+                    let tile = if sparse && index % 3 == 0 {
+                        0
+                    } else {
+                        u32::MAX - index % 16
+                    };
+                    (order, tile, index)
+                })
+                .collect::<Vec<_>>();
+            let mut expected = original.clone();
+            expected.sort_by_key(|value| (value.0, value.1));
+            let mut actual = original;
+            sort_sprites(&mut actual, &mut keys, &mut counts, |value| {
+                (value.0, value.1)
+            });
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
     fn sprite_sort_releases_oversized_scratch() {
         let mut scene = Scene::default();
         scene.sprite_sort_keys.reserve(8192);
+        scene.sprite_sort_counts.reserve(8192);
         scene.finish();
         assert_eq!(scene.sprite_sort_keys.capacity(), 0);
+        assert_eq!(scene.sprite_sort_counts.capacity(), 0);
     }
 
     #[test]
