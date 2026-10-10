@@ -1,8 +1,8 @@
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
-    ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
-    Editor, MultiBuffer, RowHighlightOptions,
+    ConflictsBase, ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs,
+    ConflictsTheirsMarker, Editor, MultiBuffer, RowHighlightOptions,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
@@ -224,6 +224,7 @@ fn conflicts_updated(
 
         editor.remove_highlighted_rows::<ConflictsOuter>(removed_highlighted_ranges.clone(), cx);
         editor.remove_highlighted_rows::<ConflictsOurs>(removed_highlighted_ranges.clone(), cx);
+        editor.remove_highlighted_rows::<ConflictsBase>(removed_highlighted_ranges.clone(), cx);
         editor
             .remove_highlighted_rows::<ConflictsOursMarker>(removed_highlighted_ranges.clone(), cx);
         editor.remove_highlighted_rows::<ConflictsTheirs>(removed_highlighted_ranges.clone(), cx);
@@ -243,6 +244,14 @@ fn conflicts_updated(
                 conflict.range.start..conflict.range.start,
                 conflict.range.clone(),
                 conflict.ours.clone(),
+                // Keep the sequence ordered even when there is no base section:
+                // an empty range at the end of `ours` sorts between `ours` and
+                // `theirs`, which `ordered_buffer_anchor_ranges_to_anchor_ranges`
+                // requires.
+                conflict
+                    .base
+                    .clone()
+                    .unwrap_or_else(|| conflict.ours.end..conflict.ours.end),
                 conflict.theirs.clone(),
             ]
         }))
@@ -252,9 +261,13 @@ fn conflicts_updated(
         let block_anchor = converted_ranges.next().flatten().map(|range| range.start);
         let outer = converted_ranges.next().flatten();
         let ours = converted_ranges.next().flatten();
+        let base = converted_ranges.next().flatten();
         let theirs = converted_ranges.next().flatten();
+        // `base` is only meaningful for the `diff3`/`zdiff3` conflict styles;
+        // otherwise the range above is just the ordering placeholder.
+        let base = conflict.base.as_ref().and(base);
         if let (Some(outer), Some(ours), Some(theirs)) = (outer, ours, theirs) {
-            update_conflict_highlighting(editor, conflict, outer, ours, theirs, cx);
+            update_conflict_highlighting(editor, conflict, outer, ours, base, theirs, cx);
         }
 
         if let Some(anchor) = block_anchor {
@@ -295,6 +308,7 @@ fn update_conflict_highlighting(
     conflict: &ConflictRegion,
     outer: Range<editor::Anchor>,
     ours: Range<editor::Anchor>,
+    base: Option<Range<editor::Anchor>>,
     theirs: Range<editor::Anchor>,
     cx: &mut Context<Editor>,
 ) {
@@ -302,6 +316,7 @@ fn update_conflict_highlighting(
 
     let ours_background = |cx: &App| cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = |cx: &App| cx.theme().colors().version_control_conflict_marker_theirs;
+    let base_background = |cx: &App| cx.theme().colors().version_control_conflict_marker_base;
 
     let options = RowHighlightOptions {
         include_gutter: true,
@@ -323,6 +338,12 @@ fn update_conflict_highlighting(
         options,
         cx,
     );
+    // The base section only exists with the `diff3`/`zdiff3` conflict styles.
+    // Highlight it from the end of `ours`, so that the `|||||||` separator line
+    // reads as part of the base block, the same way `<<<<<<<` belongs to ours.
+    if let Some(base) = base {
+        editor.highlight_rows::<ConflictsBase>(ours.end..base.end, base_background, options, cx);
+    }
     editor.highlight_rows::<ConflictsTheirs>(theirs.clone(), theirs_background, options, cx);
     editor.highlight_rows::<ConflictsTheirsMarker>(
         theirs.end..outer.end,
@@ -518,6 +539,7 @@ pub(crate) fn resolve_conflict(
 
                 editor.remove_highlighted_rows::<ConflictsOuter>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsOurs>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsBase>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsTheirs>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![range], cx);
