@@ -1004,6 +1004,255 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
     );
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Churn {
+    Replace,
+    Remount,
+    Id,
+    Text,
+}
+
+impl fmt::Display for Churn {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Replace => "replace-8-of-96",
+            Self::Remount => "remount-48-of-96",
+            Self::Id => "id-and-anonymous-count",
+            Self::Text => "text-96",
+        })
+    }
+}
+
+struct ChurnPanel {
+    index: usize,
+    frame: usize,
+    workload: Churn,
+    renders: Rc<Cell<usize>>,
+}
+
+impl Render for ChurnPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
+        let id = if self.workload == Churn::Id {
+            self.frame * 96 + self.index
+        } else {
+            self.index
+        };
+        // Checkpoints are multiples of ten, so their live shapes are identical.
+        let labels = if self.workload == Churn::Id {
+            56 + self.frame % 10
+        } else {
+            64
+        };
+        let value = if self.workload == Churn::Id {
+            0
+        } else {
+            self.frame % 1_000_000
+        };
+        gpui::div()
+            .id(gpui::ElementId::NamedInteger(
+                "churn-panel".into(),
+                id as u64,
+            ))
+            .flex()
+            .flex_col()
+            .w(gpui::px(220.))
+            .h(gpui::px(192.))
+            .bg(gpui::rgb(0x181818))
+            .overflow_hidden()
+            .children((0..labels).map(|label| {
+                gpui::div()
+                    .flex_shrink_0()
+                    .h(gpui::px(16.))
+                    .child(format!("Metric {label:02}: {value:06}"))
+            }))
+    }
+}
+
+struct ChurnRoot {
+    panels: Vec<Entity<ChurnPanel>>,
+    workload: Churn,
+    frame: usize,
+    renders: usize,
+    expected_panel_renders: usize,
+    panel_renders: Rc<Cell<usize>>,
+}
+
+impl ChurnRoot {
+    fn new(workload: Churn, cx: &mut Context<Self>) -> Self {
+        let panel_renders = Rc::new(Cell::new(0));
+        Self {
+            panels: (0..96)
+                .map(|index| {
+                    cx.new(|_| ChurnPanel {
+                        index,
+                        frame: 0,
+                        workload,
+                        renders: panel_renders.clone(),
+                    })
+                })
+                .collect(),
+            workload,
+            frame: 0,
+            renders: 0,
+            expected_panel_renders: 96,
+            panel_renders,
+        }
+    }
+
+    fn visible_panels(&self) -> usize {
+        if self.workload == Churn::Remount && self.frame % 2 == 1 {
+            48
+        } else {
+            96
+        }
+    }
+
+    fn advance(&mut self, cx: &mut Context<Self>) {
+        self.frame += 1;
+        match self.workload {
+            Churn::Replace => {
+                for offset in 0..8 {
+                    let index = ((self.frame - 1) * 8 + offset) % 96;
+                    let previous = self.panels.get_mut(index).expect("replacement panel");
+                    let replacement = cx.new(|_| ChurnPanel {
+                        index,
+                        frame: self.frame,
+                        workload: self.workload,
+                        renders: self.panel_renders.clone(),
+                    });
+                    assert_ne!(previous.entity_id(), replacement.entity_id());
+                    *previous = replacement;
+                }
+            }
+            Churn::Id | Churn::Text => {
+                for panel in &self.panels {
+                    panel.update(cx, |panel, cx| {
+                        panel.frame = self.frame;
+                        cx.notify();
+                    });
+                }
+            }
+            Churn::Remount => {}
+        }
+        self.expected_panel_renders += self.visible_panels();
+        cx.notify();
+    }
+
+    fn validate(&self) {
+        assert_eq!(self.renders, self.frame + 1);
+        assert_eq!(self.panel_renders.get(), self.expected_panel_renders);
+        assert_eq!(self.panels.len(), 96);
+    }
+}
+
+impl Render for ChurnRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders += 1;
+        gpui::div()
+            .id("churn-root")
+            .flex()
+            .flex_wrap()
+            .font_family("Noto Sans Mono")
+            .text_size(gpui::px(12.))
+            .text_color(gpui::rgb(0xffffff))
+            .child("0123456789")
+            .children(self.panels.iter().take(self.visible_panels()).cloned())
+    }
+}
+
+fn churn_workloads() -> Vec<Churn> {
+    if first_populated_panel_counts().is_empty() {
+        Vec::new()
+    } else {
+        vec![Churn::Replace, Churn::Remount, Churn::Id, Churn::Text]
+    }
+}
+
+thread_local! {
+    static DESCRIBED_CHURN: RefCell<Vec<Churn>> = const { RefCell::new(Vec::new()) };
+}
+
+#[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurn", fps = 120)]
+fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
+    let font = gpui::font("Noto Sans Mono");
+    let text_system = cx.read(|cx| cx.text_system().clone());
+    assert!(
+        text_system
+            .all_font_names()
+            .contains(&font.family.to_string())
+    );
+    let font_id = text_system.resolve_font(&font);
+    assert_eq!(
+        text_system.get_font_for_id(font_id).map(|font| font.family),
+        Some(font.family)
+    );
+    let describe = DESCRIBED_CHURN.with(|described| {
+        let mut described = described.borrow_mut();
+        if described.contains(workload) {
+            false
+        } else {
+            described.push(*workload);
+            true
+        }
+    });
+    if describe {
+        let before_window = bench_metrics::allocation_stats();
+        let mut window = cx.add_empty_window();
+        let root = window
+            .update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(*workload, cx)));
+        cx.run_until_idle();
+        let mut checkpoints = Vec::with_capacity(6);
+        checkpoints.push((0, bench_metrics::allocation_stats()));
+        for frame in 1..=3000 {
+            window.update(|_, cx| root.update(cx, |root, cx| root.advance(cx)));
+            cx.run_until_idle();
+            if [50, 200, 1000, 2000, 3000].contains(&frame) {
+                checkpoints.push((frame, bench_metrics::allocation_stats()));
+            }
+            window.update(|_, cx| root.read(cx).validate());
+        }
+        // Logging and scene snapshots allocate, so defer both until all heap reads.
+        window.update(|window, cx| {
+            assert_layout_cache_mode(window);
+            root.read(cx).validate();
+            assert!(!snapshot_glyphs(window).is_empty());
+        });
+        for (frame, stats) in checkpoints {
+            match before_window.zip(stats) {
+                Some((before, after)) => eprintln!(
+                    "layout churn {workload}: frame {frame}, live heap {} B, window delta {} B (process-wide requested bytes)",
+                    after.live_bytes(),
+                    after.live_bytes() - before.live_bytes(),
+                ),
+                None => eprintln!("layout churn {workload}: frame {frame}, heap unavailable"),
+            }
+        }
+        window.update(|window, _| window.remove_window());
+        drop(root);
+        cx.run_until_idle();
+    }
+    let mut window = cx.add_empty_window();
+    let root =
+        window.update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(*workload, cx)));
+    cx.run_until_idle();
+    cx.bench_renderer(root.clone(), |root, _, cx| root.advance(cx));
+    window.update(|window, cx| {
+        assert_layout_cache_mode(window);
+        root.read(cx).validate();
+        assert!(root.read(cx).frame > 0);
+    });
+    let incremental = window.update(|window, _| snapshot_glyphs(window));
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
+    assert!(!incremental.is_empty());
+    assert_eq!(
+        incremental,
+        window.update(|window, _| snapshot_glyphs(window))
+    );
+    window.update(|window, _| window.remove_window());
+}
+
 // Frames take 0.4 to 2.5 ms, so a 1 s measurement is already hundreds to thousands of
 // frames; Criterion's 3 s warm-up and 5 s measurement per id would make the suite take
 // most of an hour. Pass `ITERATIONS=6`, `--warm-up-time` or `--measurement-time` for a
@@ -1025,6 +1274,7 @@ gpui::bench_group!(
     text_panel_updates,
     installed_font_panel_updates,
     first_populated_text_panels,
+    layout_churn,
     family_summary
 );
 gpui::bench_main!(benches);

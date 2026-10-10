@@ -2278,6 +2278,130 @@ mod tests {
     }
 
     #[gpui::test]
+    fn layout_cache_churn_bounds_nodes_and_releases_text_state(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            window
+                .invalidator
+                .set_phase(crate::window::DrawPhase::Prepaint);
+            let mut engine = crate::TaffyLayoutEngine::new();
+            engine.enable_cache();
+            let mut previous_states = Vec::new();
+            for frame in 0..1000_u64 {
+                let scope = crate::element::InternedHandle::for_test((frame / 2) as u32, 0);
+                // Alternate replacement, ordinal shrinkage, and complete removal.
+                let count = [16, 3, 0, 7][frame as usize % 4];
+                let mut states = Vec::new();
+                for ordinal in 0..count {
+                    let layout = TextLayout::default();
+                    states.push(Rc::downgrade(&layout.0));
+                    engine.set_request_scope(&scope);
+                    let id = engine.request_text_layout(layout.measurement(
+                        format!("frame {frame}, label {ordinal}").into(),
+                        None,
+                        window,
+                    ));
+                    engine.compute_layout(id, crate::AvailableSpace::min_size(), window, cx);
+                    assert!(layout.0.borrow().is_some());
+                }
+                engine.clear();
+                assert_eq!(
+                    engine.cache_counts(),
+                    (count, count, usize::from(count > 0)),
+                    "frame {frame}"
+                );
+                assert!(
+                    previous_states
+                        .iter()
+                        .all(|state: &std::rc::Weak<_>| state.upgrade().is_none()),
+                    "old descriptors must release their TextLayout handles"
+                );
+                previous_states = states;
+            }
+            engine.clear();
+            assert_eq!(engine.cache_counts(), (0, 0, 0));
+            assert!(
+                previous_states
+                    .iter()
+                    .all(|state| state.upgrade().is_none())
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn layout_cache_reused_removed_id_matches_fresh_text_and_style(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            window
+                .invalidator
+                .set_phase(crate::window::DrawPhase::Prepaint);
+            let mut cached = crate::TaffyLayoutEngine::new();
+            cached.enable_cache();
+            let mut fresh = crate::TaffyLayoutEngine::new();
+            let scope = crate::element::InternedHandle::for_test(0, 0);
+            let mut removed_state = None;
+            for frame in 0..3 {
+                let scale = [1.0, 1.25, 2.0][frame];
+                window.set_scale_factor(scale);
+                let text: SharedString = if frame == 0 {
+                    "short".into()
+                } else {
+                    "changed text that should wrap onto several lines".into()
+                };
+                let mut results = Vec::new();
+                window.with_text_style(
+                    Some(crate::TextStyleRefinement {
+                        font_size: Some(crate::px(12.0 + frame as f32 * 8.0).into()),
+                        white_space: Some(WhiteSpace::Normal),
+                        ..Default::default()
+                    }),
+                    |window| {
+                        for engine in [&mut cached, &mut fresh] {
+                            let layout = TextLayout::default();
+                            let state = Rc::downgrade(&layout.0);
+                            engine.set_request_scope(&scope);
+                            let id = engine.request_text_layout(layout.measurement(
+                                text.clone(),
+                                None,
+                                window,
+                            ));
+                            let mut style = crate::Style::default();
+                            style.size.width = crate::px(80.0 + frame as f32 * 20.0).into();
+                            style.padding = crate::Edges::all(crate::px(frame as f32 * 3.0).into());
+                            engine.set_request_scope(&scope);
+                            let root = engine.request_layout(style, crate::px(16.0), scale, &[id]);
+                            engine.compute_layout(
+                                root,
+                                crate::AvailableSpace::min_size(),
+                                window,
+                                cx,
+                            );
+                            results.push((
+                                engine.layout_bounds(root, scale),
+                                engine.layout_bounds(id, scale),
+                                layout.wrapped_text(),
+                            ));
+                            engine.clear();
+                            if engine.cache_enabled() {
+                                removed_state = Some(state);
+                            }
+                        }
+                    },
+                );
+                assert_eq!(results[0], results[1], "frame {frame}");
+                // An absent frame must evict both the scoped box and its text state.
+                cached.clear();
+                assert_eq!(cached.cache_counts(), (0, 0, 0));
+                assert!(
+                    removed_state
+                        .as_ref()
+                        .expect("cached text state")
+                        .upgrade()
+                        .is_none()
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
     fn text_measurement_reuses_fitting_unwrapped_lines(cx: &mut crate::TestAppContext) {
         let window = cx.add_window(|_, _| crate::EmptyView);
         cx.update_window(window.into(), |_, window, cx| {

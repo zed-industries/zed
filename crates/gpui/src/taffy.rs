@@ -93,6 +93,26 @@ impl TaffyLayoutEngine {
     }
 
     #[cfg(test)]
+    pub(crate) fn cache_counts(&self) -> (usize, usize, usize) {
+        let mut scope_count = 0;
+        let mut text_count = 0;
+        if let Some(cache) = &self.cache {
+            for scope in cache.scopes.values() {
+                scope_count += 1;
+                for id in scope.nodes.iter().flatten() {
+                    if matches!(
+                        self.taffy.get_node_context(id.0),
+                        Some(NodeContext::Text(_))
+                    ) {
+                        text_count += 1;
+                    }
+                }
+            }
+        }
+        (self.taffy.total_node_count(), text_count, scope_count)
+    }
+
+    #[cfg(test)]
     pub(crate) fn text_context_identity_and_dirty(
         &self,
         id: LayoutId,
