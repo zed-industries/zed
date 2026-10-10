@@ -26,6 +26,7 @@ use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
     item::{Item, ProjectItem, test::TestItem},
+    notifications::simple_message_notification::MessageNotification,
     register_project_item,
 };
 
@@ -6102,11 +6103,29 @@ async fn test_drag_onto_existing_name_shows_clear_error(cx: &mut gpui::TestAppCo
     );
 
     // The user was told about it.
-    workspace.update_in(cx, |workspace, _, _| {
+    workspace.update_in(cx, |workspace, _, cx| {
+        let notifications = workspace.notification_views();
         assert_eq!(
-            workspace.notification_ids().len(),
+            notifications.len(),
             1,
             "Should show one notification explaining the conflict"
+        );
+        let notification = notifications
+            .into_iter()
+            .next()
+            .unwrap()
+            .downcast::<MessageNotification>()
+            .unwrap_or_else(|_| panic!("expected an error MessageNotification"));
+        let text = notification
+            .read(cx)
+            .copied_text()
+            .cloned()
+            .unwrap_or_default();
+
+        assert!(
+            text.starts_with("Error: Failed to move")
+                && text.ends_with("A file or folder already exists there."),
+            "unexpected notification text: {text}"
         );
     });
 }
@@ -6115,7 +6134,7 @@ async fn test_drag_onto_existing_name_shows_clear_error(cx: &mut gpui::TestAppCo
 fn test_explain_move_error() {
     let names = ("a/1.json".to_string(), "1.json".to_string());
     let err = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
-        .context("renaming \"/root/a/1.json\" intoto \"/root/1.json\"");
+        .context("renaming \"/root/a/1.json\" into \"/root/1.json\"");
     let explained = explain_move_error(err, Some(&names));
     assert_eq!(
         explained.to_string(),
@@ -6131,6 +6150,28 @@ fn test_explain_move_error() {
     let err = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
     let explained = explain_move_error(err, None);
     assert!(!explained.to_string().contains("Failed to move"));
+
+    // A non-collision I/O error must not be misdiagnosed, even when a path in the context contains the words "already exists".
+    for kind in [
+        std::io::ErrorKind::PermissionDenied,
+        std::io::ErrorKind::NotFound,
+    ] {
+        let err = anyhow::Error::from(std::io::Error::from(kind))
+            .context("renaming \"/root/already exists.txt\" into \"/root/b/already exists.txt\"");
+        let explained = explain_move_error(err, Some(&names));
+        assert!(
+            !explained.to_string().starts_with("Failed to move"),
+            "{kind:?} was misdiagnosed as a collision"
+        );
+    }
+
+    // Untyped text is never trusted.
+    let err = anyhow::anyhow!("path already exists: \"/root/1.json\"");
+    assert!(
+        !explain_move_error(err, Some(&names))
+            .to_string()
+            .starts_with("Failed to move")
+    );
 }
 
 #[gpui::test]
