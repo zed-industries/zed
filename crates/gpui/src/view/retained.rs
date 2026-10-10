@@ -31,6 +31,7 @@ struct ViewRecord {
     own_dirty: bool,
     descendant_dirty: bool,
     blocked: Option<SpliceFallback>,
+    dirty_path_blocked: Option<SpliceFallback>,
 }
 
 struct RetainedView {
@@ -109,6 +110,7 @@ impl ViewStore {
                     own_dirty: false,
                     descendant_dirty: false,
                     blocked: None,
+                    dirty_path_blocked: None,
                 });
                 self.cold.push(None);
                 index
@@ -142,6 +144,12 @@ impl ViewStore {
             record.blocked = Some(SpliceFallback::UncachedView);
         } else if fallback.is_some() {
             record.blocked = fallback;
+        }
+        if view.is_none() {
+            self.invalidate_state(id);
+            self.retained_mut(id).view = None;
+        } else if self.retained(id).view.is_none() {
+            self.retained_mut(id).view = view.cloned();
         }
         id
     }
@@ -181,11 +189,12 @@ impl ViewStore {
             } else {
                 record.own_dirty = false;
                 record.descendant_dirty = false;
+                record.dirty_path_blocked = None;
             }
         }
     }
 
-    pub(crate) fn mark_dirty(&mut self, entity: EntityId) {
+    pub(crate) fn mark_dirty(&mut self, entity: EntityId) -> bool {
         let mut occurrences = self.by_entity.get(&entity).cloned().unwrap_or_default();
         occurrences.extend(
             self.by_dependency
@@ -194,6 +203,7 @@ impl ViewStore {
                 .flatten()
                 .copied(),
         );
+        let retained = !occurrences.is_empty();
         for id in occurrences {
             self.record_mut(id).own_dirty = true;
             let mut parent = self.record(id).parent;
@@ -202,8 +212,21 @@ impl ViewStore {
                 let record = self.record_mut(id);
                 record.descendant_dirty = true;
                 blocked = blocked.or(record.blocked);
-                record.blocked = blocked;
+                record.dirty_path_blocked = record.dirty_path_blocked.or(blocked);
                 parent = record.parent;
+            }
+        }
+        retained
+    }
+
+    pub(crate) fn mark_unretained_descendant(&mut self, entity: EntityId) {
+        for id in self.by_entity.get(&entity).cloned().unwrap_or_default() {
+            let mut current = Some(id);
+            while let Some(id) = current {
+                let record = self.record_mut(id);
+                record.descendant_dirty = true;
+                record.dirty_path_blocked = Some(SpliceFallback::UncachedView);
+                current = record.parent;
             }
         }
     }
@@ -211,6 +234,68 @@ impl ViewStore {
     pub(crate) fn rollback_views(&mut self, views: &[ViewOccurrenceId]) {
         for id in views {
             self.record_mut(*id).last_drawn = 0;
+        }
+    }
+
+    pub(super) fn invalidate_state(&mut self, id: ViewOccurrenceId) {
+        let retained = self.retained_mut(id);
+        let dependencies = retained
+            .own_prepaint_entities
+            .union(&retained.own_paint_entities)
+            .copied()
+            .collect::<Vec<_>>();
+        retained.state = None;
+        retained.prepaint_scope = None;
+        retained.paint_scope = None;
+        retained.pending_paint = None;
+        retained.own_prepaint_entities.clear();
+        retained.own_paint_entities.clear();
+        for entity in dependencies {
+            if let Some(occurrences) = self.by_dependency.get_mut(&entity) {
+                occurrences.retain(|occurrence| *occurrence != id);
+                if occurrences.is_empty() {
+                    self.by_dependency.remove(&entity);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn append_own_access(
+        &mut self,
+        mut parent: Option<ViewOccurrenceId>,
+        own: collections::FxHashSet<EntityId>,
+        all: collections::FxHashSet<EntityId>,
+        paint: bool,
+    ) {
+        while let Some(id) = parent {
+            if self.state(id).is_none() {
+                parent = self.record(id).parent;
+                continue;
+            }
+            let retained = self.retained_mut(id);
+            let new_dependencies = own
+                .iter()
+                .filter(|entity| {
+                    !retained.own_prepaint_entities.contains(entity)
+                        && !retained.own_paint_entities.contains(entity)
+                })
+                .copied()
+                .collect::<Vec<_>>();
+            if paint {
+                retained.own_paint_entities.extend(own);
+            } else {
+                retained.own_prepaint_entities.extend(own);
+            }
+            retained
+                .state
+                .as_mut()
+                .expect("cached state")
+                .accessed_entities
+                .extend(all);
+            for entity in new_dependencies {
+                self.by_dependency.entry(entity).or_default().push(id);
+            }
+            break;
         }
     }
 
@@ -273,6 +358,19 @@ impl ViewStore {
 
     pub(crate) fn is_own_dirty(&self, id: ViewOccurrenceId) -> bool {
         self.record(id).own_dirty
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn is_entity(&self, id: ViewOccurrenceId, entity: EntityId) -> bool {
+        self.retained(id).entity == entity
+    }
+
+    pub(super) fn begin_reconstruction(
+        &mut self,
+        id: ViewOccurrenceId,
+        scope: &ViewExecutionScope,
+    ) {
+        self.record_mut(id).blocked = scope.fallback;
     }
 
     pub(crate) fn is_descendant_dirty(&self, id: ViewOccurrenceId) -> bool {
@@ -415,7 +513,8 @@ impl Window {
         if self.inspector_enabled() {
             return Err(SpliceFallback::Inspector);
         }
-        if let Some(reason) = self.view_store.record(id).blocked {
+        let record = self.view_store.record(id);
+        if let Some(reason) = record.dirty_path_blocked.or(record.blocked) {
             return Err(reason);
         }
         let retained = self.view_store.retained(id);
@@ -572,36 +671,130 @@ impl Window {
 #[cfg(test)]
 mod tests {
     use crate::{
-        AppContext, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement, Styled,
-        TestAppContext, Window, div, px,
+        AnyWindowHandle, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
+        ParentElement, Pixels, Render, StatefulInteractiveElement, StyleRefinement, Styled,
+        TestAppContext, ViewReuseSnapshot, Window, div, px, util::FluentBuilder,
     };
-    use std::{cell::Cell, rc::Rc};
+    use std::{cell::Cell, rc::Rc, time::Duration};
 
+    crate::actions!(retained_test, [ProbeAction]);
+
+    #[derive(Default)]
     struct Leaf {
         renders: Rc<Cell<usize>>,
         color: u32,
+        focus: Option<FocusHandle>,
+        focus_on_prepaint: bool,
+        action_color: Rc<Cell<u32>>,
+        hover_color: Rc<Cell<u32>>,
+        tooltip_color: Rc<Cell<u32>>,
+        tooltip: Option<Entity<crate::EmptyView>>,
     }
 
     impl Render for Leaf {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             self.renders.set(self.renders.get() + 1);
-            div().size(px(20.)).bg(crate::rgb(self.color))
+            let color = self.color;
+            let action_color = self.action_color.clone();
+            let hover_color = self.hover_color.clone();
+            let tooltip_color = self.tooltip_color.clone();
+            let focus = self.focus.clone();
+            let focus_on_prepaint = self.focus_on_prepaint;
+            let content = div()
+                .id("leaf")
+                .size(px(20.))
+                .bg(crate::rgb(color))
+                .key_context("RetainedLeaf")
+                .when_some(self.focus.as_ref(), |this, focus| this.track_focus(focus))
+                .on_action(move |_: &ProbeAction, _, _| action_color.set(color))
+                .on_hover(move |hovered, _, _| {
+                    if *hovered {
+                        hover_color.set(color);
+                    }
+                })
+                .when_some(self.tooltip.clone(), |this, tooltip| {
+                    this.tooltip(move |_, _| {
+                        tooltip_color.set(color);
+                        tooltip.clone().into()
+                    })
+                    .tooltip_show_delay(Duration::from_millis(1))
+                })
+                .child("retained");
+            div()
+                .child(crate::canvas(
+                    move |_, window, cx| {
+                        if focus_on_prepaint && let Some(focus) = focus.as_ref() {
+                            window.focus(focus, cx);
+                        }
+                    },
+                    |_, _, _, _| {},
+                ))
+                .child(content)
         }
     }
 
+    #[derive(Default)]
     struct Branch {
         renders: Rc<Cell<usize>>,
         children: Vec<Entity<Leaf>>,
+        child_size: Option<Pixels>,
+        deferred_children: bool,
+        overlapping_sibling: bool,
+        uncached_children: bool,
+        dynamic_prepaint_order: bool,
+        untracked_child_size: Option<Rc<Cell<Pixels>>>,
     }
 
     impl Render for Branch {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             self.renders.set(self.renders.get() + 1);
-            div().flex().children(self.children.iter().map(|child| {
-                child
-                    .clone()
-                    .cached(StyleRefinement::default().size(px(20.)))
-            }))
+            let child_size = self
+                .untracked_child_size
+                .as_ref()
+                .map(|size| size.get())
+                .or(self.child_size)
+                .unwrap_or(px(20.));
+            div()
+                .flex()
+                .size_full()
+                .p(px(2.))
+                .text_color(crate::rgb(0xabcdef))
+                .opacity(0.7)
+                .overflow_hidden()
+                .key_context("RetainedBranch")
+                .when(self.dynamic_prepaint_order, |this| {
+                    this.with_dynamic_prepaint_order(|_, _| smallvec::smallvec![1, 0])
+                })
+                .children(self.children.iter().enumerate().map(|(index, child)| {
+                    let child = if self.uncached_children {
+                        child.clone().into_any_element()
+                    } else {
+                        child
+                            .clone()
+                            .cached(StyleRefinement::default().size(child_size))
+                            .into_any_element()
+                    };
+                    let child = if self.deferred_children {
+                        crate::deferred(child).into_any_element()
+                    } else {
+                        child
+                    };
+                    div()
+                        .id(("slot", index))
+                        .size(child_size)
+                        .flex_shrink_0()
+                        .child(child)
+                }))
+                .when(self.overlapping_sibling, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .left(px(4.))
+                            .top(px(4.))
+                            .size(px(30.))
+                            .bg(crate::rgb(0x0000ff)),
+                    )
+                })
         }
     }
 
@@ -640,17 +833,22 @@ mod tests {
             cx.new(|_| Leaf {
                 renders: renders.clone(),
                 color: 0xff0000,
+                ..Leaf::default()
             })
         });
         let branch = cx.new(|_| Branch {
             renders: branch_renders.clone(),
             children: leaves.to_vec(),
+            ..Branch::default()
         });
         let outer = cx.new(|_| Outer {
             renders: outer_renders.clone(),
             child: branch,
         });
-        let window = cx.add_window(|_, _| Root(outer));
+        let window = cx.add_window(|window, _| {
+            window.set_view_splicing(true);
+            Root(outer)
+        });
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .expect("initial draw");
         assert_eq!(branch_renders.get(), 1);
@@ -704,6 +902,7 @@ mod tests {
         renders: Rc<Cell<usize>>,
         leaf: Entity<Leaf>,
         phase: DependencyPhase,
+        callbacks_deferred: bool,
     }
 
     impl Render for DependentParent {
@@ -717,6 +916,23 @@ mod tests {
             };
             let prepaint_leaf = self.leaf.clone();
             let paint_leaf = self.leaf.clone();
+            let callbacks = crate::canvas(
+                move |_, _, cx| {
+                    if matches!(phase, DependencyPhase::Prepaint) {
+                        std::hint::black_box(prepaint_leaf.read(cx).color);
+                    }
+                },
+                move |_, _, _, cx| {
+                    if matches!(phase, DependencyPhase::Paint) {
+                        std::hint::black_box(paint_leaf.read(cx).color);
+                    }
+                },
+            );
+            let callbacks = if self.callbacks_deferred {
+                crate::deferred(callbacks).into_any_element()
+            } else {
+                callbacks.into_any_element()
+            };
             div()
                 .bg(crate::rgb(color))
                 .child(
@@ -724,18 +940,7 @@ mod tests {
                         .clone()
                         .cached(StyleRefinement::default().size(px(20.))),
                 )
-                .child(crate::canvas(
-                    move |_, _, cx| {
-                        if matches!(phase, DependencyPhase::Prepaint) {
-                            std::hint::black_box(prepaint_leaf.read(cx).color);
-                        }
-                    },
-                    move |_, _, _, cx| {
-                        if matches!(phase, DependencyPhase::Paint) {
-                            std::hint::black_box(paint_leaf.read(cx).color);
-                        }
-                    },
-                ))
+                .child(callbacks)
         }
     }
 
@@ -751,22 +956,30 @@ mod tests {
 
     #[crate::test]
     fn cached_own_entity_dependencies(cx: &mut TestAppContext) {
-        for phase in [
+        for (phase, callbacks_deferred) in [
             DependencyPhase::Render,
             DependencyPhase::Prepaint,
             DependencyPhase::Paint,
-        ] {
+        ]
+        .into_iter()
+        .flat_map(|phase| [false, true].map(|deferred| (phase, deferred)))
+        {
             let parent_renders = Rc::new(Cell::new(0));
             let leaf = cx.new(|_| Leaf {
                 renders: Rc::new(Cell::new(0)),
                 color: 0xff0000,
+                ..Leaf::default()
             });
             let parent = cx.new(|_| DependentParent {
                 renders: parent_renders.clone(),
                 leaf: leaf.clone(),
                 phase,
+                callbacks_deferred,
             });
-            let window = cx.add_window(|_, _| DependentRoot(parent));
+            let window = cx.add_window(|window, _| {
+                window.set_view_splicing(true);
+                DependentRoot(parent)
+            });
             cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
                 .expect("initial draw");
             assert_eq!(parent_renders.get(), 1);
@@ -786,5 +999,391 @@ mod tests {
                 "a parent dependency requires its own render"
             );
         }
+    }
+
+    struct Fixture {
+        window: AnyWindowHandle,
+        leaves: [Entity<Leaf>; 2],
+        branch: Entity<Branch>,
+        branch_renders: Rc<Cell<usize>>,
+        outer_renders: Rc<Cell<usize>>,
+        identities: Vec<(crate::EntityId, String)>,
+    }
+
+    impl Fixture {
+        fn new(cx: &mut TestAppContext, forced: bool, deferred: bool, overlapping: bool) -> Self {
+            let tooltip = cx.new(|_| crate::EmptyView);
+            let leaves = [0xff0000, 0xffff00].map(|color| {
+                cx.new(|cx| Leaf {
+                    color,
+                    focus: Some(cx.focus_handle()),
+                    tooltip: Some(tooltip.clone()),
+                    ..Leaf::default()
+                })
+            });
+            let branch_renders = Rc::new(Cell::new(0));
+            let outer_renders = Rc::new(Cell::new(0));
+            let branch = cx.new(|_| Branch {
+                renders: branch_renders.clone(),
+                children: leaves.to_vec(),
+                deferred_children: deferred,
+                overlapping_sibling: overlapping,
+                ..Branch::default()
+            });
+            let outer = cx.new(|_| Outer {
+                renders: outer_renders.clone(),
+                child: branch.clone(),
+            });
+            let window = cx.add_window(|window, _| {
+                window.set_force_view_reconstruction(forced);
+                window.set_view_splicing(!forced);
+                Root(outer.clone())
+            });
+            let root = window.root(cx).expect("fixture root");
+            Self {
+                window: window.into(),
+                identities: vec![
+                    (root.entity_id(), "root".into()),
+                    (outer.entity_id(), "outer".into()),
+                    (branch.entity_id(), "branch".into()),
+                    (leaves[0].entity_id(), "leaf-0".into()),
+                    (leaves[1].entity_id(), "leaf-1".into()),
+                    (tooltip.entity_id(), "tooltip".into()),
+                ],
+                leaves,
+                branch,
+                branch_renders,
+                outer_renders,
+            }
+        }
+
+        fn capture(&self, cx: &mut TestAppContext) -> ViewReuseSnapshot {
+            cx.update_window(self.window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.view_reuse_snapshot(|id| {
+                    self.identities
+                        .iter()
+                        .find(|(entity, _)| *entity == id)
+                        .expect("fixture view identity")
+                        .1
+                        .clone()
+                })
+            })
+            .expect("fixture window")
+        }
+
+        fn notify_leaf(&self, index: usize, cx: &mut TestAppContext) {
+            self.leaves[index].update(cx, |leaf, cx| {
+                leaf.color ^= 0xffffff;
+                cx.notify();
+            });
+        }
+    }
+
+    fn compare_pair(reused: &Fixture, fresh: &Fixture, frame: usize, cx: &mut TestAppContext) {
+        reused
+            .capture(cx)
+            .compare(&fresh.capture(cx), frame)
+            .expect("differential output");
+    }
+
+    #[crate::test]
+    fn splice_output_and_overlapping_later_sibling(cx: &mut TestAppContext) {
+        for overlapping in [false, true] {
+            let reused = Fixture::new(cx, false, false, overlapping);
+            let fresh = Fixture::new(cx, true, false, overlapping);
+            for frame in 0..8 {
+                if frame > 1 {
+                    for fixture in [&reused, &fresh] {
+                        fixture.notify_leaf(frame % 2, cx);
+                        if frame == 4 {
+                            fixture.notify_leaf((frame + 1) % 2, cx);
+                        }
+                    }
+                }
+                compare_pair(&reused, &fresh, frame, cx);
+                assert_eq!(reused.branch_renders.get(), 1);
+                assert_eq!(reused.outer_renders.get(), 1);
+            }
+            cx.update_window(reused.window, |_, window, _| {
+                let stats = window.view_reuse_stats();
+                assert!(stats.splice_prepaint_calls > 0);
+                assert_eq!(stats.render_ancestor_caused, 0);
+                assert_eq!(stats.splice_fallbacks, [0; 8]);
+            })
+            .expect("splice counters");
+        }
+    }
+
+    #[crate::test]
+    fn changed_external_bounds_reconstruct_the_child(cx: &mut TestAppContext) {
+        let reused = Fixture::new(cx, false, false, true);
+        let fresh = Fixture::new(cx, true, false, true);
+        compare_pair(&reused, &fresh, 0, cx);
+        for fixture in [&reused, &fresh] {
+            fixture.branch.update(cx, |branch, cx| {
+                branch.child_size = Some(px(30.));
+                cx.notify();
+            });
+        }
+        compare_pair(&reused, &fresh, 1, cx);
+        assert_eq!(reused.outer_renders.get(), 1);
+        assert_eq!(reused.branch_renders.get(), 2);
+        cx.update_window(reused.window, |_, window, _| {
+            assert!(window.view_reuse_stats().miss_bounds > 0);
+        })
+        .expect("changed bounds counter");
+        for fixture in [&reused, &fresh] {
+            fixture.notify_leaf(0, cx);
+        }
+        compare_pair(&reused, &fresh, 2, cx);
+        assert_eq!(reused.branch_renders.get(), 2);
+    }
+
+    #[crate::test]
+    fn deferred_dirty_child_falls_back(cx: &mut TestAppContext) {
+        let reused = Fixture::new(cx, false, true, false);
+        let fresh = Fixture::new(cx, true, true, false);
+        compare_pair(&reused, &fresh, 0, cx);
+        compare_pair(&reused, &fresh, 1, cx);
+        for fixture in [&reused, &fresh] {
+            fixture.notify_leaf(0, cx);
+        }
+        compare_pair(&reused, &fresh, 2, cx);
+        assert_eq!(reused.branch_renders.get(), 2);
+        assert_eq!(reused.outer_renders.get(), 2);
+        cx.update_window(reused.window, |_, window, _| {
+            assert!(
+                window.view_reuse_stats().splice_fallbacks
+                    [super::SpliceFallback::DeferredDraw as usize]
+                    > 0
+            );
+        })
+        .expect("deferred fallback counter");
+    }
+
+    #[crate::test]
+    fn uncached_dirty_path_falls_back_and_recovers(cx: &mut TestAppContext) {
+        let reused = Fixture::new(cx, false, false, false);
+        let fresh = Fixture::new(cx, true, false, false);
+        for fixture in [&reused, &fresh] {
+            fixture.branch.update(cx, |branch, cx| {
+                branch.uncached_children = true;
+                cx.notify();
+            });
+        }
+        compare_pair(&reused, &fresh, 0, cx);
+        let outer_renders = reused.outer_renders.get();
+        for fixture in [&reused, &fresh] {
+            fixture.notify_leaf(0, cx);
+        }
+        compare_pair(&reused, &fresh, 1, cx);
+        assert_eq!(reused.outer_renders.get(), outer_renders + 1);
+        cx.update_window(reused.window, |_, window, _| {
+            assert!(
+                window.view_reuse_stats().splice_fallbacks
+                    [super::SpliceFallback::UncachedView as usize]
+                    > 0
+            );
+        })
+        .expect("uncached fallback");
+        for fixture in [&reused, &fresh] {
+            fixture.branch.update(cx, |branch, cx| {
+                branch.uncached_children = false;
+                cx.notify();
+            });
+        }
+        compare_pair(&reused, &fresh, 2, cx);
+        let outer_renders = reused.outer_renders.get();
+        let branch_renders = reused.branch_renders.get();
+        for fixture in [&reused, &fresh] {
+            fixture.notify_leaf(0, cx);
+        }
+        compare_pair(&reused, &fresh, 3, cx);
+        assert_eq!(reused.outer_renders.get(), outer_renders);
+        assert_eq!(reused.branch_renders.get(), branch_renders);
+    }
+
+    #[crate::test]
+    fn dynamic_prepaint_order_falls_back(cx: &mut TestAppContext) {
+        let reused = Fixture::new(cx, false, false, false);
+        let fresh = Fixture::new(cx, true, false, false);
+        for fixture in [&reused, &fresh] {
+            fixture.branch.update(cx, |branch, cx| {
+                branch.dynamic_prepaint_order = true;
+                cx.notify();
+            });
+        }
+        compare_pair(&reused, &fresh, 0, cx);
+        let outer_renders = reused.outer_renders.get();
+        for fixture in [&reused, &fresh] {
+            fixture.notify_leaf(0, cx);
+            fixture.notify_leaf(1, cx);
+        }
+        compare_pair(&reused, &fresh, 1, cx);
+        assert!(reused.outer_renders.get() > outer_renders);
+        cx.update_window(reused.window, |_, window, _| {
+            assert!(
+                window.view_reuse_stats().splice_fallbacks
+                    [super::SpliceFallback::ExecutionScope as usize]
+                    > 0
+            );
+        })
+        .expect("dynamic traversal fallback");
+    }
+
+    #[crate::test]
+    fn untracked_external_style_is_expected_to_diverge(cx: &mut TestAppContext) {
+        for splicing in [false, true] {
+            let reused = Fixture::new(cx, false, false, false);
+            let fresh = Fixture::new(cx, true, false, false);
+            cx.update_window(reused.window, |_, window, _| {
+                window.set_view_splicing(splicing)
+            })
+            .expect("select reuse mode");
+            let sizes = [Rc::new(Cell::new(px(20.))), Rc::new(Cell::new(px(20.)))];
+            for (fixture, size) in [&reused, &fresh].into_iter().zip(&sizes) {
+                fixture.branch.update(cx, |branch, cx| {
+                    branch.untracked_child_size = Some(size.clone());
+                    cx.notify();
+                });
+            }
+            compare_pair(&reused, &fresh, 0, cx);
+            for (fixture, size) in [&reused, &fresh].into_iter().zip(&sizes) {
+                // Deliberately violate the composing view's notification contract.
+                size.set(px(40.));
+                fixture.notify_leaf(0, cx);
+            }
+            let result = reused.capture(cx).compare(&fresh.capture(cx), 1);
+            if splicing {
+                result.expect_err("the oracle must detect untracked external-style changes");
+            } else {
+                result.expect("legacy ancestor reconstruction masks this contract violation");
+            }
+        }
+    }
+
+    #[crate::test]
+    fn spliced_child_preserves_focus_keys_hover_and_tooltips(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([crate::KeyBinding::new(
+                "ctrl-j",
+                ProbeAction,
+                Some("RetainedBranch > RetainedLeaf"),
+            )]);
+        });
+        let reused = Fixture::new(cx, false, false, false);
+        let fresh = Fixture::new(cx, true, false, false);
+        compare_pair(&reused, &fresh, 0, cx);
+        for fixture in [&reused, &fresh] {
+            fixture.leaves[0].update(cx, |leaf, cx| {
+                leaf.focus_on_prepaint = true;
+                leaf.color = 0x00ff00;
+                cx.notify();
+            });
+        }
+        compare_pair(&reused, &fresh, 1, cx);
+        assert_eq!(reused.branch_renders.get(), 1);
+        assert_eq!(reused.outer_renders.get(), 1);
+        for fixture in [&reused, &fresh] {
+            let focus = fixture.leaves[0]
+                .read_with(cx, |leaf, _| leaf.focus.clone())
+                .expect("leaf focus");
+            cx.update_window(fixture.window, |_, window, cx| {
+                assert!(focus.is_focused(window));
+                assert!(window.is_action_available(&ProbeAction, cx));
+            })
+            .expect("spliced focus path");
+            cx.simulate_keystrokes(fixture.window, "ctrl-j");
+            assert_eq!(
+                fixture.leaves[0].read_with(cx, |leaf, _| leaf.action_color.get()),
+                0x00ff00
+            );
+        }
+        for fixture in [&reused, &fresh] {
+            cx.update_window(fixture.window, |_, window, cx| {
+                window.simulate_mouse_move(crate::point(px(10.), px(10.)), cx);
+            })
+            .expect("mouse move into spliced child");
+        }
+        cx.executor().advance_clock(Duration::from_millis(2));
+        cx.run_until_parked();
+        compare_pair(&reused, &fresh, 2, cx);
+        for fixture in [&reused, &fresh] {
+            assert_eq!(
+                fixture.leaves[0].read_with(cx, |leaf, _| leaf.hover_color.get()),
+                0x00ff00
+            );
+            assert_eq!(
+                fixture.leaves[0].read_with(cx, |leaf, _| leaf.tooltip_color.get()),
+                0x00ff00
+            );
+            cx.update_window(fixture.window, |_, window, _| {
+                assert!(
+                    window
+                        .rendered_frame
+                        .tooltip_requests
+                        .iter()
+                        .any(Option::is_some)
+                );
+                assert!(window.tooltip_bounds.is_some());
+            })
+            .expect("tooltip for spliced child");
+        }
+    }
+
+    #[crate::test]
+    fn occurrence_identity_and_generation_survive_remove_reinsert(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx, false, false, false);
+        fixture.branch.update(cx, |branch, cx| {
+            branch.children = vec![fixture.leaves[0].clone(), fixture.leaves[0].clone()];
+            cx.notify();
+        });
+        fixture.capture(cx);
+        let old_occurrences = cx
+            .update_window(fixture.window, |_, window, _| {
+                window.view_store.by_entity[&fixture.leaves[0].entity_id()].clone()
+            })
+            .expect("two occurrences");
+        assert_eq!(old_occurrences.len(), 2);
+        assert_ne!(old_occurrences[0], old_occurrences[1]);
+        let initial_renders = fixture.leaves[0].read_with(cx, |leaf, _| leaf.renders.get());
+        fixture.notify_leaf(0, cx);
+        fixture.capture(cx);
+        assert_eq!(
+            fixture.leaves[0].read_with(cx, |leaf, _| leaf.renders.get()),
+            initial_renders + 2
+        );
+        assert_eq!(fixture.branch_renders.get(), 2);
+        fixture.branch.update(cx, |branch, cx| {
+            branch.children.clear();
+            cx.notify();
+        });
+        fixture.capture(cx);
+        cx.update_window(fixture.window, |_, window, _| {
+            assert!(
+                !window
+                    .view_store
+                    .by_entity
+                    .contains_key(&fixture.leaves[0].entity_id())
+            );
+        })
+        .expect("removed occurrences are collected");
+        fixture.branch.update(cx, |branch, cx| {
+            branch.children.push(fixture.leaves[0].clone());
+            cx.notify();
+        });
+        fixture.capture(cx);
+        cx.update_window(fixture.window, |_, window, _| {
+            let new_occurrence = window.view_store.by_entity[&fixture.leaves[0].entity_id()][0];
+            assert!(!old_occurrences.contains(&new_occurrence));
+            assert!(
+                old_occurrences
+                    .iter()
+                    .any(|old| old.index == new_occurrence.index
+                        && old.generation != new_occurrence.generation)
+            );
+        })
+        .expect("reinserted occurrence has a fresh generation");
     }
 }

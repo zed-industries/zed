@@ -867,7 +867,18 @@ impl RandomizedElementTree {
             drop(snapshot);
             return self.insert_child_internal();
         };
-        let owner_entity_id = nearest_entity_id(&snapshot.children, &path);
+        // Cached bounds belong to the composing view, not the child's rendered contents.
+        let external_style_changed = snapshot.cached_views
+            && matches!(mutation, RandomizedChildMutation::Bounds)
+            && node_at_path(&snapshot.children, &path).is_some_and(|node| node.is_entity);
+        let owner_path = if external_style_changed {
+            path.split_last()
+                .map(|(_, parent)| parent)
+                .unwrap_or_default()
+        } else {
+            &path
+        };
+        let owner_entity_id = nearest_entity_id(&snapshot.children, owner_path);
         let Some(node) = node_at_path_mut(&mut snapshot.children, &path) else {
             drop(snapshot);
             return self.insert_child_internal();
@@ -1457,18 +1468,16 @@ mod tests {
     const MUTATION_COUNT: usize = 32;
     const WINDOW_SIZE: Size<Pixels> = size(px(1200.0), px(900.0));
 
-    #[gpui::test]
-    fn cached_views_match_forced_reconstruction(cx: &mut TestAppContext) {
-        for topology in [
-            RandomizedElementTreeTopology::Wide,
-            RandomizedElementTreeTopology::Mixed,
-        ] {
-            let config = RandomizedElementTreeConfig::new(11, ELEMENT_COUNT)
+    #[gpui::test(iterations = 12)]
+    fn cached_views_match_forced_reconstruction(mut rng: StdRng, cx: &mut TestAppContext) {
+        for topology in RandomizedElementTreeTopology::ALL {
+            let config = RandomizedElementTreeConfig::new(rng.random(), ELEMENT_COUNT)
                 .with_topology(topology)
                 .with_entity_density(0.5)
                 .with_handler_density(0.5)
                 .with_cached_views(true);
-            let reused = cx.open_window(WINDOW_SIZE, move |_, cx| {
+            let reused = cx.open_window(WINDOW_SIZE, move |window, cx| {
+                window.set_view_splicing(true);
                 RandomizedElementTree::new_with_config(config, cx)
             });
             let reconstructed = cx.open_window(WINDOW_SIZE, move |window, cx| {

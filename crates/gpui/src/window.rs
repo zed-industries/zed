@@ -1033,6 +1033,7 @@ pub(crate) struct DeferredDraw {
     absolute_offset: Point<Pixels>,
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
+    accessed_entities: FxHashSet<EntityId>,
 }
 
 pub(crate) struct Frame {
@@ -1468,6 +1469,7 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
+    pub(crate) view_splicing: bool,
     pub(crate) view_store: crate::view::ViewStore,
     pub(crate) current_view_occurrence: Option<crate::view::ViewOccurrenceId>,
     pub(crate) retained_scope_fallback: Option<crate::view::retained::SpliceFallback>,
@@ -2386,6 +2388,7 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
+            view_splicing: std::env::var("GPUI_VIEW_SPLICE").is_ok_and(|value| value == "1"),
             view_store: crate::view::ViewStore::default(),
             current_view_occurrence: None,
             retained_scope_fallback: None,
@@ -2619,6 +2622,18 @@ impl Window {
         self.force_view_reconstruction = force;
     }
 
+    /// Opt into descendant splicing for a fixture that obeys tracked rendering dependencies.
+    ///
+    /// Production windows default to legacy ancestor reconstruction unless
+    /// `GPUI_VIEW_SPLICE=1` is set. Untracked shared state can invalidate retained output.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn set_view_splicing(&mut self, enabled: bool) {
+        if self.view_splicing != enabled {
+            self.view_splicing = enabled;
+            self.refresh();
+        }
+    }
+
     /// Snapshot the completed frame outside benchmark timing.
     ///
     /// Both independent fixtures must use identical fonts, platform resources,
@@ -2693,10 +2708,10 @@ impl Window {
             self.view_reuse_stats.render_first_mount += 1;
         } else if self.own_dirty_views.contains(&entity_id) {
             self.view_reuse_stats.render_own_dirty += 1;
-        } else if self
-            .current_view_occurrence
-            .is_some_and(|occurrence| self.view_store.is_own_dirty(occurrence))
-        {
+        } else if self.current_view_occurrence.is_some_and(|occurrence| {
+            self.view_store.is_entity(occurrence, entity_id)
+                && self.view_store.is_own_dirty(occurrence)
+        }) {
             self.view_reuse_stats.render_entity_dependency += 1;
         } else if self.cached_reconstruction_depth > 0 {
             self.view_reuse_stats.render_ancestor_caused += 1;
@@ -2715,7 +2730,7 @@ impl Window {
     }
 
     fn mark_view_dirty(&mut self, view_id: EntityId) {
-        self.view_store.mark_dirty(view_id);
+        let retained = self.view_store.mark_dirty(view_id);
         #[cfg(any(test, feature = "bench-support"))]
         self.own_dirty_views.insert(view_id);
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
@@ -2725,6 +2740,9 @@ impl Window {
             .dispatch_tree
             .view_path_reversed(view_id)
         {
+            if !retained {
+                self.view_store.mark_unretained_descendant(view_id);
+            }
             if !self.dirty_views.insert(view_id) {
                 break;
             }
@@ -4406,6 +4424,7 @@ impl Window {
 
                 let prepaint_start = self.prepaint_index();
                 if let Some(mut element) = element {
+                    let previous_access = self.begin_cached_entity_access(cx);
                     self.with_rendered_view(current_view, |window| {
                         window.with_rem_size(Some(rem_size), |window| {
                             window.with_absolute_element_offset(absolute_offset, |window| {
@@ -4413,8 +4432,20 @@ impl Window {
                             });
                         });
                     });
+                    let (own, all) = self.end_cached_entity_access(previous_access, cx);
+                    let parent_occurrence =
+                        self.next_frame.deferred_draws[deferred_draw_ix].parent_occurrence;
+                    self.next_frame.deferred_draws[deferred_draw_ix]
+                        .accessed_entities
+                        .extend(all.iter().copied());
+                    self.view_store
+                        .append_own_access(parent_occurrence, own, all, false);
                     self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
                 } else {
+                    // Deferred work lies outside its containing view's access scope.
+                    cx.entities.extend_accessed(
+                        &self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities,
+                    );
                     self.reuse_prepaint(prepaint_range);
                 }
                 let prepaint_end = self.prepaint_index();
@@ -4453,14 +4484,21 @@ impl Window {
             let paint_start = self.paint_index();
             let content_mask = deferred_draw.content_mask;
             if let Some(element) = deferred_draw.element.as_mut() {
+                let previous_access = self.begin_cached_entity_access(cx);
                 self.with_rendered_view(deferred_draw.current_view, |window| {
                     window.with_content_mask(content_mask, |window| {
                         window.with_rem_size(Some(deferred_draw.rem_size), |window| {
                             element.paint(window, cx);
                         });
                     })
-                })
+                });
+                let (own, all) = self.end_cached_entity_access(previous_access, cx);
+                deferred_draw.accessed_entities.extend(all.iter().copied());
+                self.view_store
+                    .append_own_access(deferred_draw.parent_occurrence, own, all, true);
             } else {
+                cx.entities
+                    .extend_accessed(&deferred_draw.accessed_entities);
                 self.reuse_paint(deferred_draw.paint_range.clone());
             }
             let paint_end = self.paint_index();
@@ -4577,6 +4615,7 @@ impl Window {
                     absolute_offset: deferred_draw.absolute_offset,
                     prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
+                    accessed_entities: deferred_draw.accessed_entities.clone(),
                 }),
         );
         for occurrence in
@@ -4875,6 +4914,12 @@ impl Window {
     /// described in [`Self::request_autoscroll`].
     pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
         self.invalidator.debug_assert_prepaint();
+        if let Some(occurrence) = self.current_view_occurrence {
+            self.view_store.block_splicing(
+                occurrence,
+                crate::view::retained::SpliceFallback::Autoscroll,
+            );
+        }
         self.requested_autoscroll.take()
     }
 
@@ -5130,6 +5175,7 @@ impl Window {
             absolute_offset,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
+            accessed_entities: FxHashSet::default(),
         });
     }
 

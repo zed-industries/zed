@@ -1976,6 +1976,16 @@ impl Element for Div {
             .map(|provider| provider.provide(window, cx));
 
         let has_prepaint_listener = self.prepaint_listener.is_some();
+        if (has_prepaint_listener || self.prepaint_order_fn.is_some())
+            && let Some(occurrence) = window.current_view_occurrence
+        {
+            // These callbacks can reorder children or consume child prepaint effects.
+            // Replaying only a descendant cannot reproduce that continuation.
+            window.view_store.block_splicing(
+                occurrence,
+                crate::view::retained::SpliceFallback::ExecutionScope,
+            );
+        }
         let mut children_bounds = Vec::with_capacity(if has_prepaint_listener {
             request_layout.child_layout_ids.len()
         } else {

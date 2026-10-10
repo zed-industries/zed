@@ -243,6 +243,10 @@ impl<T: Render> Entity<T> {
     /// a cached view is laid out from `style` and is *not* measured from its
     /// contents. Use [`ViewElement::new`] (or `.child(entity)`) for the
     /// uncached case.
+    ///
+    /// With experimental view splicing enabled, the composing view must notify when
+    /// this external style changes, or derive it from entities it reads through `cx`.
+    /// Reads through untracked shared state such as `Rc<RefCell<_>>` are not dependencies.
     #[track_caller]
     pub fn cached(self, style: StyleRefinement) -> ViewElement<Entity<T>> {
         let retained_view = self.downgrade().into();
@@ -503,6 +507,9 @@ fn prepaint_view(
         .map(|_| window.begin_cached_entity_access(cx));
     let result = window.with_rendered_view(entity_id, |window| {
         if let Some(mut element) = element.take() {
+            if let Some(occurrence) = occurrence {
+                window.view_store.invalidate_state(occurrence);
+            }
             element.prepaint(window, cx);
             return Some(element);
         }
@@ -527,14 +534,13 @@ fn prepaint_view(
                     state.cache_key.text_style != text_style,
                 )
             });
-            let mut reused = false;
             if let Some(element_state) = element_state
                 && element_state.cache_key.bounds == bounds
                 && element_state.cache_key.content_mask == content_mask
                 && element_state.cache_key.text_style == text_style
                 && !window.view_store.is_own_dirty(occurrence)
                 && (!window.dirty_views.contains(&entity_id)
-                    || window.view_store.is_descendant_dirty(occurrence))
+                    || (window.view_splicing && window.view_store.is_descendant_dirty(occurrence)))
                 && window.retained_scope_fallback != Some(retained::SpliceFallback::Transaction)
                 && !window.refreshing
                 && !force_reconstruction
@@ -543,9 +549,6 @@ fn prepaint_view(
                 let can_reuse = !window.view_store.is_descendant_dirty(occurrence)
                     || window.prepare_view_splice(occurrence).is_ok();
                 if can_reuse {
-                    reused = true;
-                }
-                if reused {
                     #[cfg(any(test, feature = "bench-support"))]
                     {
                         window.view_reuse_stats.cached_hits += 1;
@@ -601,6 +604,9 @@ fn prepaint_view(
                 window.cached_reconstruction_depth += 1;
             }
             let refreshing = mem::replace(&mut window.refreshing, true);
+            window
+                .view_store
+                .begin_reconstruction(occurrence, scope.as_ref().expect("cached view scope"));
             let prepaint_start = window.prepaint_index();
             let mut element = render(window, cx);
             element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
