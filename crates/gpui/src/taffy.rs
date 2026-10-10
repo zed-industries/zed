@@ -7,6 +7,7 @@ use crate::{
     },
 };
 use collections::{FxHashMap, FxHashSet};
+use slotmap::{DefaultKey, SecondaryMap};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
@@ -45,11 +46,18 @@ struct LayoutScope {
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     cache: Option<Box<LayoutCache>>,
-    absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
-    /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
-    absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
+    absolute_layout: SecondaryMap<DefaultKey, AbsoluteLayout>,
+    layout_epoch: u64,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
+}
+
+#[derive(Clone, Copy)]
+struct AbsoluteLayout {
+    epoch: u64,
+    bounds: Bounds<Pixels>,
+    /// Descendants need the unrounded device-pixel origin, not the snapped bounds.
+    outer_origin: Point<f32>,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -68,8 +76,8 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy,
             cache: None,
-            absolute_layout_bounds: FxHashMap::default(),
-            absolute_outer_origins: FxHashMap::default(),
+            absolute_layout: SecondaryMap::new(),
+            layout_epoch: 0,
             computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
         }
@@ -147,9 +155,15 @@ impl TaffyLayoutEngine {
         } else {
             self.taffy.clear();
         }
-        self.absolute_layout_bounds.clear();
-        self.absolute_outer_origins.clear();
+        self.advance_layout_epoch();
         self.computed_layouts.clear();
+    }
+
+    fn advance_layout_epoch(&mut self) {
+        self.layout_epoch = self.layout_epoch.wrapping_add(1);
+        if self.layout_epoch == 0 {
+            self.absolute_layout.clear();
+        }
     }
 
     fn claim_node(&mut self, style: taffy::Style, children: &[LayoutId]) -> (LayoutId, bool) {
@@ -427,21 +441,8 @@ impl TaffyLayoutEngine {
         // }
         //
 
-        if !self.computed_layouts.insert(id) {
-            let stack = &mut self.layout_bounds_scratch_space;
-            stack.push(id);
-            while let Some(id) = stack.pop() {
-                self.absolute_layout_bounds.remove(&id);
-                self.absolute_outer_origins.remove(&id);
-                stack.extend(
-                    self.taffy
-                        .children(id.into())
-                        .expect(EXPECT_MESSAGE)
-                        .into_iter()
-                        .map(LayoutId::from),
-                );
-            }
-        }
+        self.computed_layouts.insert(id);
+        self.advance_layout_epoch();
 
         let scale_factor = window.scale_factor();
 
@@ -586,7 +587,13 @@ impl TaffyLayoutEngine {
     // 1dp residual into descendants.
 
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
-        if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
+        self.absolute_layout(id, scale_factor).bounds
+    }
+
+    fn absolute_layout(&mut self, id: LayoutId, scale_factor: f32) -> AbsoluteLayout {
+        if let Some(layout) = self.absolute_layout.get(id.0.into()).copied()
+            && layout.epoch == self.layout_epoch
+        {
             return layout;
         }
 
@@ -598,18 +605,11 @@ impl TaffyLayoutEngine {
         let absolute_outer_origin = match parent {
             Some(parent_id) => {
                 let parent_id = LayoutId::from(parent_id);
-                self.layout_bounds(parent_id, scale_factor);
-                let parent_origin = *self
-                    .absolute_outer_origins
-                    .get(&parent_id)
-                    .expect("parent absolute outer origin should be cached");
+                let parent_origin = self.absolute_layout(parent_id, scale_factor).outer_origin;
                 parent_origin + Point::from(layout_location)
             }
             None => Point::from(layout_location),
         };
-        self.absolute_outer_origins
-            .insert(id, absolute_outer_origin);
-
         let absolute_far = absolute_outer_origin + Point::from(Size::from(layout_size));
         let snapped_bounds = Bounds::from_corners(
             absolute_outer_origin.map(round_half_toward_zero),
@@ -617,8 +617,13 @@ impl TaffyLayoutEngine {
         );
 
         let bounds = (snapped_bounds / scale_factor).map(Pixels);
-        self.absolute_layout_bounds.insert(id, bounds);
-        bounds
+        let layout = AbsoluteLayout {
+            epoch: self.layout_epoch,
+            bounds,
+            outer_origin: absolute_outer_origin,
+        };
+        self.absolute_layout.insert(id.0.into(), layout);
+        layout
     }
 }
 
@@ -988,6 +993,91 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn old_layout_bounds(
+        engine: &TaffyLayoutEngine,
+        id: LayoutId,
+        scale: f32,
+        bounds: &mut FxHashMap<LayoutId, Bounds<Pixels>>,
+        origins: &mut FxHashMap<LayoutId, Point<f32>>,
+    ) -> Bounds<Pixels> {
+        if let Some(bounds) = bounds.get(&id) {
+            return *bounds;
+        }
+        let layout = *engine.taffy.layout(id.0).expect(EXPECT_MESSAGE);
+        let origin = match engine.taffy.parent(id.0) {
+            Some(parent) => {
+                let parent = LayoutId(parent);
+                old_layout_bounds(engine, parent, scale, bounds, origins);
+                origins[&parent] + Point::from(layout.location)
+            }
+            None => Point::from(layout.location),
+        };
+        origins.insert(id, origin);
+        let result = (Bounds::from_corners(
+            origin.map(round_half_toward_zero),
+            (origin + Point::from(Size::from(layout.size))).map(round_half_toward_zero),
+        ) / scale)
+            .map(Pixels);
+        bounds.insert(id, result);
+        result
+    }
+
+    #[gpui::test]
+    fn dense_bounds_match_old_memo_across_reuse(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            let mut engine = TaffyLayoutEngine::new();
+            for scale in [1.25, 1.5, 1.75] {
+                window.set_scale_factor(scale);
+                for frame in 0..3 {
+                    let mut leaf_style = Style::default();
+                    leaf_style.size =
+                        size(DefiniteLength::Fraction(0.37).into(), Pixels(9.0).into());
+                    let leaf = engine.request_layout(leaf_style, Pixels(16.0), scale, &[]);
+                    let mut parent_style = Style::default();
+                    parent_style.size = size(Pixels(31.0).into(), Pixels(29.0).into());
+                    parent_style.padding = Edges::all(DefiniteLength::Fraction(0.075));
+                    parent_style.margin.left = DefiniteLength::Fraction(0.13).into();
+                    let parent = engine.request_layout(parent_style, Pixels(16.0), scale, &[leaf]);
+                    let mut root_style = Style::default();
+                    root_style.size =
+                        size(Pixels(101.0 + frame as f32).into(), Pixels(83.0).into());
+                    root_style.padding = Edges::all(DefiniteLength::Fraction(0.125));
+                    let root = engine.request_layout(root_style, Pixels(16.0), scale, &[parent]);
+                    for _ in 0..2 {
+                        engine.compute_layout(
+                            root,
+                            size(Pixels(201.0), Pixels(151.0)).into(),
+                            window,
+                            cx,
+                        );
+                        let mut bounds = FxHashMap::default();
+                        let mut origins = FxHashMap::default();
+                        for id in [leaf, parent, root, leaf] {
+                            let expected =
+                                old_layout_bounds(&engine, id, scale, &mut bounds, &mut origins);
+                            let actual = engine.layout_bounds(id, scale);
+                            assert_eq!(
+                                [
+                                    actual.origin.x.0.to_bits(),
+                                    actual.origin.y.0.to_bits(),
+                                    actual.size.width.0.to_bits(),
+                                    actual.size.height.0.to_bits(),
+                                ],
+                                [
+                                    expected.origin.x.0.to_bits(),
+                                    expected.origin.y.0.to_bits(),
+                                    expected.size.width.0.to_bits(),
+                                    expected.size.height.0.to_bits(),
+                                ]
+                            );
+                        }
+                    }
+                    engine.clear();
+                }
+            }
+        });
+    }
 
     #[test]
     fn text_layout_style_matches_default_conversion() {
