@@ -42,7 +42,7 @@ impl SceneIndex {
             }),
             paths: self.paths - old.paths + new.paths,
             surfaces: self.surfaces - old.surfaces + new.surfaces,
-            layer_depth: self.layer_depth,
+            layer_depth: self.layer_depth - old.layer_depth + new.layer_depth,
         }
     }
 }
@@ -1759,6 +1759,24 @@ impl PathVertex<Pixels> {
 mod tests {
     use super::*;
     use crate::{px, size};
+
+    #[test]
+    fn segment_checkpoints_rebase_inherited_layer_depth() {
+        let mut source = Scene::default();
+        let old = source.index();
+        source.push_layer(quad().bounds);
+        let descendant = source.index();
+        let mut target = Scene::default();
+        target.push_layer(quad().bounds);
+        target.push_layer(quad().bounds);
+        let new = target.index();
+        let rebased = descendant.rebase(old, new);
+        target.push_layer(quad().bounds);
+        assert_eq!(rebased.layer_depth, target.index().layer_depth);
+        assert_eq!(rebased.ordering, target.index().ordering);
+        assert_eq!(rebased.operations, target.index().operations);
+        assert_eq!(rebased.rebase(new, old).layer_depth, descendant.layer_depth);
+    }
 
     fn quad() -> Quad {
         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(20.), px(20.))).scale(1.);
