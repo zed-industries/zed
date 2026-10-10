@@ -118,9 +118,7 @@ pub fn init(cx: &mut App) {
                 workspace.toggle_panel_focus::<DebugPanel>(window, cx);
             })
             .register_action(|workspace, _: &Toggle, window, cx| {
-                if !workspace.toggle_panel_focus::<DebugPanel>(window, cx) {
-                    workspace.close_panel::<DebugPanel>(window, cx);
-                }
+                workspace.toggle_panel::<DebugPanel>(window, cx);
             })
             .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
                 NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
