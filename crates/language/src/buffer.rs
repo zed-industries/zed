@@ -3725,6 +3725,13 @@ impl BufferSnapshot {
     /// containing the delimiter to end there, so that a line which merely looks
     /// like a closing delimiter is not mistaken for one.
     pub fn block_comment_closing_indent(&self, position: Point) -> Option<IndentSize> {
+        self.block_comment_opening_row(position)
+            .map(|row| self.indent_size_for_line(row))
+    }
+
+    /// The opening row of the multi-line block comment closed at `position`.
+    /// See [`Self::block_comment_closing_indent`] for the closing-line checks.
+    pub fn block_comment_opening_row(&self, position: Point) -> Option<u32> {
         let row = position.row;
         let indent_len = self.indent_size_for_line(row).len;
         let delimiter_start = Point::new(row, indent_len);
@@ -3767,7 +3774,7 @@ impl BufferSnapshot {
             return None;
         }
         let opening_row = Point::from_ts_point(node.start_position()).row;
-        (opening_row < row).then(|| self.indent_size_for_line(opening_row))
+        (opening_row < row).then_some(opening_row)
     }
 
     /// Like [`Self::indent_size_for_line`], but reports the indentation a row
