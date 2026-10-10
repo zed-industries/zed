@@ -3917,6 +3917,13 @@ impl Project {
                 self.buffer_store.update(cx, |buffer_store, cx| {
                     buffer_store.disconnected_from_host(cx)
                 });
+                // The remote image store had no disconnect hook at all;
+                // clear its parked image waiters so `wait_for_remote_image`
+                // fails instead of waiting forever once the connection is
+                // gone for good.
+                self.image_store.update(cx, |image_store, cx| {
+                    image_store.disconnected_from_host(cx)
+                });
                 self.lsp_store.update(cx, |lsp_store, _cx| {
                     lsp_store.disconnected_from_ssh_remote()
                 });
