@@ -1079,7 +1079,7 @@ pub(crate) struct PrepaintStateIndex {
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
-    scene_index: usize,
+    scene_index: crate::scene::SceneIndex,
     #[cfg(any(test, feature = "test-support"))]
     debug_bounds_index: usize,
     mouse_listeners_index: usize,
@@ -1119,7 +1119,7 @@ impl PaintIndex {
 
     pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
         Self {
-            scene_index: self.scene_index - old.scene_index + new.scene_index,
+            scene_index: self.scene_index.rebase(old.scene_index, new.scene_index),
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index: self.debug_bounds_index - old.debug_bounds_index
                 + new.debug_bounds_index,
@@ -1423,6 +1423,7 @@ pub struct ViewReuseStats {
     /// Shadow, quad, path, underline, monochrome, subpixel, polychrome, surface.
     pub scene_primitives: [ReuseArrayStats; 8],
     pub scene_layer_operations: usize,
+    pub scene_bulk_segments: usize,
     pub index_fixups: usize,
 }
 
@@ -5006,7 +5007,7 @@ impl Window {
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
-            scene_index: self.next_frame.scene.len(),
+            scene_index: self.next_frame.scene.index(),
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index: self.next_frame.debug_bounds_records.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
@@ -5106,7 +5107,7 @@ impl Window {
         );
         #[cfg(feature = "bench-support")]
         let timer = RenderPhaseTimer::start(RenderPhase::SceneInsert);
-        self.next_frame.scene.replay(
+        self.next_frame.scene.replay_segment(
             range.start.scene_index..range.end.scene_index,
             &mut self.rendered_frame.scene,
             #[cfg(any(test, feature = "bench-support"))]

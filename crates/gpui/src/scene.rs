@@ -22,6 +22,42 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SceneIndex {
+    pub operations: usize,
+    ordering: usize,
+    primitives: [usize; 6],
+    paths: usize,
+    surfaces: usize,
+    layer_depth: usize,
+}
+
+impl SceneIndex {
+    pub(crate) fn rebase(self, old: Self, new: Self) -> Self {
+        Self {
+            operations: self.operations - old.operations + new.operations,
+            ordering: self.ordering - old.ordering + new.ordering,
+            primitives: std::array::from_fn(|index| {
+                self.primitives[index] - old.primitives[index] + new.primitives[index]
+            }),
+            paths: self.paths - old.paths + new.paths,
+            surfaces: self.surfaces - old.surfaces + new.surfaces,
+            layer_depth: self.layer_depth,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ReplayArrays {
+    ready: bool,
+    shadows: Vec<Shadow>,
+    quads: Vec<Quad>,
+    underlines: Vec<Underline>,
+    monochrome_sprites: Vec<MonochromeSprite>,
+    subpixel_sprites: Vec<SubpixelSprite>,
+    polychrome_sprites: Vec<PolychromeSprite>,
+}
+
 /// A boolean stored as a `u32` so that GPU-facing structs contain no
 /// compiler-inserted padding bytes, which would be undefined behavior to
 /// reinterpret as `&[u8]` when writing instance buffers. Guaranteed to be
@@ -54,6 +90,7 @@ pub struct Scene {
     sprite_sort_keys: Vec<u128>,
     path_indices: Vec<usize>,
     surface_indices: Vec<usize>,
+    replay_arrays: ReplayArrays,
     #[cfg(debug_assertions)]
     consumed_segments: Vec<Range<usize>>,
 }
@@ -61,6 +98,7 @@ pub struct Scene {
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
+        self.replay_arrays.ready = false;
         self.paint_operations.clear();
         self.primitive_bounds.clear();
         self.ordering_indices.clear();
@@ -81,6 +119,132 @@ impl Scene {
 
     pub fn len(&self) -> usize {
         self.paint_operations.len()
+    }
+
+    pub(crate) fn index(&self) -> SceneIndex {
+        SceneIndex {
+            operations: self.paint_operations.len(),
+            ordering: self.primitive_bounds.len(),
+            primitives: [
+                self.shadows.len(),
+                self.quads.len(),
+                self.underlines.len(),
+                self.monochrome_sprites.len(),
+                self.subpixel_sprites.len(),
+                self.polychrome_sprites.len(),
+            ],
+            paths: self.paths.len(),
+            surfaces: self.surfaces.len(),
+            layer_depth: self.layer_stack.len(),
+        }
+    }
+
+    fn prepare_replay_arrays(&mut self) {
+        if self.replay_arrays.ready {
+            return;
+        }
+        let arrays = &mut self.replay_arrays;
+        arrays.shadows.clear();
+        arrays.quads.clear();
+        arrays.underlines.clear();
+        arrays.monochrome_sprites.clear();
+        arrays.subpixel_sprites.clear();
+        arrays.polychrome_sprites.clear();
+        // Presentation sorts the typed arrays. The immutable operation stream
+        // retains paint order, so its lazy snapshot gives segment-contiguous data.
+        for operation in &self.paint_operations {
+            if let PaintOperation::Primitive(primitive) = operation {
+                match primitive {
+                    RecordedPrimitive::Shadow(value) => arrays.shadows.push(*value),
+                    RecordedPrimitive::Quad(value) => arrays.quads.push(*value),
+                    RecordedPrimitive::Underline(value) => arrays.underlines.push(*value),
+                    RecordedPrimitive::MonochromeSprite(value) => {
+                        arrays.monochrome_sprites.push(*value)
+                    }
+                    RecordedPrimitive::SubpixelSprite(value) => {
+                        arrays.subpixel_sprites.push(*value)
+                    }
+                    RecordedPrimitive::PolychromeSprite(value) => {
+                        arrays.polychrome_sprites.push(*value)
+                    }
+                    RecordedPrimitive::Path { .. } | RecordedPrimitive::Surface { .. } => {}
+                }
+            }
+        }
+        arrays.ready = true;
+    }
+
+    pub(crate) fn replay_segment(
+        &mut self,
+        range: Range<SceneIndex>,
+        previous: &mut Self,
+        #[cfg(any(test, feature = "bench-support"))] stats: &mut crate::ViewReuseStats,
+    ) {
+        let bulk = range.start.layer_depth == 0
+            && range.end.layer_depth == 0
+            && self.layer_stack.is_empty()
+            && range.start.paths == range.end.paths
+            && range.start.surfaces == range.end.surfaces
+            && self.primitive_bounds.try_replay_range(
+                &previous.primitive_bounds,
+                range.start.ordering..range.end.ordering,
+            );
+        if !bulk {
+            self.replay(
+                range.start.operations..range.end.operations,
+                previous,
+                #[cfg(any(test, feature = "bench-support"))]
+                stats,
+            );
+            return;
+        }
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(
+                previous.consumed_segments.iter().all(|prior| {
+                    range.end.operations <= prior.start || prior.end <= range.start.operations
+                }),
+                "scene segment consumed twice"
+            );
+            previous
+                .consumed_segments
+                .push(range.start.operations..range.end.operations);
+        }
+        previous.prepare_replay_arrays();
+        macro_rules! copy {
+            ($index:expr, $field:ident, $stat:expr) => {{
+                let values = &previous.replay_arrays.$field
+                    [range.start.primitives[$index]..range.end.primitives[$index]];
+                self.$field.extend_from_slice(values);
+                #[cfg(any(test, feature = "bench-support"))]
+                stats.scene_primitives[$stat].copied(values);
+            }};
+        }
+        copy!(0, shadows, 0);
+        copy!(1, quads, 1);
+        copy!(2, underlines, 3);
+        copy!(3, monochrome_sprites, 4);
+        copy!(4, subpixel_sprites, 5);
+        copy!(5, polychrome_sprites, 6);
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            stats.scene_bulk_segments += 1;
+            let primitives = range
+                .start
+                .primitives
+                .iter()
+                .zip(range.end.primitives)
+                .map(|(start, end)| end - start)
+                .sum::<usize>();
+            stats.scene_layer_operations +=
+                range.end.operations - range.start.operations - primitives;
+        }
+        self.paint_operations.extend_from_slice(
+            &previous.paint_operations[range.start.operations..range.end.operations],
+        );
+        self.ordering_indices.extend_from_slice(
+            &previous.ordering_indices[range.start.operations..range.end.operations],
+        );
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
@@ -1669,30 +1833,30 @@ mod tests {
                     scene.pop_layer();
                 }
             };
+            let mut ranges = Vec::new();
             for (index, segment) in segments.iter().enumerate() {
+                let start = previous.index();
                 paint(&mut previous, segment, index % 3 == 0);
+                ranges.push(start..previous.index());
             }
             previous.finish();
+            let mut stats = crate::ViewReuseStats::default();
             for iteration in 0..8 {
                 let mut target = Scene::default();
                 let mut fresh = Scene::default();
-                let mut source_start = 0;
+                let mut next_ranges = Vec::new();
                 for (index, segment) in segments.iter_mut().enumerate() {
+                    let start = target.index();
                     let layered = index % 3 == 0;
-                    let length = segment.len() + if layered { 2 } else { 0 };
                     if random.random_range(0..4) == 0 {
                         segment[0].bounds.origin.x += ScaledPixels(8.);
                         segment[0].content_mask.bounds = segment[0].bounds;
                         paint(&mut target, segment, layered);
                     } else {
-                        target.replay(
-                            source_start..source_start + length,
-                            &mut previous,
-                            &mut crate::ViewReuseStats::default(),
-                        );
+                        target.replay_segment(ranges[index].clone(), &mut previous, &mut stats);
                     }
                     paint(&mut fresh, segment, layered);
-                    source_start += length;
+                    next_ranges.push(start..target.index());
                 }
                 target.finish();
                 fresh.finish();
@@ -1702,7 +1866,9 @@ mod tests {
                     "seed={seed} frame={iteration}"
                 );
                 previous = target;
+                ranges = next_ranges;
             }
+            assert!(stats.scene_bulk_segments > 0);
         }
     }
 }

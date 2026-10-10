@@ -108,6 +108,45 @@ where
         self.bounds.len()
     }
 
+    pub fn try_replay_range(&mut self, previous: &Self, range: std::ops::Range<usize>) -> bool {
+        if range.start != self.bounds.len() || range.end > previous.bounds.len() {
+            return false;
+        }
+        if self.replay_generation != previous.generation {
+            self.replay_generation = previous.generation;
+            self.compared = 0;
+            self.changed.clear();
+        }
+        for position in self.compared..range.start {
+            let old = &previous.bounds[position];
+            let current = &self.bounds[position];
+            if old != current {
+                self.changed.push(old.0.clone());
+                self.changed.push(current.0.clone());
+            }
+        }
+        self.compared = range.start;
+        let comparisons = self.changed.len().saturating_mul(range.len());
+        let Some(remaining) = self.comparisons_left.checked_sub(comparisons) else {
+            return false;
+        };
+        self.comparisons_left = remaining;
+        if previous.bounds[range.clone()].iter().any(|(bounds, _)| {
+            self.changed
+                .iter()
+                .any(|changed| bounds.intersects(changed))
+        }) {
+            return false;
+        }
+        // Every prefix difference is disjoint from the whole segment. Its old
+        // orders therefore stand, including dependencies between segment nodes.
+        for (bounds, order) in &previous.bounds[range.clone()] {
+            self.register(bounds.clone(), *order);
+        }
+        self.compared = range.end;
+        true
+    }
+
     /// An unchanged bounds has its old order if no difference in the preceding
     /// insertion stream intersects it. Both sides of each difference count:
     /// removing an overlap can lower the answer just as adding one can raise it.
