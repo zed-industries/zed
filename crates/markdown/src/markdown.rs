@@ -5481,6 +5481,7 @@ mod tests {
         cx.simulate_event(ScrollWheelEvent {
             position: visible_position,
             delta: ScrollDelta::Pixels(point(px(-400.), px(0.))),
+            wheel_notches: None,
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
         });
@@ -7882,6 +7883,7 @@ mod tests {
         cx.simulate_event(ScrollWheelEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            wheel_notches: None,
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
         });
@@ -7978,6 +7980,7 @@ mod tests {
         cx.simulate_event(ScrollWheelEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            wheel_notches: None,
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
         });
