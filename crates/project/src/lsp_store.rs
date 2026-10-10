@@ -15089,12 +15089,122 @@ fn document_filter_glob(pattern: &lsp::GlobPattern) -> (Option<&lsp::Uri>, &str)
     }
 }
 
-fn document_filter_glob_matcher(glob: &str) -> Result<GlobMatcher> {
-    // In LSP glob patterns, `*` and `?` never match a path separator.
-    Ok(GlobBuilder::new(glob)
-        .literal_separator(true)
-        .build()?
-        .compile_matcher())
+/// Compiles an LSP glob pattern into a regular expression matching paths with `/` separators.
+///
+/// Follows the glob semantics of VS Code, which language servers are written against: `*` and `?`
+/// match characters (not bytes) within a path segment, a `**` segment matches any number of
+/// segments, `{a,b}` matches either sub-pattern, and `[a-z]` or `[!a-z]` matches a character in
+/// or out of a range.
+fn document_filter_glob_matcher(glob: &str) -> Result<regex::Regex> {
+    Ok(regex::Regex::new(&format!("^{}$", glob_regex(glob)?))?)
+}
+
+fn glob_regex(glob: &str) -> Result<String> {
+    const GLOBSTAR: &str = "**";
+    let segments = split_glob(glob, '/');
+    if segments.is_empty() {
+        return Ok(String::new());
+    }
+    if segments.iter().all(|segment| segment == GLOBSTAR) {
+        return Ok(".*".to_string());
+    }
+
+    let mut regex = String::new();
+    let mut previous_segment_was_globstar = false;
+    for (index, segment) in segments.iter().enumerate() {
+        let is_last_segment = index + 1 == segments.len();
+        if segment == GLOBSTAR {
+            if !previous_segment_was_globstar {
+                // Any number of segments, including the separators around them, and a last
+                // segment when nothing follows.
+                regex.push_str(if is_last_segment {
+                    "(?:/|[^/]+/|/[^/]+)*?"
+                } else {
+                    "(?:/|[^/]+/)*?"
+                });
+            }
+            previous_segment_was_globstar = true;
+            continue;
+        }
+        previous_segment_was_globstar = false;
+
+        let mut chars = segment.chars();
+        while let Some(char) = chars.next() {
+            match char {
+                '{' => {
+                    let mut choices = String::new();
+                    loop {
+                        match chars.next() {
+                            Some('}') => break,
+                            Some(char) => choices.push(char),
+                            None => anyhow::bail!("unclosed `{{` in glob pattern {glob:?}"),
+                        }
+                    }
+                    let choices = split_glob(&choices, ',')
+                        .iter()
+                        .map(|choice| glob_regex(choice))
+                        .collect::<Result<Vec<_>>>()?;
+                    regex.push_str(&format!("(?:{})", choices.join("|")));
+                }
+                '[' => {
+                    let mut class = String::new();
+                    loop {
+                        match chars.next() {
+                            // A `]` right after the `[` is a character of the class.
+                            Some(']') if !class.is_empty() => break,
+                            Some('-') => class.push('-'),
+                            Some('!' | '^') if class.is_empty() => class.push('^'),
+                            // Classes never match path separators.
+                            Some('/') => {}
+                            Some(char) => {
+                                class.push_str(&regex::escape(char.encode_utf8(&mut [0; 4])))
+                            }
+                            None => anyhow::bail!("unclosed `[` in glob pattern {glob:?}"),
+                        }
+                    }
+                    regex.push_str(&format!("[{class}]"));
+                }
+                '?' => regex.push_str("[^/]"),
+                '*' => regex.push_str("[^/]*?"),
+                char => regex.push_str(&regex::escape(char.encode_utf8(&mut [0; 4]))),
+            }
+        }
+
+        // A following `**` that ends the pattern brings its own separator.
+        let next_segment_is_last_globstar =
+            segments.get(index + 1).is_some_and(|next| next == GLOBSTAR)
+                && index + 2 == segments.len();
+        if !is_last_segment && !next_segment_is_last_globstar {
+            regex.push('/');
+        }
+    }
+    Ok(regex)
+}
+
+/// Splits a glob pattern at the separator, except within `{...}` and `[...]`.
+fn split_glob(glob: &str, separator: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut part = String::new();
+    let mut in_braces = false;
+    let mut in_brackets = false;
+    for char in glob.chars() {
+        match char {
+            char if char == separator && !in_braces && !in_brackets => {
+                parts.push(std::mem::take(&mut part));
+                continue;
+            }
+            '{' => in_braces = true,
+            '}' => in_braces = false,
+            '[' => in_brackets = true,
+            ']' => in_brackets = false,
+            _ => {}
+        }
+        part.push(char);
+    }
+    if !part.is_empty() {
+        parts.push(part);
+    }
+    parts
 }
 
 fn validate_document_filter_pattern(pattern: &lsp::GlobPattern) -> Result<()> {
@@ -17878,6 +17988,46 @@ mod tests {
             ),
             "backslashes are not separators in Unix paths",
         );
+    }
+
+    #[test]
+    fn document_filter_pattern_matches_characters() {
+        let matches = |pattern: &str, path: &str| {
+            document_filter_pattern_matches(
+                &lsp::GlobPattern::String(pattern.to_string()),
+                path,
+                PathStyle::Unix,
+            )
+        };
+
+        // `?` and character classes match characters, not bytes.
+        assert!(matches("**/?.rs", "/root/a.rs"));
+        assert!(matches("**/?.rs", "/root/é.rs"));
+        assert!(matches("**/[é].rs", "/root/é.rs"));
+        assert!(!matches("**/?.rs", "/root/ab.rs"));
+
+        assert!(matches("**/*.{rs,toml}", "/root/Project.toml"));
+        assert!(!matches("**/*.{rs,toml}", "/root/Project.json"));
+        assert!(matches("**/[!a].rs", "/root/b.rs"));
+        assert!(!matches("**/[!a].rs", "/root/a.rs"));
+        assert!(matches("**/[a-c].rs", "/root/b.rs"));
+        assert!(!matches("**/[a-c].rs", "/root/d.rs"));
+
+        assert!(matches("/root/**", "/root/sub/a.rs"));
+        assert!(matches("/root/**/a.rs", "/root/a.rs"));
+        assert!(matches("/root/**/a.rs", "/root/sub/a.rs"));
+        assert!(!matches("/root/**/a.rs", "/rooted/a.rs"));
+        assert!(!matches("/root/*.rs", "/root/sub/a.rs"));
+
+        for invalid_pattern in ["**/[a.rs", "**/{a,b.rs"] {
+            assert!(
+                validate_document_filter_pattern(&lsp::GlobPattern::String(
+                    invalid_pattern.to_string()
+                ))
+                .is_err(),
+                "expected {invalid_pattern:?} to be rejected",
+            );
+        }
     }
 
     fn rename_registrations(
