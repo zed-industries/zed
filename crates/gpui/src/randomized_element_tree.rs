@@ -1468,6 +1468,93 @@ mod tests {
     const MUTATION_COUNT: usize = 32;
     const WINDOW_SIZE: Size<Pixels> = size(px(1200.0), px(900.0));
 
+    #[gpui::test(seed = 3)]
+    fn retained_segment_leaf_style_counter_smoke(mut rng: StdRng, cx: &mut TestAppContext) {
+        use rand::SeedableRng as _;
+
+        let families = [
+            (
+                "any",
+                RandomizedElementTreeBounds::new(32..=256)
+                    .with_entity_density(0.05..=0.5)
+                    .with_handler_density(0.1..=0.4),
+            ),
+            (
+                "wide",
+                RandomizedElementTreeBounds::new(128..=2048)
+                    .with_topologies([RandomizedElementTreeTopology::Wide])
+                    .with_entity_density(0.05..=0.25)
+                    .with_handler_density(0.1..=0.4),
+            ),
+            (
+                "tall",
+                RandomizedElementTreeBounds::new(32..=256)
+                    .with_topologies(
+                        RandomizedElementTreeTopology::ALL
+                            .into_iter()
+                            .filter(|topology| topology.is_tall()),
+                    )
+                    .with_entity_density(0.05..=0.25)
+                    .with_handler_density(0.1..=0.4),
+            ),
+            (
+                "mixed",
+                RandomizedElementTreeBounds::new(128..=1024)
+                    .with_topologies([RandomizedElementTreeTopology::Mixed])
+                    .with_entity_density(0.05..=0.25)
+                    .with_handler_density(0.1..=0.4),
+            ),
+            (
+                "dense-entities",
+                RandomizedElementTreeBounds::new(128..=1024)
+                    .with_topologies([
+                        RandomizedElementTreeTopology::Wide,
+                        RandomizedElementTreeTopology::Mixed,
+                    ])
+                    .with_entity_density(0.75..=1.0)
+                    .with_handler_density(0.1..=0.4),
+            ),
+        ];
+        let stream_seed = rng.random::<u64>();
+        for (name, bounds) in families {
+            let name_hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+            });
+            let config = bounds
+                .sample(&mut StdRng::seed_from_u64(stream_seed ^ name_hash))
+                .with_cached_views(true);
+            for splice in [false, true] {
+                let window = cx.open_window(WINDOW_SIZE, move |window, cx| {
+                    window.set_view_splicing(splice);
+                    RandomizedElementTree::new_with_config(config, cx)
+                });
+                cx.run_until_parked();
+                window
+                    .update(cx, |_, window, _| window.take_view_reuse_stats())
+                    .expect("counter window exists");
+                for _ in 0..16 {
+                    window
+                        .update(cx, |tree, _, cx| {
+                            tree.apply_mutation(RandomizedElementTreeMutationKind::ChildColor, cx);
+                        })
+                        .expect("counter window exists");
+                    cx.run_until_parked();
+                }
+                window
+                    .update(cx, |_, window, _| {
+                        let stats = window.take_view_reuse_stats();
+                        assert_eq!(stats.frames, 16);
+                        assert!(stats.cached_hits > 0);
+                        println!(
+                            "retained-segment-smoke family={name} splice={splice} stats={stats:?}"
+                        );
+                        window.remove_window();
+                    })
+                    .expect("counter window exists");
+            }
+        }
+    }
+
     #[gpui::test(iterations = 12)]
     fn cached_views_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
         views_match_forced_reconstruction(rng, cx, true);
@@ -1479,7 +1566,16 @@ mod tests {
     }
 
     fn views_match_forced_reconstruction(mut rng: StdRng, cx: &mut TestAppContext, cached: bool) {
-        for topology in RandomizedElementTreeTopology::ALL {
+        for (topology, splice) in
+            RandomizedElementTreeTopology::ALL
+                .into_iter()
+                .flat_map(|topology| {
+                    [false, true]
+                        .into_iter()
+                        .filter(move |splice| cached || *splice)
+                        .map(move |splice| (topology, splice))
+                })
+        {
             let config = RandomizedElementTreeConfig::new(rng.random(), ELEMENT_COUNT)
                 .with_topology(topology)
                 .with_entity_density(0.5)
@@ -1487,7 +1583,7 @@ mod tests {
                 .with_cached_views(cached);
             let reused = cx.open_window(WINDOW_SIZE, move |window, cx| {
                 if cached {
-                    window.set_view_splicing(true);
+                    window.set_view_splicing(splice);
                 } else {
                     window.set_implicit_view_splicing(true);
                 }
@@ -1576,7 +1672,7 @@ mod tests {
             {
                 assert!(stats.cached_hits > 0, "fixture exercises reuse");
                 assert!(
-                    stats.hitboxes.cloned_elements > 0,
+                    stats.hitboxes.copied_elements > 0,
                     "fixture replays hitboxes"
                 );
             }
