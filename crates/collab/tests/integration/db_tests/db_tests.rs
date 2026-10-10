@@ -4,6 +4,7 @@ use collab::db::RoomId;
 use collab::db::*;
 use pretty_assertions::assert_eq;
 use rpc::ConnectionId;
+use rpc::proto;
 use std::sync::Arc;
 
 test_both_dbs!(
@@ -226,4 +227,83 @@ async fn test_project_count(db: &Arc<Database>) {
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
+}
+
+test_both_dbs!(
+    test_language_server_memory_usage_requires_host,
+    test_language_server_memory_usage_requires_host_postgres,
+    test_language_server_memory_usage_requires_host_sqlite
+);
+
+async fn test_language_server_memory_usage_requires_host(db: &Arc<Database>) {
+    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+    let host = db.create_user(true).await.unwrap();
+    let guest = db.create_user(false).await.unwrap();
+
+    let host_connection = ConnectionId { owner_id, id: 0 };
+    let guest_connection = ConnectionId { owner_id, id: 1 };
+
+    let room_id = RoomId::from_proto(
+        db.create_room(host.user_id, host_connection, "")
+            .await
+            .unwrap()
+            .id,
+    );
+
+    db.call(room_id, host.user_id, host_connection, guest.user_id, None)
+        .await
+        .unwrap();
+
+    db.join_room(room_id, guest.user_id, guest_connection)
+        .await
+        .unwrap();
+
+    let (project_id, _) = db
+        .share_project(room_id, host_connection, &[], false, false, &[])
+        .await
+        .unwrap()
+        .into_inner();
+
+    let server_id = 1;
+
+    db.start_language_server(
+        &proto::StartLanguageServer {
+            project_id: project_id.to_proto(),
+            server: Some(proto::LanguageServer {
+                id: server_id,
+                name: "test".to_string(),
+                worktree_id: None,
+                language_name: Some("Rust".to_string()),
+                server_version: None,
+            }),
+            capabilities: String::new(),
+        },
+        host_connection,
+    )
+    .await
+    .unwrap();
+
+    db.cache_language_server_memory_usage_for_connection(
+        project_id,
+        host_connection,
+        server_id,
+        100,
+    )
+    .await
+    .unwrap();
+
+    let result = db
+        .cache_language_server_memory_usage_for_connection(
+            project_id,
+            guest_connection,
+            server_id,
+            999,
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(
+        db.language_server_memory_usage(project_id, server_id),
+        Some(100)
+    );
 }

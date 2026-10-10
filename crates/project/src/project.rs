@@ -2899,6 +2899,10 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.send_project_updates(cx);
         });
+
+        self.lsp_store.update(cx, |lsp_store, _| {
+            lsp_store.resend_language_server_memory_usage();
+        });
         if let Some(remote_id) = self.remote_id() {
             self.git_store.update(cx, |git_store, cx| {
                 git_store.shared(remote_id, self.collab_client.clone().into(), cx)

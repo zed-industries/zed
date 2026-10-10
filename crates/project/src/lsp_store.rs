@@ -10144,6 +10144,23 @@ impl LspStore {
         }
     }
 
+    pub(crate) fn resend_language_server_memory_usage(&self) {
+        let Some((downstream_client, project_id)) = &self.downstream_client else {
+            return;
+        };
+
+        for message in language_server_memory_usage_updates(
+            *project_id,
+            self.language_server_statuses
+                .iter()
+                .map(|(server_id, status)| {
+                    (*server_id, status.name.to_string(), status.memory_usage)
+                }),
+        ) {
+            downstream_client.send(message).log_err();
+        }
+    }
+
     pub fn shared(
         &mut self,
         project_id: u64,
@@ -10178,20 +10195,7 @@ impl LspStore {
             }
         }
 
-        for (server_id, status) in &self.language_server_statuses {
-            if let Some(memory_usage) = status.memory_usage {
-                downstream_client
-                    .send(proto::UpdateLanguageServer {
-                        project_id,
-                        server_name: Some(status.name.to_string()),
-                        language_server_id: server_id.to_proto(),
-                        variant: Some(proto::update_language_server::Variant::MemoryUsageUpdated(
-                            proto::ServerMemoryUsageUpdated { memory_usage },
-                        )),
-                    })
-                    .log_err();
-            }
-        }
+        self.resend_language_server_memory_usage();
     }
 
     pub fn disconnected_from_host(&mut self) {
@@ -15120,6 +15124,24 @@ impl LspStore {
     }
 }
 
+fn language_server_memory_usage_updates(
+    project_id: u64,
+    servers: impl IntoIterator<Item = (LanguageServerId, String, Option<u64>)>,
+) -> impl Iterator<Item = proto::UpdateLanguageServer> {
+    servers
+        .into_iter()
+        .filter_map(move |(server_id, server_name, memory_usage)| {
+            memory_usage.map(|memory_usage| proto::UpdateLanguageServer {
+                project_id,
+                server_name: Some(server_name),
+                language_server_id: server_id.to_proto(),
+                variant: Some(proto::update_language_server::Variant::MemoryUsageUpdated(
+                    proto::ServerMemoryUsageUpdated { memory_usage },
+                )),
+            })
+        })
+}
+
 fn document_selector_context_for_buffer(
     buffer: &Buffer,
     adapter: &CachedLspAdapter,
@@ -17154,6 +17176,30 @@ mod tests {
     use gpui::TestAppContext;
     use settings::SettingsStore;
     use text::Point;
+
+    #[test]
+    fn reshare_republishes_retained_language_server_memory_usage() {
+        let mut updates = language_server_memory_usage_updates(
+            42,
+            [
+                (LanguageServerId(7), "rust-analyzer".to_owned(), Some(128)),
+                (LanguageServerId(8), "typescript".to_owned(), None),
+            ],
+        );
+
+        assert_eq!(
+            updates.next(),
+            Some(proto::UpdateLanguageServer {
+                project_id: 42,
+                server_name: Some("rust-analyzer".to_owned()),
+                language_server_id: 7,
+                variant: Some(proto::update_language_server::Variant::MemoryUsageUpdated(
+                    proto::ServerMemoryUsageUpdated { memory_usage: 128 },
+                )),
+            })
+        );
+        assert_eq!(updates.next(), None);
+    }
 
     #[gpui::test]
     fn test_inlay_hint_server_removal_retires_ids_and_resolves(cx: &mut TestAppContext) {

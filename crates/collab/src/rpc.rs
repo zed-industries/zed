@@ -2404,6 +2404,21 @@ async fn update_language_server(
             )
             .await?
         }
+        Some(proto::update_language_server::Variant::MetadataUpdated(update)) => {
+            if let Some(capabilities) = update.capabilities.clone() {
+                db.update_server_capabilities_and_get_connection_ids(
+                    project_id,
+                    session.connection_id,
+                    request.language_server_id,
+                    capabilities,
+                )
+                .await?
+            } else {
+                db.project_connection_ids(project_id, session.connection_id, true)
+                    .await?
+                    .into_inner()
+            }
+        }
         _ => db
             .project_connection_ids(project_id, session.connection_id, true)
             .await?
@@ -2414,12 +2429,6 @@ async fn update_language_server(
         db.0.remove_language_server_memory_usage(project_id, request.language_server_id);
     }
 
-    if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
-        && let Some(capabilities) = update.capabilities.clone()
-    {
-        db.update_server_capabilities(project_id, request.language_server_id, capabilities)
-            .await?;
-    }
     broadcast(
         Some(session.connection_id),
         project_connection_ids.iter().copied(),

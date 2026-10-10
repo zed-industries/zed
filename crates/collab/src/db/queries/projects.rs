@@ -1233,6 +1233,18 @@ impl Database {
     ) -> Result<HashSet<ConnectionId>> {
         let project_connection_ids = self
             .project_transaction(project_id, |tx| async move {
+                let project = project::Entity::find_by_id(project_id)
+                    .one(&*tx)
+                    .await?
+                    .context("no such project")?;
+
+                // Ensure the update comes from the host.
+                if project.host_connection()? != connection_id {
+                    return Err(
+                        anyhow::anyhow!("can't update a project hosted by someone else").into(),
+                    );
+                }
+
                 let connection_ids = self
                     .internal_project_connection_ids(project_id, connection_id, true, &tx)
                     .await?;
@@ -1244,7 +1256,7 @@ impl Database {
                         .is_some();
 
                 if !language_server_exists {
-                    return Err(anyhow!("no such language server").into());
+                    return Err(anyhow::anyhow!("no such language server").into());
                 }
 
                 Ok(connection_ids)
@@ -1255,6 +1267,51 @@ impl Database {
 
         self.update_language_server_memory_usage(project_id, language_server_id, memory_usage);
 
+        drop(project_connection_ids);
+
+        Ok(connection_ids)
+    }
+
+    pub async fn update_server_capabilities_and_get_connection_ids(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+        server_id: u64,
+        new_capabilities: String,
+    ) -> Result<HashSet<ConnectionId>> {
+        let project_connection_ids = self
+            .project_transaction(project_id, |tx| {
+                let new_capabilities = new_capabilities.clone();
+                async move {
+                    let connection_ids = self
+                        .internal_project_connection_ids(project_id, connection_id, true, &tx)
+                        .await?;
+
+                    let language_server_exists =
+                        language_server::Entity::find_by_id((project_id, server_id as i64))
+                            .one(&*tx)
+                            .await?
+                            .is_some();
+
+                    if !language_server_exists {
+                        return Err(anyhow::anyhow!("no such language server").into());
+                    }
+
+                    language_server::Entity::update(language_server::ActiveModel {
+                        project_id: ActiveValue::unchanged(project_id),
+                        id: ActiveValue::unchanged(server_id as i64),
+                        capabilities: ActiveValue::set(new_capabilities),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?;
+
+                    Ok(connection_ids)
+                }
+            })
+            .await?;
+
+        let connection_ids = project_connection_ids.iter().copied().collect();
         drop(project_connection_ids);
 
         Ok(connection_ids)

@@ -2582,6 +2582,45 @@ mod tests {
     }
 
     #[gpui::test]
+    fn persistent_menu_rebuild_preserves_selection_and_submenu(cx: &mut TestAppContext) {
+        cx.disable_accessibility();
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let window = cx
+            .update(|cx| {
+                cx.open_window(Default::default(), |window, cx| {
+                    ContextMenu::build_persistent(window, cx, |menu, _, _| {
+                        menu.entry("First", None, |_, _| {})
+                            .submenu("More", |menu, _, _| menu)
+                    })
+                })
+            })
+            .expect("open menu window");
+        let menu = window.root(cx).expect("menu root");
+        let mut visual_cx = VisualTestContext::from_window(window.into(), cx);
+        focus_menu(&menu, &mut visual_cx);
+
+        visual_cx.dispatch_action(SelectNext);
+        visual_cx.dispatch_action(SelectNext);
+        visual_cx.dispatch_action(SelectChild);
+        menu.read_with(&visual_cx, |menu, _| {
+            assert_eq!(menu.selected_index, Some(1));
+            assert!(matches!(&menu.submenu_state, SubmenuState::Open(_)));
+        });
+
+        menu.update_in(&mut visual_cx, |menu, window, cx| menu.rebuild(window, cx));
+
+        menu.read_with(&visual_cx, |menu, _| {
+            assert_eq!(menu.selected_index, Some(1));
+            assert!(matches!(&menu.submenu_state, SubmenuState::Open(_)));
+        });
+    }
+
+    #[gpui::test]
     fn persistent_focus_selection_with_accessibility(cx: &mut TestAppContext) {
         assert_focus_selection(cx, true, true);
     }

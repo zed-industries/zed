@@ -1272,15 +1272,22 @@ impl LspButton {
                 lsp_button
                     .update_in(cx, |lsp_button, window, cx| {
                         lsp_button.regenerate_items(cx);
-                        let menu = ContextMenu::build(window, cx, |menu, _, cx| {
-                            state.update(cx, |state, cx| state.fill_menu(menu, cx))
-                        });
-                        lsp_button.lsp_menu = Some(menu.clone());
-                        lsp_button.popover_menu_handle.refresh_menu(
-                            window,
-                            cx,
-                            Rc::new(move |_, _| Some(menu.clone())),
-                        );
+
+                        if let Some(menu) = lsp_button.lsp_menu.clone() {
+                            menu.update(cx, |menu, cx| menu.rebuild(window, cx));
+                        } else {
+                            let menu =
+                                ContextMenu::build_persistent(window, cx, move |menu, _, cx| {
+                                    state.update(cx, |state, cx| state.fill_menu(menu, cx))
+                                });
+                            lsp_button.lsp_menu = Some(menu.clone());
+                            lsp_button.popover_menu_handle.refresh_menu(
+                                window,
+                                cx,
+                                Rc::new(move |_, _| Some(menu.clone())),
+                            );
+                        }
+
                         cx.notify();
                     })
                     .ok();
