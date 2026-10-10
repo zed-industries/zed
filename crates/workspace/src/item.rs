@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 use ui::{Color, Icon, IntoElement, Label, LabelCommon};
-use util::{ResultExt, debug_panic};
+use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
