@@ -1339,12 +1339,19 @@ pub(crate) enum RenderPhase {
     DispatchPayloadIndex,
     ViewStoreGrowth,
     GeometryValidation,
+    ScopeTextStyle,
+    ScopeIdentity,
+    ScopeDispatch,
+    ScopeMask,
+    ScopeScalars,
+    ScopeImageCache,
+    ScopeEmpty,
 }
 
 #[cfg(feature = "bench-support")]
 thread_local! {
-    static RENDER_PHASE_TIMINGS: std::cell::RefCell<[(Duration, usize); 23]> =
-        const { std::cell::RefCell::new([(Duration::ZERO, 0); 23]) };
+    static RENDER_PHASE_TIMINGS: std::cell::RefCell<[(Duration, usize); 30]> =
+        const { std::cell::RefCell::new([(Duration::ZERO, 0); 30]) };
 }
 
 #[cfg(feature = "bench-support")]
@@ -2639,9 +2646,9 @@ impl Window {
     /// Takes opt-in foreground phase totals. Timings are inclusive: replay and
     /// layout totals are also included in the enclosing root phase.
     #[cfg(feature = "bench-support")]
-    pub fn take_render_phase_timings(&self) -> [(&'static str, Duration, usize); 23] {
+    pub fn take_render_phase_timings(&self) -> [(&'static str, Duration, usize); 30] {
         let values =
-            RENDER_PHASE_TIMINGS.with(|timings| timings.replace([(Duration::ZERO, 0); 23]));
+            RENDER_PHASE_TIMINGS.with(|timings| timings.replace([(Duration::ZERO, 0); 30]));
         let names = [
             "layout",
             "retain",
@@ -2666,6 +2673,13 @@ impl Window {
             "dispatch payload index",
             "ViewStore growth",
             "geometry validation",
+            "scope text style",
+            "scope identity",
+            "scope dispatch",
+            "scope content mask",
+            "scope rem scale opacity",
+            "scope image cache",
+            "scope empty timer",
         ];
         std::array::from_fn(|index| (names[index], values[index].0, values[index].1))
     }
@@ -2758,6 +2772,10 @@ impl Window {
     pub(crate) fn capture_view_scope(&mut self) -> ViewExecutionScope {
         #[cfg(feature = "bench-support")]
         let _timer = RenderPhaseTimer::start(RenderPhase::ScopeCapture);
+        #[cfg(feature = "bench-support")]
+        if _timer.is_some() {
+            return self.capture_view_scope_profiled();
+        }
         let image_cache = self.image_cache_stack.last().map(|cache| {
             let entity = cache.entity_id();
             if let Some(cache) = self
@@ -2791,6 +2809,69 @@ impl Window {
             dispatch_node: self.next_frame.dispatch_tree.active_node_id(),
             parent_occurrence: self.current_view_occurrence,
             fallback: self.retained_scope_fallback,
+        }
+    }
+
+    #[cfg(feature = "bench-support")]
+    fn capture_view_scope_profiled(&mut self) -> ViewExecutionScope {
+        drop(RenderPhaseTimer::start(RenderPhase::ScopeEmpty));
+        let timer = RenderPhaseTimer::start(RenderPhase::ScopeImageCache);
+        let image_cache = self.image_cache_stack.last().map(|cache| {
+            let entity = cache.entity_id();
+            if let Some(cache) = self
+                .scope_image_caches
+                .get(&entity)
+                .and_then(std::rc::Weak::upgrade)
+            {
+                cache
+            } else {
+                let cache = Rc::new(cache.clone());
+                self.scope_image_caches
+                    .insert(entity, Rc::downgrade(&cache));
+                cache
+            }
+        });
+        drop(timer);
+        let timer = RenderPhaseTimer::start(RenderPhase::ScopeTextStyle);
+        let text_style = self.retained_text_style_handle();
+        drop(timer);
+        let timer = RenderPhaseTimer::start(RenderPhase::ScopeIdentity);
+        let element_path = self.element_id_stack.handle();
+        let current_view = self.rendered_entity_stack.last().copied();
+        let offset = self
+            .element_offset_stack
+            .last()
+            .copied()
+            .unwrap_or_default();
+        drop(timer);
+        let timer = RenderPhaseTimer::start(RenderPhase::ScopeDispatch);
+        let dispatch_node = self.next_frame.dispatch_tree.active_node_id();
+        let parent_occurrence = self.current_view_occurrence;
+        drop(timer);
+        let timer = RenderPhaseTimer::start(RenderPhase::ScopeMask);
+        let content_mask = self.content_mask();
+        drop(timer);
+        let timer = RenderPhaseTimer::start(RenderPhase::ScopeScalars);
+        let rem_override = self.rem_size_override_stack.last().copied();
+        let opacity = self.element_opacity;
+        let rem_size = self.rem_size;
+        let scale_factor = self.scale_factor;
+        let fallback = self.retained_scope_fallback;
+        drop(timer);
+        ViewExecutionScope {
+            element_path,
+            text_style,
+            current_view,
+            offset,
+            content_mask,
+            rem_override,
+            image_cache,
+            opacity,
+            rem_size,
+            scale_factor,
+            dispatch_node,
+            parent_occurrence,
+            fallback,
         }
     }
 
