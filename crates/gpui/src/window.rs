@@ -5025,8 +5025,6 @@ impl Window {
                 .size
                 .map(|value| ScaledPixels(value.0 as f32 / SMOOTH_SVG_SCALE_FACTOR)),
         };
-        // Rounding the size up lets the outermost samples read past this tile
-        // into the one packed next to it in the atlas.
         let final_bounds = svg_bounds
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| ScaledPixels(size.0.floor().max(1.)));
