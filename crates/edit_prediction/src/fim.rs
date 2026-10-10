@@ -161,7 +161,7 @@ pub fn request_prediction(
     })
 }
 
-async fn send_fim_request(
+pub(crate) async fn send_fim_request(
     provider: settings::EditPredictionProvider,
     prompt_format: EditPredictionPromptFormat,
     settings: &OpenAiCompatibleEditPredictionSettings,
@@ -320,69 +320,6 @@ fn clean_fim_completion(response: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::AsyncReadExt as _;
-    use gpui::http_client::FakeHttpClient;
-    use serde_json::{Value, json};
-
-    #[test]
-    fn deepseek_flash_uses_native_fim_with_separate_suffix() -> Result<()> {
-        futures::executor::block_on(async {
-            for api_url in [
-                "https://api.deepseek.com/v1/completions",
-                "https://api.deepseek.com/v1/chat/completions",
-                "https://api.deepseek.com/beta/completions",
-            ] {
-                let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::create(
-                    |mut request| async move {
-                        assert_eq!(
-                            request.uri().to_string(),
-                            "https://api.deepseek.com/beta/completions"
-                        );
-                        let mut body = String::new();
-                        request.body_mut().read_to_string(&mut body).await?;
-                        let body: Value = serde_json::from_str(&body)?;
-                        assert_eq!(
-                            body,
-                            json!({
-                                "model": "deepseek-flash",
-                                "prompt": "def square(number):\n    return number ",
-                                "suffix": " number\n",
-                                "max_tokens": 32
-                            })
-                        );
-                        Ok(http_client::Response::builder().status(200).body(json!({
-                            "id": "native-fim", "object": "text_completion", "created": 0,
-                            "model": "deepseek-flash",
-                            "choices": [{"text": "*", "finish_reason": "stop"}],
-                            "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}
-                        }).to_string().into())?)
-                    },
-                );
-                let settings = OpenAiCompatibleEditPredictionSettings {
-                    model: "deepseek-flash".into(),
-                    api_url: api_url.into(),
-                    max_output_tokens: 32,
-                    ..Default::default()
-                };
-                assert_eq!(
-                    send_fim_request(
-                        settings::EditPredictionProvider::OpenAiCompatibleApi,
-                        EditPredictionPromptFormat::DeepseekCoder,
-                        &settings,
-                        "def square(number):\n    return number ",
-                        " number\n",
-                        None,
-                        &http_client
-                    )
-                    .await?,
-                    ("*".into(), "native-fim".into()),
-                    "{api_url}"
-                );
-            }
-            Ok(())
-        })
-    }
-
     #[test]
     fn infer_prompt_format_matches_known_model_families() {
         assert_eq!(
