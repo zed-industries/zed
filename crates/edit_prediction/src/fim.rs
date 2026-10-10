@@ -171,7 +171,7 @@ pub(crate) async fn send_fim_request(
     http_client: &Arc<dyn http_client::HttpClient>,
 ) -> Result<(String, String)> {
     if provider == settings::EditPredictionProvider::OpenAiCompatibleApi {
-        // Flash uses a native suffix instead of the Coder markers selected by format inference.
+        // Official DeepSeek APIs use a native suffix instead of the legacy Coder markers.
         if let Some(response) =
             deepseek_fim::try_request(settings, prefix, suffix, api_key.clone(), http_client)
                 .await?
@@ -193,6 +193,17 @@ pub(crate) async fn send_fim_request(
         http_client,
     )
     .await
+}
+
+pub fn infer_prompt_format_for_api(
+    model: &str,
+    api_url: &str,
+) -> Option<EditPredictionPromptFormat> {
+    if deepseek_fim::is_supported_api_url(api_url) {
+        Some(EditPredictionPromptFormat::DeepseekCoder)
+    } else {
+        infer_prompt_format(model)
+    }
 }
 
 /// Infers the FIM prompt format from an Ollama/OpenAI-compatible model name.

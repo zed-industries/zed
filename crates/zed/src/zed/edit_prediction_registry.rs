@@ -127,7 +127,15 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
 
             let mut format = custom_settings.prompt_format;
             if format == EditPredictionPromptFormat::Infer {
-                if let Some(inferred_format) = fim::infer_prompt_format(&custom_settings.model) {
+                let inferred_format = if provider == EditPredictionProvider::OpenAiCompatibleApi {
+                    fim::infer_prompt_format_for_api(
+                        &custom_settings.model,
+                        &custom_settings.api_url,
+                    )
+                } else {
+                    fim::infer_prompt_format(&custom_settings.model)
+                };
+                if let Some(inferred_format) = inferred_format {
                     format = inferred_format;
                 } else {
                     // todo: notify user that prompt format inference failed
@@ -341,6 +349,49 @@ mod tests {
 
         let provider_name = config.map(|config| config.name());
         assert_eq!(provider_name, Some("Sweep Prompt"));
+
+        drop(app_state);
+    }
+
+    #[gpui::test]
+    async fn test_official_deepseek_infers_fim_for_future_models(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            client::init(&app_state.client, cx);
+            language_model::init(cx);
+            app_state
+        });
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.edit_predictions =
+                        Some(settings::EditPredictionSettingsContent {
+                            provider: Some(EditPredictionProvider::OpenAiCompatibleApi),
+                            open_ai_compatible_api: Some(
+                                settings::CustomEditPredictionProviderSettingsContent {
+                                    api_url: Some(
+                                        "https://api.deepseek.com/v1/completions".to_string(),
+                                    ),
+                                    model: Some("deepseek-next".to_string()),
+                                    prompt_format: Some(EditPredictionPromptFormatContent::Infer),
+                                    ..Default::default()
+                                },
+                            ),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+
+        assert!(matches!(
+            cx.update(|cx| edit_prediction_provider_config_for_settings(cx)),
+            Some(EditPredictionProviderConfig::Zed(
+                EditPredictionModel::Fim {
+                    format: EditPredictionPromptFormat::DeepseekCoder,
+                }
+            ))
+        ));
 
         drop(app_state);
     }
