@@ -1,4 +1,5 @@
 use super::*;
+use workspace::{NavigableItem, NavigationLocation};
 
 impl Editor {
     pub fn move_left(&mut self, _: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
@@ -938,10 +939,6 @@ impl Editor {
         });
     }
 
-    pub fn set_nav_history(&mut self, nav_history: Option<ItemNavHistory>) {
-        self.nav_history = nav_history;
-    }
-
     pub fn save_location(
         &mut self,
         _: &SaveLocation,
@@ -955,8 +952,7 @@ impl Editor {
         self.push_to_nav_history(
             self.selections.newest_anchor().head(),
             None,
-            false,
-            true,
+            RecordNavigation::Always,
             cx,
         );
     }
@@ -1003,7 +999,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.go_to_singleton_buffer_range_impl(range, true, window, cx);
+        self.go_to_singleton_buffer_range_impl(range, RecordNavigation::Always, window, cx);
     }
 
     /// Like `go_to_singleton_buffer_point`, but does not push a navigation
@@ -1015,7 +1011,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.go_to_singleton_buffer_range_impl(point..point, false, window, cx);
+        self.go_to_singleton_buffer_range_impl(point..point, RecordNavigation::Never, window, cx);
     }
 
     pub fn go_to_next_document_highlight(
@@ -1470,7 +1466,6 @@ impl Editor {
                     if Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
                         editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
-                        let pane = workspace.read(cx).active_pane().clone();
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
                                 workspace.update(cx, |workspace, cx| {
@@ -1492,11 +1487,14 @@ impl Editor {
                                     )
                                 });
                             target_editor.update(cx, |target_editor, cx| {
-                                // When selecting a definition in a different buffer, disable the nav history
-                                // to avoid creating a history entry at the previous cursor location.
-                                pane.update(cx, |pane, _| pane.disable_history());
-                                target_editor.go_to_singleton_buffer_range(range, window, cx);
-                                pane.update(cx, |pane, _| pane.enable_history());
+                                // When selecting a definition in a different buffer, don't create a
+                                // history entry at the previous cursor location.
+                                target_editor.go_to_singleton_buffer_range_impl(
+                                    range,
+                                    RecordNavigation::Never,
+                                    window,
+                                    cx,
+                                );
                             });
                         });
                     }
@@ -1549,31 +1547,36 @@ impl Editor {
             return None;
         };
         let data = self.navigation_data(cursor_anchor, cx);
-        Some(history.navigation_entry(Some(Arc::new(data) as Arc<dyn Any + Send + Sync>)))
+        Some(history.navigation_entry(data.into_location()))
     }
 
+    /// Records `cursor_anchor` as the location the cursor moved away from. Without a
+    /// `new_position`, the location is recorded unless `record_navigation` is `Never`.
     pub(super) fn push_to_nav_history(
         &mut self,
         cursor_anchor: Anchor,
         new_position: Option<Point>,
-        is_deactivate: bool,
-        always: bool,
+        record_navigation: RecordNavigation,
         cx: &mut Context<Self>,
     ) {
+        let min_row_delta = match record_navigation {
+            RecordNavigation::Never => return,
+            RecordNavigation::OnLargeJump => MIN_NAVIGATION_HISTORY_ROW_DELTA,
+            RecordNavigation::Always => 1,
+        };
         let data = self.navigation_data(cursor_anchor, cx);
         if let Some(nav_history) = self.nav_history.as_mut() {
             if let Some(new_position) = new_position {
                 let row_delta = (new_position.row as i64 - data.cursor_position.row as i64).abs();
-                if row_delta == 0 || (row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA && !always) {
+                if row_delta < min_row_delta {
                     return;
                 }
             }
 
-            let cursor_row = data.cursor_position.row;
-            nav_history.push(Some(data), Some(cursor_row), cx);
+            nav_history.push(data.into_location(), cx);
             cx.emit(EditorEvent::PushedToNavHistory {
                 anchor: cursor_anchor,
-                is_deactivate,
+                is_deactivate: false,
             })
         }
     }
@@ -1837,9 +1840,7 @@ impl Editor {
                                 let nav_data = editor
                                     .navigation_data(editor.selections.newest_anchor().head(), cx);
                                 let target =
-                                    Some(nav_history.navigation_entry(Some(
-                                        Arc::new(nav_data) as Arc<dyn Any + Send + Sync>
-                                    )));
+                                    Some(nav_history.navigation_entry(nav_data.into_location()));
                                 nav_history.push_tag(origin, target);
                             })
                         }
@@ -1926,7 +1927,7 @@ impl Editor {
                                 editor.cursor_top_offset(cx),
                                 cx,
                             ))
-                            .nav_history(true),
+                            .record_navigation(RecordNavigation::Always),
                             window,
                             cx,
                             |s| s.select_anchor_ranges(target_ranges),
@@ -1941,7 +1942,6 @@ impl Editor {
                         let Some(workspace) = workspace else {
                             return Navigated::No;
                         };
-                        let pane = workspace.read(cx).active_pane().clone();
                         let offset = editor.cursor_top_offset(cx);
 
                         window.defer(cx, move |window, cx| {
@@ -1981,10 +1981,6 @@ impl Editor {
                             let mut nav_history = target_pane
                                 .update(cx, |pane, _| pane.nav_history_for_item(&target_editor));
                             target_editor.update(cx, |target_editor, cx| {
-                                // When selecting a definition in a different buffer, disable the nav history
-                                // to avoid creating a history entry at the previous cursor location.
-                                pane.update(cx, |pane, _| pane.disable_history());
-
                                 let multibuffer = target_editor.buffer.read(cx);
                                 let Some(target_buffer) = multibuffer.as_singleton() else {
                                     return Navigated::No;
@@ -2009,11 +2005,13 @@ impl Editor {
                                     return Navigated::No;
                                 }
 
+                                // When selecting a definition in a different buffer, don't create a
+                                // history entry at the previous cursor location.
                                 target_editor.change_selections(
                                     SelectionEffects::scroll(Autoscroll::for_go_to_definition(
                                         offset, cx,
                                     ))
-                                    .nav_history(true),
+                                    .record_navigation(RecordNavigation::Never),
                                     window,
                                     cx,
                                     |s| s.select_anchor_ranges(target_ranges),
@@ -2024,11 +2022,8 @@ impl Editor {
                                     cx,
                                 );
                                 let target =
-                                    Some(nav_history.navigation_entry(Some(
-                                        Arc::new(nav_data) as Arc<dyn Any + Send + Sync>
-                                    )));
+                                    Some(nav_history.navigation_entry(nav_data.into_location()));
                                 nav_history.push_tag(origin, target);
-                                pane.update(cx, |pane, _| pane.enable_history());
                                 Navigated::Yes
                             });
                         });
@@ -2468,7 +2463,7 @@ impl Editor {
     fn go_to_singleton_buffer_range_impl(
         &mut self,
         range: Range<Point>,
-        record_nav_history: bool,
+        record_navigation: RecordNavigation,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2487,7 +2482,7 @@ impl Editor {
                 self.cursor_top_offset(cx),
                 cx,
             ))
-            .nav_history(record_nav_history),
+            .record_navigation(record_navigation),
             window,
             cx,
             |s| s.select_anchor_ranges([start..end]),
@@ -2557,5 +2552,67 @@ impl Editor {
                 s.select_ranges([destination..destination]);
             });
         }
+    }
+}
+
+impl NavigationData {
+    fn into_location(self) -> NavigationLocation {
+        let cursor_row = self.cursor_position.row;
+        NavigationLocation::new(self, Some(cursor_row))
+    }
+}
+
+impl NavigableItem for Editor {
+    fn capture_location(&mut self, cx: &mut Context<Self>) -> NavigationLocation {
+        let cursor_anchor = self.selections.newest_anchor().head();
+        let data = self.navigation_data(cursor_anchor, cx);
+        cx.emit(EditorEvent::PushedToNavHistory {
+            anchor: cursor_anchor,
+            is_deactivate: true,
+        });
+        data.into_location()
+    }
+
+    fn restore_location(
+        &mut self,
+        data: Arc<dyn Any + Send + Sync>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(data) = data.downcast_ref::<NavigationData>() else {
+            return false;
+        };
+        let newest_selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
+        let buffer = self.buffer.read(cx).read(cx);
+        let offset = if buffer.can_resolve(&data.cursor_anchor) {
+            data.cursor_anchor.to_point(&buffer)
+        } else {
+            buffer.clip_point(data.cursor_position, Bias::Left)
+        };
+
+        let mut scroll_anchor = data.scroll_anchor;
+        if !buffer.can_resolve(&scroll_anchor.anchor) {
+            scroll_anchor.anchor = buffer
+                .anchor_before(buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left));
+        }
+
+        drop(buffer);
+
+        if newest_selection.head() == offset {
+            false
+        } else {
+            self.set_scroll_anchor(scroll_anchor, window, cx);
+            self.change_selections(
+                SelectionEffects::default().record_navigation(RecordNavigation::Never),
+                window,
+                cx,
+                |s| s.select_ranges([offset..offset]),
+            );
+            true
+        }
+    }
+
+    fn bind_history(&mut self, history: ItemNavHistory, _: &mut Context<Self>) {
+        self.nav_history = Some(history);
     }
 }

@@ -48,7 +48,7 @@ use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
 use workspace::{
-    ItemId, ItemNavHistory, Pane, SaveIntent, Workspace, WorkspaceId, delete_unloaded_items,
+    ItemId, ItemNavigation, Pane, SaveIntent, Workspace, WorkspaceId, delete_unloaded_items,
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
@@ -84,7 +84,6 @@ pub struct MarkdownPreviewView {
     /// Search results depend on the parsed markdown, which lags behind the source while a
     /// background parse is in flight. Tracked so matches can be invalidated once it lands.
     markdown_parse_pending: bool,
-    nav_history: Option<ItemNavHistory>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -427,7 +426,6 @@ impl MarkdownPreviewView {
                 hovered_url: None,
                 mode,
                 markdown_parse_pending: false,
-                nav_history: None,
             };
 
             this.set_editor(active_editor, window, cx);
@@ -1830,19 +1828,8 @@ impl Item for MarkdownPreviewView {
         )))
     }
 
-    fn set_nav_history(
-        &mut self,
-        history: ItemNavHistory,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) {
-        self.nav_history = Some(history);
-    }
-
-    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(nav_history) = self.nav_history.as_mut() {
-            nav_history.push::<()>(None, None, cx);
-        }
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
     }
 }
 

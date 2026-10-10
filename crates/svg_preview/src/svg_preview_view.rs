@@ -9,7 +9,7 @@ use gpui::{
 use language::{Buffer, BufferEvent};
 use multi_buffer::MultiBuffer;
 use ui::prelude::*;
-use workspace::item::Item;
+use workspace::item::{Item, ItemNavigation};
 use workspace::{Pane, Workspace};
 
 use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
@@ -317,6 +317,10 @@ impl EventEmitter<()> for SvgPreviewView {}
 
 impl Item for SvgPreviewView {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_icon(&self, _window: &Window, cx: &App) -> Option<Icon> {
         self.buffer

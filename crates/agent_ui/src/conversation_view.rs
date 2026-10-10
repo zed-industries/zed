@@ -3992,7 +3992,7 @@ pub(crate) mod tests {
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
-    use workspace::{Item, MultiWorkspace};
+    use workspace::{Item, ItemNavigation, MultiWorkspace};
 
     use crate::agent_panel;
     use crate::completion_provider::AgentContextSource;
@@ -7891,8 +7891,8 @@ pub(crate) mod tests {
     impl Item for ThreadViewItem {
         type Event = ();
 
-        fn include_in_nav_history() -> bool {
-            false
+        fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+            ItemNavigation::Excluded
         }
 
         fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {

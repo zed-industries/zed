@@ -20,7 +20,7 @@ use ui::{
 use workspace::{
     Event as WorkspaceEvent, SplitDirection, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
-    item::{Item, ItemHandle},
+    item::{Item, ItemHandle, ItemNavigation},
 };
 
 actions!(
@@ -567,6 +567,10 @@ impl Focusable for SyntaxTreeView {
 
 impl Item for SyntaxTreeView {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 

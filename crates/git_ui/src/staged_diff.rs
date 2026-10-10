@@ -20,14 +20,10 @@ use project::{
     project_settings::ProjectSettings,
 };
 use settings::Settings;
-use std::{
-    any::{Any, TypeId},
-    ops::Range,
-    sync::Arc,
-};
+use std::{any::TypeId, ops::Range, sync::Arc};
 use ui::{DiffStat, Divider, Icon, Tooltip, Window, prelude::*};
 use workspace::{
-    ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    ItemNavigation, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::SearchableItemHandle,
@@ -287,19 +283,8 @@ impl Item for StagedDiff {
         Editor::to_item_events(event, f)
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.diff
-            .update(cx, |diff, cx| diff.deactivated(window, cx));
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.diff
-            .update(cx, |diff, cx| diff.navigate(data, window, cx))
+    fn navigation(&self, _: &Entity<Self>, cx: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.diff.read(cx).editor().clone())
     }
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
@@ -328,16 +313,6 @@ impl Item for StagedDiff {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.diff.read(cx).active_project_path(cx)
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.diff
-            .update(cx, |diff, cx| diff.set_nav_history(nav_history, cx));
     }
 
     fn can_split(&self) -> bool {

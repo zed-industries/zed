@@ -71,8 +71,9 @@ use gpui::{
 };
 pub use history_manager::*;
 pub use item::{
-    FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-    ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
+    FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemNavigation, ItemSettings,
+    NavigableItem, NavigationLocation, PreviewTabsSettings, ProjectItem, SerializableItem,
+    SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
 use language::{Buffer, LanguageRegistry, Rope, language_settings::all_language_settings};
@@ -3187,7 +3188,10 @@ impl Workspace {
 
                         let mut navigated = prev_active_item_index != pane.active_item_index();
                         if let Some(data) = entry.data {
-                            navigated |= pane.active_item()?.navigate(data, window, cx);
+                            navigated |= pane
+                                .active_item()?
+                                .navigation(cx)
+                                .restore_location(data, window, cx);
                         }
 
                         if navigated {
@@ -3238,7 +3242,7 @@ impl Workspace {
                             navigated |= Some(item.item_id()) != prev_active_item_id;
                             pane.nav_history_mut().set_mode(NavigationMode::Normal);
                             if let Some(data) = entry.data {
-                                navigated |= item.navigate(data, window, cx);
+                                navigated |= item.navigation(cx).restore_location(data, window, cx);
                             }
                         })?;
                     }
@@ -3262,7 +3266,7 @@ impl Workspace {
                                         navigated |= Some(item.item_id()) != prev_active_item_id;
                                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
                                         if let Some(data) = entry.data {
-                                            navigated |= item.navigate(data, window, cx);
+                                            navigated |= item.navigation(cx).restore_location(data, window, cx);
                                         }
                                     })?;
                                 }
@@ -14365,6 +14369,209 @@ mod tests {
         });
     }
 
+    /// An item that hands navigation to a child, like the editor wrappers do.
+    struct DelegatingItem {
+        child: Entity<TestItem>,
+        focus_handle: FocusHandle,
+    }
+
+    impl DelegatingItem {
+        fn new(child: Entity<TestItem>, cx: &mut Context<Self>) -> Self {
+            Self {
+                child,
+                focus_handle: cx.focus_handle(),
+            }
+        }
+    }
+
+    impl EventEmitter<()> for DelegatingItem {}
+
+    impl Focusable for DelegatingItem {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl Render for DelegatingItem {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            Empty
+        }
+    }
+
+    impl Item for DelegatingItem {
+        type Event = ();
+
+        fn tab_content_text(&self, _: usize, _: &App) -> SharedString {
+            "".into()
+        }
+
+        fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+            ItemNavigation::delegate(self.child.clone())
+        }
+    }
+
+    #[gpui::test]
+    async fn test_navigation_delegated_to_child_item(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let child = cx.new(|cx| {
+            let mut child = TestItem::new(cx);
+            child.state = "initial".to_string();
+            child
+        });
+        let wrapper = cx.new(|cx| DelegatingItem::new(child.clone(), cx));
+        let other_item = cx.new(TestItem::new);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(wrapper.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(other_item.clone()), None, true, window, cx);
+        });
+
+        // Deactivating the wrapper records the child's location, attributed to the wrapper.
+        let entry = pane
+            .update(cx, |pane, cx| {
+                pane.nav_history_mut().pop(NavigationMode::GoingBack, cx)
+            })
+            .expect("deactivating the wrapper should record an entry");
+        assert_eq!(entry.item.id(), wrapper.entity_id());
+        assert_eq!(
+            entry
+                .data
+                .and_then(|data| data.downcast_ref::<String>().cloned()),
+            Some("initial".to_string())
+        );
+
+        // The child receives the history bound to the wrapper, so its own pushes reactivate the
+        // wrapper as well.
+        child.update(cx, |child, cx| child.set_state("updated".to_string(), cx));
+        let entry = pane
+            .update(cx, |pane, cx| {
+                pane.nav_history_mut().pop(NavigationMode::GoingBack, cx)
+            })
+            .expect("the child should push to the wrapper's history");
+        assert_eq!(entry.item.id(), wrapper.entity_id());
+
+        // Restoring through the wrapper reaches the child.
+        cx.update(|window, cx| {
+            let navigation = wrapper.navigation(cx);
+            assert!(navigation.restore_location(Arc::new("updated".to_string()), window, cx));
+            let navigation = wrapper.navigation(cx);
+            assert!(!navigation.restore_location(Arc::new("unknown".to_string()), window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_back_and_close_through_delegated_item(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let child = cx.new(|cx| {
+            let mut child = TestItem::new(cx);
+            child.state = "current".to_string();
+            child
+        });
+        let wrapper = cx.new(|cx| DelegatingItem::new(child.clone(), cx));
+        let other_item = cx.new(TestItem::new);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(other_item.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(wrapper.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Push an entry for the already active wrapper on top of the one for `other_item`. Going
+        // back then only counts as navigating if restoring through the wrapper reaches the child,
+        // which accepts the location as its state matches. Otherwise, `go_back` would skip the
+        // entry and activate `other_item`.
+        child.update(cx, |child, cx| child.set_state("current".to_string(), cx));
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.active_item().map(|item| item.item_id()),
+                Some(wrapper.entity_id())
+            );
+            assert!(pane.can_navigate_backward());
+        });
+
+        // Closing the wrapper records the child's location for reopening it.
+        pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(wrapper.entity_id(), SaveIntent::Skip, window, cx)
+                .detach_and_log_err(cx);
+        });
+        cx.run_until_parked();
+        let entry = pane
+            .update(cx, |pane, cx| {
+                pane.nav_history_mut()
+                    .pop(NavigationMode::ReopeningClosedItem, cx)
+            })
+            .expect("closing the wrapper should record an entry");
+        assert_eq!(entry.item.id(), wrapper.entity_id());
+        assert_eq!(
+            entry
+                .data
+                .and_then(|data| data.downcast_ref::<String>().cloned()),
+            Some("current".to_string())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_moving_item_between_panes_rebinds_history(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let source_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = cx.new(TestItem::new);
+        let other_item = cx.new(TestItem::new);
+        let destination_pane = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(other_item.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+            workspace.split_pane(source_pane.clone(), SplitDirection::Right, window, cx)
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            move_item(
+                &source_pane,
+                &destination_pane,
+                item.entity_id(),
+                0,
+                true,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        for pane in [&source_pane, &destination_pane] {
+            pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
+        }
+
+        // The item's own pushes go to the history of the pane it was moved to.
+        item.update(cx, |item, cx| item.set_state("moved".to_string(), cx));
+        source_pane.read_with(cx, |pane, _| assert!(!pane.can_navigate_backward()));
+        destination_pane.read_with(cx, |pane, _| assert!(pane.can_navigate_backward()));
+    }
+
     /// Tests that the navigation history deduplicates entries for the same item.
     ///
     /// When navigating back and forth between items (e.g., A -> B -> A -> B -> A -> B -> C),
@@ -17672,15 +17879,9 @@ mod tests {
             );
         });
 
-        pane.update(cx, |pane, _| {
+        pane.update(cx, |pane, cx| {
             pane.nav_history_mut().set_mode(NavigationMode::ClosingItem);
-        });
-
-        reopenable_item.update_in(cx, |item, window, cx| {
-            item.deactivated(window, cx);
-        });
-
-        pane.update(cx, |pane, _| {
+            pane.record_navigation(&reopenable_item, cx);
             pane.nav_history_mut().set_mode(NavigationMode::Normal);
         });
 
@@ -18477,6 +18678,9 @@ mod tests {
 
         impl Item for TestPngItemView {
             type Event = ();
+            fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+                ItemNavigation::Excluded
+            }
             fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
                 "".into()
             }
@@ -18566,6 +18770,9 @@ mod tests {
 
         impl Item for TestIpynbItemView {
             type Event = ();
+            fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+                ItemNavigation::Excluded
+            }
             fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
                 "".into()
             }
@@ -18612,6 +18819,9 @@ mod tests {
 
         impl Item for TestAlternatePngItemView {
             type Event = ();
+            fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+                ItemNavigation::Excluded
+            }
             fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
                 "".into()
             }

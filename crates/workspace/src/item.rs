@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 use ui::{Color, Icon, IntoElement, Label, LabelCommon};
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
@@ -167,6 +167,145 @@ pub enum ItemBufferKind {
     None,
 }
 
+/// How an item takes part in its pane's navigation history (going back and forward, and
+/// reopening closed items).
+///
+/// The pane records an entry whenever an item is deactivated or closed, so items only describe
+/// *what* to record, not *when*.
+pub enum ItemNavigation {
+    /// The item is never recorded: going back or forward skips it, and it can't be reopened from
+    /// the history.
+    Excluded,
+    /// Visits to the item are recorded, without any position inside of it. Like all recorded
+    /// items, it can only be reopened from the history if it has a project path.
+    Visits,
+    /// Positions inside the item are recorded and restored through [`NavigableItem`].
+    Locations(NavigableItemHandle),
+    /// Navigation is handled by a child item, while entries are still attributed to (and
+    /// reactivate) the outer item.
+    Delegate(Box<dyn ItemHandle>),
+}
+
+impl ItemNavigation {
+    pub fn locations<T: NavigableItem>(item: Entity<T>) -> Self {
+        Self::Locations(NavigableItemHandle(Box::new(item)))
+    }
+
+    pub fn delegate<T: Item>(child: Entity<T>) -> Self {
+        Self::Delegate(Box::new(child))
+    }
+
+    /// Returns the location to record, or `None` if nothing should be recorded.
+    pub(crate) fn capture_location(self, cx: &mut App) -> Option<NavigationLocation> {
+        match self {
+            Self::Excluded => None,
+            Self::Visits => Some(NavigationLocation::visit()),
+            Self::Locations(item) => Some(item.0.capture_location(cx)),
+            Self::Delegate(child) => child.navigation(cx).capture_location(cx),
+        }
+    }
+
+    /// Returns whether restoring the location changed anything.
+    pub(crate) fn restore_location(
+        self,
+        data: Arc<dyn Any + Send + Sync>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        match self {
+            Self::Excluded | Self::Visits => false,
+            Self::Locations(item) => item.0.restore_location(data, window, cx),
+            Self::Delegate(child) => child.navigation(cx).restore_location(data, window, cx),
+        }
+    }
+
+    pub(crate) fn bind_history(self, history: ItemNavHistory, cx: &mut App) {
+        match self {
+            Self::Excluded | Self::Visits => {}
+            Self::Locations(item) => item.0.bind_history(history, cx),
+            Self::Delegate(child) => child.navigation(cx).bind_history(history, cx),
+        }
+    }
+}
+
+/// A position inside an item, as recorded in the navigation history.
+pub struct NavigationLocation {
+    pub(crate) data: Option<Arc<dyn Any + Send + Sync>>,
+    /// Entries for the same item and row are deduplicated.
+    pub(crate) row: Option<u32>,
+}
+
+impl NavigationLocation {
+    /// Wraps `data` in an `Arc` itself, so pass the plain value for downcasts to succeed when
+    /// restoring.
+    pub fn new(data: impl Any + Send + Sync, row: Option<u32>) -> Self {
+        Self {
+            data: Some(Arc::new(data)),
+            row,
+        }
+    }
+
+    fn visit() -> Self {
+        Self {
+            data: None,
+            row: None,
+        }
+    }
+}
+
+/// An item that records and restores positions inside of itself, see [`ItemNavigation::Locations`].
+pub trait NavigableItem: Item {
+    /// Captures the current position. Called by the pane when the item is deactivated or closed.
+    fn capture_location(&mut self, cx: &mut Context<Self>) -> NavigationLocation;
+
+    /// Restores a position previously captured or pushed by this item. Returns whether anything
+    /// changed.
+    fn restore_location(
+        &mut self,
+        data: Arc<dyn Any + Send + Sync>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool;
+
+    /// Provides the history whenever the item is added to a pane, for items that push entries on
+    /// their own, e.g. when jumping within the item. Items that don't can ignore it.
+    fn bind_history(&mut self, history: ItemNavHistory, cx: &mut Context<Self>);
+}
+
+/// A type-erased [`NavigableItem`], created through [`ItemNavigation::locations`]. It can only be
+/// used by the workspace, so that locations are always captured and restored by the pane.
+pub struct NavigableItemHandle(Box<dyn AnyNavigableItem>);
+
+trait AnyNavigableItem {
+    fn capture_location(&self, cx: &mut App) -> NavigationLocation;
+    fn restore_location(
+        &self,
+        data: Arc<dyn Any + Send + Sync>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool;
+    fn bind_history(&self, history: ItemNavHistory, cx: &mut App);
+}
+
+impl<T: NavigableItem> AnyNavigableItem for Entity<T> {
+    fn capture_location(&self, cx: &mut App) -> NavigationLocation {
+        self.update(cx, |item, cx| item.capture_location(cx))
+    }
+
+    fn restore_location(
+        &self,
+        data: Arc<dyn Any + Send + Sync>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        self.update(cx, |item, cx| item.restore_location(data, window, cx))
+    }
+
+    fn bind_history(&self, history: ItemNavHistory, cx: &mut App) {
+        self.update(cx, |item, cx| item.bind_history(history, cx))
+    }
+}
+
 pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     type Event;
 
@@ -213,19 +352,15 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(ItemEvent)) {}
 
-    fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
+    /// How this item takes part in the pane's navigation history.
+    ///
+    /// This is required so that every item makes an explicit choice, see [`ItemNavigation`].
+    fn navigation(&self, this: &Entity<Self>, cx: &App) -> ItemNavigation;
+
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_removed(&self, _cx: &mut Context<Self>) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn pane_changed(&mut self, _new_pane_id: EntityId, _cx: &mut Context<Self>) {}
-    fn navigate(
-        &mut self,
-        _: Arc<dyn Any + Send>,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) -> bool {
-        false
-    }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         None
@@ -258,8 +393,6 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         });
         result
     }
-
-    fn set_nav_history(&mut self, _: ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
 
     fn can_split(&self) -> bool {
         false
@@ -377,10 +510,6 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn preserve_preview(&self, _cx: &App) -> bool {
         false
-    }
-
-    fn include_in_nav_history() -> bool {
-        true
     }
 
     /// Called when the containing pane receives a drop on the item or the item's tab.
@@ -519,10 +648,9 @@ pub trait ItemHandle: 'static + Send {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
-    fn deactivated(&self, window: &mut Window, cx: &mut App);
+    fn navigation(&self, cx: &App) -> ItemNavigation;
     fn on_removed(&self, cx: &mut App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
-    fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
@@ -569,7 +697,6 @@ pub trait ItemHandle: 'static + Send {
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a App) -> &'a WorkspaceSettings;
     fn preserve_preview(&self, cx: &App) -> bool;
-    fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
     fn handle_drop(
         &self,
@@ -753,8 +880,8 @@ impl<T: Item> ItemHandle for Entity<T> {
     ) {
         let weak_item = self.downgrade();
         let history = pane.read(cx).nav_history_for_item(self);
+        self.navigation(cx).bind_history(history, cx);
         self.update(cx, |this, cx| {
-            this.set_nav_history(history, window, cx);
             this.added_to_workspace(workspace, window, cx);
         });
 
@@ -1011,8 +1138,14 @@ impl<T: Item> ItemHandle for Entity<T> {
         });
     }
 
-    fn deactivated(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |this, cx| this.deactivated(window, cx));
+    fn navigation(&self, cx: &App) -> ItemNavigation {
+        let navigation = self.read(cx).navigation(self, cx);
+        debug_assert!(
+            !matches!(&navigation, ItemNavigation::Delegate(delegate) if delegate.item_id() == self.item_id()),
+            "{entity_type} delegates navigation to itself, use `ItemNavigation::locations` instead",
+            entity_type = std::any::type_name::<T>()
+        );
+        navigation
     }
 
     fn on_removed(&self, cx: &mut App) {
@@ -1021,10 +1154,6 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.workspace_deactivated(window, cx));
-    }
-
-    fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool {
-        self.update(cx, |this, cx| this.navigate(data, window, cx))
     }
 
     fn item_id(&self) -> EntityId {
@@ -1144,10 +1273,6 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn preserve_preview(&self, cx: &App) -> bool {
         self.read(cx).preserve_preview(cx)
-    }
-
-    fn include_in_nav_history(&self) -> bool {
-        T::include_in_nav_history()
     }
 
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App) {
@@ -1425,7 +1550,10 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
-    use super::{Item, ItemEvent, SerializableItem, TabContentParams};
+    use super::{
+        Item, ItemEvent, ItemNavigation, NavigableItem, NavigationLocation, SerializableItem,
+        TabContentParams,
+    };
     use crate::{
         ItemId, ItemNavHistory, Workspace, WorkspaceId,
         item::{ItemBufferKind, SaveOptions},
@@ -1629,8 +1757,29 @@ pub mod test {
 
         fn push_to_nav_history(&mut self, cx: &mut Context<Self>) {
             if let Some(history) = &mut self.nav_history {
-                history.push(Some(Box::new(self.state.clone())), None, cx);
+                history.push(NavigationLocation::new(self.state.clone(), None), cx);
             }
+        }
+    }
+
+    impl NavigableItem for TestItem {
+        fn capture_location(&mut self, _: &mut Context<Self>) -> NavigationLocation {
+            NavigationLocation::new(self.state.clone(), None)
+        }
+
+        fn restore_location(
+            &mut self,
+            state: Arc<dyn Any + Send + Sync>,
+            _window: &mut Window,
+            _: &mut Context<Self>,
+        ) -> bool {
+            state
+                .downcast_ref::<String>()
+                .is_some_and(|state| *state == self.state)
+        }
+
+        fn bind_history(&mut self, history: ItemNavHistory, _: &mut Context<Self>) {
+            self.nav_history = Some(history);
         }
     }
 
@@ -1694,36 +1843,8 @@ pub mod test {
             self.buffer_kind
         }
 
-        fn set_nav_history(
-            &mut self,
-            history: ItemNavHistory,
-            _window: &mut Window,
-            _: &mut Context<Self>,
-        ) {
-            self.nav_history = Some(history);
-        }
-
-        fn navigate(
-            &mut self,
-            state: Arc<dyn Any + Send>,
-            _window: &mut Window,
-            _: &mut Context<Self>,
-        ) -> bool {
-            if let Some(state) = state.downcast_ref::<Box<String>>() {
-                let state = *state.clone();
-                if state != self.state {
-                    false
-                } else {
-                    self.state = state;
-                    true
-                }
-            } else {
-                false
-            }
-        }
-
-        fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-            self.push_to_nav_history(cx);
+        fn navigation(&self, this: &Entity<Self>, _: &App) -> ItemNavigation {
+            ItemNavigation::locations(this.clone())
         }
 
         fn can_split(&self) -> bool {

@@ -58,8 +58,8 @@ use ui::{
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
-    Workspace, item::TabContentParams, move_item, pane::Event,
+    ActivePaneDecorator, DraggedTab, Item, ItemHandle, ItemNavigation, Member, Pane, PaneGroup,
+    SplitDirection, Workspace, item::TabContentParams, move_item, pane::Event,
 };
 
 static PROCESS_ID_PLACEHOLDER: LazyLock<String> =
@@ -284,6 +284,10 @@ impl Focusable for SubView {
 impl EventEmitter<()> for SubView {}
 impl Item for SubView {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Excluded
+    }
 
     /// This is used to serialize debugger pane layouts
     /// A SharedString gets converted to a enum and back during serialization/deserialization.

@@ -37,7 +37,7 @@ use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     Workspace,
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, ItemNavigation},
     workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
 use zed_actions::ExtensionCategoryFilter;
@@ -1647,6 +1647,10 @@ impl Focusable for ExtensionsPage {
 
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Extensions".into()
