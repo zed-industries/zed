@@ -396,26 +396,24 @@ impl Conversation {
         pattern_index: usize,
         cx: &mut Context<Self>,
     ) {
-        let Some(request) = self.permission_request(session_id, request_id, cx) else {
+        if self
+            .permission_request(session_id, request_id, cx)
+            .and_then(PermissionRequest::legacy_options)
+            .is_none()
+        {
             return;
-        };
-        let Some(options) = request.legacy_options() else {
-            return;
-        };
-        let pattern_count = match options {
-            PermissionOptions::DropdownWithPatterns { patterns, .. } => patterns.len(),
-            _ => 0,
-        };
+        }
         match self.permission_selections.get_mut(&request_id) {
             Some(selection @ thread_view::PermissionSelection::SelectedPatterns(_)) => {
                 selection.toggle_pattern(pattern_index);
             }
             _ => {
+                // First click: activate "Select options" with only the clicked pattern checked.
+                // Checking the rest is left to the user — checking one pattern must not
+                // implicitly grant the others.
                 self.permission_selections.insert(
                     request_id,
-                    thread_view::PermissionSelection::SelectedPatterns(
-                        (0..pattern_count).collect(),
-                    ),
+                    thread_view::PermissionSelection::SelectedPatterns(vec![pattern_index]),
                 );
             }
         }
@@ -14655,6 +14653,155 @@ pub(crate) mod tests {
         });
     }
 
+    /// Regression test for #55523: a `ToggleCommandPattern` action for an
+    /// unselected pipeline pattern must only check that one pattern, not all of
+    /// them. The original behavior pre-checked every pattern on first toggle,
+    /// which silently allow-listed commands the user never explicitly approved.
+    ///
+    /// The action handler and the dropdown's click handler both delegate to
+    /// `Conversation::toggle_permission_pattern`. The rendered dropdown is
+    /// exercised by `select_embedded_child_permission`.
+    #[gpui::test]
+    async fn test_toggle_command_pattern_first_click_checks_only_clicked_pattern(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let tool_call_id = acp_v1::ToolCallId::new("pattern-toggle-test-1");
+        let tool_call =
+            acp_v1::ToolCall::new(tool_call_id.clone(), "Run `ls && git status && git log`")
+                .kind(acp_v1::ToolKind::Edit);
+
+        // Pipeline command — produces `DropdownWithPatterns` with one pattern
+        // per distinct sub-command.
+        let permission_options = ToolPermissionContext::new(
+            TerminalTool::NAME,
+            vec!["ls && git status && git log".to_string()],
+        )
+        .build_permission_options();
+
+        let PermissionOptions::DropdownWithPatterns { patterns, .. } = &permission_options else {
+            panic!("Expected DropdownWithPatterns for pipeline command");
+        };
+        assert!(
+            patterns.len() >= 2,
+            "Pipeline should produce multiple patterns to make this test meaningful"
+        );
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Inspect the repo", window, cx);
+        });
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        // First click: toggle pattern index 0 (e.g., "Always for `ls` commands").
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::ToggleCommandPattern {
+                    tool_call_id: "pattern-toggle-test-1".to_string(),
+                    request_id: None,
+                    session_id: None,
+                    pattern_index: 0,
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Only the clicked pattern (0) is checked. Any other patterns must remain
+        // unchecked — the user did not approve them.
+        thread_view.read_with(cx, |thread_view, cx| {
+            let state = thread_view.active_thread().unwrap();
+            let state = state.read(cx);
+            let request_id = state
+                .thread
+                .read(cx)
+                .permission_request_for_tool(&tool_call_id)
+                .expect("permission request exists")
+                .id;
+            let selected = state
+                .conversation
+                .read(cx)
+                .permission_selections
+                .get(&request_id);
+            match selected {
+                Some(thread_view::PermissionSelection::SelectedPatterns(checked)) => {
+                    assert_eq!(
+                        checked,
+                        &vec![0],
+                        "First click must check only the clicked pattern, not all patterns"
+                    );
+                }
+                other => panic!("Expected SelectedPatterns([0]), got {other:?}"),
+            }
+        });
+
+        // Second click on a different pattern: that pattern is added to the checked set.
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::ToggleCommandPattern {
+                    tool_call_id: "pattern-toggle-test-1".to_string(),
+                    request_id: None,
+                    session_id: None,
+                    pattern_index: 1,
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |thread_view, cx| {
+            let state = thread_view.active_thread().unwrap();
+            let state = state.read(cx);
+            let request_id = state
+                .thread
+                .read(cx)
+                .permission_request_for_tool(&tool_call_id)
+                .expect("permission request exists")
+                .id;
+            let selected = state
+                .conversation
+                .read(cx)
+                .permission_selections
+                .get(&request_id);
+            match selected {
+                Some(thread_view::PermissionSelection::SelectedPatterns(checked)) => {
+                    let mut sorted = checked.clone();
+                    sorted.sort();
+                    assert_eq!(
+                        sorted,
+                        vec![0, 1],
+                        "Second click must add the clicked pattern to the checked set"
+                    );
+                }
+                other => panic!("Expected SelectedPatterns([0, 1]), got {other:?}"),
+            }
+        });
+    }
+
     #[gpui::test]
     async fn test_allow_button_uses_selected_granularity(cx: &mut TestAppContext) {
         init_test(cx);
@@ -15365,6 +15512,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         if with_patterns {
+            let pattern = cx
+                .debug_bounds("MENU_ITEM-Always for `cargo test` commands")
+                .expect("the rendered persistent dropdown should offer the cargo pattern");
+            cx.simulate_click(pattern.center(), gpui::Modifiers::default());
+            cx.run_until_parked();
+            // Toggling `sort` on and off must leave only `cargo test` checked.
             for _ in 0..2 {
                 let pattern = cx
                     .debug_bounds("MENU_ITEM-Always for `sort` commands")
