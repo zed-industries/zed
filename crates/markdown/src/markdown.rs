@@ -1514,7 +1514,10 @@ pub struct ParsedMarkdown {
     pub(crate) code_block_highlights: Arc<CodeBlockHighlights>,
 }
 
-pub(crate) type CodeBlockHighlights = HashMap<usize, ResolvedHighlights>;
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct MarkdownEventIndex(usize);
+
+pub(crate) type CodeBlockHighlights = HashMap<MarkdownEventIndex, ResolvedHighlights>;
 
 impl ParsedMarkdown {
     pub fn source(&self) -> &SharedString {
@@ -1638,13 +1641,14 @@ impl ParsedMarkdown {
 
 struct PendingCodeBlock<'a> {
     language: Arc<Language>,
-    texts: Vec<(Range<usize>, &'a str)>,
+    texts: Vec<(MarkdownEventIndex, &'a str)>,
 }
 
 fn compute_code_block_highlights(parsed: &ParsedMarkdown) -> CodeBlockHighlights {
     let mut code_block_highlights = CodeBlockHighlights::default();
     let mut pending_block: Option<PendingCodeBlock> = None;
-    for (range, event) in parsed.events.iter() {
+    for (event_index, (range, event)) in parsed.events.iter().enumerate() {
+        let event_index = MarkdownEventIndex(event_index);
         match event {
             MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) => {
                 if parsed.mermaid_diagrams.contains_key(&range.start) {
@@ -1667,12 +1671,12 @@ fn compute_code_block_highlights(parsed: &ParsedMarkdown) -> CodeBlockHighlights
                 if let Some(block) = &mut pending_block {
                     block
                         .texts
-                        .push((range.clone(), &parsed.source[range.clone()]));
+                        .push((event_index, &parsed.source[range.clone()]));
                 }
             }
             MarkdownEvent::SubstitutedText(text) => {
                 if let Some(block) = &mut pending_block {
-                    block.texts.push((range.clone(), text.as_str()));
+                    block.texts.push((event_index, text.as_str()));
                 }
             }
             _ => {}
@@ -1694,12 +1698,12 @@ fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut Cod
     if resolved.runs.is_empty() {
         return;
     }
-    if let [(source_range, _)] = block.texts.as_slice() {
-        code_block_highlights.insert(source_range.start, resolved);
+    if let [(event_index, _)] = block.texts.as_slice() {
+        code_block_highlights.insert(*event_index, resolved);
         return;
     }
     let mut runs = resolved.runs.iter().peekable();
-    for ((source_range, text), text_offset) in block.texts.iter().zip(text_offsets) {
+    for ((event_index, text), text_offset) in block.texts.iter().zip(text_offsets) {
         let text_end = text_offset + text.len();
         let mut text_runs = Vec::new();
         while let Some((run_range, highlight_id)) = runs.peek() {
@@ -1718,7 +1722,7 @@ fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut Cod
         }
         if !text_runs.is_empty() {
             code_block_highlights.insert(
-                source_range.start,
+                *event_index,
                 ResolvedHighlights {
                     sources: resolved.sources.clone(),
                     runs: text_runs.into(),
@@ -2720,7 +2724,6 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
             highlights,
-            parsed_markdown.code_block_highlights.clone(),
         );
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
@@ -2735,6 +2738,7 @@ impl Element for MarkdownElement {
         let mut rendered_mermaid_block = false;
         let mut rendered_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
+            let event_index = MarkdownEventIndex(index);
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
                 && current_img_block_range.end > range.end
@@ -3356,13 +3360,21 @@ impl Element for MarkdownElement {
                     if let Some(current_code_block_text) = &mut current_code_block_text {
                         current_code_block_text.push_str(text);
                     }
-                    builder.push_text(text, range.clone());
+                    builder.push_highlighted_text(
+                        text,
+                        range.clone(),
+                        parsed_markdown.code_block_highlights.get(&event_index),
+                    );
                 }
                 MarkdownEvent::SubstitutedText(text) => {
                     if let Some(current_code_block_text) = &mut current_code_block_text {
                         current_code_block_text.push_str(text);
                     }
-                    builder.push_text(text, range.clone());
+                    builder.push_highlighted_text(
+                        text,
+                        range.clone(),
+                        parsed_markdown.code_block_highlights.get(&event_index),
+                    );
                 }
                 MarkdownEvent::Code => {
                     self.push_markdown_code_span(
@@ -3874,7 +3886,6 @@ struct MarkdownElementBuilder {
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
-    code_block_highlights: Arc<CodeBlockHighlights>,
     link_depth: usize,
     list_stack: Vec<ListStackEntry>,
     table: TableState,
@@ -3976,7 +3987,6 @@ impl MarkdownElementBuilder {
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
         highlights: MarkdownHighlights,
-        code_block_highlights: Arc<CodeBlockHighlights>,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3995,7 +4005,6 @@ impl MarkdownElementBuilder {
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
-            code_block_highlights,
             link_depth: 0,
             list_stack: Vec::new(),
             table: TableState::default(),
@@ -4269,6 +4278,15 @@ impl MarkdownElementBuilder {
     }
 
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
+        self.push_highlighted_text(text, source_range, None);
+    }
+
+    fn push_highlighted_text(
+        &mut self,
+        text: &str,
+        source_range: Range<usize>,
+        highlights: Option<&ResolvedHighlights>,
+    ) {
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
             source_index: source_range.start,
@@ -4280,7 +4298,7 @@ impl MarkdownElementBuilder {
         let text_style = self.text_style();
 
         if let Some(language) = self.code_block_stack.last().and_then(Option::as_ref)
-            && let Some(resolved) = self.code_block_highlights.get(&source_range.start)
+            && let Some(resolved) = highlights
         {
             let runs = if resolved.is_current() {
                 resolved.runs.clone()
@@ -5154,6 +5172,7 @@ impl RenderedText {
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
         let mut fallback_line: Option<&Rc<RenderedLine>> = None;
+        let mut gap_source_index: Option<usize> = None;
 
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
@@ -5172,10 +5191,16 @@ impl RenderedText {
             if position.y > line_bounds.bottom() {
                 if let Some(next_line) = lines.peek()
                     && position.y < next_line.layout.bounds().top()
+                    && gap_source_index.is_none()
                 {
-                    return Err(line.source_end);
+                    // A later table cell may contain the position, so defer the gap fallback.
+                    gap_source_index = Some(line.source_end);
                 }
             }
+        }
+
+        if let Some(source_index) = gap_source_index {
+            return Err(source_index);
         }
 
         // Fall back to Y-coordinate matched line
@@ -5873,6 +5898,45 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_code_block_highlights_with_partial_tabs(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        for (source, expected) in [
+            (" ```rust\n\tfn main() {}\n ```\n", "   fn main() {}"),
+            ("  ```rust\n\tfn café() {}\n  ```\n", "  fn café() {}"),
+            ("   ```rust\r\n\tfn 界() {}\r\n   ```\r\n", " fn 界() {}"),
+            ("- ```rust\n\tfn main() {}\n  ```\n", "  fn main() {}"),
+            (" ```rust\n\tfn main() {}", "   fn main() {}"),
+        ] {
+            let (language, markdown) = markdown_with_rust_language(source, cx);
+            for stale in [false, true] {
+                if stale {
+                    language.set_theme(&rust_test_theme());
+                }
+                let rendered = render_markdown_entity_in_view(
+                    markdown.clone(),
+                    MarkdownStyle {
+                        syntax: Arc::new(rust_test_theme()),
+                        ..MarkdownStyle::default()
+                    },
+                    None,
+                    None,
+                    cx,
+                );
+                assert_eq!(
+                    rendered
+                        .lines
+                        .iter()
+                        .map(|line| line.layout.text())
+                        .collect::<Vec<_>>(),
+                    vec![expected.to_owned()],
+                    "source: {source:?}, stale: {stale}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
     fn test_code_block_language_uses_first_word_of_info_string(cx: &mut TestAppContext) {
         let source = "```rust import.meta.vitest\nfn main() {}\n```";
         let (_, markdown) = markdown_with_rust_language(source, cx);
@@ -6023,14 +6087,11 @@ mod tests {
                 .as_ref()
                 .expect("the fallback language must be resolved for untagged code blocks");
             assert_eq!(fallback.name(), language.name());
-
-            let code_start = source.find("fn main").unwrap();
-            let cached = parsed
-                .code_block_highlights
-                .get(&code_start)
-                .expect("untagged code blocks must be highlighted with the fallback language");
-            assert!(!cached.runs.is_empty());
         });
+
+        let code_start = source.find("fn main").unwrap();
+        let cached = cached_code_block_highlights(&markdown, code_start, cx);
+        assert!(!cached.runs.is_empty());
     }
 
     #[gpui::test]
@@ -6452,6 +6513,210 @@ mod tests {
 
         assert_eq!(first_word, "a");
         assert_eq!(second_word, "b");
+    }
+
+    #[gpui::test]
+    fn test_wrapped_table_links_hit_testing(cx: &mut TestAppContext) {
+        for width in [240., 360., 1200.] {
+            let rendered = render_markdown_at_width(WRAPPED_LINK_TABLE, px(width), cx);
+            assert_eq!(rendered.links.len(), 2);
+
+            let first_link = rendered.links.first().expect("table should contain links");
+            let link_bounds = rendered.bounds_for_source_range(first_link.source_range.clone());
+            if width < 1200. {
+                assert!(link_bounds.len() > 1, "link should wrap at {width}px");
+                let number_bounds = rendered
+                    .lines
+                    .iter()
+                    .find(|line| line.layout.text().as_str() == "1")
+                    .expect("first row should contain a number")
+                    .layout
+                    .bounds();
+                assert!(
+                    link_bounds.first().expect("link should have bounds").top()
+                        < number_bounds.top(),
+                    "wrapped link should start above the centered number"
+                );
+            } else {
+                assert_eq!(link_bounds.len(), 1);
+            }
+            assert_link_hit_testing(&rendered);
+        }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_table_link_column_positions_and_alignment(cx: &mut TestAppContext) {
+        for alignment in ["---", ":---", ":---:", "---:"] {
+            for column_count in 1..=3 {
+                for link_column in 0..column_count {
+                    let source =
+                        wrapped_link_table_with_columns(column_count, link_column, alignment);
+                    let rendered = render_markdown_at_width(&source, px(240.), cx);
+                    assert_eq!(rendered.links.len(), 2);
+                    for link in rendered.links.iter() {
+                        assert!(
+                            rendered
+                                .bounds_for_source_range(link.source_range.clone())
+                                .len()
+                                > 1,
+                            "link should wrap: alignment={alignment}, source={source}"
+                        );
+                    }
+                    assert_link_hit_testing(&rendered);
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_table_link_unicode_and_surrounding_text(cx: &mut TestAppContext) {
+        for alignment in ["---", ":---", ":---:", "---:"] {
+            for (cell, surrounding_words) in [
+                (
+                    "[https://zed.dev/docs/über/条件/🙂/markdown/preview/tables/wrapped-links](https://zed.dev/docs/markdown/unicode)",
+                    None,
+                ),
+                (
+                    "before [https://zed.dev/docs/markdown/preview/tables/wrapped-link-hit-testing-and-selection](https://zed.dev/docs/markdown/links) after",
+                    Some(["before", "after"]),
+                ),
+            ] {
+                let source = format!("| # | Link |\n| --- | {alignment} |\n| 1 | {cell} |\n");
+                let (view, cx) = open_link_interaction_test_window(&source, cx);
+                let rendered = view
+                    .read_with(cx, |view, _| view.rendered_text.borrow().clone())
+                    .expect("table should be rendered");
+                assert_eq!(rendered.links.len(), 1);
+                let link = rendered.links.first().expect("cell should contain a link");
+                assert!(
+                    rendered
+                        .bounds_for_source_range(link.source_range.clone())
+                        .len()
+                        > 1,
+                    "link should wrap: alignment={alignment}, source={source}"
+                );
+                assert_link_hit_testing(&rendered);
+                assert_link_mouse_interactions(&view, &rendered, cx);
+
+                if let Some(surrounding_words) = surrounding_words {
+                    let positions = surrounding_words.map(|word| {
+                        let start = source.find(word).expect("cell should contain plain text");
+                        rendered
+                            .bounds_for_source_range(start..start + word.len())
+                            .into_iter()
+                            .next()
+                            .expect("plain text should have bounds")
+                            .center()
+                    });
+                    assert_non_link_mouse_interactions(&view, &rendered, positions, cx);
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_table_link_hover_click_and_resize(cx: &mut TestAppContext) {
+        let source = format!("Before\n\n{WRAPPED_LINK_TABLE}\nAfter");
+        let (view, cx) = open_link_interaction_test_window(&source, cx);
+        let rendered_text = view.read_with(cx, |view, _| view.rendered_text.clone());
+
+        for width in [1200., 240., 360., 1200.] {
+            *rendered_text.borrow_mut() = None;
+            cx.simulate_resize(size(px(width), px(1600.)));
+            cx.run_until_parked();
+            let rendered = rendered_text
+                .borrow()
+                .clone()
+                .expect("markdown should be rendered again after resizing");
+            assert_eq!(rendered.links.len(), 2);
+            let first_link = rendered.links.first().expect("table should contain links");
+            let row_count = rendered
+                .bounds_for_source_range(first_link.source_range.clone())
+                .len();
+            if width < 1200. {
+                assert!(row_count > 1);
+            } else {
+                assert_eq!(row_count, 1);
+            }
+            assert_link_mouse_interactions(&view, &rendered, cx);
+
+            let before_bounds = rendered
+                .bounds_for_source_range(0.."Before".len())
+                .into_iter()
+                .next()
+                .expect("paragraph should have bounds");
+            let number_start = source.find("| 1 |").expect("table should contain row 1") + 2;
+            let number_bounds = rendered
+                .bounds_for_source_range(number_start..number_start + 1)
+                .into_iter()
+                .next()
+                .expect("number should have bounds");
+            let header_bounds = rendered
+                .lines
+                .iter()
+                .find(|line| line.layout.text().as_str() == "#")
+                .expect("table should have a header")
+                .layout
+                .bounds();
+            assert!(before_bounds.bottom() < header_bounds.top());
+            let gap_position = point(
+                before_bounds.center().x,
+                (before_bounds.bottom() + header_bounds.top()) / 2.,
+            );
+            assert_non_link_mouse_interactions(
+                &view,
+                &rendered,
+                [before_bounds.center(), number_bounds.center(), gap_position],
+                cx,
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_hit_testing_outside_text_preserves_source_indices(cx: &mut TestAppContext) {
+        let empty = render_markdown("", cx);
+        assert_eq!(
+            empty.source_index_for_position(point(px(0.), px(0.))),
+            Err(0)
+        );
+
+        let rendered = render_markdown("First\n\nSecond", cx);
+        let mut lines = rendered.lines.iter();
+        let first = lines.next().expect("first paragraph should be rendered");
+        let second = lines.next().expect("second paragraph should be rendered");
+        let first_bounds = first.layout.bounds();
+        let second_bounds = second.layout.bounds();
+        assert!(first_bounds.bottom() < second_bounds.top());
+        for (position, source_index) in [
+            (
+                point(first_bounds.center().x, first_bounds.top() - px(1.)),
+                0,
+            ),
+            (
+                point(first_bounds.left() - px(1.), first_bounds.center().y),
+                0,
+            ),
+            (
+                point(first_bounds.right() + px(1.), first_bounds.center().y),
+                5,
+            ),
+            (
+                point(
+                    first_bounds.center().x,
+                    (first_bounds.bottom() + second_bounds.top()) / 2.,
+                ),
+                5,
+            ),
+            (
+                point(second_bounds.center().x, second_bounds.bottom() + px(1.)),
+                13,
+            ),
+        ] {
+            assert_eq!(
+                rendered.source_index_for_position(position),
+                Err(source_index)
+            );
+        }
     }
 
     #[gpui::test]
@@ -8269,6 +8534,219 @@ mod tests {
         );
     }
 
+    const WRAPPED_LINK_TABLE: &str = indoc::indoc! {r#"
+        | # | Link |
+        | --- | --- |
+        | 1 | [https://zed.dev/docs/markdown/preview/tables/wrapped-link-hit-testing-and-selection](https://zed.dev/docs/markdown/preview/tables/wrapped-link-hit-testing-and-selection) |
+        | 2 | [https://zed.dev/docs/editor/appearance/themes/configuring-editor-colors](https://zed.dev/docs/editor/appearance/themes/configuring-editor-colors) |
+    "#};
+
+    fn wrapped_link_table_with_columns(
+        column_count: usize,
+        link_column: usize,
+        alignment: &str,
+    ) -> String {
+        let mut headers = vec!["Value"; column_count];
+        *headers
+            .get_mut(link_column)
+            .expect("link column should exist") = "Link";
+        let mut source = format!(
+            "Before\n\n| {} |\n| {} |\n",
+            headers.join(" | "),
+            vec![alignment; column_count].join(" | ")
+        );
+        for (number, url) in [
+            (
+                "1",
+                "https://zed.dev/docs/markdown/preview/tables/wrapped-link-hit-testing-and-selection",
+            ),
+            (
+                "2",
+                "https://zed.dev/docs/editor/appearance/themes/configuring-editor-colors",
+            ),
+        ] {
+            let mut cells = vec![number.to_string(); column_count];
+            *cells
+                .get_mut(link_column)
+                .expect("link column should exist") = format!("[{url}]({url})");
+            source.push_str(&format!("| {} |\n", cells.join(" | ")));
+        }
+        source.push_str("\nAfter");
+        source
+    }
+
+    fn link_bounds_for_visual_rows(
+        rendered: &RenderedText,
+        link: &RenderedLink,
+    ) -> Vec<Bounds<Pixels>> {
+        let bounds = rendered.bounds_for_source_range(link.source_range.clone());
+        assert!(!bounds.is_empty(), "link should have bounds: {link:?}");
+        let mut row_tops = Vec::new();
+        for line in rendered.lines.iter() {
+            for (rendered_index, character) in line.layout.text().char_indices() {
+                let source_index = line.source_index_for_rendered_index(rendered_index);
+                if link.source_range.contains(&source_index) {
+                    // GPUI assigns wrap boundary indices to the preceding row, so use character ends.
+                    let position = line
+                        .layout
+                        .position_for_index(rendered_index + character.len_utf8())
+                        .expect("link character should have a layout position");
+                    if row_tops.last() != Some(&position.y) {
+                        row_tops.push(position.y);
+                    }
+                }
+            }
+        }
+        assert_eq!(bounds.len(), row_tops.len(), "missing link rows: {link:?}");
+        for (bounds, row_top) in bounds.iter().zip(row_tops) {
+            assert!(
+                (bounds.top() - row_top).abs() < px(0.01),
+                "bounds should cover every visual link row: {link:?}"
+            );
+        }
+        bounds
+    }
+
+    fn assert_link_hit_testing(rendered: &RenderedText) {
+        assert!(!rendered.links.is_empty(), "markdown should contain links");
+        for link in rendered.links.iter() {
+            for bounds in link_bounds_for_visual_rows(rendered, link) {
+                let position = bounds.center();
+                let source_index = rendered
+                    .source_index_for_position(position)
+                    .expect("position inside a link should hit text");
+                assert_eq!(
+                    rendered.link_for_source_index(source_index),
+                    Some(link),
+                    "wrong link at {position:?}"
+                );
+            }
+        }
+    }
+
+    fn assert_link_mouse_interactions(
+        view: &Entity<LinkInteractionTestView>,
+        rendered: &RenderedText,
+        cx: &mut VisualTestContext,
+    ) {
+        assert!(!rendered.links.is_empty(), "markdown should contain links");
+        let markdown = view.read_with(cx, |view, _| view.markdown.clone());
+        let hovered_urls = view.read_with(cx, |view, _| view.hovered_urls.clone());
+        let opened_urls = view.read_with(cx, |view, _| view.opened_urls.clone());
+        let viewport =
+            cx.update(|window, _| Bounds::new(point(px(0.), px(0.)), window.viewport_size()));
+        for link in rendered.links.iter() {
+            for bounds in link_bounds_for_visual_rows(rendered, link) {
+                let position = bounds.center();
+                assert!(
+                    viewport.contains(&position),
+                    "link should be visible at {position:?}"
+                );
+                hovered_urls.borrow_mut().clear();
+                opened_urls.borrow_mut().clear();
+                markdown.read_with(cx, |markdown, _| assert!(markdown.pressed_link.is_none()));
+                cx.simulate_mouse_move(position, None, Modifiers::default());
+                assert_eq!(
+                    hovered_urls.borrow().as_slice(),
+                    &[Some(link.destination_url.clone())],
+                    "mouse move should report this link exactly once at {position:?}"
+                );
+                assert!(opened_urls.borrow().is_empty());
+                cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+                assert!(opened_urls.borrow().is_empty());
+                markdown.read_with(cx, |markdown, _| {
+                    assert_eq!(markdown.pressed_link.as_ref(), Some(link));
+                });
+                cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
+                assert_eq!(
+                    opened_urls.borrow().as_slice(),
+                    std::slice::from_ref(&link.destination_url),
+                    "click should open this link exactly once at {position:?}"
+                );
+                markdown.read_with(cx, |markdown, _| assert!(markdown.pressed_link.is_none()));
+            }
+        }
+    }
+
+    fn assert_non_link_mouse_interactions(
+        view: &Entity<LinkInteractionTestView>,
+        rendered: &RenderedText,
+        positions: impl IntoIterator<Item = Point<Pixels>>,
+        cx: &mut VisualTestContext,
+    ) {
+        let hovered_urls = view.read_with(cx, |view, _| view.hovered_urls.clone());
+        let opened_urls = view.read_with(cx, |view, _| view.opened_urls.clone());
+        let viewport =
+            cx.update(|window, _| Bounds::new(point(px(0.), px(0.)), window.viewport_size()));
+        let mut checked_position_count = 0;
+        for position in positions {
+            checked_position_count += 1;
+            assert!(
+                viewport.contains(&position),
+                "non-link position should be visible at {position:?}"
+            );
+            assert!(
+                rendered
+                    .source_index_for_position(position)
+                    .ok()
+                    .and_then(|source_index| rendered.link_for_source_index(source_index))
+                    .is_none(),
+                "position should not hit a link: {position:?}"
+            );
+            hovered_urls.borrow_mut().clear();
+            opened_urls.borrow_mut().clear();
+            cx.simulate_mouse_move(position, None, Modifiers::default());
+            assert_eq!(hovered_urls.borrow().as_slice(), &[None]);
+            assert!(opened_urls.borrow().is_empty());
+            cx.simulate_click(position, Modifiers::default());
+            assert!(opened_urls.borrow().is_empty());
+        }
+        assert!(
+            checked_position_count > 0,
+            "non-link positions should be tested"
+        );
+    }
+
+    struct LinkInteractionTestView {
+        markdown: Entity<Markdown>,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+        hovered_urls: Rc<RefCell<Vec<Option<SharedString>>>>,
+        opened_urls: Rc<RefCell<Vec<SharedString>>>,
+    }
+
+    impl Render for LinkInteractionTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let hovered_urls = self.hovered_urls.clone();
+            let opened_urls = self.opened_urls.clone();
+            div().size_full().child(CapturingMarkdownElement {
+                markdown_element: MarkdownElement::new(
+                    self.markdown.clone(),
+                    MarkdownStyle::default(),
+                )
+                .on_url_hover(move |url, _, _| hovered_urls.borrow_mut().push(url))
+                .on_url_click(move |url, _, _| opened_urls.borrow_mut().push(url)),
+                rendered_text: self.rendered_text.clone(),
+            })
+        }
+    }
+
+    fn open_link_interaction_test_window<'a>(
+        source: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<LinkInteractionTestView>, &'a mut VisualTestContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new(source.to_string().into(), None, None, cx));
+        let (view, cx) = cx.add_window_view(move |_, _| LinkInteractionTestView {
+            markdown,
+            rendered_text: Rc::new(RefCell::new(None)),
+            hovered_urls: Rc::new(RefCell::new(Vec::new())),
+            opened_urls: Rc::new(RefCell::new(Vec::new())),
+        });
+        cx.simulate_resize(size(px(240.), px(1600.)));
+        cx.run_until_parked();
+        (view, cx)
+    }
+
     struct TestWindow;
 
     impl Render for TestWindow {
@@ -8899,10 +9377,22 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> ResolvedHighlights {
         markdown.read_with(cx, |markdown, _| {
-            markdown
-                .parsed_markdown()
+            let parsed = markdown.parsed_markdown();
+            let event_index = parsed
+                .events
+                .iter()
+                .position(|(range, event)| {
+                    range.start == code_start
+                        && matches!(
+                            event,
+                            MarkdownEvent::Text | MarkdownEvent::SubstitutedText(_)
+                        )
+                })
+                .map(MarkdownEventIndex)
+                .expect("code block text event must exist");
+            parsed
                 .code_block_highlights
-                .get(&code_start)
+                .get(&event_index)
                 .expect("code block highlights must be computed during parse")
                 .clone()
         })
