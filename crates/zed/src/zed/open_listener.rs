@@ -13,6 +13,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::future;
 
 use futures::{FutureExt, StreamExt};
+use git::repository::RepoPath;
 use git_ui::multi_diff_view::MultiDiffView;
 use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{App, AsyncApp, Global, TaskExt, WindowHandle};
@@ -79,6 +80,7 @@ pub enum OpenRequestKind {
     },
     GitCommit {
         sha: String,
+        scroll_to: Option<(RepoPath, u32)>,
     },
 }
 
@@ -117,7 +119,11 @@ impl std::fmt::Debug for OpenRequestKind {
                 .debug_struct("GitClone")
                 .field("repo_url", repo_url)
                 .finish(),
-            Self::GitCommit { sha } => f.debug_struct("GitCommit").field("sha", sha).finish(),
+            Self::GitCommit { sha, scroll_to } => f
+                .debug_struct("GitCommit")
+                .field("sha", sha)
+                .field("scroll_to", scroll_to)
+                .finish(),
         }
     }
 }
@@ -261,22 +267,37 @@ impl OpenRequest {
     }
 
     fn parse_git_commit_url(&mut self, commit_path: &str) -> Result<()> {
-        // Format: <sha>?repo=<path>
+        // Format: <sha>?repo=<path>[&path=<repo-relative path>[&line=<one-based line>]]
         let (sha, query) = commit_path
             .split_once('?')
             .context("invalid git commit url: missing query string")?;
         anyhow::ensure!(!sha.is_empty(), "invalid git commit url: missing sha");
 
-        let repo = url::form_urlencoded::parse(query.as_bytes())
-            .find_map(|(key, value)| (key == "repo").then_some(value))
-            .filter(|s| !s.is_empty())
+        let query_param = |name: &str| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .find_map(|(key, value)| (key == name).then_some(value))
+                .filter(|s| !s.is_empty())
+        };
+
+        let repo = query_param("repo")
             .context("invalid git commit url: missing repo query parameter")?
             .to_string();
+
+        // A malformed path or line still opens the commit, at the top of the diff or of the file.
+        let scroll_to = query_param("path")
+            .and_then(|path| RepoPath::new(path.as_ref()).log_err())
+            .map(|path| {
+                let line = query_param("line")
+                    .and_then(|line| line.parse::<u32>().ok())
+                    .unwrap_or(1);
+                (path, line.saturating_sub(1))
+            });
 
         self.open_paths.push(repo);
 
         self.kind = Some(OpenRequestKind::GitCommit {
             sha: sha.to_string(),
+            scroll_to,
         });
 
         Ok(())
@@ -1676,7 +1697,7 @@ mod tests {
         });
 
         match request.kind.unwrap() {
-            OpenRequestKind::GitCommit { sha } => {
+            OpenRequestKind::GitCommit { sha, .. } => {
                 assert_eq!(sha, "abc123");
             }
             _ => panic!("expected GitCommit variant"),
@@ -1697,7 +1718,7 @@ mod tests {
         });
 
         match request.kind.unwrap() {
-            OpenRequestKind::GitCommit { sha } => {
+            OpenRequestKind::GitCommit { sha, .. } => {
                 assert_eq!(sha, "def456");
             }
             _ => panic!("expected GitCommit variant"),
@@ -1737,6 +1758,85 @@ mod tests {
                 .to_string()
                 .contains("missing repo query parameter")
         );
+
+        // Test with a file and line to scroll to
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/commit/abc123?repo=path/to/repo&path=src%2Fmain.rs&line=42"
+                            .into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { sha, scroll_to } => {
+                assert_eq!(sha, "abc123");
+                assert_eq!(scroll_to, Some((RepoPath::new("src/main.rs").unwrap(), 41)));
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+
+        // Test with a file and a missing or malformed line
+        for url in [
+            "zed://git/commit/abc123?repo=path/to/repo&path=src/main.rs",
+            "zed://git/commit/abc123?repo=path/to/repo&path=src/main.rs&line=abc",
+        ] {
+            let request = cx.update(|cx| {
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec![url.into()],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap()
+            });
+            match request.kind.unwrap() {
+                OpenRequestKind::GitCommit { scroll_to, .. } => {
+                    assert_eq!(scroll_to, Some((RepoPath::new("src/main.rs").unwrap(), 0)));
+                }
+                _ => panic!("expected GitCommit variant"),
+            }
+        }
+
+        // Test with a path that is not relative to the repository
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/commit/abc123?repo=path/to/repo&path=/abs.rs&line=3".into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { scroll_to, .. } => assert_eq!(scroll_to, None),
+            _ => panic!("expected GitCommit variant"),
+        }
+
+        // Test with a line but no file
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/abc123?repo=path/to/repo&line=42".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { scroll_to, .. } => assert_eq!(scroll_to, None),
+            _ => panic!("expected GitCommit variant"),
+        }
     }
 
     #[gpui::test]

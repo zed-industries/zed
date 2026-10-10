@@ -1205,7 +1205,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     })));
                 });
             }
-            OpenRequestKind::GitCommit { sha } => {
+            OpenRequestKind::GitCommit { sha, scroll_to } => {
                 let base_open_options = zed::open_options_for_request(
                     request.open_behavior,
                     &workspace::SerializedWorkspaceLocation::Local,
@@ -1241,8 +1241,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                         sha,
                                         repo.downgrade(),
                                         workspace.weak_handle(),
-                                        None,
-                                        None,
+                                        git_ui::commit_view::CommitViewOptions {
+                                            scroll_to,
+                                            ..Default::default()
+                                        },
                                         window,
                                         cx,
                                     );
