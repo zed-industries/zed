@@ -52,7 +52,7 @@ use project::Project;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use ui::{Button, Label, prelude::*};
 use workspace::{
     Workspace,
@@ -352,6 +352,8 @@ pub struct CedianPanel {
     next_toast: u64,
     /// The OMP the panel runs is not the pinned one (ADR-0057 decision 4).
     omp_warning: Option<String>,
+    /// The benchmark's timing rows and frame durations (ADR-0058).
+    instruments: crate::instruments::Instruments,
     /// The `policy = "omp"` badge (ADR-0035 decision 4), shown while the
     /// launch runs under it.
     omp_policy: Option<String>,
@@ -533,6 +535,7 @@ impl CedianPanel {
             link: None,
             connection: Connection::NotStarted,
             omp_warning: None,
+            instruments: Default::default(),
             omp_policy: None,
             toasts: Vec::new(),
             next_toast: 0,
@@ -1464,6 +1467,7 @@ impl CedianPanel {
             cx,
         ));
         let (event_tx, mut event_rx) = mpsc::unbounded::<LinkEvent>();
+        self.instruments.spawning();
         self.link = Some(OmpLink::start(spec, event_tx, previous));
         self.connection = Connection::Starting;
         self._events = Some(cx.spawn_in(window, async move |this, cx| {
@@ -1892,6 +1896,7 @@ impl CedianPanel {
                     resumed,
                     policy_note,
                 };
+                self.instruments.ready();
             }
             LinkEvent::OmpWarning(warning) => self.omp_warning = Some(warning),
             LinkEvent::OmpPolicy(badge) => self.omp_policy = Some(badge),
@@ -1903,7 +1908,11 @@ impl CedianPanel {
                 }
                 self.connection = Connection::Taken { session_id, reason };
             }
+            LinkEvent::PromptTimed { sent, returned } => {
+                self.instruments.prompt_returned(sent, returned);
+            }
             LinkEvent::PromptCancelled => {
+                self.instruments.abandoned();
                 self.thread.withdraw_user();
                 self.end_turn(None, cx);
             }
@@ -1911,6 +1920,7 @@ impl CedianPanel {
                 self.end_turn(Some(format!("turn stopped: {e}")), cx);
             }
             LinkEvent::PromptFailed(e) => {
+                self.instruments.abandoned();
                 self.end_turn(Some(format!("OMP did not run the prompt: {e}")), cx);
             }
             LinkEvent::AbortFailed(e) => {
@@ -2088,7 +2098,18 @@ impl CedianPanel {
             }
             LinkEvent::Event(RouterEvent::ThinkingLevel(level)) => self.picker.thinking = level,
             LinkEvent::Event(RouterEvent::Toast(toast)) => self.push_toast(toast),
-            LinkEvent::Event(event) => return self.on_event(event, cx),
+            LinkEvent::Event(event) => {
+                let settled = matches!(event, RouterEvent::Settled);
+                if matches!(event, RouterEvent::AgentStart) {
+                    self.instruments.stream_started(window);
+                }
+                self.on_event(event, cx);
+                if settled {
+                    self.instruments.settled();
+                    self.instruments.stream_ended(window);
+                }
+                return;
+            }
         }
         cx.notify();
     }
@@ -2168,6 +2189,7 @@ impl CedianPanel {
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let started = Instant::now();
         let text = self.input.read(cx).text(cx);
         if text.trim().is_empty() {
             return;
@@ -2190,6 +2212,7 @@ impl CedianPanel {
             cx.notify();
             return;
         }
+        self.instruments.sent(started);
         self.input.update(cx, |editor, cx| editor.clear(window, cx));
         self.images.clear();
         self.thread.push_user(&text);
@@ -2229,6 +2252,7 @@ impl CedianPanel {
         let message = edit.message(cx);
         match self.turn {
             Turn::Idle => {
+                let started = Instant::now();
                 let prompt = Prompt {
                     text: message.clone(),
                     images: Vec::new(),
@@ -2238,6 +2262,7 @@ impl CedianPanel {
                     cx.notify();
                     return false;
                 }
+                self.instruments.sent(started);
                 self.thread.push_user(&message);
                 self.begin_edit_turn(edit, cx);
                 self.notice = None;

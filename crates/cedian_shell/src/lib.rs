@@ -17,6 +17,7 @@ pub mod settings;
 pub mod state;
 #[cfg(test)]
 mod test_dir;
+pub mod timing;
 pub mod verify_store;
 pub mod workflow_host;
 pub mod workflow_store;

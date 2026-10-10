@@ -23,6 +23,7 @@ mod config;
 mod fixture;
 mod fs_effects;
 mod record;
+pub mod recording;
 mod replay;
 
 pub use fixture::{Dir, Placeholders, Record};
@@ -43,15 +44,7 @@ pub const EXIT_DIVERGED: i32 = 3;
 /// that points `CEDIAN_OMP_BINARY` at it runs with no off-pin warning
 /// (ADR-0057 decision 4).
 pub fn version() -> i32 {
-    let pin: serde_json::Value =
-        serde_json::from_str(include_str!("../../../vendor/omp-revision.json"))
-            .expect("vendor/omp-revision.json is JSON");
-    println!(
-        "omp/{}",
-        pin["spikeVerified"]["ompVersion"]
-            .as_str()
-            .unwrap_or_default()
-    );
+    println!("omp/{}", recording::pinned_version());
     0
 }
 

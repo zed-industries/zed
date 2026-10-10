@@ -70,9 +70,7 @@ pub fn run(
     let started = std::time::Instant::now();
     let mut rt = crate::spawn(session_dir, workdir, settings, &host)?;
     rt.open_session("shell").map_err(|e| e.to_string())?;
-    crate::timing::record(
-        serde_json::json!({"event": "spawn", "ms": crate::timing::ms(started.elapsed())}),
-    );
+    cedian_shell::timing::record(cedian_shell::timing::Row::Spawn(started.elapsed()));
     println!(
         "cedian shell — {} (pid {}). {HELP}",
         workdir.display(),

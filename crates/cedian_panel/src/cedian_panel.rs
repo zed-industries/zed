@@ -5,6 +5,7 @@ pub mod browser;
 mod context;
 pub mod dialogs;
 pub mod import;
+pub mod instruments;
 pub mod omp_link;
 pub mod omp_settings;
 pub mod panel;

@@ -29,6 +29,11 @@
 //! notes.txt is opened only after the review and gets its block at once;
 //! a blocker whose hunk changed keeps a Dismiss in Review Changes.
 //!
+//! Record (`CEDIAN_U12_RECORD=review CEDIAN_RECORD_OMP=<pinned omp>`, one
+//! model turn): the implementing OMP is the pinned one and its scrubbed
+//! recording replaces `review.jsonl`; the reviewer still replays the CLI's
+//! recording, so the app must show it the diff the CLI did.
+//!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
 use cedian_panel::{CedianPanel, Connection, Turn};
@@ -67,7 +72,10 @@ fn main() {
     unsafe {
         std::env::set_var("CEDIAN_CONFIG", root.join("cedian.toml"));
         std::env::set_var("CEDIAN_STATE_DIR", root.join("state"));
-        std::env::set_var("HOME", root.join("home"));
+        // A recording keeps the person's HOME: the pinned OMP's auth.
+        if !cedian_fake_omp::recording::armed("review") {
+            std::env::set_var("HOME", root.join("home"));
+        }
         std::env::set_var("CEDIAN_OMP_BINARY", std::env::current_exe().unwrap());
     }
     print!("test reviewer_from_the_app ... ");
@@ -98,7 +106,12 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     let ws = root.join("ws");
     std::fs::write(ws.join("notes.txt"), "alpha\nbeta\ngamma\n").unwrap();
     let state = cedian_shell::state::dir(&ws).unwrap();
-    cedian_fake_omp::install_replay(&state.join("omp"), Path::new(FIXTURE)).unwrap();
+    let record = cedian_fake_omp::recording::armed("review");
+    if record {
+        cedian_fake_omp::recording::arm_app(&state.join("omp"), root);
+    } else {
+        cedian_fake_omp::install_replay(&state.join("omp"), Path::new(FIXTURE)).unwrap();
+    }
     cedian_fake_omp::install_replay(&state.join("reviewer"), Path::new(REVIEWER_FIXTURE)).unwrap();
     // The role the reviewer reads, from the directory cedian owns.
     let roles = state.join("roles/.omp");
@@ -135,6 +148,12 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     wait(cx, &window, "the turn to settle", |p| {
         p.turn() == &Turn::Idle && p.transcript().iter().any(|l| l.contains("p5-done"))
     });
+    if record {
+        cedian_fake_omp::recording::write_fixture(
+            &state.join("omp").join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(FIXTURE),
+        );
+    }
     assert_connected(cx, &window);
     let hunks = window
         .update(cx, |p, _, _| {
@@ -389,7 +408,7 @@ fn wait(
     what: &str,
     done: impl Fn(&CedianPanel) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + cedian_fake_omp::recording::wait_limit(Duration::from_secs(60));
     loop {
         cx.run_until_parked();
         let (finished, state) = window

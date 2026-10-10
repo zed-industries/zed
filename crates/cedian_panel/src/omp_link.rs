@@ -32,7 +32,7 @@ use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// What the OMP thread tells the panel.
 #[derive(Debug, Clone)]
@@ -66,6 +66,8 @@ pub enum LinkEvent {
     Taken { session_id: String, reason: String },
     /// The prompt was stopped before OMP got it.
     PromptCancelled,
+    /// OMP got the prompt at `sent`; its `prompt_result` came at `returned`.
+    PromptTimed { sent: Instant, returned: Instant },
     /// OMP ran the prompt, it was stopped, and the call ended in an error
     /// instead of a result.
     PromptStopped(String),
@@ -1451,13 +1453,18 @@ fn run(
                     }
                     turn.phase = Phase::Sent;
                 }
+                let sent = Instant::now();
                 let result = runtime.prompt(&prompt.text, prompt.images);
+                let returned = Instant::now();
                 let omp_started = result.as_ref().is_ok_and(|turn| {
                     turn.events
                         .iter()
                         .any(|event| matches!(event, RpcAgentEvent::AgentStart(_)))
                 });
                 let (cancelled, started) = gate.prompt_ended(omp_started);
+                if result.is_ok() {
+                    let _ = events.unbounded_send(LinkEvent::PromptTimed { sent, returned });
+                }
                 if let Err(e) = result {
                     let _ = events.unbounded_send(match (cancelled, started) {
                         (true, true) => LinkEvent::PromptStopped(e.to_string()),

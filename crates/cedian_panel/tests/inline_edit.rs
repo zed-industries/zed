@@ -19,6 +19,11 @@
 //! 4. reverting the inline-edit turn restores its start (line 2), and one
 //!    undo redoes it.
 //!
+//! Record (`CEDIAN_U12_RECORD=inline_edit CEDIAN_RECORD_OMP=<pinned omp>`,
+//! two model turns): the same two turns against the pinned OMP; the
+//! scrubbed recording replaces `inline_edit.jsonl`, so it is no longer
+//! spliced.
+//!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
 use cedian_panel::{CedianPanel, Connection, Turn};
@@ -59,7 +64,10 @@ fn main() {
     unsafe {
         std::env::set_var("CEDIAN_CONFIG", root.join("cedian.toml"));
         std::env::set_var("CEDIAN_STATE_DIR", root.join("state"));
-        std::env::set_var("HOME", root.join("home"));
+        // A recording keeps the person's HOME: the pinned OMP's auth.
+        if !cedian_fake_omp::recording::armed("inline_edit") {
+            std::env::set_var("HOME", root.join("home"));
+        }
         std::env::set_var("CEDIAN_OMP_BINARY", std::env::current_exe().unwrap());
     }
     print!("test p6_replay_through_the_app ... ");
@@ -92,7 +100,12 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     let ws = root.join("ws");
     std::fs::write(ws.join("notes.txt"), "alpha\nbeta\ngamma\ndelta\n").unwrap();
     let state = cedian_shell::state::dir(&ws).unwrap();
-    cedian_fake_omp::install_replay(&state.join("omp"), Path::new(FIXTURE)).unwrap();
+    let record = cedian_fake_omp::recording::armed("inline_edit");
+    if record {
+        cedian_fake_omp::recording::arm_app(&state.join("omp"), root);
+    } else {
+        cedian_fake_omp::install_replay(&state.join("omp"), Path::new(FIXTURE)).unwrap();
+    }
 
     let project = Project::test(fs::RealFs::new(None, cx.executor()), [ws.as_path()], cx).await;
     let window = cx.add_window(|window, cx| CedianPanel::new(project.clone(), window, cx));
@@ -217,6 +230,12 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     wait(cx, &window, "the prompt turn to settle", |p| {
         p.turn() == &Turn::Idle && p.transcript().iter().any(|l| l.contains("t2-done"))
     });
+    if record {
+        cedian_fake_omp::recording::write_fixture(
+            &state.join("omp").join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(FIXTURE),
+        );
+    }
     assert_connected(cx, &window);
     assert_eq!(text(cx), "ALPHA\nBETA\ngamma\nDELTA\n");
     buffer.update(cx, |b, cx| b.edit([(22..22, "!")], None, cx));
@@ -309,7 +328,7 @@ fn wait(
     what: &str,
     done: impl Fn(&CedianPanel) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + cedian_fake_omp::recording::wait_limit(Duration::from_secs(60));
     loop {
         cx.run_until_parked();
         let (finished, state) = window

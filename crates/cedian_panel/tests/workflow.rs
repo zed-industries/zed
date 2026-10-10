@@ -15,6 +15,10 @@
 //!    outcome, the refused claims ledger; Resume sets it running again;
 //! 4. an unsaved keystroke in notes.txt makes e1 stale (ADR-0057 decision 7).
 //!
+//! Record (`CEDIAN_U12_RECORD=workflow CEDIAN_RECORD_OMP=<pinned omp>`,
+//! one model turn): the same steps against the pinned OMP; the scrubbed
+//! recording replaces `workflow.jsonl`.
+//!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
 use cedian_panel::{CedianPanel, Connection, Turn};
@@ -55,7 +59,10 @@ fn main() {
     unsafe {
         std::env::set_var("CEDIAN_CONFIG", root.join("cedian.toml"));
         std::env::set_var("CEDIAN_STATE_DIR", root.join("state"));
-        std::env::set_var("HOME", root.join("home"));
+        // A recording keeps the person's HOME: the pinned OMP's auth.
+        if !cedian_fake_omp::recording::armed("workflow") {
+            std::env::set_var("HOME", root.join("home"));
+        }
         std::env::set_var("CEDIAN_OMP_BINARY", std::env::current_exe().unwrap());
     }
     print!("test workflow_in_the_app ... ");
@@ -87,7 +94,12 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     std::fs::write(ws.join("notes.txt"), "alpha\nbeta\ngamma\n").unwrap();
     std::fs::write(ws.join("other.txt"), "delta\n").unwrap();
     let state = cedian_shell::state::dir(&ws).unwrap();
-    cedian_fake_omp::install_replay(&state.join("omp"), Path::new(FIXTURE)).unwrap();
+    let record = cedian_fake_omp::recording::armed("workflow");
+    if record {
+        cedian_fake_omp::recording::arm_app(&state.join("omp"), root);
+    } else {
+        cedian_fake_omp::install_replay(&state.join("omp"), Path::new(FIXTURE)).unwrap();
+    }
 
     let project = Project::test(fs::RealFs::new(None, cx.executor()), [ws.as_path()], cx).await;
     let window = cx.add_window(|window, cx| CedianPanel::new(project.clone(), window, cx));
@@ -105,6 +117,12 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     wait(cx, &window, "the turn to settle", |p| {
         p.turn() == &Turn::Idle && p.transcript().iter().any(|l| l.contains("p5-done"))
     });
+    if record {
+        cedian_fake_omp::recording::write_fixture(
+            &state.join("omp").join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(FIXTURE),
+        );
+    }
     assert_connected(cx, &window);
     let raw = std::fs::read_to_string(state.join("workflow.json"))
         .unwrap_or_else(|e| panic!("the turn started a workflow in the state dir: {e}"));
@@ -112,7 +130,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     let read_call = workflow["evidence"]["e1"]["provenance"]["attributed"]["tool_call_id"]
         .as_str()
         .unwrap_or_else(|| panic!("e1 bound to the read call:\n{raw}"));
-    assert!(read_call.starts_with("call_01a113f417f6"), "{read_call}");
+    assert_eq!(read_call, first_read_call(), "e1 bound to OMP's read");
 
     let unreviewable = window
         .update(cx, |p, _, _| p.review().unreviewable().to_vec())
@@ -216,6 +234,24 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     );
 }
 
+/// The id of the fixture's `read` of notes.txt, as OMP started it.
+fn first_read_call() -> String {
+    std::fs::read_to_string(FIXTURE)
+        .unwrap()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .map(|r| r["frame"].clone())
+        .find(|f| {
+            f["type"] == "tool_execution_start"
+                && f["toolName"] == "read"
+                && f["args"]["path"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with("notes.txt"))
+        })
+        .and_then(|f| f["toolCallId"].as_str().map(str::to_string))
+        .expect("the fixture's read of notes.txt")
+}
+
 fn rendered(
     vcx: &mut VisualTestContext,
     selector: &'static str,
@@ -245,7 +281,7 @@ fn wait(
     what: &str,
     done: impl Fn(&CedianPanel) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + cedian_fake_omp::recording::wait_limit(Duration::from_secs(30));
     loop {
         cx.run_until_parked();
         let (finished, state) = window

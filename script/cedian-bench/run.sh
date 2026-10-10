@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
-# S2 speed benchmark harness (ADR-0026, ADR-0037). Tasks B1-B10 are in
-# the cedian docs repo, docs/plans/done/s2-workflow-core.md.
+# S2 speed benchmark harness (ADR-0026, ADR-0037), re-run for S9 (ADR-0058).
+# Tasks B1-B10 are in the cedian docs repo, docs/plans/done/s2-workflow-core.md.
 #
 #   script/cedian-bench/run.sh check <id|all>   prove each done predicate: it passes at the
 #                                        reference commit and fails at the start commit.
 #                                        No model, no OMP.
-#   BENCH_GO=1 script/cedian-bench/run.sh run <id|all>
+#   BENCH_GO=1 MANDATE=on|off script/cedian-bench/run.sh run <id|all>
 #                                        run cedian (this checkout's release build) on the
-#                                        task in a fresh worktree, then check the predicate.
-#                                        Needs the owner's go (ADR-0037).
+#                                        task in a fresh worktree, check the predicate,
+#                                        then remove the worktree. One model turn per task.
+#   BENCH_GO=1 script/cedian-bench/run.sh record <lane|all>
+#                                        re-record one hand-cut fixture (ADR-0058 decision 5).
+#   script/cedian-bench/run.sh plan all  the live pass in order, with its model turns.
+#   script/cedian-bench/run.sh turns all the turns this pass has used.
+#   script/cedian-bench/run.sh compare <on|off>  results against the S2 baseline.
+#   script/cedian-bench/run.sh snapshot <before|after>  the person's ~/.omp around the pass.
 #
-# Work dir: $BENCH_WORK (default /tmp/cedian-bench). Results: $BENCH_WORK/results/<id>.json.
+# The pass stops before a step that would take it past MAX_TURNS (default 40)
+# model turns; the ledger is $BENCH_WORK/turns.log (delete it to start a new pass).
+# MANDATE=off runs OMP with `--append-system-prompt ""`, as the reviewer is run,
+# so ~/.omp/agent/APPEND_SYSTEM.md does not reach it.
+# Work dir: $BENCH_WORK (default /tmp/cedian-bench). Results: $BENCH_WORK/results/<mandate>/<id>.json.
 set -euo pipefail
 
 ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
@@ -22,8 +32,15 @@ TASKS=${BENCH_TASKS_REPO:-$HOME/cedian}
 WORK=${BENCH_WORK:-/tmp/cedian-bench}
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$WORK/target}
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-# cedian spawns the first omp on PATH; pin it so the recorded version is the one that ran.
-export CEDIAN_OMP_BINARY=${CEDIAN_OMP_BINARY:-$(command -v omp)}
+# The OMP that runs is the pin, checked by version before any model turn.
+PIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["spikeVerified"]["ompVersion"])' \
+  "$ROOT/vendor/omp-revision.json")
+OMP=${CEDIAN_OMP_BINARY:-$HOME/.local/bin/omp}
+# The S2 baseline's model (ADR-0058 decision 1): a run on another is refused.
+BENCH_MODEL=${BENCH_MODEL:-opencode-go/muse-spark-1.3-contributor}
+MAX_TURNS=${MAX_TURNS:-40}
+LEDGER=$WORK/turns.log
+S2_RESULTS=${S2_RESULTS:-$TASKS/docs/benchmarks/2026-10-07}
 ALL="b1 b2 b3 b4 b5 b6 b7 b8 b9 b10"
 # B8 is open work: it starts where the harness was written.
 B8_BASE=ef2f8b7
@@ -165,10 +182,75 @@ check() {
   drop "$dir"
 }
 
+# The OMP named by $OMP is the pin, or nothing runs (ADR-0058 decision 1).
+pin_check() {
+  local got
+  got=$("$OMP" --version 2>/dev/null | head -1) || got="no omp at $OMP"
+  [ "$got" = "omp/$PIN" ] || {
+    echo "refused: cedian is pinned to OMP $PIN; $OMP says '$got'. Set CEDIAN_OMP_BINARY to the pinned omp." >&2
+    exit 2
+  }
+}
+
+# The model OMP would use, read from the person's config; never written.
+model_check() {
+  local model
+  model=$("$OMP" config get modelRoles --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"].get("default",""))')
+  [ "$model" = "$BENCH_MODEL" ] || {
+    echo "refused: OMP's default model is '$model', the S2 baseline ran $BENCH_MODEL (ADR-0058 decision 1)" >&2
+    exit 2
+  }
+}
+
+# What cedian spawns: the pin itself, or a wrapper that empties the appended
+# system prompt for rpc runs, as the reviewer's spawn profile does.
+omp_for_mandate() {
+  case ${MANDATE:-} in
+  on) echo "$OMP" ;;
+  off)
+    local w=$WORK/omp-mandate-off
+    printf '#!/bin/sh\ncase "$1" in --mode) exec "%s" "$@" --append-system-prompt "" ;; esac\nexec "%s" "$@"\n' \
+      "$OMP" "$OMP" > "$w"
+    chmod 755 "$w"
+    echo "$w" ;;
+  *) echo "MANDATE must be on or off (ADR-0058 decision 2)" >&2; exit 2 ;;
+  esac
+}
+
+# Free disk before a step: refuse under 10 GB. `need` is what the step adds.
+preflight() {
+  local need=$1 free
+  free=$(df -Pk "$WORK" | awk 'NR==2 { print int($4 / 1048576) }')
+  if [ "$free" -lt 10 ]; then
+    echo "refused: ${free} GB free under $WORK, the floor is 10 GB; this step needs about ${need} GB (run script/cedian-prune 10, or free disk)" >&2
+    exit 2
+  fi
+  echo "disk: ${free} GB free; this step needs about ${need} GB" >&2
+}
+
+turns_used() { if [ -f "$LEDGER" ]; then awk '{ n += $2 } END { print n + 0 }' "$LEDGER"; else echo 0; fi; }
+
+# Exit 0 without starting `what` when its `n` turns would pass the cap.
+admit() {
+  local what=$1 n=$2 used
+  used=$(turns_used)
+  if [ $((used + n)) -gt "$MAX_TURNS" ]; then
+    echo "turn cap: $used of $MAX_TURNS used; $what needs $n; stopping before it (partial exit, ADR-0058 decision 5)"
+    exit 0
+  fi
+}
+
+spend() { printf '%s %s\n' "$1" "$2" >> "$LEDGER"; }
+
 run() {
-  local id=$1 dir cfg start end out verdict
+  local id=$1 dir cfg start end out verdict omp results
   [ "${BENCH_GO:-}" = 1 ] || { echo "run needs the owner's go: BENCH_GO=1 (ADR-0037)" >&2; exit 2; }
   task "$id"
+  admit "$id (mandate ${MANDATE})" 1
+  preflight 5
+  omp=$(omp_for_mandate)
+  results=$WORK/results/$MANDATE
+  mkdir -p "$results"
   dir=$(worktree "$id-run" "$BASE")
   [ "$id" = b6 ] && git show "$REF:crates/cedian_cli/tests/fixtures/p5_worktree.jsonl" \
       > "$dir/crates/cedian_cli/tests/fixtures/p5_worktree.jsonl"
@@ -176,39 +258,159 @@ run() {
   cfg=$WORK/run-$id.toml
   # The agent must run cargo: the run uses the owner's OMP config (ADR-0035).
   printf 'schema = 1\n[projects."%s"]\npolicy = "omp"\n' "$dir" > "$cfg"
-  rm -f "$WORK/results/$id.timing.jsonl"
+  : > "$results/$id.timing.jsonl"
+  spend "$id-$MANDATE" 1
   start=$(python3 -c 'import time; print(int(time.time()*1000))')
-  out=$(CEDIAN_CONFIG=$cfg CEDIAN_WORKDIR=$dir CEDIAN_SESSION_DIR=$WORK/sessions/$id CEDIAN_STATE_DIR=$WORK/state/$id \
-        CEDIAN_TIMING=$WORK/results/$id.timing.jsonl \
+  out=$(CEDIAN_OMP_BINARY=$omp CEDIAN_CONFIG=$cfg CEDIAN_WORKDIR=$dir \
+        CEDIAN_SESSION_DIR=$WORK/sessions/$MANDATE/$id CEDIAN_STATE_DIR=$WORK/state/$MANDATE/$id \
+        CEDIAN_TIMING=$results/$id.timing.jsonl \
         "$CARGO_TARGET_DIR/release/cedian" prompt "$PROMPT" 2>&1) || true
   end=$(python3 -c 'import time; print(int(time.time()*1000))')
-  printf '%s\n' "$out" > "$WORK/logs/$id-run.out"
-  verdict=$(cd "$dir" && verdict "$id" 2>"$WORK/logs/$id-predicate.log")
-  python3 - "$id" "$verdict" "$((end - start))" "$WORK" "$dir" <<'PY'
-import json, os, re, subprocess, sys
-id, verdict, wall, work = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
-out = open(f"{work}/logs/{id}-run.out").read()
-timing = [json.loads(l) for l in open(f"{work}/results/{id}.timing.jsonl")] if __import__("os").path.exists(f"{work}/results/{id}.timing.jsonl") else []
+  printf '%s\n' "$out" > "$WORK/logs/$id-$MANDATE-run.out"
+  verdict=$(cd "$dir" && verdict "$id" 2>"$WORK/logs/$id-$MANDATE-predicate.log")
+  (cd "$dir" && git diff > "$WORK/logs/$id-$MANDATE.patch") || true
+  python3 - "$id" "$verdict" "$((end - start))" "$WORK" "$results" "$MANDATE" "$OMP" "$BENCH_MODEL" <<'PY'
+import json, re, subprocess, sys
+id, verdict, wall, work, results, mandate, omp_bin, model = sys.argv[1:9]
+wall = int(wall)
+out = open(f"{work}/logs/{id}-{mandate}-run.out").read()
+timing = [json.loads(l) for l in open(f"{results}/{id}.timing.jsonl") if l.strip()]
 claimed = bool(re.search(r"\b(done|fixed|complete[d]?|implemented)\b", out.split("\n[")[0], re.I))
-omp_bin = os.environ["CEDIAN_OMP_BINARY"]
 omp = subprocess.run([omp_bin, "--version"], capture_output=True, text=True).stdout.strip()
-model = json.loads(subprocess.run([omp_bin, "config", "get", "modelRoles", "--json"], capture_output=True, text=True, cwd=sys.argv[5]).stdout)["value"].get("default")
 json.dump({
     "task": id, "predicate": verdict, "wall_ms": wall,
     "time_to_usable_result_ms": wall if verdict == "pass" else None,
     "claimed_done": claimed, "false_done": claimed and verdict == "fail",
-    "omp_version": omp, "omp_binary": omp_bin, "model": model, "timing": timing,
-}, open(f"{work}/results/{id}.json", "w"), indent=2)
-print(f"{id}: predicate {verdict}, wall {wall} ms, claimed_done {claimed}")
+    "omp_version": omp, "omp_binary": omp_bin, "model": model, "mandate": mandate,
+    "timing": timing,
+}, open(f"{results}/{id}.json", "w"), indent=2)
+print(f"{id} (mandate {mandate}): predicate {verdict}, wall {wall} ms, claimed_done {claimed}")
+PY
+  drop "$dir"
+}
+
+# Record lanes: the env that arms one, the test that records it, and its
+# model turns (OMP `agent_start`s); each lane prints what it used. The lanes
+# keep the person's HOME, so the pinned OMP reads their auth and mandate as in
+# real use (ADR-0058 decision 5); sessions go to the test's temp dir.
+lane() {
+  LANE_TEST="-p cedian_cli --test replay_cli"
+  case $1 in
+  cli|s2|channel|worktree|p8|p8deny|s2profile) LANE_TURNS=1 LANE_ENV="CEDIAN_P2_RECORD=$1" ;;
+  shell|s3review|s3same) LANE_TURNS=2 LANE_ENV="CEDIAN_P2_RECORD=$1" ;;
+  workflow|review|turn_lifecycle) LANE_TURNS=1 ;;
+  inline_edit) LANE_TURNS=2 ;;
+  *) echo "unknown lane $1" >&2; exit 2 ;;
+  esac
+  case $1 in
+  workflow|review|turn_lifecycle|inline_edit)
+    LANE_ENV="CEDIAN_U12_RECORD=$1" LANE_TEST="-p cedian_panel --test $1" ;;
+  esac
+}
+# Frame rewrites first (edit_frames.py, the U8-U10 cuts), then the tool-list-only
+# edits; s2profile last, the first cut when the cap is near (37 LLM calls).
+LANES="cli shell s2 s3review s3same workflow review inline_edit turn_lifecycle channel worktree p8 p8deny s2profile"
+
+record() {
+  local name=$1 out used
+  [ "${BENCH_GO:-}" = 1 ] || { echo "record needs the owner's go: BENCH_GO=1 (ADR-0058 decision 5)" >&2; exit 2; }
+  lane "$name"
+  admit "lane $name" "$LANE_TURNS"
+  preflight 9
+  out=$WORK/logs/record-$name.log
+  # shellcheck disable=SC2086
+  (cd "$ROOT" && env $LANE_ENV CEDIAN_RECORD_OMP="$OMP" CARGO_PROFILE_DEV_DEBUG=line-tables-only \
+     cargo test -j4 $LANE_TEST) 2>&1 | tee "$out" || true
+  used=$(sed -n 's/.*model turns: \([0-9][0-9]*\).*/\1/p' "$out" | awk '{ n += $1 } END { print n + 0 }')
+  # A lane that died before it printed may still have spent its turns.
+  [ "$used" -gt 0 ] || used=$LANE_TURNS
+  spend "record-$name" "$used"
+  echo "lane $name: $used model turn(s); pass total $(turns_used) of $MAX_TURNS"
+}
+
+plan() {
+  local total=0 l m id
+  echo "# the live pass, in order (MAX_TURNS=$MAX_TURNS); each step stops the pass at the cap"
+  for l in $LANES; do
+    lane "$l"; total=$((total + LANE_TURNS))
+    echo "BENCH_GO=1 script/cedian-bench/run.sh record $l   # $LANE_TURNS turn(s), total $total"
+  done
+  for m in off on; do
+    for id in $ALL; do
+      total=$((total + 1))
+      echo "BENCH_GO=1 MANDATE=$m script/cedian-bench/run.sh run $id   # 1 turn, total $total"
+    done
+  done
+  [ "$total" -le "$MAX_TURNS" ] || echo "# over the cap by $((total - MAX_TURNS)): the pass stops before the last $((total - MAX_TURNS)) step(s)"
+}
+
+turns() { echo "$(turns_used) of $MAX_TURNS model turns used"; [ -f "$LEDGER" ] && cat "$LEDGER"; true; }
+
+# This pass's results beside S2's, task by task (ADR-0037: a task more than
+# 25% slower on the same model is a regression; overhead = total - omp).
+compare() {
+  python3 - "$WORK/results/$1" "$S2_RESULTS" <<'PY'
+import json, os, statistics, sys
+new_dir, s2_dir = sys.argv[1:3]
+def load(d, id):
+    p = f"{d}/{id}.json"
+    return json.load(open(p)) if os.path.exists(p) else None
+print("task  s2       s2_wall_s  verdict  wall_s  ratio  regression  false_done  overhead_ms")
+over = []
+for id in [f"b{i}" for i in range(1, 11)]:
+    s2, new = load(s2_dir, id), load(new_dir, id)
+    if not new:
+        print(f"{id:5} not run"); continue
+    o = [t["total_ms"] - t["omp_ms"] for t in new["timing"] if t.get("event") == "turn"]
+    over += o
+    both = s2 and s2["predicate"] == "pass" and new["predicate"] == "pass"
+    ratio = new["wall_ms"] / s2["wall_ms"] if both else None
+    print(f"{id:5} {s2['predicate'] if s2 else '-':8} {s2['wall_ms'] / 1000 if s2 else 0:9.0f}  "
+          f"{new['predicate']:7} {new['wall_ms'] / 1000:6.0f}  {f'{ratio:.2f}' if ratio else '-':5}  "
+          f"{str(bool(ratio and ratio > 1.25)):10}  {str(new['false_done']):10}  {o}")
+if over:
+    print(f"overhead per turn: median {statistics.median(over)} ms, max {max(over)} ms, {len(over)} turns")
 PY
 }
 
+# ADR-0058 decision 5: hashes of the person's OMP config before and after the
+# pass, and the files the pass left in ~/.omp/run and ~/.omp/logs (listed,
+# never deleted). Reads ~/.omp only.
+snapshot() {
+  local omp_home=$HOME/.omp dir=$WORK/omp-snapshot
+  mkdir -p "$dir"
+  {
+    for f in agent/config.yml agent/APPEND_SYSTEM.md; do
+      if [ -f "$omp_home/$f" ]; then shasum -a 256 "$omp_home/$f"; else echo "absent $f"; fi
+    done
+    if [ -d "$omp_home/agent/skills" ]; then
+      (cd "$omp_home/agent/skills" && find . -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | sed 's|-$|agent/skills/|')
+    fi
+  } > "$dir/$1.hashes"
+  (cd "$omp_home" && find run logs -type f 2>/dev/null | sort) > "$dir/$1.files"
+  if [ "$1" = after ]; then
+    if diff "$dir/before.hashes" "$dir/after.hashes"; then echo "OMP config, mandate and skills unchanged"; else echo "CHANGED (above)"; fi
+    echo "files the pass left in ~/.omp/run and ~/.omp/logs:"
+    comm -13 "$dir/before.files" "$dir/after.files"
+  fi
+}
+
 mode=${1:-}; target=${2:-}
-[ -n "$mode" ] && [ -n "$target" ] || { sed -n '2,13p' "$0"; exit 2; }
+[ -n "$mode" ] && [ -n "$target" ] || { sed -n '2,24p' "$0"; exit 2; }
 mkdir -p "$WORK/logs" "$WORK/results" "$WORK/trees"
-[ "$target" = all ] && ids=$ALL || ids=$target
-[ "$mode" = run ] && (cd "$ROOT" && cargo build -q --release -p cedian_cli) &&
-  { [ -x "$CARGO_TARGET_DIR/release/cedian" ] || { echo "no cedian binary at $CARGO_TARGET_DIR/release" >&2; exit 2; }; }
+case $mode in
+check) ids=$([ "$target" = all ] && echo "$ALL" || echo "$target"); preflight 4 ;;
+run)
+  ids=$([ "$target" = all ] && echo "$ALL" || echo "$target")
+  pin_check; omp_for_mandate >/dev/null; model_check
+  (cd "$ROOT" && cargo build -q --release -p cedian_cli)
+  [ -x "$CARGO_TARGET_DIR/release/cedian" ] || { echo "no cedian binary at $CARGO_TARGET_DIR/release" >&2; exit 2; } ;;
+record) ids=$([ "$target" = all ] && echo "$LANES" || echo "$target"); pin_check ;;
+plan|turns) "$mode"; exit 0 ;;
+compare) compare "$target"; exit 0 ;;
+snapshot) snapshot "$target"; exit 0 ;;
+*) sed -n '2,24p' "$0"; exit 2 ;;
+esac
 status=0
 for id in $ids; do "$mode" "$id" || status=1; done
 exit $status

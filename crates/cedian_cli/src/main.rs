@@ -30,13 +30,13 @@ mod shell_lock;
 mod state;
 #[cfg(test)]
 mod test_dir;
-mod timing;
 
 use cedian_agent_ui::Panel;
 use cedian_omp::{OmpBinary, OmpRuntime, RuntimeConfig};
 use cedian_review::FileDiff;
 use cedian_shell::{
-    corrections, review_agent, review_findings, workflow_host, workflow_store, workspace_files,
+    corrections, review_agent, review_findings, timing, workflow_host, workflow_store,
+    workspace_files,
 };
 use cedian_workspace::{HostTools, WorkspaceHost};
 use std::collections::HashMap;
@@ -397,7 +397,7 @@ fn cmd_prompt(
     let started = Instant::now();
     let mut rt = spawn(session_dir, workdir, settings, &host)?;
     rt.open_session("cli").map_err(|e| e.to_string())?;
-    timing::record(serde_json::json!({"event": "spawn", "ms": timing::ms(started.elapsed())}));
+    timing::record(timing::Row::Spawn(started.elapsed()));
     let result = run_turn(
         &mut rt,
         &host,
@@ -492,10 +492,9 @@ pub(crate) fn run_turn(
     } else {
         format!("{ambient}\n{message}")
     };
-    let context_ms = timing::ms(turn_started.elapsed());
     let omp_started = Instant::now();
     let turn = rt.prompt(&full, vec![]);
-    let omp_ms = timing::ms(omp_started.elapsed());
+    let omp_returned = Instant::now();
     // `Settled` follows `prompt_result`; give it a moment, then unsubscribe —
     // dropping our sender always ends the pump, even when the turn failed or
     // no `Settled` arrived.
@@ -565,11 +564,12 @@ pub(crate) fn run_turn(
     store.record_turn(kind, label, turn_files);
     store.models.extend(rt.router().answered_models());
     let saved = session::save(workdir, &store);
-    let total_ms = timing::ms(turn_started.elapsed());
-    timing::record(serde_json::json!({
-        "event": "turn", "context_ms": context_ms, "omp_ms": omp_ms,
-        "post_ms": total_ms.saturating_sub(context_ms + omp_ms), "total_ms": total_ms,
-    }));
+    timing::record(timing::Row::Turn {
+        started: turn_started,
+        sent: omp_started,
+        returned: omp_returned,
+        ended: Instant::now(),
+    });
     saved
 }
 

@@ -35,7 +35,7 @@ collections.workspace = true
 editor.workspace = true
 fs.workspace = true
 futures.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, features = ["profiler"] }
 url.workspace = true
 language.workspace = true
 log.workspace = true

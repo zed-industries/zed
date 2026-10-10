@@ -38,6 +38,13 @@
 //! hand-ordered from OMP's RPC handlers, and the `fs_sleep`s only stretch
 //! a gap real OMP leaves short.
 //!
+//! Their queue order is checked against OMP's own frames: in every fixture,
+//! and in `turn_lifecycle_live.jsonl` once recorded
+//! (`CEDIAN_U12_RECORD=turn_lifecycle CEDIAN_RECORD_OMP=<pinned omp>`, one
+//! model turn: a long reply, a refused and a taken steer, a follow-up, then
+//! Stop, against the pinned OMP). The record lane does not replace the four
+//! fixtures: their restarts, hangs and refusals are no model's to make.
+//!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
 #![allow(
@@ -60,6 +67,11 @@ fn fixture(n: u8) -> String {
     )
 }
 
+const LIVE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turn_lifecycle_live.jsonl"
+);
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -68,6 +80,8 @@ fn main() {
         Some("config") => std::process::exit(cedian_fake_omp::config_get(&args)),
         _ => {}
     }
+    let record = cedian_fake_omp::recording::armed("turn_lifecycle");
+    queue_order_matches_omps();
     let root = std::env::temp_dir().join(format!("cedian-u4-turns-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("ws")).unwrap();
@@ -77,16 +91,27 @@ fn main() {
     unsafe {
         std::env::set_var("CEDIAN_CONFIG", root.join("cedian.toml"));
         std::env::set_var("CEDIAN_STATE_DIR", root.join("state"));
-        std::env::set_var("HOME", root.join("home"));
+        // A recording keeps the person's HOME: the pinned OMP's auth.
+        if !record {
+            std::env::set_var("HOME", root.join("home"));
+        }
         std::env::set_var("CEDIAN_OMP_BINARY", std::env::current_exe().unwrap());
     }
-    print!("test turn_lifecycle ... ");
+    print!(
+        "test turn_lifecycle ({}) ... ",
+        if record { "record" } else { "replay" }
+    );
     gpui::run_test_once(
         0,
         Box::new(move |dispatcher| {
             let exec = std::sync::Arc::new(dispatcher.clone());
             let mut cx = TestAppContext::build(dispatcher.clone(), Some("turn_lifecycle"));
-            gpui::ForegroundExecutor::new(exec).block_test(scenario(&mut cx, &root));
+            let executor = gpui::ForegroundExecutor::new(exec);
+            if record {
+                executor.block_test(record_scenario(&mut cx, &root));
+            } else {
+                executor.block_test(scenario(&mut cx, &root));
+            }
             cx.run_until_parked();
             cx.update(|cx| cx.quit());
             cx.run_until_parked();
@@ -348,6 +373,142 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     assert_ready(cx, &window);
 }
 
+/// The live lane: the queue and Stop of step 2 against the pinned OMP.
+async fn record_scenario(cx: &mut TestAppContext, root: &Path) {
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        editor::init(cx);
+    });
+    let ws = root.join("ws");
+    let sessions = cedian_shell::state::dir(&ws).unwrap().join("omp");
+    cedian_fake_omp::recording::arm_app(&sessions, root);
+    let project = Project::test(fs::RealFs::new(None, cx.executor()), [ws.as_path()], cx).await;
+    let window = cx.add_window(|window, cx| CedianPanel::new(project.clone(), window, cx));
+    let mut vcx = VisualTestContext::from_window(window.into(), cx);
+    wait(cx, &window, "OMP ready", ready);
+
+    submit(
+        cx,
+        &window,
+        "Write the whole numbers from 1 to 300 in English words, one per line, and nothing else.",
+    );
+    wait(cx, &window, "the long reply to stream", |p| {
+        p.turn() == &Turn::Streaming
+    });
+    set_prompt(cx, &window, "/plan");
+    click(&mut vcx, "cedian-steer");
+    wait(cx, &window, "the refused steer", |p| {
+        p.notice().is_some_and(|n| n.contains("cannot be queued"))
+    });
+    set_prompt(cx, &window, "faster");
+    click(&mut vcx, "cedian-steer");
+    wait(cx, &window, "the steer chip", |p| {
+        p.transcript()
+            .iter()
+            .any(|l| l.ends_with("queued: faster / "))
+    });
+    submit(cx, &window, "two");
+    wait(cx, &window, "the follow-up chip", |p| {
+        p.transcript()
+            .iter()
+            .any(|l| l.ends_with("queued: faster / two"))
+    });
+    click(&mut vcx, "cedian-stop");
+    wait(cx, &window, "the stopped turn", |p| {
+        p.turn() == &Turn::Idle && !p.transcript().iter().any(|l| l.contains("queued:"))
+    });
+    assert_eq!(prompt(cx, &window), "faster\ntwo");
+    cedian_fake_omp::recording::write_fixture(
+        &sessions.join(cedian_fake_omp::RECORDED_FILE),
+        Path::new(LIVE),
+    );
+    let broken = queue_order(&std::fs::read_to_string(LIVE).unwrap());
+    assert!(broken.is_empty(), "OMP's own order: {broken:#?}");
+}
+
+/// The order the hand-ordered fixtures rely on, checked in each fixture and
+/// in the live recording when there is one.
+fn queue_order_matches_omps() {
+    print!("test turn_lifecycle_queue_order ... ");
+    let swapped = concat!(
+        r#"{"dir":"in","frame":{"id":"s","type":"steer","message":"x"}}"#,
+        "\n",
+        r#"{"dir":"out","frame":{"id":"s","type":"response","command":"steer","success":true}}"#,
+        "\n",
+        r#"{"dir":"out","frame":{"type":"queue_update","steering":["x"],"followUp":[]}}"#,
+        "\n",
+        r#"{"dir":"in","frame":{"id":"a","type":"abort"}}"#,
+        "\n",
+        r#"{"dir":"out","frame":{"type":"queue_update","steering":[],"followUp":[]}}"#,
+        "\n",
+        r#"{"dir":"out","frame":{"id":"a","type":"response","command":"abort","success":true}}"#,
+        "\n"
+    );
+    assert_eq!(queue_order(swapped).len(), 2, "the check sees both breaks");
+    let mut files: Vec<String> = (1..=4).map(fixture).collect();
+    if Path::new(LIVE).exists() {
+        files.push(LIVE.to_string());
+    }
+    for file in files {
+        let broken = queue_order(&std::fs::read_to_string(&file).unwrap());
+        assert!(broken.is_empty(), "{file}: {broken:#?}");
+    }
+    println!("ok");
+}
+
+/// Where `recorded` breaks OMP's queue order: a queue command that changed
+/// the queue (`steer`, `follow_up`, `remove_queued_message`) has its
+/// `queue_update` before its response; `abort` answers with no
+/// `queue_update`.
+fn queue_order(recorded: &str) -> Vec<String> {
+    let records: Vec<serde_json::Value> = recorded
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let mut broken = Vec::new();
+    for (at, record) in records.iter().enumerate() {
+        let frame = &record["frame"];
+        let kind = frame["type"].as_str().unwrap_or_default();
+        if record["dir"] != "in"
+            || !matches!(
+                kind,
+                "steer" | "follow_up" | "remove_queued_message" | "abort"
+            )
+        {
+            continue;
+        }
+        let between: Vec<&serde_json::Value> = records[at + 1..]
+            .iter()
+            .filter(|r| r["dir"] == "out")
+            .map(|r| &r["frame"])
+            .take_while(|f| !(f["type"] == "response" && f["id"] == frame["id"]))
+            .collect();
+        let Some(response) = records[at + 1..]
+            .iter()
+            .map(|r| &r["frame"])
+            .find(|f| f["type"] == "response" && f["id"] == frame["id"])
+        else {
+            // The OMP that took it was stopped first (a restart).
+            continue;
+        };
+        let updated = between.iter().any(|f| f["type"] == "queue_update");
+        match kind {
+            "abort" if updated => broken.push(format!("abort {} sent a queue_update", frame["id"])),
+            "abort" => {}
+            "remove_queued_message" if response["data"]["removed"] != true => {}
+            _ if response["success"] == true && !updated => broken.push(format!(
+                "{kind} {} answered before its queue_update",
+                frame["id"]
+            )),
+            _ => {}
+        }
+    }
+    broken
+}
+
 fn set_prompt(cx: &mut TestAppContext, window: &WindowHandle<CedianPanel>, text: &str) {
     window
         .update(cx, |p, window, cx| p.set_prompt(text, window, cx))
@@ -414,7 +575,7 @@ fn wait(
     what: &str,
     done: impl Fn(&CedianPanel) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + cedian_fake_omp::recording::wait_limit(Duration::from_secs(30));
     loop {
         cx.run_until_parked();
         let (finished, state) = window

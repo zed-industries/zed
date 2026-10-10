@@ -7,7 +7,10 @@
 //! (`CEDIAN_OMP_BINARY`), which then acts as fake-omp.
 //!
 //! Hermetic: `cargo test -p cedian_cli --test replay_cli`
-//! Re-record one fixture (real OMP + auth): `CEDIAN_P2_RECORD=cli|shell|channel|worktree|s2 cargo test -p cedian_cli --test replay_cli`
+//! Re-record one fixture (the pinned OMP, the person's HOME for its auth):
+//! `CEDIAN_P2_RECORD=<lane> CEDIAN_RECORD_OMP=<pinned omp> cargo test -p cedian_cli --test replay_cli`,
+//! or `script/cedian-bench/run.sh record <lane>`. The recording is scrubbed
+//! (`cedian_fake_omp::recording`) and prints its model turns.
 #![allow(
     clippy::disallowed_methods,
     reason = "headless, synchronous process control (OMP, LSP, DAP, Chrome, git, sandbox-exec): Zed's async spawn helpers do not apply"
@@ -33,7 +36,7 @@ fn main() {
     if args.first().map(String::as_str) == Some("config") {
         std::process::exit(cedian_fake_omp::config_get(&args));
     }
-    // `CEDIAN_P2_RECORD=cli|shell|channel|worktree|s2` re-records ONE fixture against real OMP.
+    // `CEDIAN_P2_RECORD=<lane>` re-records ONE fixture against the pinned OMP.
     let which = std::env::var("CEDIAN_P2_RECORD").unwrap_or_default();
     let record = which == "cli";
     print!(
@@ -113,8 +116,8 @@ fn main() {
 }
 
 /// The CLI under test, isolated in `root`: its own workspace, session dir,
-/// user `cedian.toml` and HOME (never the developer's), and a PATH with no
-/// `omp` on it, so only fake-omp can run.
+/// user `cedian.toml` and HOME (never the developer's, but in a recording),
+/// and a PATH with no `omp` on it, so only fake-omp can run.
 fn cli(root: &Path) -> Command {
     let config = root.join("cedian.toml");
     if !config.exists() {
@@ -127,8 +130,10 @@ fn cli(root: &Path) -> Command {
         .env("CEDIAN_STATE_DIR", root.join("state"))
         .env("CEDIAN_OMP_BINARY", std::env::current_exe().unwrap())
         .env("CEDIAN_TIMING", root.join("timing.jsonl"))
-        .env("HOME", root.join("home"))
         .env("PATH", path_without_omp());
+    if !root.join(RECORD_HOME).exists() {
+        cmd.env("HOME", root.join("home"));
+    }
     cmd
 }
 
@@ -171,8 +176,7 @@ fn scenario(record: bool) {
     let root = root.canonicalize().unwrap();
     let sessions = root.join("sessions");
     if record {
-        let real = cedian_omp_path();
-        cedian_fake_omp::arm_record(&sessions, &real).unwrap();
+        arm(&sessions, &root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(FIXTURE)).unwrap();
     }
@@ -185,7 +189,10 @@ fn scenario(record: bool) {
         ],
     );
     if record {
-        std::fs::copy(sessions.join(cedian_fake_omp::RECORDED_FILE), FIXTURE).unwrap();
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(FIXTURE),
+        );
     }
     assert!(out.contains("edited-ok"), "assistant text rendered:\n{out}");
     assert!(out.contains("[✓]"), "a done tool card rendered:\n{out}");
@@ -345,9 +352,8 @@ fn s3_review_scenario(record: bool) {
     let reviewer = sessions.join("reviewer");
     roles(&sessions, Some("opencode-go/glm-5.3"));
     if record {
-        let real = cedian_omp_path();
-        cedian_fake_omp::arm_record(&sessions, &real).unwrap();
-        cedian_fake_omp::arm_record(&reviewer, &real).unwrap();
+        arm(&sessions, &root);
+        arm(&reviewer, &root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(S3_FIXTURE)).unwrap();
         cedian_fake_omp::install_replay(&reviewer, Path::new(S3_REVIEWER_FIXTURE)).unwrap();
@@ -367,14 +373,16 @@ fn s3_review_scenario(record: bool) {
         ],
     );
     if record {
-        std::fs::copy(sessions.join(cedian_fake_omp::RECORDED_FILE), S3_FIXTURE).unwrap();
-        std::fs::copy(
-            reviewer
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(S3_FIXTURE),
+        );
+        cedian_fake_omp::recording::write_fixture(
+            &reviewer
                 .join("run/session")
                 .join(cedian_fake_omp::RECORDED_FILE),
-            S3_REVIEWER_FIXTURE,
-        )
-        .unwrap();
+            Path::new(S3_REVIEWER_FIXTURE),
+        );
     }
     assert_eq!(
         std::fs::read_to_string(root.join("ws/add.py")).unwrap(),
@@ -508,9 +516,8 @@ fn s3_same_model_scenario(record: bool) {
     let reviewer = sessions.join("reviewer");
     roles(&sessions, None);
     if record {
-        let real = cedian_omp_path();
-        cedian_fake_omp::arm_record(&sessions, &real).unwrap();
-        cedian_fake_omp::arm_record(&reviewer, &real).unwrap();
+        arm(&sessions, &root);
+        arm(&reviewer, &root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(S3_SAME_FIXTURE)).unwrap();
         cedian_fake_omp::install_replay(&reviewer, Path::new(S3_SAME_REVIEWER_FIXTURE)).unwrap();
@@ -527,18 +534,16 @@ fn s3_same_model_scenario(record: bool) {
         ],
     );
     if record {
-        std::fs::copy(
-            sessions.join(cedian_fake_omp::RECORDED_FILE),
-            S3_SAME_FIXTURE,
-        )
-        .unwrap();
-        std::fs::copy(
-            reviewer
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(S3_SAME_FIXTURE),
+        );
+        cedian_fake_omp::recording::write_fixture(
+            &reviewer
                 .join("run/session")
                 .join(cedian_fake_omp::RECORDED_FILE),
-            S3_SAME_REVIEWER_FIXTURE,
-        )
-        .unwrap();
+            Path::new(S3_SAME_REVIEWER_FIXTURE),
+        );
     }
     assert_eq!(
         std::fs::read_to_string(root.join("ws/add.py")).unwrap(),
@@ -583,14 +588,16 @@ fn roles(sessions: &Path, review: Option<&str>) {
     std::fs::write(dir.join("config.yml"), text).unwrap();
 }
 
-fn cedian_omp_path() -> PathBuf {
-    std::env::var_os("PATH")
-        .iter()
-        .flat_map(std::env::split_paths)
-        .map(|d| d.join("omp"))
-        .find(|p| p.is_file())
-        .expect("omp on PATH for recording")
+/// Arm a recording in `sessions` against the pinned OMP. The recording
+/// keeps the person's HOME, where the pinned OMP finds its auth.
+fn arm(sessions: &Path, root: &Path) {
+    let omp = cedian_fake_omp::recording::pinned_omp().unwrap_or_else(|e| panic!("{e}"));
+    cedian_fake_omp::arm_record(sessions, &omp).unwrap();
+    std::fs::write(root.join(RECORD_HOME), "").unwrap();
 }
+
+/// Marks a test root whose CLI keeps the person's HOME.
+const RECORD_HOME: &str = "record-home";
 
 const SHELL_REVIEWER_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -618,7 +625,7 @@ fn shell_scenario(record: bool) {
     let root = root.canonicalize().unwrap();
     let sessions = root.join("sessions");
     if record {
-        cedian_fake_omp::arm_record(&sessions, &cedian_omp_path()).unwrap();
+        arm(&sessions, &root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(SHELL_FIXTURE)).unwrap();
     }
@@ -629,7 +636,7 @@ fn shell_scenario(record: bool) {
     roles(&sessions, Some("opencode-go/glm-5.3"));
     let record_reviewer = std::env::var("CEDIAN_P2_RECORD").as_deref() == Ok("shellreview");
     if record_reviewer {
-        cedian_fake_omp::arm_record(&reviewer, &cedian_omp_path()).unwrap();
+        arm(&reviewer, &root);
     } else {
         cedian_fake_omp::install_replay(&reviewer, Path::new(SHELL_REVIEWER_FIXTURE)).unwrap();
     }
@@ -721,13 +728,12 @@ fn shell_scenario(record: bool) {
         "{out}"
     );
     if record_reviewer {
-        std::fs::copy(
-            reviewer
+        cedian_fake_omp::recording::write_fixture(
+            &reviewer
                 .join("run/session")
                 .join(cedian_fake_omp::RECORDED_FILE),
-            SHELL_REVIEWER_FIXTURE,
-        )
-        .unwrap();
+            Path::new(SHELL_REVIEWER_FIXTURE),
+        );
     }
     let findings = std::fs::read_to_string(state_dir(&root).join("findings.json")).unwrap();
     assert!(
@@ -744,7 +750,10 @@ fn shell_scenario(record: bool) {
     );
 
     if record {
-        std::fs::copy(sessions.join(cedian_fake_omp::RECORDED_FILE), SHELL_FIXTURE).unwrap();
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(SHELL_FIXTURE),
+        );
     }
     // One OMP process served both turns: one `ready`, two `prompt`s.
     let fixture = std::fs::read_to_string(SHELL_FIXTURE).unwrap();
@@ -779,7 +788,7 @@ fn channel_scenario(record: bool) {
     let root = root.canonicalize().unwrap();
     let sessions = root.join("sessions");
     if record {
-        cedian_fake_omp::arm_record(&sessions, &cedian_omp_path()).unwrap();
+        arm(&sessions, &root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(CHANNEL_FIXTURE)).unwrap();
     }
@@ -800,11 +809,10 @@ fn channel_scenario(record: bool) {
         ],
     );
     if record {
-        std::fs::copy(
-            sessions.join(cedian_fake_omp::RECORDED_FILE),
-            CHANNEL_FIXTURE,
-        )
-        .unwrap();
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(CHANNEL_FIXTURE),
+        );
     }
     assert!(out.contains("p5-done"), "assistant text rendered:\n{out}");
 
@@ -883,7 +891,7 @@ fn worktree_scenario(record: bool) {
     let root = root.canonicalize().unwrap();
     let sessions = root.join("sessions");
     if record {
-        cedian_fake_omp::arm_record(&sessions, &cedian_omp_path()).unwrap();
+        arm(&sessions, &root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(WORKTREE_FIXTURE)).unwrap();
     }
@@ -903,11 +911,10 @@ fn worktree_scenario(record: bool) {
         ],
     );
     if record {
-        std::fs::copy(
-            sessions.join(cedian_fake_omp::RECORDED_FILE),
-            WORKTREE_FIXTURE,
-        )
-        .unwrap();
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(WORKTREE_FIXTURE),
+        );
     }
     assert!(out.contains("wt-done"), "assistant text rendered:\n{out}");
     assert!(
@@ -987,7 +994,7 @@ fn s2_blocked_scenario(record: bool, floor: bool) {
     let root = root.canonicalize().unwrap();
     let sessions = root.join("sessions");
     if record {
-        cedian_fake_omp::arm_record(&sessions, &cedian_omp_path()).unwrap();
+        arm(&sessions, &root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(S2_FIXTURE)).unwrap();
     }
@@ -1001,7 +1008,10 @@ fn s2_blocked_scenario(record: bool, floor: bool) {
         ],
     );
     if record {
-        std::fs::copy(sessions.join(cedian_fake_omp::RECORDED_FILE), S2_FIXTURE).unwrap();
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(S2_FIXTURE),
+        );
     }
 
     let raw = std::fs::read_to_string(state_dir(&root).join("workflow.json"))
@@ -1134,7 +1144,7 @@ fn p8_scenario(record: bool, deny: bool) {
     let fixture = if deny { P8_DENY_FIXTURE } else { P8_FIXTURE };
     let sessions = root.join("sessions");
     if record {
-        cedian_fake_omp::arm_record(&sessions, &cedian_omp_path()).unwrap();
+        arm(&sessions, &root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(fixture)).unwrap();
     }
@@ -1146,7 +1156,10 @@ fn p8_scenario(record: bool, deny: bool) {
     };
     let out = cedian(&root, &["prompt", prompt]);
     if record {
-        std::fs::copy(sessions.join(cedian_fake_omp::RECORDED_FILE), fixture).unwrap();
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(fixture),
+        );
     }
 
     let overlay = overlay(&sessions);
@@ -1271,7 +1284,7 @@ fn s2_profile_scenario(record: bool) {
     .unwrap();
     let sessions = root.join("sessions");
     if record {
-        cedian_fake_omp::arm_record(&sessions, &cedian_omp_path()).unwrap();
+        arm(&sessions, &root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(S2_PROFILE_FIXTURE)).unwrap();
     }
@@ -1300,11 +1313,10 @@ fn s2_profile_scenario(record: bool) {
         ],
     );
     if record {
-        std::fs::copy(
-            sessions.join(cedian_fake_omp::RECORDED_FILE),
-            S2_PROFILE_FIXTURE,
-        )
-        .unwrap();
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(S2_PROFILE_FIXTURE),
+        );
     }
 
     let raw = std::fs::read_to_string(state_dir(&root).join("workflow.json"))

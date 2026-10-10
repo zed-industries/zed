@@ -4,15 +4,19 @@
 //! tool output and the final text show; the audit has allow/user/bash.
 //!
 //! Replay (default) plays `live_approval.jsonl` through fake-omp. Record
-//! (`CEDIAN_U4_RECORD=1`, one model call, needs OMP auth) proxies to the
-//! pinned OMP through a wrapper that adds `--session-dir` in the run's temp
-//! dir, so the session stays out of the person's OMP store, and writes the
-//! redacted fixture.
+//! (`CEDIAN_U4_RECORD=1 CEDIAN_RECORD_OMP=<pinned omp>`, one model turn,
+//! the person's HOME for OMP's auth) proxies to the pinned OMP through a
+//! wrapper that adds `--session-dir` in the run's temp dir, so the session
+//! stays out of the person's OMP store, and writes the scrubbed fixture.
 //!
 //! Two request/response pairs are synthetic, added after the recording
 //! when the link began sending them: `set_host_tools` (`req_tools_1`) and
 //! `set_subagent_subscription` (`req_sub_1`). Their responses follow OMP's
 //! documented shapes; a re-record replaces them.
+//!
+//! The benchmark's instruments ride along (ADR-0058 decision 3): the app
+//! writes one spawn and one turn row in the CLI's `CEDIAN_TIMING` schema,
+//! whose parts add up, and one `CEDIAN_FRAMES` row for the run's draws.
 //!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
@@ -45,7 +49,6 @@ fn main() {
         Some("config") => std::process::exit(cedian_fake_omp::config_get(&args)),
         _ => {}
     }
-    scrub_removes_the_persons_setup();
     let record = std::env::var_os("CEDIAN_U4_RECORD").is_some();
     let root = std::env::temp_dir().join(format!("cedian-u4-live-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -60,6 +63,8 @@ fn main() {
             std::env::set_var("HOME", root.join("home"));
         }
         std::env::set_var("CEDIAN_OMP_BINARY", std::env::current_exe().unwrap());
+        std::env::set_var("CEDIAN_TIMING", root.join("timing.jsonl"));
+        std::env::set_var("CEDIAN_FRAMES", root.join("frames.jsonl"));
     }
     print!("test live_approval_replays_in_the_app ... ");
     gpui::run_test_once(
@@ -90,20 +95,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool) {
     let state = cedian_shell::state::dir(&ws).unwrap();
     let sessions = state.join("omp");
     if record {
-        let omp = std::env::var("CEDIAN_U4_OMP").expect("CEDIAN_U4_OMP: the pinned omp");
-        let wrapper = root.join("omp-in-temp-store");
-        std::fs::write(
-            &wrapper,
-            format!(
-                "#!/bin/sh\nexec '{omp}' \"$@\" --session-dir '{}'\n",
-                sessions.display()
-            ),
-        )
-        .unwrap();
-        let mut permissions = std::fs::metadata(&wrapper).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-        std::fs::set_permissions(&wrapper, permissions).unwrap();
-        cedian_fake_omp::arm_record(&sessions, &wrapper).unwrap();
+        cedian_fake_omp::recording::arm_app(&sessions, root);
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(FIXTURE)).unwrap();
     }
@@ -153,10 +145,10 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool) {
     });
 
     if record {
-        let recorded =
-            std::fs::read_to_string(sessions.join(cedian_fake_omp::RECORDED_FILE)).unwrap();
-        std::fs::write(FIXTURE, scrub(&recorded)).unwrap();
-        eprintln!("fixture written: {FIXTURE}");
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(FIXTURE),
+        );
     }
     let transcript = window.update(cx, |p, _, _| p.transcript()).unwrap();
     assert!(
@@ -191,44 +183,44 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool) {
         window.update(cx, |p, _, _| p.connection().clone()).unwrap(),
         Connection::Ready { .. }
     ));
-}
 
-/// What the recorder's redaction leaves but the fixture must not carry:
-/// get_state's system prompt (the person's global prefs and memory setup)
-/// and tool dump, and the installed skills in OMP's command lists.
-fn scrub(recorded: &str) -> String {
-    recorded
-        .lines()
-        .map(|line| {
-            let mut record: Value = serde_json::from_str(line).unwrap();
-            let frame = &mut record["frame"];
-            if frame["command"] == "get_state"
-                && let Some(data) = frame.get_mut("data").and_then(Value::as_object_mut)
-            {
-                data.insert("systemPrompt".into(), "${SCRUBBED}".into());
-                data.insert("dumpTools".into(), Value::Array(Vec::new()));
-            }
-            if frame["type"] == "available_commands_update" {
-                frame["commands"] = Value::Array(Vec::new());
-            }
-            format!("{record}\n")
-        })
-        .collect()
-}
-
-/// Run on every invocation, replay included: a re-record cannot leak.
-fn scrub_removes_the_persons_setup() {
-    let recorded = concat!(
-        r#"{"dir":"out","frame":{"type":"response","command":"get_state","data":{"systemPrompt":"my memory","dumpTools":[{"name":"x"}],"sessionId":"s"}}}"#,
-        "\n",
-        r#"{"dir":"out","frame":{"type":"available_commands_update","commands":[{"name":"my-skill"}]}}"#,
-        "\n"
+    wait(cx, &window, "the turn's timing row", |_| {
+        rows(&root.join("timing.jsonl")).len() == 2
+    });
+    let timing = rows(&root.join("timing.jsonl"));
+    assert_eq!(timing[0]["event"], "spawn", "{timing:?}");
+    let turn = &timing[1];
+    assert_eq!(turn["event"], "turn", "{timing:?}");
+    let part = |k: &str| turn[k].as_u64().unwrap_or_else(|| panic!("{k} in {turn}"));
+    assert_eq!(
+        part("context_ms") + part("omp_ms") + part("post_ms"),
+        part("total_ms"),
+        "{turn}"
     );
-    let scrubbed = scrub(recorded);
-    for secret in ["my memory", "\"x\"", "my-skill"] {
-        assert!(!scrubbed.contains(secret), "{secret} in {scrubbed}");
-    }
-    assert!(scrubbed.contains("\"sessionId\":\"s\""));
+    assert!(part("omp_ms") > 0, "OMP's time is measured: {turn}");
+    let frames = rows(&root.join("frames.jsonl"));
+    assert_eq!(frames.len(), 1, "one row for OMP's one run: {frames:?}");
+    let ms = |k: &str| {
+        frames[0][k]
+            .as_f64()
+            .unwrap_or_else(|| panic!("{k} in {frames:?}"))
+    };
+    assert!(frames[0]["frames"].as_u64().unwrap() > 0, "{frames:?}");
+    assert!(
+        ms("draw_p50_ms") <= ms("draw_p95_ms")
+            && ms("draw_p95_ms") <= ms("draw_p99_ms")
+            && ms("draw_p99_ms") <= ms("draw_max_ms")
+            && ms("draw_max_ms") > 0.0,
+        "{frames:?}"
+    );
+}
+
+fn rows(path: &Path) -> Vec<Value> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
 }
 
 fn rendered(

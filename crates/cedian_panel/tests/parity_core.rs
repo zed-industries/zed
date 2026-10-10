@@ -20,7 +20,10 @@
 //! 4. Under `policy = "omp"` the panel shows the OMP policy badge.
 //!
 //! Step 0 runs first: OMP has no model, so the panel onboards through
-//! `get_login_providers` and `login` (ADR-0057 decision 3).
+//! `get_login_providers` and `login` (ADR-0057 decision 3). Its login
+//! frames are hand-made and stay so (ADR-0058 decision 6): recording them
+//! takes a real OAuth login in the person's browser, which no record lane
+//! makes for them.
 //!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
