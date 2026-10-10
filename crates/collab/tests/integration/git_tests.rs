@@ -1737,3 +1737,361 @@ async fn test_history_not_preloaded_for_remote_project(
         "remote project should not fetch commit history until the History tab is opened"
     );
 }
+
+#[gpui::test]
+async fn test_remote_graph_data_is_paged(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    use git::repository::{GRAPH_CHUNK_SIZE, LogOrder, LogSource};
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    cx_a.update(|cx| git_ui::init(cx));
+    cx_b.update(|cx| git_ui::init(cx));
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+    let dot_git = Path::new(path!("/project/.git"));
+    let mut rng = StdRng::seed_from_u64(7);
+    let commits = git_ui::git_graph::generate_random_commit_dag(&mut rng, 2500, false);
+    client_a.fs().set_graph_commits(dot_git, commits.clone());
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let repository_b =
+        project_b.read_with(cx_b, |project, cx| project.active_repository(cx).unwrap());
+
+    let remote_graph = build_git_graph(&project_b, &workspace_b, cx_b);
+    render_git_graph(&remote_graph, cx_b);
+    // The first chunk arriving notifies the view, which the app answers with another frame.
+    render_git_graph(&remote_graph, cx_b);
+    let shown = remote_graph.read_with(cx_b, |graph, _| graph.initial_commit_data_for_test().len());
+    assert_eq!(
+        shown,
+        2 * GRAPH_CHUNK_SIZE,
+        "graph view keeps one chunk loaded past its viewport"
+    );
+
+    let deep_commit = commits[2400].sha;
+    remote_graph.update(cx_b, |graph, cx| {
+        graph.select_commit_by_sha(deep_commit, cx)
+    });
+    cx_b.run_until_parked();
+    let shown = remote_graph.read_with(cx_b, |graph, _| graph.initial_commit_data_for_test());
+    assert_initial_graph_commits_eq(&shown, &commits);
+    let deep_index = repository_b.read_with(cx_b, |repository, _| {
+        repository
+            .get_graph_data(LogSource::All, LogOrder::DateOrder)
+            .and_then(|data| data.commit_oid_to_index.get(&deep_commit).copied())
+    });
+    assert_eq!(
+        deep_index,
+        Some(2400),
+        "jumping to a deep commit pages the log in up to it"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_graph_window_cuts_host_chunks(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    use git::repository::{LogOrder, LogSource};
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+    let dot_git = Path::new(path!("/project/.git"));
+    let mut rng = StdRng::seed_from_u64(7);
+    let commits = git_ui::git_graph::generate_random_commit_dag(&mut rng, 2500, false);
+    client_a.fs().set_graph_commits(dot_git, commits.clone());
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repository_b =
+        project_b.read_with(cx_b, |project, cx| project.active_repository(cx).unwrap());
+    let loaded = |cx: &mut TestAppContext| {
+        repository_b.read_with(cx, |repository, _| {
+            repository
+                .get_graph_data(LogSource::All, LogOrder::DateOrder)
+                .map_or(0, |data| data.commit_data.len())
+        })
+    };
+
+    repository_b.update(cx_b, |repository, cx| {
+        repository.graph_data(LogSource::All, LogOrder::DateOrder, 0..1500, cx);
+    });
+    executor.run_until_parked();
+    assert_eq!(
+        loaded(cx_b),
+        1500,
+        "guest receives exactly the requested window"
+    );
+
+    repository_b.update(cx_b, |repository, cx| {
+        repository.graph_data(LogSource::All, LogOrder::DateOrder, 0..1700, cx);
+    });
+    executor.run_until_parked();
+    assert_eq!(
+        loaded(cx_b),
+        commits.len(),
+        "the next window starts where the last ended and is at least a chunk long"
+    );
+    let shown = repository_b.read_with(cx_b, |repository, _| {
+        repository
+            .get_graph_data(LogSource::All, LogOrder::DateOrder)
+            .map(|data| data.commit_data.clone())
+            .unwrap_or_default()
+    });
+    assert_initial_graph_commits_eq(&shown, &commits);
+}
+
+#[gpui::test]
+async fn test_remote_graph_completes_after_exact_window(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    use git::repository::{LogOrder, LogSource};
+    use project::git_store::{GitGraphEvent, RepositoryEvent};
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+    let dot_git = Path::new(path!("/project/.git"));
+    let mut rng = StdRng::seed_from_u64(7);
+    let commits = git_ui::git_graph::generate_random_commit_dag(&mut rng, 2000, false);
+    client_a.fs().set_graph_commits(dot_git, commits.clone());
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repository_b =
+        project_b.read_with(cx_b, |project, cx| project.active_repository(cx).unwrap());
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = cx_b.update(|cx| {
+        cx.subscribe(&repository_b, {
+            let events = events.clone();
+            move |_, event, _| {
+                if let RepositoryEvent::GraphEvent(_, graph_event) = event {
+                    events.borrow_mut().push(graph_event.clone());
+                }
+            }
+        })
+    });
+
+    let request = |cx: &mut TestAppContext, end: usize| {
+        repository_b.update(cx, |repository, cx| {
+            repository
+                .graph_data(LogSource::All, LogOrder::DateOrder, 0..end, cx)
+                .is_loading
+        })
+    };
+
+    // A window that comes back full says nothing about whether the log has ended.
+    assert!(request(cx_b, 2000));
+    executor.run_until_parked();
+    assert!(
+        !events.borrow().contains(&GitGraphEvent::FullyLoaded),
+        "a full window must not be taken as the end of the log"
+    );
+
+    assert!(
+        request(cx_b, 3000),
+        "the log is not known to be complete yet"
+    );
+    executor.run_until_parked();
+    assert!(events.borrow().contains(&GitGraphEvent::FullyLoaded));
+    assert!(
+        !request(cx_b, 4000),
+        "a complete log is never fetched again"
+    );
+    let loaded = repository_b.read_with(cx_b, |repository, _| {
+        repository
+            .get_graph_data(LogSource::All, LogOrder::DateOrder)
+            .map_or(0, |data| data.commit_data.len())
+    });
+    assert_eq!(loaded, commits.len());
+}
+
+#[gpui::test]
+async fn test_remote_history_tab_pages_on_scroll(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    use git::repository::GRAPH_CHUNK_SIZE;
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    cx_a.update(|cx| git_ui::init(cx));
+    cx_b.update(|cx| git_ui::init(cx));
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+    let dot_git = Path::new(path!("/project/.git"));
+    client_a.fs().set_branch_name(dot_git, Some("main"));
+    client_a
+        .fs()
+        .set_head_for_repo(dot_git, &[("file.txt", "content".into())], "sha1");
+    let mut rng = StdRng::seed_from_u64(7);
+    let commits = git_ui::git_graph::generate_random_commit_dag(&mut rng, 2500, false);
+    client_a.fs().set_graph_commits(dot_git, commits.clone());
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let panel_b = workspace_b.update_in(cx_b, GitPanel::new_test);
+    workspace_b.update_in(cx_b, |workspace, window, cx| {
+        workspace.add_panel(panel_b.clone(), window, cx);
+    });
+    executor.run_until_parked();
+
+    panel_b.update_in(cx_b, |panel, window, cx| {
+        panel.activate_history_tab_for_test(window, cx);
+    });
+    executor.run_until_parked();
+    let shown = panel_b.read_with(cx_b, |panel, _| panel.commit_history_len_for_test());
+    assert_eq!(
+        shown, GRAPH_CHUNK_SIZE,
+        "opening History fetches one chunk of the host's log"
+    );
+
+    // Scrolling deep into the list makes the next frame ask for a chunk past the top.
+    panel_b.read_with(cx_b, |panel, _| panel.scroll_history_to_for_test(1500));
+    cx_b.draw(point(px(0.), px(0.)), size(px(1200.), px(800.)), |_, _| {
+        panel_b.clone().into_any_element()
+    });
+    cx_b.run_until_parked();
+    let shown = panel_b.read_with(cx_b, |panel, _| panel.commit_history_len_for_test());
+    assert_eq!(
+        shown,
+        commits.len(),
+        "History pages the log in as far as the scroll asks"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_graph_error_reaches_guest(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    use git::repository::{LogOrder, LogSource};
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+    let dot_git = Path::new(path!("/project/.git"));
+    client_a
+        .fs()
+        .set_graph_error(dot_git, Some("fatal: bad object".to_string()));
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repository_b =
+        project_b.read_with(cx_b, |project, cx| project.active_repository(cx).unwrap());
+    repository_b.update(cx_b, |repository, cx| {
+        repository.graph_data(LogSource::All, LogOrder::DateOrder, 0..1000, cx);
+    });
+    executor.run_until_parked();
+
+    let (error, is_loading) = repository_b.update(cx_b, |repository, cx| {
+        let response = repository.graph_data(LogSource::All, LogOrder::DateOrder, 0..5000, cx);
+        (response.error.clone(), response.is_loading)
+    });
+    assert!(
+        error.is_some_and(|error| error.contains("bad object")),
+        "the host's git log failure is reported on the guest"
+    );
+    assert!(!is_loading, "a failed log is not retried on later requests");
+}
