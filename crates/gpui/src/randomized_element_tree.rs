@@ -61,6 +61,7 @@ pub struct RandomizedElementTreeConfig {
     topology: RandomizedElementTreeTopology,
     entity_density: f64,
     handler_density: f64,
+    cached_views: bool,
 }
 
 impl RandomizedElementTreeConfig {
@@ -72,7 +73,14 @@ impl RandomizedElementTreeConfig {
             topology: RandomizedElementTreeTopology::from_seed(seed),
             entity_density: 0.0,
             handler_density: 0.0,
+            cached_views: false,
         }
+    }
+
+    /// Use definite-size cached entity boundaries in this separate workload variant.
+    pub fn with_cached_views(mut self, cached: bool) -> Self {
+        self.cached_views = cached;
+        self
     }
 
     /// Selects the initial tree topology independently of the RNG seed.
@@ -241,6 +249,7 @@ pub struct RandomizedElementTreeSnapshot {
     root: RandomizedElementStyle,
     children: Vec<RandomizedElementNode>,
     next_element_id: u64,
+    cached_views: bool,
     paths_by_element_id: HashMap<u64, Vec<usize>>,
 }
 
@@ -531,6 +540,7 @@ impl RandomizedElementTree {
             root: RandomizedElementStyle::random_root(&mut rng),
             children,
             next_element_id: config.element_count as u64,
+            cached_views: config.cached_views,
             paths_by_element_id: HashMap::default(),
         };
         snapshot.rebuild_element_paths();
@@ -568,6 +578,16 @@ impl RandomizedElementTree {
     /// Captures all state that affects rendering and future element IDs.
     pub fn snapshot(&self) -> RandomizedElementTreeSnapshot {
         self.snapshot.borrow().clone()
+    }
+
+    /// Resolve a view's logical element identity for independent-window verification.
+    pub fn view_element_identity(&self, entity_id: crate::EntityId) -> Option<u64> {
+        self.entities
+            .borrow()
+            .iter()
+            .find_map(|(element_id, entity)| {
+                (entity.entity_id() == entity_id).then_some(*element_id)
+            })
     }
 
     /// Clears render work accumulated since construction or the previous reset.
@@ -847,7 +867,18 @@ impl RandomizedElementTree {
             drop(snapshot);
             return self.insert_child_internal();
         };
-        let owner_entity_id = nearest_entity_id(&snapshot.children, &path);
+        // Cached bounds belong to the composing view, not the child's rendered contents.
+        let external_style_changed = snapshot.cached_views
+            && matches!(mutation, RandomizedChildMutation::Bounds)
+            && node_at_path(&snapshot.children, &path).is_some_and(|node| node.is_entity);
+        let owner_path = if external_style_changed {
+            path.split_last()
+                .map(|(_, parent)| parent)
+                .unwrap_or_default()
+        } else {
+            &path
+        };
+        let owner_entity_id = nearest_entity_id(&snapshot.children, owner_path);
         let Some(node) = node_at_path_mut(&mut snapshot.children, &path) else {
             drop(snapshot);
             return self.insert_child_internal();
@@ -1021,12 +1052,9 @@ impl Render for RandomizedElementTree {
             .opacity(root.opacity)
             .when(root.clipped, |element| element.overflow_hidden())
             .when(!root.visible, |element| element.invisible())
-            .children(
-                snapshot
-                    .children
-                    .iter()
-                    .map(|node| render_node(node, &entities, &mut work_counters)),
-            )
+            .children(snapshot.children.iter().map(|node| {
+                render_node(node, &entities, &mut work_counters, snapshot.cached_views)
+            }))
     }
 }
 
@@ -1050,7 +1078,14 @@ impl Render for RandomizedElementEntity {
 
         snapshot
             .node(self.element_id)
-            .map(|node| render_node_body(node, entities.as_deref(), &mut work_counters))
+            .map(|node| {
+                render_node_body(
+                    node,
+                    entities.as_deref(),
+                    &mut work_counters,
+                    snapshot.cached_views,
+                )
+            })
             .unwrap_or_else(|| div().into_any_element())
     }
 }
@@ -1199,14 +1234,21 @@ fn render_node(
     node: &RandomizedElementNode,
     entities: &RandomizedElementEntities,
     work_counters: &mut RandomizedElementTreeWorkCounters,
+    cached_views: bool,
 ) -> AnyElement {
     if node.is_entity
         && let Some(entity) = entities.get(&node.id)
     {
+        if cached_views {
+            let mut style = crate::StyleRefinement::default();
+            style.size.width = Some(px(node.style.width).into());
+            style.size.height = Some(px(node.style.height).into());
+            return entity.clone().cached(style).into_any_element();
+        }
         return entity.clone().into_any_element();
     }
 
-    render_node_body(node, Some(entities), work_counters)
+    render_node_body(node, Some(entities), work_counters, cached_views)
 }
 
 #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
@@ -1214,6 +1256,7 @@ fn render_node_body(
     node: &RandomizedElementNode,
     entities: Option<&RandomizedElementEntities>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
+    cached_views: bool,
 ) -> AnyElement {
     work_counters.element_render_count += 1;
     work_counters.handler_registration_count += node.features.handler_count();
@@ -1248,9 +1291,9 @@ fn render_node_body(
         })
         .children(node.children.iter().map(|child| {
             if let Some(entities) = entities {
-                render_node(child, entities, work_counters)
+                render_node(child, entities, work_counters, cached_views)
             } else {
-                render_node_body(child, None, work_counters)
+                render_node_body(child, None, work_counters, cached_views)
             }
         }))
         .into_any_element()
@@ -1424,6 +1467,221 @@ mod tests {
     const ELEMENT_COUNT: usize = 64;
     const MUTATION_COUNT: usize = 32;
     const WINDOW_SIZE: Size<Pixels> = size(px(1200.0), px(900.0));
+
+    #[gpui::test(seed = 3)]
+    fn retained_segment_leaf_style_counter_smoke(mut rng: StdRng, cx: &mut TestAppContext) {
+        use rand::SeedableRng as _;
+
+        let families = [
+            (
+                "any",
+                RandomizedElementTreeBounds::new(32..=256)
+                    .with_entity_density(0.05..=0.5)
+                    .with_handler_density(0.1..=0.4),
+            ),
+            (
+                "wide",
+                RandomizedElementTreeBounds::new(128..=2048)
+                    .with_topologies([RandomizedElementTreeTopology::Wide])
+                    .with_entity_density(0.05..=0.25)
+                    .with_handler_density(0.1..=0.4),
+            ),
+            (
+                "tall",
+                RandomizedElementTreeBounds::new(32..=256)
+                    .with_topologies(
+                        RandomizedElementTreeTopology::ALL
+                            .into_iter()
+                            .filter(|topology| topology.is_tall()),
+                    )
+                    .with_entity_density(0.05..=0.25)
+                    .with_handler_density(0.1..=0.4),
+            ),
+            (
+                "mixed",
+                RandomizedElementTreeBounds::new(128..=1024)
+                    .with_topologies([RandomizedElementTreeTopology::Mixed])
+                    .with_entity_density(0.05..=0.25)
+                    .with_handler_density(0.1..=0.4),
+            ),
+            (
+                "dense-entities",
+                RandomizedElementTreeBounds::new(128..=1024)
+                    .with_topologies([
+                        RandomizedElementTreeTopology::Wide,
+                        RandomizedElementTreeTopology::Mixed,
+                    ])
+                    .with_entity_density(0.75..=1.0)
+                    .with_handler_density(0.1..=0.4),
+            ),
+        ];
+        let stream_seed = rng.random::<u64>();
+        for (name, bounds) in families {
+            let name_hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+            });
+            let config = bounds
+                .sample(&mut StdRng::seed_from_u64(stream_seed ^ name_hash))
+                .with_cached_views(true);
+            for splice in [false, true] {
+                let window = cx.open_window(WINDOW_SIZE, move |window, cx| {
+                    window.set_view_splicing(splice);
+                    RandomizedElementTree::new_with_config(config, cx)
+                });
+                cx.run_until_parked();
+                window
+                    .update(cx, |_, window, _| window.take_view_reuse_stats())
+                    .expect("counter window exists");
+                for _ in 0..16 {
+                    window
+                        .update(cx, |tree, _, cx| {
+                            tree.apply_mutation(RandomizedElementTreeMutationKind::ChildColor, cx);
+                        })
+                        .expect("counter window exists");
+                    cx.run_until_parked();
+                }
+                window
+                    .update(cx, |_, window, _| {
+                        let stats = window.take_view_reuse_stats();
+                        assert_eq!(stats.frames, 16);
+                        assert!(stats.cached_hits > 0);
+                        println!(
+                            "retained-segment-smoke family={name} splice={splice} stats={stats:?}"
+                        );
+                        window.remove_window();
+                    })
+                    .expect("counter window exists");
+            }
+        }
+    }
+
+    #[gpui::test(iterations = 12)]
+    fn cached_views_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
+        views_match_forced_reconstruction(rng, cx, true);
+    }
+
+    #[gpui::test(iterations = 12)]
+    fn implicit_views_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
+        views_match_forced_reconstruction(rng, cx, false);
+    }
+
+    fn views_match_forced_reconstruction(mut rng: StdRng, cx: &mut TestAppContext, cached: bool) {
+        for (topology, splice) in
+            RandomizedElementTreeTopology::ALL
+                .into_iter()
+                .flat_map(|topology| {
+                    [false, true]
+                        .into_iter()
+                        .filter(move |splice| cached || *splice)
+                        .map(move |splice| (topology, splice))
+                })
+        {
+            let config = RandomizedElementTreeConfig::new(rng.random(), ELEMENT_COUNT)
+                .with_topology(topology)
+                .with_entity_density(0.5)
+                .with_handler_density(0.5)
+                .with_cached_views(cached);
+            let reused = cx.open_window(WINDOW_SIZE, move |window, cx| {
+                if cached {
+                    window.set_view_splicing(splice);
+                } else {
+                    window.set_implicit_view_splicing(true);
+                }
+                RandomizedElementTree::new_with_config(config, cx)
+            });
+            let reconstructed = cx.open_window(WINDOW_SIZE, move |window, cx| {
+                window.set_view_splicing(false);
+                window.set_force_view_reconstruction(true);
+                RandomizedElementTree::new_with_config(config, cx)
+            });
+            cx.update_window(reused.into(), |_, window, _| {
+                window.set_force_view_reconstruction(false);
+            })
+            .expect("reused window exists");
+            let reused_root = reused.root(cx).expect("reused root exists");
+            let reconstructed_root = reconstructed.root(cx).expect("reconstructed root exists");
+            for frame in 0..16 {
+                if frame > 0 {
+                    for root in [&reused_root, &reconstructed_root] {
+                        root.update(cx, |tree, cx| match frame % 7 {
+                            0 => cx.notify(),
+                            1 => {
+                                tree.apply_mutation(
+                                    RandomizedElementTreeMutationKind::ChildColor,
+                                    cx,
+                                );
+                            }
+                            2 => {
+                                tree.apply_mutation(
+                                    RandomizedElementTreeMutationKind::ChildBounds,
+                                    cx,
+                                );
+                            }
+                            3 => {
+                                tree.apply_mutation(RandomizedElementTreeMutationKind::Insert, cx);
+                            }
+                            4 => {
+                                tree.apply_mutation(
+                                    RandomizedElementTreeMutationKind::RemoveLeaf,
+                                    cx,
+                                );
+                            }
+                            5 => {
+                                tree.apply_mutation(RandomizedElementTreeMutationKind::Reorder, cx);
+                            }
+                            _ => cx.notify(),
+                        });
+                    }
+                }
+                let capture =
+                    |root: &Entity<RandomizedElementTree>, window, cx: &mut TestAppContext| {
+                        let mut identities = root.read_with(cx, |tree, _| {
+                            tree.entities
+                                .borrow()
+                                .iter()
+                                .map(|(id, entity)| (entity.entity_id(), format!("element-{id}")))
+                                .collect::<HashMap<_, _>>()
+                        });
+                        identities.insert(root.entity_id(), "root".into());
+                        cx.update_window(window, |_, window, cx| {
+                            let arena_clear_needed = window.draw(cx);
+                            let snapshot = window.view_reuse_snapshot(|entity_id| {
+                                identities
+                                    .get(&entity_id)
+                                    .cloned()
+                                    .expect("fixture owns every view")
+                            });
+                            arena_clear_needed.clear(cx);
+                            snapshot
+                        })
+                        .expect("fixture window exists")
+                    };
+                let reused_snapshot = capture(&reused_root, reused.into(), cx);
+                let reconstructed_snapshot = capture(&reconstructed_root, reconstructed.into(), cx);
+                reused_snapshot
+                    .compare(&reconstructed_snapshot, frame)
+                    .expect("cached output matches reconstruction");
+            }
+            let stats = cx
+                .update_window(reused.into(), |_, window, _| window.take_view_reuse_stats())
+                .expect("reused window exists");
+            if cached
+                || cx
+                    .update_window(reused.into(), |_, window, _| window.layout_cache_enabled())
+                    .expect("window")
+            {
+                assert!(stats.cached_hits > 0, "fixture exercises reuse");
+                assert!(
+                    stats.hitboxes.copied_elements > 0,
+                    "fixture replays hitboxes"
+                );
+            }
+            cx.update_window(reused.into(), |_, window, _| window.remove_window())
+                .expect("reused window exists");
+            cx.update_window(reconstructed.into(), |_, window, _| window.remove_window())
+                .expect("reconstructed window exists");
+        }
+    }
 
     #[derive(Debug, PartialEq)]
     struct SceneSnapshot {
@@ -1632,7 +1890,15 @@ mod tests {
         draw_window(window, cx);
 
         let incremental_counters = root.read_with(cx, |tree, _| tree.work_counters());
-        assert!(incremental_counters.root_render_count() >= 1);
+        let retained = cx
+            .update_window(window, |_, window, _| window.implicit_view_splicing)
+            .expect("window");
+        if retained {
+            assert_eq!(incremental_counters.root_render_count(), 0);
+            assert_eq!(incremental_counters.entity_render_count(), 1);
+        } else {
+            assert!(incremental_counters.root_render_count() >= 1);
+        }
         assert!(incremental_counters.entity_render_count() >= 1);
         assert!(incremental_counters.element_render_count() >= 1);
         assert!(incremental_counters.handler_registration_count() >= 2);

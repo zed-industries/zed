@@ -79,11 +79,233 @@ struct LayoutScope {
     last_requested_epoch: u64,
 }
 
+#[derive(Default)]
+struct RetainedLayouts {
+    layouts: FxHashMap<NodeId, taffy::Layout>,
+    previous_layouts: FxHashMap<NodeId, taffy::Layout>,
+    inputs: FxHashMap<NodeId, taffy::LayoutInput>,
+    outputs: FxHashMap<NodeId, taffy::LayoutOutput>,
+    kept: FxHashSet<LayoutId>,
+}
+
+impl RetainedLayouts {
+    fn set_layout(&mut self, node: NodeId, layout: taffy::Layout) {
+        if let Some(previous) = self.layouts.insert(node, layout)
+            && previous != layout
+        {
+            self.previous_layouts.entry(node).or_insert(previous);
+        }
+    }
+}
+
+// TaffyTree's high-level API hides container inputs. Retention needs the exact
+// inputs, not a size-derived approximation (flex, grid and percentages differ).
+struct RetainedLayoutTree<'a, F> {
+    taffy: &'a mut TaffyTree<NodeContext>,
+    retained: &'a mut RetainedLayouts,
+    measure: F,
+}
+
+impl<F> taffy::TraversePartialTree for RetainedLayoutTree<'_, F> {
+    type ChildIter<'a>
+        = <TaffyTree<NodeContext> as taffy::TraversePartialTree>::ChildIter<'a>
+    where
+        Self: 'a;
+
+    fn child_ids(&self, node: NodeId) -> Self::ChildIter<'_> {
+        self.taffy.child_ids(node)
+    }
+
+    fn child_count(&self, node: NodeId) -> usize {
+        self.taffy.child_count(node)
+    }
+
+    fn get_child_id(&self, node: NodeId, index: usize) -> NodeId {
+        self.taffy.get_child_id(node, index)
+    }
+}
+
+impl<F> taffy::CacheTree for RetainedLayoutTree<'_, F> {
+    fn cache_get(
+        &mut self,
+        node: NodeId,
+        input: &taffy::LayoutInput,
+    ) -> Option<taffy::LayoutOutput> {
+        taffy::CacheTree::cache_get(self.taffy, node, input)
+    }
+
+    fn cache_store(
+        &mut self,
+        node: NodeId,
+        input: &taffy::LayoutInput,
+        output: taffy::LayoutOutput,
+    ) {
+        taffy::CacheTree::cache_store(self.taffy, node, input, output);
+    }
+
+    fn cache_clear(&mut self, node: NodeId) {
+        taffy::CacheTree::cache_clear(self.taffy, node);
+    }
+}
+
+impl<F> RetainedLayoutTree<'_, F>
+where
+    F: FnMut(
+        taffy::LayoutInput,
+        NodeId,
+        Option<&mut NodeContext>,
+        &taffy::Style,
+    ) -> taffy::LayoutOutput,
+{
+    fn compute(
+        &mut self,
+        node: NodeId,
+        input: taffy::LayoutInput,
+        block: Option<&mut taffy::BlockContext<'_>>,
+    ) -> taffy::LayoutOutput {
+        if input.run_mode == taffy::RunMode::PerformLayout {
+            self.retained.inputs.insert(node, input);
+        }
+        if input.run_mode == taffy::RunMode::PerformHiddenLayout {
+            return taffy::compute_hidden_layout(self, node);
+        }
+        let output = taffy::compute_cached_layout(self, node, input, |tree, node, input| {
+            let style = tree.taffy.style(node).expect(EXPECT_MESSAGE);
+            if style.display == taffy::Display::None {
+                taffy::compute_hidden_layout(tree, node)
+            } else if tree.taffy.child_count(node) == 0 {
+                let style = style.clone();
+                (tree.measure)(input, node, tree.taffy.get_node_context_mut(node), &style)
+            } else {
+                match style.display {
+                    taffy::Display::Flex => taffy::compute_flexbox_layout(tree, node, input),
+                    taffy::Display::Grid => taffy::compute_grid_layout(tree, node, input),
+                    taffy::Display::Block => taffy::compute_block_layout(tree, node, input, block),
+                    taffy::Display::FlowRoot => {
+                        taffy::compute_block_layout(tree, node, input, None)
+                    }
+                    taffy::Display::None => unreachable!(),
+                }
+            }
+        });
+        if input.run_mode == taffy::RunMode::PerformLayout {
+            self.retained.outputs.insert(node, output);
+        }
+        output
+    }
+}
+
+impl<F> taffy::LayoutPartialTree for RetainedLayoutTree<'_, F>
+where
+    F: FnMut(
+        taffy::LayoutInput,
+        NodeId,
+        Option<&mut NodeContext>,
+        &taffy::Style,
+    ) -> taffy::LayoutOutput,
+{
+    type CoreContainerStyle<'a>
+        = &'a taffy::Style
+    where
+        Self: 'a;
+    type CustomIdent = String;
+
+    fn get_core_container_style(&self, node: NodeId) -> Self::CoreContainerStyle<'_> {
+        self.taffy.style(node).expect(EXPECT_MESSAGE)
+    }
+
+    fn set_unrounded_layout(&mut self, node: NodeId, layout: &taffy::Layout) {
+        self.retained.set_layout(node, *layout);
+    }
+
+    fn compute_child_layout(
+        &mut self,
+        node: NodeId,
+        input: taffy::LayoutInput,
+    ) -> taffy::LayoutOutput {
+        self.compute(node, input, None)
+    }
+}
+
+impl<F> taffy::LayoutBlockContainer for RetainedLayoutTree<'_, F>
+where
+    F: FnMut(
+        taffy::LayoutInput,
+        NodeId,
+        Option<&mut NodeContext>,
+        &taffy::Style,
+    ) -> taffy::LayoutOutput,
+{
+    type BlockContainerStyle<'a>
+        = &'a taffy::Style
+    where
+        Self: 'a;
+    type BlockItemStyle<'a>
+        = &'a taffy::Style
+    where
+        Self: 'a;
+    fn get_block_container_style(&self, node: NodeId) -> Self::BlockContainerStyle<'_> {
+        self.taffy.style(node).expect(EXPECT_MESSAGE)
+    }
+    fn get_block_child_style(&self, node: NodeId) -> Self::BlockItemStyle<'_> {
+        self.taffy.style(node).expect(EXPECT_MESSAGE)
+    }
+    fn compute_block_child_layout(
+        &mut self,
+        node: NodeId,
+        input: taffy::LayoutInput,
+        block: Option<&mut taffy::BlockContext<'_>>,
+    ) -> taffy::LayoutOutput {
+        self.compute(node, input, block)
+    }
+}
+
+impl<F> taffy::LayoutFlexboxContainer for RetainedLayoutTree<'_, F>
+where
+    Self: taffy::LayoutPartialTree,
+{
+    type FlexboxContainerStyle<'a>
+        = &'a taffy::Style
+    where
+        Self: 'a;
+    type FlexboxItemStyle<'a>
+        = &'a taffy::Style
+    where
+        Self: 'a;
+    fn get_flexbox_container_style(&self, node: NodeId) -> Self::FlexboxContainerStyle<'_> {
+        self.taffy.style(node).expect(EXPECT_MESSAGE)
+    }
+    fn get_flexbox_child_style(&self, node: NodeId) -> Self::FlexboxItemStyle<'_> {
+        self.taffy.style(node).expect(EXPECT_MESSAGE)
+    }
+}
+
+impl<F> taffy::LayoutGridContainer for RetainedLayoutTree<'_, F>
+where
+    Self: taffy::LayoutPartialTree<CustomIdent = String>,
+{
+    type GridContainerStyle<'a>
+        = &'a taffy::Style
+    where
+        Self: 'a;
+    type GridItemStyle<'a>
+        = &'a taffy::Style
+    where
+        Self: 'a;
+    fn get_grid_container_style(&self, node: NodeId) -> Self::GridContainerStyle<'_> {
+        self.taffy.style(node).expect(EXPECT_MESSAGE)
+    }
+    fn get_grid_child_style(&self, node: NodeId) -> Self::GridItemStyle<'_> {
+        self.taffy.style(node).expect(EXPECT_MESSAGE)
+    }
+}
+
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     cache: Option<Box<LayoutCache>>,
     absolute_layout: SecondaryMap<DefaultKey, AbsoluteLayout>,
     layout_epoch: u64,
+    retained: Option<Box<RetainedLayouts>>,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
 }
@@ -114,6 +336,7 @@ impl TaffyLayoutEngine {
             cache: None,
             absolute_layout: SecondaryMap::new(),
             layout_epoch: 0,
+            retained: None,
             computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
         }
@@ -123,9 +346,100 @@ impl TaffyLayoutEngine {
         self.cache = Some(Box::default());
     }
 
-    #[cfg(any(test, feature = "bench-support"))]
     pub(crate) fn cache_enabled(&self) -> bool {
         self.cache.is_some()
+    }
+
+    pub(crate) fn enable_retention(&mut self) {
+        if self.retained.is_none() {
+            self.retained = Some(Box::default());
+        }
+    }
+
+    pub(crate) fn retained_style(&self, id: LayoutId) -> taffy::Style {
+        self.taffy.style(id.0).expect(EXPECT_MESSAGE).clone()
+    }
+
+    pub(crate) fn retained_input(&self, id: LayoutId) -> Option<taffy::LayoutInput> {
+        self.retained.as_ref()?.inputs.get(&id.0).copied()
+    }
+
+    pub(crate) fn retained_output(&self, id: LayoutId) -> Option<taffy::LayoutOutput> {
+        self.retained.as_ref()?.outputs.get(&id.0).copied()
+    }
+
+    pub(crate) fn retained_geometry_unchanged(
+        &self,
+        id: LayoutId,
+        boundaries: &[LayoutId],
+    ) -> bool {
+        let Some(retained) = self.retained.as_ref() else {
+            return false;
+        };
+        let mut stack = vec![id.0];
+        while let Some(node) = stack.pop() {
+            if let Some(previous) = retained.previous_layouts.get(&node)
+                && retained.layouts.get(&node) != Some(previous)
+            {
+                return false;
+            }
+            if node == id.0 || !boundaries.contains(&LayoutId(node)) {
+                stack.extend(self.taffy.child_ids(node));
+            }
+        }
+        true
+    }
+
+    pub(crate) fn retain_subtree(&mut self, id: LayoutId) {
+        let Some(cache) = self.cache.as_mut() else {
+            return;
+        };
+        let epochs = &mut cache.nodes[node_index(id.0)];
+        if epochs.last_computed != cache.epoch {
+            epochs.last_computed = cache.epoch;
+            cache.computed_roots.push(id);
+        }
+        let mut nodes = FxHashSet::default();
+        let mut stack = vec![id.0];
+        while let Some(node) = stack.pop() {
+            if nodes.insert(LayoutId(node)) {
+                cache.nodes[node_index(node)].last_requested = cache.epoch;
+                stack.extend(self.taffy.child_ids(node));
+            }
+        }
+        for scope in cache.scopes.iter_mut().flatten() {
+            for (ordinal, node) in scope.nodes.iter().enumerate() {
+                if node.is_some_and(|id| nodes.contains(&id)) {
+                    scope.last_requested_epoch = cache.epoch;
+                    scope.cursor = scope.cursor.max(ordinal + 1);
+                }
+            }
+        }
+        if let Some(retained) = self.retained.as_mut() {
+            retained.kept.extend(nodes);
+        }
+    }
+
+    pub(crate) fn reset_retained_subtree(&mut self, id: LayoutId) {
+        let mut nodes = FxHashSet::default();
+        let mut stack = vec![id.0];
+        while let Some(node) = stack.pop() {
+            if nodes.insert(LayoutId(node)) {
+                stack.extend(self.taffy.child_ids(node));
+            }
+        }
+        if let Some(cache) = self.cache.as_mut() {
+            for scope in cache.scopes.iter_mut().flatten() {
+                if scope
+                    .nodes
+                    .iter()
+                    .flatten()
+                    .any(|node| nodes.contains(node))
+                {
+                    scope.cursor = 0;
+                }
+            }
+        }
     }
 
     #[cfg(test)]
@@ -209,11 +523,21 @@ impl TaffyLayoutEngine {
                                 .set_node_context(id.0, None)
                                 .expect(EXPECT_MESSAGE);
                             self.taffy.remove(id.0).expect(EXPECT_MESSAGE);
+                            if let Some(retained) = self.retained.as_mut() {
+                                retained.layouts.remove(&id.0);
+                                retained.inputs.remove(&id.0);
+                                retained.outputs.remove(&id.0);
+                            }
                             *node = None;
-                        } else if matches!(
-                            self.taffy.get_node_context(id.0),
-                            Some(NodeContext::Custom(_))
-                        ) {
+                        } else if !self
+                            .retained
+                            .as_ref()
+                            .is_some_and(|retained| retained.kept.contains(&id))
+                            && matches!(
+                                self.taffy.get_node_context(id.0),
+                                Some(NodeContext::Custom(_))
+                            )
+                        {
                             self.taffy
                                 .set_node_context(id.0, None)
                                 .expect(EXPECT_MESSAGE);
@@ -238,6 +562,10 @@ impl TaffyLayoutEngine {
         }
         self.advance_layout_epoch();
         self.computed_layouts.clear();
+        if let Some(retained) = self.retained.as_mut() {
+            retained.kept.clear();
+            retained.previous_layouts.clear();
+        }
     }
 
     fn advance_layout_epoch(&mut self) {
@@ -492,6 +820,27 @@ impl TaffyLayoutEngine {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.compute_layout_with_input(id, available_space, None, window, cx);
+    }
+
+    pub(crate) fn compute_retained_layout(
+        &mut self,
+        id: LayoutId,
+        input: taffy::LayoutInput,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.compute_layout_with_input(id, AvailableSpace::min_size(), Some(input), window, cx);
+    }
+
+    fn compute_layout_with_input(
+        &mut self,
+        id: LayoutId,
+        available_space: Size<AvailableSpace>,
+        input: Option<taffy::LayoutInput>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         if let Some(cache) = self.cache.as_mut() {
             let generation = window.text_system().font_generation();
             if cache.font_generation != Some(generation) {
@@ -510,7 +859,8 @@ impl TaffyLayoutEngine {
                 cache.font_generation = Some(generation);
             }
         }
-        if let Some(cache) = self.cache.as_ref()
+        if input.is_none()
+            && let Some(cache) = self.cache.as_ref()
             && let Some(parent) = self.taffy.parent(id.0)
             && cache.nodes[node_index(parent)].last_requested != cache.epoch
         {
@@ -538,6 +888,8 @@ impl TaffyLayoutEngine {
         } else {
             self.computed_layouts.insert(id);
         }
+        // A speculative child may have populated absolute bounds before its
+        // containing root redistributes flex space, even on that root's first pass.
         self.advance_layout_epoch();
 
         let scale_factor = window.scale_factor();
@@ -555,56 +907,74 @@ impl TaffyLayoutEngine {
         );
 
         let cache_enabled = self.cache.is_some();
-        self.taffy
-            .compute_layout_with_measure(
-                id.into(),
-                available_space.into(),
-                |inputs, _id, node_context, style| {
-                    taffy::compute_leaf_layout(
-                        inputs,
-                        style,
-                        |_, _| 0.0,
-                        |known_dimensions, available_space| {
-                            let Some(node_context) = node_context else {
-                                return taffy::geometry::Size::default();
-                            };
+        let measure = |inputs: taffy::LayoutInput,
+                       _id,
+                       node_context: Option<&mut NodeContext>,
+                       style: &taffy::Style| {
+            taffy::compute_leaf_layout(
+                inputs,
+                style,
+                |_, _| 0.0,
+                |known_dimensions, available_space| {
+                    let Some(node_context) = node_context else {
+                        return taffy::geometry::Size::default();
+                    };
 
-                            let known_dimensions = Size {
-                                width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
-                                height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
-                            };
+                    let known_dimensions = Size {
+                        width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
+                        height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
+                    };
 
-                            let available_space: Size<AvailableSpace> = available_space.into();
-                            let untransform = |ev: AvailableSpace| match ev {
-                                AvailableSpace::Definite(pixels) => {
-                                    AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
-                                }
-                                AvailableSpace::MinContent => AvailableSpace::MinContent,
-                                AvailableSpace::MaxContent => AvailableSpace::MaxContent,
-                            };
-                            let available_space = size(
-                                untransform(available_space.width),
-                                untransform(available_space.height),
-                            );
+                    let available_space: Size<AvailableSpace> = available_space.into();
+                    let untransform = |ev: AvailableSpace| match ev {
+                        AvailableSpace::Definite(pixels) => {
+                            AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
+                        }
+                        AvailableSpace::MinContent => AvailableSpace::MinContent,
+                        AvailableSpace::MaxContent => AvailableSpace::MaxContent,
+                    };
+                    let available_space = size(
+                        untransform(available_space.width),
+                        untransform(available_space.height),
+                    );
 
-                            let measured_size = match node_context {
-                                NodeContext::Custom(measure) => {
-                                    measure(known_dimensions, available_space, window, cx)
-                                }
-                                NodeContext::Text(measure) => measure.measure(
-                                    known_dimensions,
-                                    available_space,
-                                    cache_enabled.then_some(inputs.run_mode),
-                                    window,
-                                    cx,
-                                ),
-                            };
-                            snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
-                        },
-                    )
+                    let measured_size = match node_context {
+                        NodeContext::Custom(measure) => {
+                            measure(known_dimensions, available_space, window, cx)
+                        }
+                        NodeContext::Text(measure) => measure.measure(
+                            known_dimensions,
+                            available_space,
+                            cache_enabled.then_some(inputs.run_mode),
+                            window,
+                            cx,
+                        ),
+                    };
+                    snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
                 },
             )
-            .expect(EXPECT_MESSAGE);
+        };
+        if let Some(retained) = self.retained.as_mut() {
+            let mut tree = RetainedLayoutTree {
+                taffy: &mut self.taffy,
+                retained,
+                measure,
+            };
+            if let Some(input) = input {
+                let output = tree.compute(id.0, input, None);
+                if let Some(mut layout) = tree.retained.layouts.get(&id.0).copied() {
+                    layout.size = output.size;
+                    layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
+                    tree.retained.set_layout(id.0, layout);
+                }
+            } else {
+                taffy::compute_root_layout(&mut tree, id.0, available_space.into());
+            }
+        } else {
+            self.taffy
+                .compute_layout_with_measure(id.into(), available_space.into(), measure)
+                .expect(EXPECT_MESSAGE);
+        }
     }
 
     // Pixel snapping
@@ -693,7 +1063,11 @@ impl TaffyLayoutEngine {
             return layout;
         }
 
-        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        let layout = self
+            .retained
+            .as_ref()
+            .and_then(|retained| retained.layouts.get(&id.0))
+            .unwrap_or_else(|| self.taffy.layout(id.into()).expect(EXPECT_MESSAGE));
         let layout_location = layout.location;
         let layout_size = layout.size;
         let parent = self.taffy.parent(id.0);

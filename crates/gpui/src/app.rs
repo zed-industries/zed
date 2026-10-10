@@ -861,6 +861,8 @@ pub struct App {
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
     pub(crate) element_arena: RefCell<Arena>,
+    pub(crate) tracking_retained_globals: Cell<bool>,
+    pub(crate) accessed_retained_globals: RefCell<FxHashSet<TypeId>>,
     /// Per-App event arena.
     pub(crate) event_arena: Arena,
 
@@ -962,6 +964,8 @@ impl App {
                 asset_source,
                 http_client,
                 globals_by_type: Default::default(),
+                tracking_retained_globals: Cell::new(false),
+                accessed_retained_globals: RefCell::default(),
                 entities,
                 new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
@@ -2139,6 +2143,9 @@ impl App {
 
     fn apply_notify_global_observers_effect(&mut self, type_id: TypeId) {
         self.pending_global_notifications.remove(&type_id);
+        for window in self.windows.values_mut().flatten() {
+            window.invalidate_retained_global(type_id);
+        }
         self.global_observers
             .clone()
             .retain(&type_id, |observer| observer(self));
@@ -2385,6 +2392,7 @@ impl App {
     /// Access the global of the given type. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global<G: Global>(&self) -> &G {
+        self.record_retained_global_read(TypeId::of::<G>());
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -2393,6 +2401,7 @@ impl App {
 
     /// Access the global of the given type if a value has been assigned.
     pub fn try_global<G: Global>(&self) -> Option<&G> {
+        self.record_retained_global_read(TypeId::of::<G>());
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -2426,6 +2435,14 @@ impl App {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, Box::new(global));
+    }
+
+    fn record_retained_global_read(&self, global_type: TypeId) {
+        if self.tracking_retained_globals.get() {
+            self.accessed_retained_globals
+                .borrow_mut()
+                .insert(global_type);
+        }
     }
 
     /// Clear all stored globals. Does not notify global observers.

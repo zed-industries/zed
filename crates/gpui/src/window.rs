@@ -733,7 +733,7 @@ type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(crate) struct CursorStyleRequest {
     pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
@@ -1022,16 +1022,19 @@ impl std::ops::Deref for ElementIdStack {
 
 pub(crate) struct DeferredDraw {
     current_view: EntityId,
+    parent_occurrence: Option<crate::view::ViewOccurrenceId>,
     priority: usize,
     parent_node: DispatchNodeId,
     element_id_stack: ElementIdStack,
     text_style_stack: Vec<TextStyleRefinement>,
+    text_style_base: Option<Rc<TextStyle>>,
     content_mask: Option<ContentMask<Pixels>>,
     rem_size: Pixels,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
+    accessed_entities: FxHashSet<EntityId>,
 }
 
 pub(crate) struct Frame {
@@ -1057,16 +1060,21 @@ pub(crate) struct Frame {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
     pub(crate) tab_stops: TabStopMap,
+    pub(crate) prepaint_views: Vec<crate::view::ViewOccurrenceId>,
+    pub(crate) paint_views: Vec<crate::view::ViewOccurrenceId>,
+    #[cfg(debug_assertions)]
+    consumed_segments: [Vec<Range<usize>>; 6],
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct PrepaintStateIndex {
-    hitboxes_index: usize,
-    tooltips_index: usize,
-    deferred_draws_index: usize,
-    dispatch_tree_index: usize,
-    accessed_element_states_index: usize,
-    line_layout_index: LineLayoutIndex,
+    pub(crate) hitboxes_index: usize,
+    pub(crate) tooltips_index: usize,
+    pub(crate) deferred_draws_index: usize,
+    pub(crate) dispatch_tree_index: usize,
+    pub(crate) accessed_element_states_index: usize,
+    pub(crate) line_layout_index: LineLayoutIndex,
+    pub(crate) views_index: usize,
 }
 
 #[derive(Clone, Default)]
@@ -1080,6 +1088,74 @@ pub(crate) struct PaintIndex {
     accessed_element_states_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
+    pub(crate) views_index: usize,
+}
+
+impl PrepaintStateIndex {
+    pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
+        Self {
+            hitboxes_index: self.hitboxes_index - old.hitboxes_index + new.hitboxes_index,
+            tooltips_index: self.tooltips_index - old.tooltips_index + new.tooltips_index,
+            deferred_draws_index: self.deferred_draws_index - old.deferred_draws_index
+                + new.deferred_draws_index,
+            dispatch_tree_index: self.dispatch_tree_index - old.dispatch_tree_index
+                + new.dispatch_tree_index,
+            accessed_element_states_index: self.accessed_element_states_index
+                - old.accessed_element_states_index
+                + new.accessed_element_states_index,
+            line_layout_index: self
+                .line_layout_index
+                .rebase(&old.line_layout_index, &new.line_layout_index),
+            views_index: self.views_index - old.views_index + new.views_index,
+        }
+    }
+}
+
+impl PaintIndex {
+    pub(crate) fn with_cached_state_access(mut self) -> Self {
+        self.accessed_element_states_index -= 1;
+        self
+    }
+
+    pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
+        Self {
+            scene_index: self.scene_index - old.scene_index + new.scene_index,
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_index: self.debug_bounds_index - old.debug_bounds_index
+                + new.debug_bounds_index,
+            mouse_listeners_index: self.mouse_listeners_index - old.mouse_listeners_index
+                + new.mouse_listeners_index,
+            input_handlers_index: self.input_handlers_index - old.input_handlers_index
+                + new.input_handlers_index,
+            cursor_styles_index: self.cursor_styles_index - old.cursor_styles_index
+                + new.cursor_styles_index,
+            accessed_element_states_index: self.accessed_element_states_index
+                - old.accessed_element_states_index
+                + new.accessed_element_states_index,
+            tab_handle_index: self.tab_handle_index - old.tab_handle_index + new.tab_handle_index,
+            line_layout_index: self
+                .line_layout_index
+                .rebase(&old.line_layout_index, &new.line_layout_index),
+            views_index: self.views_index - old.views_index + new.views_index,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ViewExecutionScope {
+    element_path: InternedHandle,
+    text_style: Rc<TextStyle>,
+    current_view: Option<EntityId>,
+    offset: Point<Pixels>,
+    content_mask: ContentMask<Pixels>,
+    rem_override: Option<Pixels>,
+    image_cache: Option<Rc<AnyImageCache>>,
+    opacity: f32,
+    rem_size: Pixels,
+    scale_factor: f32,
+    pub(crate) dispatch_node: Option<DispatchNodeId>,
+    pub(crate) parent_occurrence: Option<crate::view::ViewOccurrenceId>,
+    pub(crate) fallback: Option<crate::view::retained::SpliceFallback>,
 }
 
 impl Frame {
@@ -1116,6 +1192,10 @@ impl Frame {
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
             tab_stops: TabStopMap::default(),
+            prepaint_views: Vec::new(),
+            paint_views: Vec::new(),
+            #[cfg(debug_assertions)]
+            consumed_segments: Default::default(),
         }
     }
 
@@ -1133,6 +1213,12 @@ impl Frame {
         self.deferred_draws.clear();
         self.tab_stops.clear();
         self.focus = None;
+        self.prepaint_views.clear();
+        self.paint_views.clear();
+        #[cfg(debug_assertions)]
+        for ranges in &mut self.consumed_segments {
+            ranges.clear();
+        }
 
         #[cfg(any(test, feature = "test-support"))]
         {
@@ -1193,15 +1279,28 @@ impl Frame {
     }
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        for element_state_key in &self.accessed_element_states {
-            if let Some((element_state_key, element_state)) =
-                prev_frame.element_states.remove_entry(element_state_key)
-            {
-                self.element_states.insert(element_state_key, element_state);
-            }
-        }
+        let accessed: FxHashSet<_> = self.accessed_element_states.iter().copied().collect();
+        self.element_states.extend(
+            prev_frame
+                .element_states
+                .extract_if(|key, _| accessed.contains(key)),
+        );
 
         self.scene.finish();
+    }
+
+    #[cfg(debug_assertions)]
+    fn consume_segment(&mut self, array: usize, range: Range<usize>) {
+        if !range.is_empty() {
+            let consumed = &mut self.consumed_segments[array];
+            debug_assert!(
+                consumed
+                    .iter()
+                    .all(|prior| range.end <= prior.start || prior.end <= range.start),
+                "frame segment consumed twice"
+            );
+            consumed.push(range);
+        }
     }
 }
 
@@ -1210,6 +1309,154 @@ enum InputModality {
     Mouse,
     Keyboard,
     Touch,
+}
+
+/// Work performed by view caching since the last explicit reset.
+///
+/// Miss reasons overlap: a view can have changed bounds and also be dirty.
+/// Byte counts describe inline array records, not allocations owned by those records.
+#[cfg(any(test, feature = "bench-support"))]
+#[derive(Clone, Debug, Default)]
+#[expect(missing_docs)]
+pub struct ViewReuseStats {
+    pub frames: usize,
+    /// Actual element callbacks, in request-layout, prepaint, paint order.
+    pub phase_element_visits: [usize; 3],
+    /// Cached boundary callbacks for hits; retained descendants have zero visits.
+    pub reused_view_boundary_visits: [usize; 3],
+    pub render_own_dirty: usize,
+    pub render_ancestor_caused: usize,
+    pub render_first_mount: usize,
+    pub render_refresh_or_inspector: usize,
+    pub render_cache_context: usize,
+    pub render_uncached: usize,
+    pub render_entity_dependency: usize,
+    pub splice_prepaint_calls: usize,
+    pub splice_paint_calls: usize,
+    pub spliced_children: usize,
+    /// Uncached view, deferred draw, transaction, autoscroll, accessibility,
+    /// inspector, execution scope, missing view.
+    pub splice_fallbacks: [usize; 11],
+    pub cached_hits: usize,
+    pub cached_misses: usize,
+    pub miss_first_mount: usize,
+    pub miss_bounds: usize,
+    pub miss_content_mask: usize,
+    pub miss_text_style: usize,
+    pub miss_dirty: usize,
+    pub miss_refreshing: usize,
+    pub miss_inspector: usize,
+    pub miss_forced_reconstruction: usize,
+    pub bounds_size_changed: usize,
+    pub bounds_origin_only_changed: usize,
+    pub prepaint_reuse_calls: usize,
+    pub paint_reuse_calls: usize,
+    pub hitboxes: ReuseArrayStats,
+    pub tooltips: ReuseArrayStats,
+    pub element_state_keys: ReuseArrayStats,
+    pub dispatch_nodes: ReuseArrayStats,
+    pub dispatch_contexts: ReuseArrayStats,
+    pub deferred_draws: ReuseArrayStats,
+    pub cursor_styles: ReuseArrayStats,
+    pub input_handlers: ReuseArrayStats,
+    pub mouse_listeners: ReuseArrayStats,
+    pub tab_stops: ReuseArrayStats,
+    pub text_layout_usage_indices: ReuseArrayStats,
+    /// Shadow, quad, path, underline, monochrome, subpixel, polychrome, surface.
+    pub scene_primitives: [ReuseArrayStats; 8],
+    pub scene_layer_operations: usize,
+    pub index_fixups: usize,
+}
+
+/// Canonical CPU output for differential runs of a deterministic fixture.
+///
+/// View identities must be logical fixture identities, not entity IDs from separate
+/// windows. This is not a pixel oracle, and native surfaces may contain external identity.
+#[cfg(any(test, feature = "bench-support"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(missing_docs)]
+pub struct ViewReuseSnapshot {
+    pub scene: Vec<String>,
+    pub hitboxes: Vec<String>,
+    pub dispatch: Vec<String>,
+    pub cursor_styles: Vec<String>,
+    pub tab_stops: Vec<String>,
+}
+
+#[cfg(any(test, feature = "bench-support"))]
+impl ViewReuseSnapshot {
+    /// Report the first CPU-output mismatch with its frame and logical dispatch identities.
+    pub fn compare(&self, reconstructed: &Self, frame: usize) -> anyhow::Result<()> {
+        for (name, reused, fresh) in [
+            ("scene", &self.scene, &reconstructed.scene),
+            ("hitboxes", &self.hitboxes, &reconstructed.hitboxes),
+            ("dispatch", &self.dispatch, &reconstructed.dispatch),
+            (
+                "cursor styles",
+                &self.cursor_styles,
+                &reconstructed.cursor_styles,
+            ),
+            ("tab stops", &self.tab_stops, &reconstructed.tab_stops),
+        ] {
+            if reused != fresh {
+                let index = reused
+                    .iter()
+                    .zip(fresh)
+                    .position(|(left, right)| left != right)
+                    .unwrap_or(reused.len().min(fresh.len()));
+                anyhow::bail!(
+                    "view reuse mismatch in frame {frame}, {name}[{index}]: reused={:?}, reconstructed={:?}; logical view dispatch={:?}",
+                    reused.get(index),
+                    fresh.get(index),
+                    self.dispatch,
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Inline records replayed by an array's existing reuse implementation.
+#[cfg(any(test, feature = "bench-support"))]
+#[derive(Clone, Debug, Default)]
+#[expect(missing_docs)]
+pub struct ReuseArrayStats {
+    pub cloned_elements: usize,
+    pub cloned_bytes: usize,
+    pub copied_elements: usize,
+    pub copied_bytes: usize,
+    pub moved_elements: usize,
+    pub moved_bytes: usize,
+    pub rebuilt_elements: usize,
+    pub rebuilt_bytes: usize,
+}
+
+#[cfg(any(test, feature = "bench-support"))]
+impl ReuseArrayStats {
+    pub(crate) fn cloned<T>(&mut self, records: &[T]) {
+        self.cloned_elements += records.len();
+        self.cloned_bytes += std::mem::size_of_val(records);
+    }
+
+    pub(crate) fn copied<T>(&mut self, records: &[T]) {
+        self.copied_elements += records.len();
+        self.copied_bytes += std::mem::size_of_val(records);
+    }
+
+    pub(crate) fn moved<T>(&mut self, records: &[T]) {
+        self.moved_elements += records.len();
+        self.moved_bytes += std::mem::size_of_val(records);
+    }
+
+    pub(crate) fn moved_count<T>(&mut self, count: usize) {
+        self.moved_elements += count;
+        self.moved_bytes += count * std::mem::size_of::<T>();
+    }
+
+    pub(crate) fn rebuilt<T>(&mut self, count: usize) {
+        self.rebuilt_elements += count;
+        self.rebuilt_bytes += count * std::mem::size_of::<T>();
+    }
 }
 
 /// Holds the state for a specific window.
@@ -1232,13 +1479,16 @@ pub struct Window {
     /// a given rem size.
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
-    layout_engine: Option<TaffyLayoutEngine>,
+    pub(crate) layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
     pub(crate) element_id_interner: ElementIdInterner,
     text_style_stack: Vec<TextStyleRefinement>,
     // Keep the large resolved value off Window and retain its allocation across invalidations.
     resolved_text_style: RefCell<Option<Box<Option<TextStyle>>>>,
+    retained_text_style: RefCell<Option<Rc<TextStyle>>>,
+    retained_text_style_base: Option<Rc<TextStyle>>,
+    scope_image_caches: FxHashMap<EntityId, std::rc::Weak<AnyImageCache>>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
@@ -1257,6 +1507,30 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
+    pub(crate) view_splicing: bool,
+    pub(crate) implicit_view_splicing: bool,
+    root_view_changed: bool,
+    retained_a11y_active: bool,
+    retained_font_generation: Option<usize>,
+    retained_input_changed: bool,
+    pub(crate) view_store: crate::view::ViewStore,
+    pub(crate) current_view_occurrence: Option<crate::view::ViewOccurrenceId>,
+    pub(crate) retained_scope_fallback: Option<crate::view::retained::SpliceFallback>,
+    pub(crate) dispatch_replay: Vec<crate::ReusedSubtree>,
+    pub(crate) cached_entity_access_stack: Vec<FxHashSet<EntityId>>,
+    cached_global_access_stack: Vec<(
+        bool,
+        FxHashSet<TypeId>,
+        Option<crate::view::ViewOccurrenceId>,
+    )>,
+    #[cfg(any(test, feature = "bench-support"))]
+    own_dirty_views: FxHashSet<EntityId>,
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) view_reuse_stats: ViewReuseStats,
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) force_view_reconstruction: bool,
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) cached_reconstruction_depth: usize,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
@@ -2148,6 +2422,9 @@ impl Window {
             element_id_interner,
             text_style_stack: Vec::new(),
             resolved_text_style: RefCell::new(None),
+            retained_text_style: RefCell::new(None),
+            retained_text_style_base: None,
+            scope_image_caches: FxHashMap::default(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -2162,6 +2439,30 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
+            view_splicing: std::env::var("GPUI_VIEW_SPLICE")
+                .is_ok_and(|value| value == "1" || value == "all"),
+            implicit_view_splicing: std::env::var("GPUI_VIEW_SPLICE")
+                .is_ok_and(|value| value == "all")
+                && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1"),
+            root_view_changed: false,
+            retained_a11y_active: false,
+            retained_font_generation: None,
+            retained_input_changed: false,
+            view_store: crate::view::ViewStore::default(),
+            current_view_occurrence: None,
+            retained_scope_fallback: None,
+            dispatch_replay: Vec::new(),
+            cached_entity_access_stack: Vec::new(),
+            cached_global_access_stack: Vec::new(),
+            #[cfg(any(test, feature = "bench-support"))]
+            own_dirty_views: FxHashSet::default(),
+            #[cfg(any(test, feature = "bench-support"))]
+            view_reuse_stats: ViewReuseStats::default(),
+            #[cfg(any(test, feature = "bench-support"))]
+            force_view_reconstruction: std::env::var("GPUI_FORCE_VIEW_RECONSTRUCTION")
+                .is_ok_and(|value| value == "1"),
+            #[cfg(any(test, feature = "bench-support"))]
+            cached_reconstruction_depth: 0,
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             focus_lost_path: SmallVec::new(),
@@ -2257,7 +2558,349 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
+    pub(crate) fn begin_cached_entity_access(&mut self, cx: &mut App) -> FxHashSet<EntityId> {
+        if self.implicit_view_splicing {
+            self.cached_global_access_stack.push((
+                cx.tracking_retained_globals.replace(true),
+                mem::take(cx.accessed_retained_globals.get_mut()),
+                self.current_view_occurrence,
+            ));
+        }
+        self.cached_entity_access_stack.push(FxHashSet::default());
+        mem::take(cx.entities.accessed_entities.get_mut().deref_mut())
+    }
+
+    pub(crate) fn end_cached_entity_access(
+        &mut self,
+        previous: FxHashSet<EntityId>,
+        cx: &mut App,
+    ) -> (FxHashSet<EntityId>, FxHashSet<EntityId>) {
+        if self.implicit_view_splicing {
+            let (tracking, previous, occurrence) = self
+                .cached_global_access_stack
+                .pop()
+                .expect("global access scope");
+            let globals = mem::replace(cx.accessed_retained_globals.get_mut(), previous);
+            cx.tracking_retained_globals.set(tracking);
+            if let Some(occurrence) = occurrence {
+                self.view_store.append_global_access(occurrence, globals);
+            }
+        }
+        let own = mem::replace(
+            cx.entities.accessed_entities.get_mut().deref_mut(),
+            previous,
+        );
+        let mut all = self
+            .cached_entity_access_stack
+            .pop()
+            .expect("cached access scope");
+        all.extend(own.iter().copied());
+        if let Some(parent) = self.cached_entity_access_stack.last_mut() {
+            parent.extend(all.iter().copied());
+        } else {
+            cx.entities.extend_accessed(&all);
+        }
+        (own, all)
+    }
+
+    pub(crate) fn capture_view_scope(&mut self) -> ViewExecutionScope {
+        let image_cache = self.image_cache_stack.last().map(|cache| {
+            let entity = cache.entity_id();
+            if let Some(cache) = self
+                .scope_image_caches
+                .get(&entity)
+                .and_then(std::rc::Weak::upgrade)
+            {
+                cache
+            } else {
+                let cache = Rc::new(cache.clone());
+                self.scope_image_caches
+                    .insert(entity, Rc::downgrade(&cache));
+                cache
+            }
+        });
+        ViewExecutionScope {
+            element_path: self.element_id_stack.handle(),
+            text_style: self.retained_text_style_handle(),
+            current_view: self.rendered_entity_stack.last().copied(),
+            offset: self
+                .element_offset_stack
+                .last()
+                .copied()
+                .unwrap_or_default(),
+            content_mask: self.content_mask(),
+            rem_override: self.rem_size_override_stack.last().copied(),
+            image_cache,
+            opacity: self.element_opacity,
+            rem_size: self.rem_size,
+            scale_factor: self.scale_factor,
+            dispatch_node: self.next_frame.dispatch_tree.active_node_id(),
+            parent_occurrence: self.current_view_occurrence,
+            fallback: self.retained_scope_fallback,
+        }
+    }
+
+    pub(crate) fn view_scope_is_current(&self, scope: &ViewExecutionScope) -> bool {
+        self.rem_size == scope.rem_size && self.scale_factor == scope.scale_factor
+    }
+
+    pub(crate) fn view_layout_scope_matches(
+        &self,
+        old: &ViewExecutionScope,
+        new: &ViewExecutionScope,
+    ) -> bool {
+        self.view_scope_is_current(old)
+            && old.text_style == new.text_style
+            && old.rem_override == new.rem_override
+            && old.image_cache.as_ref().map(|cache| cache.entity_id())
+                == new.image_cache.as_ref().map(|cache| cache.entity_id())
+            && old.opacity == new.opacity
+            && old.content_mask == new.content_mask
+    }
+
+    pub(crate) fn with_view_scope<R>(
+        &mut self,
+        scope: ViewExecutionScope,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.with_execution_scope(scope, true, f)
+    }
+
+    pub(crate) fn with_view_layout_scope<R>(
+        &mut self,
+        scope: ViewExecutionScope,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.with_execution_scope(scope, false, f)
+    }
+
+    fn with_execution_scope<R>(
+        &mut self,
+        mut scope: ViewExecutionScope,
+        dispatch: bool,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let dispatch_node = self.next_frame.dispatch_tree.active_node_id();
+        if dispatch && let Some(node) = scope.dispatch_node {
+            self.next_frame.dispatch_tree.set_active_node(node);
+        }
+        let global_id = self.element_id_interner.global_id(scope.element_path);
+        let mut element_ids = ElementIdStack::new(&self.element_id_interner);
+        for id in &*global_id {
+            element_ids.push(id.clone(), &mut self.element_id_interner);
+        }
+        let element_ids = mem::replace(&mut self.element_id_stack, element_ids);
+        let text_styles = mem::take(&mut self.text_style_stack);
+        let text_style_base = self
+            .retained_text_style_base
+            .replace(scope.text_style.clone());
+        let rendered_entities = mem::replace(
+            &mut self.rendered_entity_stack,
+            scope.current_view.into_iter().collect(),
+        );
+        let offsets = mem::replace(&mut self.element_offset_stack, vec![scope.offset]);
+        let content_masks = mem::replace(&mut self.content_mask_stack, vec![scope.content_mask]);
+        let rem_overrides = mem::replace(
+            &mut self.rem_size_override_stack,
+            scope.rem_override.into_iter().collect(),
+        );
+        let image_caches = mem::replace(
+            &mut self.image_cache_stack,
+            scope
+                .image_cache
+                .as_ref()
+                .map(|cache| (**cache).clone())
+                .into_iter()
+                .collect(),
+        );
+        mem::swap(&mut self.element_opacity, &mut scope.opacity);
+        mem::swap(
+            &mut self.current_view_occurrence,
+            &mut scope.parent_occurrence,
+        );
+        mem::swap(&mut self.retained_scope_fallback, &mut scope.fallback);
+        self.invalidate_text_style();
+        let result = f(self);
+        self.element_id_stack = element_ids;
+        self.text_style_stack = text_styles;
+        self.retained_text_style_base = text_style_base;
+        self.rendered_entity_stack = rendered_entities;
+        self.element_offset_stack = offsets;
+        self.content_mask_stack = content_masks;
+        self.rem_size_override_stack = rem_overrides;
+        self.image_cache_stack = image_caches;
+        mem::swap(&mut self.element_opacity, &mut scope.opacity);
+        mem::swap(
+            &mut self.current_view_occurrence,
+            &mut scope.parent_occurrence,
+        );
+        mem::swap(&mut self.retained_scope_fallback, &mut scope.fallback);
+        self.invalidate_text_style();
+        if dispatch && let Some(dispatch_node) = dispatch_node {
+            self.next_frame.dispatch_tree.set_active_node(dispatch_node);
+        }
+        result
+    }
+
+    /// Read view work accumulated since the last reset.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn view_reuse_stats(&self) -> &ViewReuseStats {
+        &self.view_reuse_stats
+    }
+
+    /// Return and reset accumulated view work without resetting invalidation state.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn take_view_reuse_stats(&mut self) -> ViewReuseStats {
+        std::mem::take(&mut self.view_reuse_stats)
+    }
+
+    /// Disable cached view reuse for differential runs of deterministic fixtures.
+    ///
+    /// This does not run an extra render pass in the live window. Compare independent
+    /// windows with identical scripted updates, since rendering may mutate entity state.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn set_force_view_reconstruction(&mut self, force: bool) {
+        self.force_view_reconstruction = force;
+    }
+
+    /// Opt into descendant splicing for a fixture that obeys tracked rendering dependencies.
+    ///
+    /// Production windows default to legacy ancestor reconstruction unless
+    /// `GPUI_VIEW_SPLICE=1` is set. Untracked shared state can invalidate retained output.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn set_view_splicing(&mut self, enabled: bool) {
+        self.implicit_view_splicing = false;
+        if self.view_splicing != enabled {
+            self.view_splicing = enabled;
+            self.refresh();
+        }
+    }
+
+    /// Opt into implicit entity-view boundaries as well as explicit cached views.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn set_implicit_view_splicing(&mut self, enabled: bool) {
+        self.set_view_splicing(enabled);
+        self.implicit_view_splicing = enabled
+            && self
+                .layout_engine
+                .as_ref()
+                .is_some_and(|engine| engine.cache_enabled());
+        self.refresh();
+    }
+
+    /// Snapshot the completed frame outside benchmark timing.
+    ///
+    /// Both independent fixtures must use identical fonts, platform resources,
+    /// scripted inputs, and deterministic rendering.
+    #[cfg(any(test, feature = "bench-support"))]
+    pub fn view_reuse_snapshot(
+        &self,
+        mut view_identity: impl FnMut(EntityId) -> String,
+    ) -> ViewReuseSnapshot {
+        let frame = &self.rendered_frame;
+        ViewReuseSnapshot {
+            scene: frame.scene.reuse_snapshot(),
+            hitboxes: frame
+                .hitboxes
+                .iter()
+                .map(|hitbox| {
+                    format!(
+                        "{:?}:{:?}:{:?}",
+                        hitbox.bounds, hitbox.content_mask, hitbox.behavior
+                    )
+                })
+                .collect(),
+            dispatch: frame.dispatch_tree.reuse_snapshot(&mut view_identity),
+            cursor_styles: frame
+                .cursor_styles
+                .iter()
+                .map(|cursor| {
+                    let hitbox = cursor
+                        .hitbox_id
+                        .map(|id| frame.hitboxes.iter().position(|hitbox| hitbox.id == id));
+                    format!("{hitbox:?}:{:?}", cursor.style)
+                })
+                .collect(),
+            tab_stops: frame
+                .tab_stops
+                .insertion_history
+                .iter()
+                .map(|operation| match operation {
+                    crate::tab_stop::TabStopOperation::Insert(handle) => {
+                        format!(
+                            "insert:{:?}:{}:{}",
+                            frame.dispatch_tree.focusable_node_id(handle.id),
+                            handle.tab_index,
+                            handle.tab_stop
+                        )
+                    }
+                    crate::tab_stop::TabStopOperation::Group(index) => format!("group:{index}"),
+                    crate::tab_stop::TabStopOperation::GroupEnd => "group-end".into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn record_view_render(
+        &mut self,
+        entity_id: EntityId,
+        inspector: bool,
+        cached: bool,
+        first_mount: bool,
+    ) {
+        if !cached && !inspector && self.cached_reconstruction_depth == 0 {
+            self.view_reuse_stats.render_uncached += 1;
+            return;
+        }
+        if first_mount
+            || self
+                .rendered_frame
+                .dispatch_tree
+                .view_path_reversed(entity_id)
+                .next()
+                .is_none()
+        {
+            self.view_reuse_stats.render_first_mount += 1;
+        } else if self.own_dirty_views.contains(&entity_id) {
+            self.view_reuse_stats.render_own_dirty += 1;
+        } else if self.current_view_occurrence.is_some_and(|occurrence| {
+            self.view_store.is_entity(occurrence, entity_id)
+                && self.view_store.is_own_dirty(occurrence)
+        }) {
+            self.view_reuse_stats.render_entity_dependency += 1;
+        } else if self.cached_reconstruction_depth > 0
+            || self
+                .current_view_occurrence
+                .is_some_and(|occurrence| self.view_store.has_own_dirty_ancestor(occurrence))
+        {
+            self.view_reuse_stats.render_ancestor_caused += 1;
+        } else if inspector || self.refreshing {
+            self.view_reuse_stats.render_refresh_or_inspector += 1;
+        } else if self
+            .rendered_frame
+            .dispatch_tree
+            .view_path_reversed(entity_id)
+            .any(|view| self.dirty_views.contains(&view))
+        {
+            self.view_reuse_stats.render_ancestor_caused += 1;
+        } else {
+            self.view_reuse_stats.render_cache_context += 1;
+        }
+    }
+
     fn mark_view_dirty(&mut self, view_id: EntityId) {
+        if self.implicit_view_splicing
+            && self
+                .root
+                .as_ref()
+                .is_some_and(|root| root.entity_id() == view_id)
+        {
+            self.root_view_changed = true;
+        }
+        let retained = !self.view_splicing || self.view_store.mark_dirty(view_id);
+        #[cfg(any(test, feature = "bench-support"))]
+        self.own_dirty_views.insert(view_id);
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
         for view_id in self
@@ -2265,6 +2908,9 @@ impl Window {
             .dispatch_tree
             .view_path_reversed(view_id)
         {
+            if !retained {
+                self.view_store.mark_unretained_descendant(view_id);
+            }
             if !self.dirty_views.insert(view_id) {
                 break;
             }
@@ -2477,7 +3123,11 @@ impl Window {
         let resolved = cache.get_or_insert_with(|| Box::new(None));
         resolved
             .get_or_insert_with(|| {
-                let mut style = TextStyle::default();
+                let mut style = self
+                    .retained_text_style_base
+                    .as_deref()
+                    .cloned()
+                    .unwrap_or_default();
                 for refinement in &self.text_style_stack {
                     style.refine(refinement);
                 }
@@ -2486,9 +3136,19 @@ impl Window {
             .clone()
     }
 
+    pub(crate) fn retained_text_style_handle(&self) -> Rc<TextStyle> {
+        self.retained_text_style
+            .borrow_mut()
+            .get_or_insert_with(|| Rc::new(self.text_style()))
+            .clone()
+    }
+
     fn invalidate_text_style(&mut self) {
         if let Some(resolved) = self.resolved_text_style.get_mut() {
             **resolved = None;
+        }
+        if self.view_splicing {
+            self.retained_text_style.get_mut().take();
         }
     }
 
@@ -2932,7 +3592,12 @@ impl Window {
     }
 
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {
-        self.appearance = self.platform_window.appearance();
+        let appearance = self.platform_window.appearance();
+        let changed = self.appearance != appearance;
+        self.appearance = appearance;
+        if self.implicit_view_splicing && changed {
+            self.refresh();
+        }
 
         self.appearance_observers
             .clone()
@@ -2940,6 +3605,9 @@ impl Window {
     }
 
     pub(crate) fn button_layout_changed(&mut self, cx: &mut App) {
+        if self.implicit_view_splicing {
+            self.refresh();
+        }
         self.button_layout_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
@@ -3448,6 +4116,10 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            self.view_reuse_stats.frames += 1;
+        }
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -3463,6 +4135,14 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
+        if self.implicit_view_splicing && self.retained_input_changed {
+            self.refreshing = true;
+            self.retained_input_changed = false;
+        }
+        if self.view_splicing {
+            self.view_store.begin_frame();
+            self.dispatch_replay.clear();
+        }
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
@@ -3499,6 +4179,14 @@ impl Window {
             }
         }
         self.dirty_views.clear();
+        self.root_view_changed = false;
+        if self.view_splicing {
+            self.view_store.finish_frame();
+            self.scope_image_caches
+                .retain(|_, cache| cache.strong_count() > 0);
+        }
+        #[cfg(any(test, feature = "bench-support"))]
+        self.own_dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
         // Register requested input handler with the platform window.
@@ -3696,10 +4384,22 @@ impl Window {
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
+        let refreshing = self.refreshing;
+        self.refreshing |= self.implicit_view_splicing && self.root_view_changed;
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
         self.a11y.sync_active_flag();
+        if self.implicit_view_splicing {
+            let a11y_active = self.a11y.is_active();
+            let font_generation = self.text_system.font_generation();
+            self.refreshing |= a11y_active != self.retained_a11y_active
+                || self
+                    .retained_font_generation
+                    .is_some_and(|previous| previous != font_generation);
+            self.retained_a11y_active = a11y_active;
+            self.retained_font_generation = Some(font_generation);
+        }
         if self.a11y.is_active() {
             self.a11y.begin_frame();
         }
@@ -3810,6 +4510,7 @@ impl Window {
                 self.platform_window.a11y_tree_update(tree_update);
             }
         }
+        self.refreshing = refreshing;
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -3927,9 +4628,23 @@ impl Window {
                     )
                 };
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
+                let previous_text_style_base = mem::replace(
+                    &mut self.retained_text_style_base,
+                    self.next_frame.deferred_draws[deferred_draw_ix]
+                        .text_style_base
+                        .clone(),
+                );
+                let previous_occurrence = mem::replace(
+                    &mut self.current_view_occurrence,
+                    self.next_frame.deferred_draws[deferred_draw_ix].parent_occurrence,
+                );
+                let previous_fallback = self
+                    .retained_scope_fallback
+                    .replace(crate::view::retained::SpliceFallback::DeferredDraw);
 
                 let prepaint_start = self.prepaint_index();
                 if let Some(mut element) = element {
+                    let previous_access = self.begin_cached_entity_access(cx);
                     self.with_rendered_view(current_view, |window| {
                         window.with_rem_size(Some(rem_size), |window| {
                             window.with_absolute_element_offset(absolute_offset, |window| {
@@ -3937,13 +4652,32 @@ impl Window {
                             });
                         });
                     });
+                    let (own, all) = self.end_cached_entity_access(previous_access, cx);
+                    let parent_occurrence =
+                        self.next_frame.deferred_draws[deferred_draw_ix].parent_occurrence;
+                    self.next_frame.deferred_draws[deferred_draw_ix]
+                        .accessed_entities
+                        .extend(all.iter().copied());
+                    self.view_store
+                        .append_own_access(parent_occurrence, own, false);
                     self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
                 } else {
-                    self.reuse_prepaint(prepaint_range);
+                    // Deferred work lies outside its containing view's access scope.
+                    cx.entities.extend_accessed(
+                        &self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities,
+                    );
+                    if self.view_splicing {
+                        self.reuse_retained_prepaint(prepaint_range, cx);
+                    } else {
+                        self.reuse_prepaint(prepaint_range);
+                    }
                 }
                 let prepaint_end = self.prepaint_index();
                 self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
                     prepaint_start..prepaint_end;
+                self.current_view_occurrence = previous_occurrence;
+                self.retained_scope_fallback = previous_fallback;
+                self.retained_text_style_base = previous_text_style_base;
             }
 
             self.element_id_stack.clear();
@@ -3975,14 +4709,26 @@ impl Window {
             let paint_start = self.paint_index();
             let content_mask = deferred_draw.content_mask;
             if let Some(element) = deferred_draw.element.as_mut() {
+                let parent_occurrence = mem::replace(
+                    &mut self.current_view_occurrence,
+                    deferred_draw.parent_occurrence,
+                );
+                let previous_access = self.begin_cached_entity_access(cx);
                 self.with_rendered_view(deferred_draw.current_view, |window| {
                     window.with_content_mask(content_mask, |window| {
                         window.with_rem_size(Some(deferred_draw.rem_size), |window| {
                             element.paint(window, cx);
                         });
                     })
-                })
+                });
+                let (own, all) = self.end_cached_entity_access(previous_access, cx);
+                deferred_draw.accessed_entities.extend(all.iter().copied());
+                self.view_store
+                    .append_own_access(deferred_draw.parent_occurrence, own, true);
+                self.current_view_occurrence = parent_occurrence;
             } else {
+                cx.entities
+                    .extend_accessed(&deferred_draw.accessed_entities);
                 self.reuse_paint(deferred_draw.paint_range.clone());
             }
             let paint_end = self.paint_index();
@@ -4007,14 +4753,48 @@ impl Window {
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             line_layout_index: self.text_system.layout_index(),
+            views_index: self.next_frame.prepaint_views.len(),
         }
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
-        self.next_frame.hitboxes.extend(
-            self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
-                .iter()
-                .cloned(),
+        let new_start = self.prepaint_index();
+        #[cfg(debug_assertions)]
+        {
+            self.rendered_frame
+                .consume_segment(0, range.start.hitboxes_index..range.end.hitboxes_index);
+            self.rendered_frame
+                .consume_segment(1, range.start.tooltips_index..range.end.tooltips_index);
+            self.rendered_frame.consume_segment(
+                2,
+                range.start.deferred_draws_index..range.end.deferred_draws_index,
+            );
+        }
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            let stats = &mut self.view_reuse_stats;
+            stats.prepaint_reuse_calls += 1;
+            stats.hitboxes.copied(
+                &self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index],
+            );
+            stats.tooltips.moved(
+                &self.rendered_frame.tooltip_requests
+                    [range.start.tooltips_index..range.end.tooltips_index],
+            );
+            stats.element_state_keys.copied(
+                &self.rendered_frame.accessed_element_states[range
+                    .start
+                    .accessed_element_states_index
+                    ..range.end.accessed_element_states_index],
+            );
+            stats.deferred_draws.moved(
+                &self.rendered_frame.deferred_draws
+                    [range.start.deferred_draws_index..range.end.deferred_draws_index],
+            );
+            stats.index_fixups += range.end.deferred_draws_index - range.start.deferred_draws_index;
+        }
+        self.next_frame.hitboxes.extend_from_slice(
+            &self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index],
         );
         self.next_frame.tooltip_requests.extend(
             self.rendered_frame.tooltip_requests
@@ -4022,19 +4802,29 @@ impl Window {
                 .iter_mut()
                 .map(|request| request.take()),
         );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .copied(),
+        self.next_frame.accessed_element_states.extend_from_slice(
+            &self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index],
         );
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.text_system.reuse_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+            #[cfg(any(test, feature = "bench-support"))]
+            &mut self.view_reuse_stats.text_layout_usage_indices,
+        );
 
+        let replay = &self.dispatch_replay;
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut self.rendered_frame.dispatch_tree,
             self.focus,
+            |node| {
+                replay
+                    .iter()
+                    .rev()
+                    .find_map(|range| range.remap_node_id(node))
+            },
+            #[cfg(any(test, feature = "bench-support"))]
+            &mut self.view_reuse_stats,
         );
 
         if reused_subtree.contains_focus() {
@@ -4044,12 +4834,18 @@ impl Window {
         self.next_frame.deferred_draws.extend(
             self.rendered_frame.deferred_draws
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
-                .iter()
+                .iter_mut()
                 .map(|deferred_draw| DeferredDraw {
                     current_view: deferred_draw.current_view,
+                    parent_occurrence: deferred_draw.parent_occurrence,
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
-                    element_id_stack: deferred_draw.element_id_stack.clone(),
-                    text_style_stack: deferred_draw.text_style_stack.clone(),
+                    element_id_stack: ElementIdStack {
+                        ids: mem::take(&mut deferred_draw.element_id_stack.ids),
+                        handles: mem::take(&mut deferred_draw.element_id_stack.handles),
+                        root: deferred_draw.element_id_stack.root,
+                    },
+                    text_style_stack: mem::take(&mut deferred_draw.text_style_stack),
+                    text_style_base: deferred_draw.text_style_base.take(),
                     content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
@@ -4057,8 +4853,21 @@ impl Window {
                     absolute_offset: deferred_draw.absolute_offset,
                     prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
+                    accessed_entities: mem::take(&mut deferred_draw.accessed_entities),
                 }),
         );
+        for occurrence in
+            &self.rendered_frame.prepaint_views[range.start.views_index..range.end.views_index]
+        {
+            self.view_store
+                .reuse_prepaint(*occurrence, &range.start, &new_start, &reused_subtree);
+            self.element_id_interner
+                .mark_used(self.view_store.element_path(*occurrence));
+            self.next_frame.prepaint_views.push(*occurrence);
+        }
+        if self.view_splicing {
+            self.dispatch_replay.push(reused_subtree);
+        }
     }
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
@@ -4072,10 +4881,55 @@ impl Window {
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
+            views_index: self.next_frame.paint_views.len(),
         }
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        let new_start = self.paint_index();
+        #[cfg(debug_assertions)]
+        {
+            self.rendered_frame.consume_segment(
+                3,
+                range.start.cursor_styles_index..range.end.cursor_styles_index,
+            );
+            self.rendered_frame.consume_segment(
+                4,
+                range.start.input_handlers_index..range.end.input_handlers_index,
+            );
+            self.rendered_frame.consume_segment(
+                5,
+                range.start.mouse_listeners_index..range.end.mouse_listeners_index,
+            );
+        }
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            let stats = &mut self.view_reuse_stats;
+            stats.paint_reuse_calls += 1;
+            stats.cursor_styles.copied(
+                &self.rendered_frame.cursor_styles
+                    [range.start.cursor_styles_index..range.end.cursor_styles_index],
+            );
+            stats.input_handlers.moved(
+                &self.rendered_frame.input_handlers
+                    [range.start.input_handlers_index..range.end.input_handlers_index],
+            );
+            stats.mouse_listeners.moved(
+                &self.rendered_frame.mouse_listeners
+                    [range.start.mouse_listeners_index..range.end.mouse_listeners_index],
+            );
+            stats.element_state_keys.copied(
+                &self.rendered_frame.accessed_element_states[range
+                    .start
+                    .accessed_element_states_index
+                    ..range.end.accessed_element_states_index],
+            );
+            stats
+                .tab_stops
+                .rebuilt::<crate::tab_stop::TabStopOperation>(
+                    range.end.tab_handle_index - range.start.tab_handle_index,
+                );
+        }
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
@@ -4084,11 +4938,9 @@ impl Window {
             self.next_frame
                 .record_debug_bounds(selector.clone(), *bounds);
         }
-        self.next_frame.cursor_styles.extend(
-            self.rendered_frame.cursor_styles
-                [range.start.cursor_styles_index..range.end.cursor_styles_index]
-                .iter()
-                .cloned(),
+        self.next_frame.cursor_styles.extend_from_slice(
+            &self.rendered_frame.cursor_styles
+                [range.start.cursor_styles_index..range.end.cursor_styles_index],
         );
         self.next_frame.input_handlers.extend(
             self.rendered_frame.input_handlers
@@ -4102,23 +4954,37 @@ impl Window {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .copied(),
+        self.next_frame.accessed_element_states.extend_from_slice(
+            &self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index],
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
                 [range.start.tab_handle_index..range.end.tab_handle_index],
         );
 
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.text_system.reuse_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+            #[cfg(any(test, feature = "bench-support"))]
+            &mut self.view_reuse_stats.text_layout_usage_indices,
+        );
         self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
-            &self.rendered_frame.scene,
+            &mut self.rendered_frame.scene,
+            #[cfg(any(test, feature = "bench-support"))]
+            &mut self.view_reuse_stats,
         );
+        for occurrence in
+            &self.rendered_frame.paint_views[range.start.views_index..range.end.views_index]
+        {
+            self.view_store.reuse_paint(
+                *occurrence,
+                &range.start,
+                &new_start,
+                &self.dispatch_replay,
+            );
+            self.next_frame.paint_views.push(*occurrence);
+        }
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -4254,7 +5120,11 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let previous_fallback = self
+            .retained_scope_fallback
+            .replace(crate::view::retained::SpliceFallback::Transaction);
         let result = f(self);
+        self.retained_scope_fallback = previous_fallback;
         if result.is_err() {
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
             self.next_frame
@@ -4270,6 +5140,9 @@ impl Window {
                 .accessed_element_states
                 .truncate(index.accessed_element_states_index);
             self.text_system.truncate_layouts(index.line_layout_index);
+            self.view_store
+                .rollback_views(&self.next_frame.prepaint_views[index.views_index..]);
+            self.next_frame.prepaint_views.truncate(index.views_index);
         }
         result
     }
@@ -4281,6 +5154,12 @@ impl Window {
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         self.invalidator.debug_assert_prepaint();
+        if let Some(occurrence) = self.current_view_occurrence {
+            self.view_store.block_splicing(
+                occurrence,
+                crate::view::retained::SpliceFallback::Autoscroll,
+            );
+        }
         self.requested_autoscroll = Some(bounds);
     }
 
@@ -4288,6 +5167,12 @@ impl Window {
     /// described in [`Self::request_autoscroll`].
     pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
         self.invalidator.debug_assert_prepaint();
+        if let Some(occurrence) = self.current_view_occurrence {
+            self.view_store.block_splicing(
+                occurrence,
+                crate::view::retained::SpliceFallback::Autoscroll,
+            );
+        }
         self.requested_autoscroll.take()
     }
 
@@ -4532,9 +5417,11 @@ impl Window {
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
+            parent_occurrence: self.current_view_occurrence,
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            text_style_base: self.retained_text_style_base.clone(),
             content_mask,
             rem_size: self.rem_size(),
             priority,
@@ -4542,6 +5429,7 @@ impl Window {
             absolute_offset,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
+            accessed_entities: FxHashSet::default(),
         });
     }
 
@@ -5622,6 +6510,21 @@ impl Window {
     /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        if self.implicit_view_splicing
+            && matches!(
+                &event,
+                PlatformInput::MouseMove(_)
+                    | PlatformInput::MouseDown(_)
+                    | PlatformInput::MouseUp(_)
+                    | PlatformInput::MouseExited(_)
+                    | PlatformInput::ModifiersChanged(_)
+                    | PlatformInput::ScrollWheel(_)
+                    | PlatformInput::Pinch(_)
+            )
+        {
+            // Canvases can read pointer/modifier state without notifying an entity.
+            self.retained_input_changed = true;
+        }
         #[cfg(feature = "profiler")]
         self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
@@ -8184,6 +9087,7 @@ mod tests {
         });
         observations.borrow_mut().clear();
         cx.update_window(window.into(), |_, window, cx| {
+            window.refresh();
             window.draw(cx).clear(cx);
             assert!(window.text_style_stack.is_empty());
             assert_eq!(
@@ -8592,7 +9496,283 @@ mod tests {
             .unwrap();
     }
 
+    struct ReplayQueryLeaf {
+        focus: FocusHandle,
+    }
+
+    impl Render for ReplayQueryLeaf {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("replay-query-leaf")
+                .size_full()
+                .track_focus(&self.focus)
+                .key_context("ReplayQueryLeaf")
+                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                .child(canvas(
+                    |_, _, _| {},
+                    |_, _, window, _| {
+                        window.set_window_cursor_style(crate::CursorStyle::PointingHand);
+                    },
+                ))
+        }
+    }
+
+    struct ReplayQueries {
+        child: crate::Entity<ReplayQueryLeaf>,
+        expected: Rc<RefCell<Option<ReplayQuerySnapshot>>>,
+        checked: Rc<Cell<usize>>,
+    }
+
+    struct ReplayQuerySnapshot {
+        focus: Vec<super::FocusId>,
+        hitboxes: Vec<super::HitboxId>,
+        cursor: Option<crate::CursorStyle>,
+    }
+
+    impl ReplayQuerySnapshot {
+        fn capture(window: &Window) -> Self {
+            Self {
+                focus: window.rendered_frame.focus_path().to_vec(),
+                hitboxes: window
+                    .rendered_frame
+                    .hit_test(point(px(10.), px(10.)))
+                    .ids
+                    .to_vec(),
+                cursor: window.rendered_frame.cursor_style(window),
+            }
+        }
+    }
+
+    impl Render for ReplayQueries {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let expected = self.expected.clone();
+            let checked = self.checked.clone();
+            div()
+                .size_full()
+                .child(
+                    self.child
+                        .clone()
+                        .cached(crate::StyleRefinement::default().size_full()),
+                )
+                .child(canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        if let Some(expected) = expected.borrow().as_ref() {
+                            let actual = ReplayQuerySnapshot::capture(window);
+                            assert_eq!(actual.focus, expected.focus);
+                            assert_eq!(actual.hitboxes, expected.hitboxes);
+                            assert_eq!(actual.cursor, expected.cursor);
+                            assert!(
+                                window
+                                    .rendered_frame
+                                    .mouse_listeners
+                                    .iter()
+                                    .all(Option::is_none)
+                            );
+                            assert!(
+                                window
+                                    .next_frame
+                                    .mouse_listeners
+                                    .iter()
+                                    .any(Option::is_some)
+                            );
+                            checked.set(checked.get() + 1);
+                        }
+                    },
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn old_frame_queries_survive_segment_moves_during_draw(cx: &mut TestAppContext) {
+        for splice in [false, true] {
+            let expected = Rc::new(RefCell::new(None));
+            let checked = Rc::new(Cell::new(0));
+            let window = cx.open_window(size(px(100.), px(100.)), {
+                let expected = expected.clone();
+                let checked = checked.clone();
+                move |window, cx| {
+                    window.set_view_splicing(splice);
+                    let child = cx.new(|cx| ReplayQueryLeaf {
+                        focus: cx.focus_handle(),
+                    });
+                    let focus = child.read(cx).focus.clone();
+                    window.focus(&focus, cx);
+                    ReplayQueries {
+                        child,
+                        expected,
+                        checked,
+                    }
+                }
+            });
+            cx.run_until_parked();
+            window
+                .update(cx, |_, window, _| {
+                    let snapshot = ReplayQuerySnapshot::capture(window);
+                    assert!(!snapshot.focus.is_empty());
+                    assert!(!snapshot.hitboxes.is_empty());
+                    assert_eq!(snapshot.cursor, Some(crate::CursorStyle::PointingHand));
+                    expected.replace(Some(snapshot));
+                })
+                .expect("query window exists");
+            for _ in 0..2 {
+                window
+                    .update(cx, |_, _, cx| cx.notify())
+                    .expect("query window exists");
+                cx.run_until_parked();
+            }
+            assert_eq!(checked.get(), 2);
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("query window exists");
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "frame segment consumed twice")]
+    fn replay_rejects_overlapping_frame_segments() {
+        let mut frame = super::Frame::new(crate::DispatchTree::new(
+            Rc::new(RefCell::new(crate::Keymap::default())),
+            Rc::new(crate::ActionRegistry::default()),
+        ));
+        frame.consume_segment(0, 1..4);
+        frame.consume_segment(0, 3..5);
+    }
+
+    #[test]
+    fn finish_transfers_accessed_states_without_dropping_old_unaccessed_states() {
+        struct DropCounter(Rc<Cell<usize>>);
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let new_frame = || {
+            super::Frame::new(crate::DispatchTree::new(
+                Rc::new(RefCell::new(crate::Keymap::default())),
+                Rc::new(crate::ActionRegistry::default()),
+            ))
+        };
+        let interner = crate::ElementIdInterner::default();
+        let accessed = (interner.root(), std::any::TypeId::of::<u32>());
+        let unaccessed = (interner.root(), std::any::TypeId::of::<DropCounter>());
+        let drops = Rc::new(Cell::new(0));
+        let mut source = new_frame();
+        source.element_states.insert(
+            accessed,
+            super::ElementStateBox {
+                inner: Box::new(42_u32),
+                #[cfg(debug_assertions)]
+                type_name: "u32",
+            },
+        );
+        source.element_states.insert(
+            unaccessed,
+            super::ElementStateBox {
+                inner: Box::new(DropCounter(drops.clone())),
+                #[cfg(debug_assertions)]
+                type_name: "DropCounter",
+            },
+        );
+        let mut target = new_frame();
+        target
+            .accessed_element_states
+            .extend_from_slice(&[accessed, accessed]);
+        target.finish(&mut source);
+        assert_eq!(target.element_states.len(), 1);
+        assert_eq!(
+            target.element_states[&accessed].inner.downcast_ref::<u32>(),
+            Some(&42)
+        );
+        assert_eq!(source.element_states.len(), 1);
+        assert!(source.element_states.contains_key(&unaccessed));
+        assert_eq!(drops.get(), 0);
+        source.clear();
+        assert_eq!(drops.get(), 1);
+    }
+
     struct EmptyView;
+
+    struct ReplayDeferredQueries {
+        child: crate::Entity<DeferredTextStyleView>,
+        check_moves: Rc<Cell<bool>>,
+    }
+
+    impl Render for ReplayDeferredQueries {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let check_moves = self.check_moves.clone();
+            div()
+                .size_full()
+                .child(
+                    self.child
+                        .clone()
+                        .cached(crate::StyleRefinement::default().size_full()),
+                )
+                .child(canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        if check_moves.get() {
+                            assert_eq!(window.rendered_frame.deferred_draws.len(), 4);
+                            assert_eq!(window.next_frame.deferred_draws.len(), 4);
+                            for draw in &window.rendered_frame.deferred_draws {
+                                assert!(draw.element_id_stack.ids.is_empty());
+                                assert!(draw.text_style_stack.is_empty());
+                                assert!(draw.text_style_base.is_none());
+                                assert!(draw.accessed_entities.is_empty());
+                                assert!(
+                                    !window
+                                        .rendered_frame
+                                        .dispatch_tree
+                                        .dispatch_path(draw.parent_node)
+                                        .is_empty()
+                                );
+                            }
+                            assert!(
+                                window
+                                    .next_frame
+                                    .deferred_draws
+                                    .iter()
+                                    .any(|draw| !draw.text_style_stack.is_empty())
+                            );
+                        }
+                    },
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn nested_deferred_segments_move_payloads_and_keep_old_parent_paths(cx: &mut TestAppContext) {
+        let check_moves = Rc::new(Cell::new(false));
+        let window = cx.open_window(size(px(100.), px(100.)), {
+            let check_moves = check_moves.clone();
+            move |window, cx| {
+                window.set_view_splicing(true);
+                ReplayDeferredQueries {
+                    child: cx.new(|_| DeferredTextStyleView {
+                        observations: Rc::default(),
+                    }),
+                    check_moves,
+                }
+            }
+        });
+        cx.run_until_parked();
+        check_moves.set(true);
+        for _ in 0..2 {
+            window
+                .update(cx, |_, _, cx| cx.notify())
+                .expect("deferred window exists");
+            cx.run_until_parked();
+        }
+        window
+            .update(cx, |_, window, _| {
+                assert!(window.view_reuse_stats().deferred_draws.moved_elements >= 8);
+                assert_eq!(window.view_reuse_stats().deferred_draws.cloned_elements, 0);
+            })
+            .expect("deferred window exists");
+    }
 
     impl Render for EmptyView {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {

@@ -182,6 +182,9 @@ fn measure_in_window(
     mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Window, &mut Context<RandomizedElementTree>),
 ) -> Measured {
     let config = input.config;
+    if std::env::var("GPUI_VERIFY_REUSE_DIFFERENTIAL").is_ok_and(|value| value == "1") {
+        verify_tree_reuse(config.with_cached_views(true), cx);
+    }
     let before_window = bench_metrics::allocation_stats();
     let mut window = cx.add_empty_window();
     let tree = window.update(|window, cx| {
@@ -203,6 +206,9 @@ fn measure_in_window(
         initial.element_render_count() >= config.element_count(),
         "every generated element renders in the first frame"
     );
+    window.update(|window, _| {
+        window.take_view_reuse_stats();
+    });
 
     // Each iteration reads what the previous frame rendered before resetting for its own
     // mutation. Frame pacing may coalesce two mutations into one drawn frame, the more
@@ -237,6 +243,10 @@ fn measure_in_window(
         tree.reset_work_counters();
         mutate(tree, window, cx);
         frames += 1;
+    });
+    window.update(|window, _| {
+        let stats = window.take_view_reuse_stats();
+        eprintln!("view-reuse {group}/{}: {stats:?}", input.family);
     });
     assert!(
         frames_that_rendered * 2 >= frames,
@@ -516,6 +526,139 @@ impl fmt::Display for ChangingShareInput {
     }
 }
 
+fn cached_input(family: &TreeFamily, rng: &mut StdRng) -> TreeInput {
+    let mut input = family.sample(rng);
+    input.config = input.config.with_cached_views(true);
+    input
+}
+
+fn verify_tree_reuse(config: RandomizedElementTreeConfig, cx: &mut BenchAppContext) {
+    let mut reused_window = cx.add_empty_window();
+    let mut fresh_window = cx.add_empty_window();
+    let reused = reused_window.update(|window, cx| {
+        window.set_force_view_reconstruction(false);
+        window.replace_root(cx, |_, cx| {
+            RandomizedElementTree::new_with_config(config, cx)
+        })
+    });
+    let fresh = fresh_window.update(|window, cx| {
+        window.set_force_view_reconstruction(true);
+        window.replace_root(cx, |_, cx| {
+            RandomizedElementTree::new_with_config(config, cx)
+        })
+    });
+    for frame in 0..16 {
+        if frame > 0 {
+            for root in [&reused, &fresh] {
+                root.update(cx, |tree, cx| {
+                    let kind = match frame % 6 {
+                        0 => {
+                            cx.notify();
+                            return;
+                        }
+                        1 => RandomizedElementTreeMutationKind::ChildColor,
+                        2 => RandomizedElementTreeMutationKind::ChildBounds,
+                        3 => RandomizedElementTreeMutationKind::Insert,
+                        4 => RandomizedElementTreeMutationKind::RemoveLeaf,
+                        _ => RandomizedElementTreeMutationKind::Reorder,
+                    };
+                    tree.apply_mutation(kind, cx);
+                });
+            }
+        }
+        cx.run_until_idle();
+        let reused_snapshot = reused_window.update(|window, cx| {
+            window.view_reuse_snapshot(|id| {
+                if id == reused.entity_id() {
+                    "root".into()
+                } else {
+                    format!(
+                        "element-{}",
+                        reused
+                            .read(cx)
+                            .view_element_identity(id)
+                            .expect("fixture view")
+                    )
+                }
+            })
+        });
+        let fresh_snapshot = fresh_window.update(|window, cx| {
+            window.view_reuse_snapshot(|id| {
+                if id == fresh.entity_id() {
+                    "root".into()
+                } else {
+                    format!(
+                        "element-{}",
+                        fresh
+                            .read(cx)
+                            .view_element_identity(id)
+                            .expect("fixture view")
+                    )
+                }
+            })
+        });
+        reused_snapshot
+            .compare(&fresh_snapshot, frame)
+            .expect("differential tree output");
+    }
+    reused_window.update(|window, _| window.remove_window());
+    fresh_window.update(|window, _| window.remove_window());
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/full refresh", fps = 120)]
+fn cached_full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let measured = measure_in_window("cached full refresh", &input, cx, |_, window, _| {
+        window.refresh()
+    });
+    assert!(measured.frames > 0);
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/leaf style", fps = 120)]
+fn cached_leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let frames = measure("cached leaf style", &input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::ChildColor, cx);
+    });
+    assert!(frames > 0);
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/leaf bounds", fps = 120)]
+fn cached_leaf_bounds(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let frames = measure("cached leaf bounds", &input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::ChildBounds, cx);
+    });
+    assert!(frames > 0);
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/insert-remove", fps = 120)]
+fn cached_insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let mut insert = true;
+    let frames = measure("cached insert-remove", &input, cx, |tree, cx| {
+        tree.apply_mutation(
+            if insert {
+                RandomizedElementTreeMutationKind::Insert
+            } else {
+                RandomizedElementTreeMutationKind::RemoveLeaf
+            },
+            cx,
+        );
+        insert = !insert;
+    });
+    assert!(frames > 0);
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/reorder", fps = 120)]
+fn cached_reorder(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let frames = measure("cached reorder", &input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::Reorder, cx);
+    });
+    assert!(frames > 0);
+}
+
 /// The share of elements recolored per frame, from one element to all of them. A renderer
 /// that retains clean entity subtrees should fall toward the left of this axis; one that
 /// redraws everything is flat across it, so the two curves' distance is what retention
@@ -655,6 +798,108 @@ impl Render for TextPanelRoot {
     }
 }
 
+struct CachedTextPanelRoot(TextPanelRoot, bool);
+
+impl Render for CachedTextPanelRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::div()
+            .id("text-panels")
+            .flex()
+            .flex_wrap()
+            .font_family(self.0.font_family.clone())
+            .text_size(gpui::px(12.))
+            .text_color(gpui::rgb(0xffffff))
+            .child("0123456789")
+            .children(self.0.panels.iter().cloned().map(|panel| {
+                let mut style = gpui::StyleRefinement::default();
+                style.size.width = Some(gpui::px(220.).into());
+                style.size.height = Some(gpui::px(192.).into());
+                if self.1 {
+                    panel.cached(style).into_any_element()
+                } else {
+                    panel.into_any_element()
+                }
+            }))
+    }
+}
+
+fn verify_text_reuse(panel_count: usize, font_family: &'static str, cx: &mut BenchAppContext) {
+    let implicit = std::env::var("GPUI_VIEW_SPLICE").as_deref() == Ok("all")
+        && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1");
+    let mut reused_window = cx.add_empty_window();
+    let mut fresh_window = cx.add_empty_window();
+    let create = |window: &mut Window, cx: &mut gpui::App, force| {
+        window.set_force_view_reconstruction(force);
+        if implicit {
+            window.set_implicit_view_splicing(!force);
+        } else {
+            window.set_view_splicing(!force);
+        }
+        window.replace_root(cx, |_, cx| {
+            CachedTextPanelRoot(
+                TextPanelRoot {
+                    panels: (0..panel_count)
+                        .map(|index| {
+                            cx.new(|_| TextPanel {
+                                index,
+                                value: 0,
+                                renders: Rc::new(Cell::new(0)),
+                            })
+                        })
+                        .collect(),
+                    renders: Rc::new(Cell::new(0)),
+                    font_family: font_family.into(),
+                },
+                !implicit,
+            )
+        })
+    };
+    let reused = reused_window.update(|window, cx| create(window, cx, false));
+    let fresh = fresh_window.update(|window, cx| create(window, cx, true));
+    for frame in 0..16 {
+        if frame > 0 {
+            for root in [&reused, &fresh] {
+                root.update(cx, |root, cx| {
+                    for index in [0, panel_count / 2] {
+                        root.0.panels.get(index).expect("configured panel").update(
+                            cx,
+                            |panel, cx| {
+                                panel.value += 1;
+                                cx.notify();
+                            },
+                        );
+                    }
+                });
+            }
+        }
+        cx.run_until_idle();
+        let capture = |window: &mut gpui::BenchWindowContext,
+                       root: &Entity<CachedTextPanelRoot>| {
+            window.update(|window, cx| {
+                window.view_reuse_snapshot(|id| {
+                    if id == root.entity_id() {
+                        "root".into()
+                    } else {
+                        let index = root
+                            .read(cx)
+                            .0
+                            .panels
+                            .iter()
+                            .position(|panel| panel.entity_id() == id)
+                            .expect("fixture panel");
+                        format!("panel-{index}")
+                    }
+                })
+            })
+        };
+        capture(&mut reused_window, &reused)
+            .compare(&capture(&mut fresh_window, &fresh), frame)
+            .expect("differential text output");
+    }
+    reused_window.update(|window, _| window.remove_window());
+    fresh_window.update(|window, _| window.remove_window());
+}
+
 fn text_panel_counts() -> Vec<usize> {
     assert!(
         !std::env::var("GPUI_RETAINED_DISPATCH").is_ok_and(|value| value == "1"),
@@ -713,6 +958,9 @@ fn measure_text_panel_updates(
     font_family: &'static str,
     cx: &mut BenchAppContext,
 ) {
+    if std::env::var("GPUI_VERIFY_REUSE_DIFFERENTIAL").is_ok_and(|value| value == "1") {
+        verify_text_reuse(panel_count, font_family, cx);
+    }
     let mut window = cx.add_empty_window();
     let root_renders = Rc::new(Cell::new(0));
     let panel_renders = Rc::new(Cell::new(0));
@@ -746,9 +994,17 @@ fn measure_text_panel_updates(
                 root_renders.get(),
                 panel_renders.get()
             );
+            eprintln!(
+                "retained metadata (occurrences, hot, cold, cache, layout bytes): {:?}",
+                window.retained_view_storage_sizes()
+            );
         }
     });
     let initial_panel_renders = panel_renders.get();
+    let initial_root_renders = root_renders.get();
+    window.update(|window, _| {
+        window.take_view_reuse_stats();
+    });
     let mut updates = 0usize;
     cx.bench_renderer(root, |root, _, cx| {
         for index in [0, panel_count / 2] {
@@ -761,6 +1017,12 @@ fn measure_text_panel_updates(
                 });
         }
         updates += 1;
+    });
+    window.update(|window, _| {
+        let stats = window.take_view_reuse_stats();
+        eprintln!("view-reuse TextPanels/{font_family}/{panel_count}: root renders {}, panel renders {}, {stats:?}",
+            root_renders.get() - initial_root_renders,
+            panel_renders.get() - initial_panel_renders);
     });
     assert!(updates > 0);
     assert!(
@@ -1264,6 +1526,11 @@ gpui::bench_group!(
         .measurement_time(Duration::from_secs(1))
         .sample_size(20);
     targets = full_refresh,
+    cached_full_refresh,
+    cached_leaf_style,
+    cached_leaf_bounds,
+    cached_insert_remove,
+    cached_reorder,
     unchanged,
     leaf_style,
     leaf_bounds,

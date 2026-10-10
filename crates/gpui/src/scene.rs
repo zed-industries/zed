@@ -51,6 +51,10 @@ pub struct Scene {
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
     sprite_sort_keys: Vec<u128>,
+    path_indices: Vec<usize>,
+    surface_indices: Vec<usize>,
+    #[cfg(debug_assertions)]
+    consumed_segments: Vec<Range<usize>>,
 }
 
 #[expect(missing_docs)]
@@ -67,6 +71,10 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.path_indices.clear();
+        self.surface_indices.clear();
+        #[cfg(debug_assertions)]
+        self.consumed_segments.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -86,13 +94,18 @@ impl Scene {
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
-        let mut primitive = primitive.into();
+        if let Some(operation) = self.prepare_primitive(primitive.into()) {
+            self.paint_operations.push(operation);
+        }
+    }
+
+    fn prepare_primitive(&mut self, primitive: Primitive) -> Option<PaintOperation> {
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
 
         if clipped_bounds.is_empty() {
-            return;
+            return None;
         }
 
         let order = self
@@ -100,53 +113,216 @@ impl Scene {
             .last()
             .copied()
             .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
-        match &mut primitive {
-            Primitive::Shadow(shadow) => {
+        let primitive = match primitive {
+            Primitive::Shadow(mut shadow) => {
                 shadow.order = order;
-                self.shadows.push(*shadow);
+                self.shadows.push(shadow);
+                RecordedPrimitive::Shadow(shadow)
             }
-            Primitive::Quad(quad) => {
+            Primitive::Quad(mut quad) => {
                 quad.order = order;
-                self.quads.push(*quad);
+                self.quads.push(quad);
+                RecordedPrimitive::Quad(quad)
             }
-            Primitive::Path(path) => {
+            Primitive::Path(mut path) => {
                 path.order = order;
                 path.id = PathId(self.paths.len());
-                self.paths.push(path.clone());
+                let record = RecordedPrimitive::Path {
+                    id: path.id,
+                    bounds: path.bounds,
+                    content_mask: path.content_mask,
+                };
+                self.paths.push(path);
+                record
             }
-            Primitive::Underline(underline) => {
+            Primitive::Underline(mut underline) => {
                 underline.order = order;
-                self.underlines.push(*underline);
+                self.underlines.push(underline);
+                RecordedPrimitive::Underline(underline)
             }
-            Primitive::MonochromeSprite(sprite) => {
+            Primitive::MonochromeSprite(mut sprite) => {
                 sprite.order = order;
-                self.monochrome_sprites.push(*sprite);
+                self.monochrome_sprites.push(sprite);
+                RecordedPrimitive::MonochromeSprite(sprite)
             }
-            Primitive::SubpixelSprite(sprite) => {
+            Primitive::SubpixelSprite(mut sprite) => {
                 sprite.order = order;
-                self.subpixel_sprites.push(*sprite);
+                self.subpixel_sprites.push(sprite);
+                RecordedPrimitive::SubpixelSprite(sprite)
             }
-            Primitive::PolychromeSprite(sprite) => {
+            Primitive::PolychromeSprite(mut sprite) => {
                 sprite.order = order;
-                self.polychrome_sprites.push(*sprite);
+                self.polychrome_sprites.push(sprite);
+                RecordedPrimitive::PolychromeSprite(sprite)
             }
-            Primitive::Surface(surface) => {
+            Primitive::Surface(mut surface) => {
                 surface.order = order;
-                self.surfaces.push(surface.clone());
+                let record = RecordedPrimitive::Surface {
+                    index: self.surfaces.len(),
+                    bounds: surface.bounds,
+                    content_mask: surface.content_mask,
+                };
+                self.surfaces.push(surface);
+                record
             }
-        }
-        self.paint_operations
-            .push(PaintOperation::Primitive(primitive));
+        };
+        Some(PaintOperation::Primitive(primitive))
     }
 
-    pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
-        for operation in &prev_scene.paint_operations[range] {
+    pub fn replay(
+        &mut self,
+        range: Range<usize>,
+        prev_scene: &mut Scene,
+        #[cfg(any(test, feature = "bench-support"))] stats: &mut crate::ViewReuseStats,
+    ) {
+        #[cfg(debug_assertions)]
+        if !range.is_empty() {
+            debug_assert!(
+                prev_scene
+                    .consumed_segments
+                    .iter()
+                    .all(|prior| { range.end <= prior.start || prior.end <= range.start }),
+                "scene segment consumed twice"
+            );
+            prev_scene.consumed_segments.push(range.clone());
+        }
+        let start = self.paint_operations.len();
+        self.paint_operations
+            .extend_from_slice(&prev_scene.paint_operations[range]);
+        for index in start..self.paint_operations.len() {
+            let operation = self.paint_operations[index];
+            #[cfg(any(test, feature = "bench-support"))]
             match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
-                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
-                PaintOperation::EndLayer => self.pop_layer(),
+                PaintOperation::Primitive(primitive) => {
+                    match primitive {
+                        RecordedPrimitive::Shadow(value) => {
+                            stats.scene_primitives[0].copied(std::slice::from_ref(&value))
+                        }
+                        RecordedPrimitive::Quad(value) => {
+                            stats.scene_primitives[1].copied(std::slice::from_ref(&value))
+                        }
+                        RecordedPrimitive::Path { id, .. } => {
+                            stats.scene_primitives[2]
+                                .moved(std::slice::from_ref(prev_scene.path(id)));
+                            stats.index_fixups += 1;
+                        }
+                        RecordedPrimitive::Underline(value) => {
+                            stats.scene_primitives[3].copied(std::slice::from_ref(&value))
+                        }
+                        RecordedPrimitive::MonochromeSprite(value) => {
+                            stats.scene_primitives[4].copied(std::slice::from_ref(&value))
+                        }
+                        RecordedPrimitive::SubpixelSprite(value) => {
+                            stats.scene_primitives[5].copied(std::slice::from_ref(&value))
+                        }
+                        RecordedPrimitive::PolychromeSprite(value) => {
+                            stats.scene_primitives[6].copied(std::slice::from_ref(&value))
+                        }
+                        RecordedPrimitive::Surface { index, .. } => stats.scene_primitives[7]
+                            .cloned(std::slice::from_ref(prev_scene.surface(index))),
+                    }
+                    stats.index_fixups += 1;
+                }
+                PaintOperation::StartLayer(_) | PaintOperation::EndLayer => {
+                    stats.scene_layer_operations += 1;
+                }
+            }
+            match operation {
+                PaintOperation::Primitive(primitive) => {
+                    let primitive = match primitive {
+                        RecordedPrimitive::Shadow(value) => Primitive::Shadow(value),
+                        RecordedPrimitive::Quad(value) => Primitive::Quad(value),
+                        RecordedPrimitive::Underline(value) => Primitive::Underline(value),
+                        RecordedPrimitive::MonochromeSprite(value) => {
+                            Primitive::MonochromeSprite(value)
+                        }
+                        RecordedPrimitive::SubpixelSprite(value) => {
+                            Primitive::SubpixelSprite(value)
+                        }
+                        RecordedPrimitive::PolychromeSprite(value) => {
+                            Primitive::PolychromeSprite(value)
+                        }
+                        RecordedPrimitive::Path {
+                            id,
+                            bounds,
+                            content_mask,
+                        } => {
+                            let source_index = prev_scene.path_index(id);
+                            let path = &mut prev_scene.paths[source_index];
+                            debug_assert_eq!(path.bounds, bounds);
+                            debug_assert_eq!(path.content_mask, content_mask);
+                            Primitive::Path(Path {
+                                id: path.id,
+                                order: path.order,
+                                bounds: path.bounds,
+                                content_mask: path.content_mask,
+                                vertices: std::mem::take(&mut path.vertices),
+                                color: path.color,
+                                start: path.start,
+                                current: path.current,
+                                contour_count: path.contour_count,
+                            })
+                        }
+                        RecordedPrimitive::Surface {
+                            index,
+                            bounds,
+                            content_mask,
+                        } => {
+                            let surface = prev_scene.surface(index);
+                            debug_assert_eq!(surface.bounds, bounds);
+                            debug_assert_eq!(surface.content_mask, content_mask);
+                            Primitive::Surface(surface.clone())
+                        }
+                    };
+                    if let Some(operation) = self.prepare_primitive(primitive) {
+                        self.paint_operations[index] = operation;
+                    }
+                }
+                PaintOperation::StartLayer(bounds) => {
+                    let order = self.primitive_bounds.insert(bounds);
+                    self.layer_stack.push(order);
+                }
+                PaintOperation::EndLayer => {
+                    self.layer_stack.pop();
+                }
             }
         }
+    }
+
+    fn path_index(&self, id: PathId) -> usize {
+        self.path_indices.get(id.0).copied().unwrap_or(id.0)
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    fn path(&self, id: PathId) -> &Path<ScaledPixels> {
+        &self.paths[self.path_index(id)]
+    }
+
+    fn surface(&self, index: usize) -> &PaintSurface {
+        &self.surfaces[self.surface_indices.get(index).copied().unwrap_or(index)]
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn reuse_snapshot(&self) -> Vec<String> {
+        self.paint_operations
+            .iter()
+            .map(|operation| match operation {
+                PaintOperation::Primitive(primitive) => match primitive {
+                    RecordedPrimitive::Shadow(value) => format!("shadow:{value:?}"),
+                    RecordedPrimitive::Quad(value) => format!("quad:{value:?}"),
+                    RecordedPrimitive::Path { id, .. } => format!("path:{:?}", self.path(*id)),
+                    RecordedPrimitive::Underline(value) => format!("underline:{value:?}"),
+                    RecordedPrimitive::MonochromeSprite(value) => format!("monochrome:{value:?}"),
+                    RecordedPrimitive::SubpixelSprite(value) => format!("subpixel:{value:?}"),
+                    RecordedPrimitive::PolychromeSprite(value) => format!("polychrome:{value:?}"),
+                    RecordedPrimitive::Surface { index, .. } => {
+                        format!("surface:{:?}", self.surface(*index))
+                    }
+                },
+                PaintOperation::StartLayer(bounds) => format!("layer:{bounds:?}"),
+                PaintOperation::EndLayer => "end-layer".into(),
+            })
+            .collect()
     }
 
     pub fn finish(&mut self) {
@@ -186,6 +362,10 @@ impl Scene {
         sort_if_needed(&mut self.shadows, |shadow| shadow.order);
         sort_if_needed(&mut self.quads, |quad| quad.order);
         sort_if_needed(&mut self.paths, |path| path.order);
+        self.path_indices.resize(self.paths.len(), 0);
+        for (index, path) in self.paths.iter().enumerate() {
+            self.path_indices[path.id.0] = index;
+        }
         sort_if_needed(&mut self.underlines, |underline| underline.order);
         let sprite_count = self
             .monochrome_sprites
@@ -210,7 +390,20 @@ impl Scene {
             &mut self.sprite_sort_keys,
             |sprite| (sprite.order, sprite.tile.tile_id.0),
         );
-        sort_if_needed(&mut self.surfaces, |surface| surface.order);
+        if !self.surfaces.is_empty() {
+            let mut surfaces: Vec<_> = self.surfaces.drain(..).enumerate().collect();
+            surfaces.sort_by_key(|(_, surface)| surface.order);
+            self.surface_indices
+                .extend(self.surface_indices.len()..surfaces.len());
+            let mut permutation = vec![0; surfaces.len()];
+            for (index, (old_index, surface)) in surfaces.into_iter().enumerate() {
+                permutation[old_index] = index;
+                self.surfaces.push(surface);
+            }
+            for index in &mut self.surface_indices {
+                *index = permutation[*index];
+            }
+        }
     }
 
     #[cfg_attr(
@@ -538,10 +731,31 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum PaintOperation {
-    Primitive(Primitive),
+    Primitive(RecordedPrimitive),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum RecordedPrimitive {
+    Shadow(Shadow),
+    Quad(Quad),
+    Path {
+        id: PathId,
+        bounds: Bounds<ScaledPixels>,
+        content_mask: ContentMask<ScaledPixels>,
+    },
+    Underline(Underline),
+    MonochromeSprite(MonochromeSprite),
+    SubpixelSprite(SubpixelSprite),
+    PolychromeSprite(PolychromeSprite),
+    Surface {
+        index: usize,
+        bounds: Bounds<ScaledPixels>,
+        content_mask: ContentMask<ScaledPixels>,
+    },
 }
 
 #[derive(Clone)]
@@ -1272,5 +1486,131 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{px, size};
+
+    fn quad() -> Quad {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(20.), px(20.))).scale(1.);
+        Quad {
+            bounds,
+            content_mask: ContentMask { bounds },
+            ..Quad::default()
+        }
+    }
+
+    fn path() -> Path<ScaledPixels> {
+        let mut path = Path::new(point(px(0.), px(0.)));
+        path.line_to(point(px(10.), px(0.)));
+        path.line_to(point(px(0.), px(10.)));
+        path.content_mask = ContentMask {
+            bounds: Bounds::new(point(px(0.), px(0.)), size(px(20.), px(20.))),
+        };
+        path.scale(1.)
+    }
+
+    #[test]
+    fn replay_moves_paths_and_recomputes_order_in_nested_layers() {
+        let mut source = Scene::default();
+        source.insert_primitive(quad());
+        source.push_layer(quad().bounds);
+        source.insert_primitive(path());
+        source.push_layer(quad().bounds);
+        source.insert_primitive(path());
+        source.pop_layer();
+        source.pop_layer();
+        source.insert_primitive(path());
+        source.finish();
+        let old_bounds: Vec<_> = source
+            .paths
+            .iter()
+            .map(|path| (path.id, path.bounds))
+            .collect();
+        let allocations: Vec<_> = source
+            .paths
+            .iter()
+            .map(|path| path.vertices.as_ptr())
+            .collect();
+        let mut target = Scene::default();
+        let mut fresh = Scene::default();
+        for scene in [&mut target, &mut fresh] {
+            scene.insert_primitive(quad());
+            scene.insert_primitive(quad());
+        }
+        let mut stats = crate::ViewReuseStats::default();
+        target.replay(0..source.len(), &mut source, &mut stats);
+        fresh.insert_primitive(quad());
+        fresh.push_layer(quad().bounds);
+        fresh.insert_primitive(path());
+        fresh.push_layer(quad().bounds);
+        fresh.insert_primitive(path());
+        fresh.pop_layer();
+        fresh.pop_layer();
+        fresh.insert_primitive(path());
+        target.finish();
+        fresh.finish();
+        assert_eq!(target.reuse_snapshot(), fresh.reuse_snapshot());
+        assert_eq!(
+            target
+                .paths
+                .iter()
+                .map(|path| path.vertices.as_ptr())
+                .collect::<Vec<_>>(),
+            allocations
+        );
+        assert!(source.paths.iter().all(|path| path.vertices.is_empty()));
+        assert_eq!(
+            source
+                .paths
+                .iter()
+                .map(|path| (path.id, path.bounds))
+                .collect::<Vec<_>>(),
+            old_bounds
+        );
+        assert_eq!(stats.scene_primitives[2].cloned_elements, 0);
+        assert_eq!(stats.scene_primitives[2].moved_elements, 3);
+        assert_eq!(stats.scene_primitives[1].copied_elements, 1);
+
+        let mut next = Scene::default();
+        next.replay(0..target.len(), &mut target, &mut stats);
+        next.finish();
+        assert_eq!(next.reuse_snapshot(), fresh.reuse_snapshot());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "scene segment consumed twice")]
+    fn replay_rejects_double_scene_consumption() {
+        let mut source = Scene::default();
+        source.insert_primitive(path());
+        source.finish();
+        let mut target = Scene::default();
+        let mut stats = crate::ViewReuseStats::default();
+        target.replay(0..1, &mut source, &mut stats);
+        target.replay(0..1, &mut source, &mut stats);
+    }
+
+    #[test]
+    fn replay_resolves_path_ids_after_painter_order_sorting() {
+        let mut source = Scene::default();
+        source.insert_primitive(quad());
+        source.insert_primitive(path());
+        let mut separate = path();
+        separate.bounds.origin.x = ScaledPixels(100.);
+        separate.content_mask.bounds = separate.bounds;
+        source.insert_primitive(separate);
+        source.finish();
+        source.finish();
+        assert_eq!(source.paths[0].id, PathId(1));
+        let expected = source.reuse_snapshot();
+        let mut target = Scene::default();
+        let mut stats = crate::ViewReuseStats::default();
+        target.replay(0..source.len(), &mut source, &mut stats);
+        target.finish();
+        assert_eq!(target.reuse_snapshot(), expected);
     }
 }
