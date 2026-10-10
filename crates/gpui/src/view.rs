@@ -338,12 +338,12 @@ struct ViewElementCacheKey {
 struct RetainedViewState {
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
-    cache_key: RetainedViewCacheKey,
+    bounds: Bounds<Pixels>,
+    cache_key: Option<RetainedViewCacheKey>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct RetainedViewCacheKey {
-    bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
     text_style: Rc<TextStyle>,
 }
@@ -596,8 +596,11 @@ fn prepaint_view(
         let implicit = window.is_implicit_view(occurrence);
         let mut prepaint = |window: &mut Window| {
             let constraints_unchanged = window.implicit_prepaint_layout(occurrence);
-            let content_mask = window.content_mask();
-            let text_style = window.retained_text_style_handle();
+            let recording = window.view_store.recording(occurrence);
+            let cache_key = recording.then(|| RetainedViewCacheKey {
+                content_mask: window.content_mask(),
+                text_style: window.retained_text_style_handle(),
+            });
 
             let element_state = window.view_store.state(occurrence);
             #[cfg(any(test, feature = "bench-support"))]
@@ -608,18 +611,27 @@ fn prepaint_view(
             #[cfg(any(test, feature = "bench-support"))]
             let cache_changes = element_state.map(|state| {
                 (
-                    state.cache_key.bounds != bounds,
-                    state.cache_key.bounds.size != bounds.size,
-                    state.cache_key.content_mask != content_mask,
-                    state.cache_key.text_style != text_style,
+                    state.bounds != bounds,
+                    state.bounds.size != bounds.size,
+                    state
+                        .cache_key
+                        .as_ref()
+                        .zip(cache_key.as_ref())
+                        .is_some_and(|(old, new)| old.content_mask != new.content_mask),
+                    state
+                        .cache_key
+                        .as_ref()
+                        .zip(cache_key.as_ref())
+                        .is_some_and(|(old, new)| old.text_style != new.text_style),
                 )
             });
             if element.is_none()
                 && let Some(element_state) = element_state
+                && recording
                 && (!window.is_implicit_view(occurrence) || window.view_store.has_paint(occurrence))
-                && element_state.cache_key.bounds == bounds
-                && element_state.cache_key.content_mask == content_mask
-                && element_state.cache_key.text_style == text_style
+                && element_state.bounds == bounds
+                && element_state.cache_key.is_some()
+                && element_state.cache_key == cache_key
                 && !window.view_store.is_own_dirty(occurrence)
                 && (!window.dirty_views.contains(&entity_id)
                     || (window.view_splicing && window.view_store.is_descendant_dirty(occurrence)))
@@ -691,6 +703,7 @@ fn prepaint_view(
             // on reconstruction. Only an explicit cached miss implies a refresh.
             let refreshing = window.refreshing;
             window.refreshing |= !implicit;
+            window.view_store.rendered(occurrence);
             let previous_access = window.begin_view_entity_access(cx);
             window
                 .view_store
@@ -726,11 +739,8 @@ fn prepaint_view(
                 RetainedViewState {
                     prepaint_range: prepaint_start..prepaint_end,
                     paint_range: PaintIndex::default()..PaintIndex::default(),
-                    cache_key: RetainedViewCacheKey {
-                        bounds,
-                        content_mask,
-                        text_style,
-                    },
+                    bounds,
+                    cache_key,
                 },
                 scope.take().expect("cached views have a scope"),
             );

@@ -1582,6 +1582,7 @@ pub struct Window {
     pub(crate) view_splicing: bool,
     pub(crate) implicit_view_splicing: bool,
     pub(crate) implicit_ancestor_dirty: bool,
+    pub(crate) adaptive_view_recording: bool,
     window_root_layout: Option<LayoutId>,
     retained_a11y_active: bool,
     retained_font_generation: Option<usize>,
@@ -2520,6 +2521,8 @@ impl Window {
                 .is_ok_and(|value| value == "all")
                 && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1"),
             implicit_ancestor_dirty: false,
+            adaptive_view_recording: std::env::var("GPUI_VIEW_SPLICE").as_deref() == Ok("all")
+                && std::env::var("GPUI_VIEW_ADAPTIVE_RECORDING").as_deref() != Ok("0"),
             window_root_layout: None,
             retained_a11y_active: false,
             retained_font_generation: None,
@@ -2939,6 +2942,8 @@ impl Window {
                 .layout_engine
                 .as_ref()
                 .is_some_and(|engine| engine.cache_enabled());
+        self.adaptive_view_recording = self.implicit_view_splicing
+            && std::env::var("GPUI_VIEW_ADAPTIVE_RECORDING").as_deref() != Ok("0");
         self.refresh();
     }
 
