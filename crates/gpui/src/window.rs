@@ -1592,6 +1592,7 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
+            touch_input_mode,
             #[cfg_attr(
                 not(any(target_os = "linux", target_os = "freebsd")),
                 allow(unused_variables)
@@ -1622,6 +1623,7 @@ impl Window {
                 window_min_size,
                 app_id: app_id.clone(),
                 icon,
+                touch_input_mode,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
             },
@@ -9601,6 +9603,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 window.dispatch_event(
                     TouchEvent {
+                        timestamp: None,
                         id,
                         phase,
                         position: point(px(x), px(0.)),
