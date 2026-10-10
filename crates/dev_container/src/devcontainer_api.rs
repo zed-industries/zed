@@ -18,8 +18,12 @@ use worktree::Snapshot;
 use crate::{
     DevContainerContext, DevContainerFeature, DevContainerTemplate,
     devcontainer_json::DevContainer,
-    devcontainer_manifest::{read_devcontainer_configuration, spawn_dev_container},
-    devcontainer_templates_repository, get_latest_oci_manifest, get_oci_token, ghcr_registry,
+    devcontainer_manifest::{
+        read_devcontainer_configuration, remote_user_from_inspect, spawn_dev_container,
+    },
+    devcontainer_templates_repository,
+    docker::{Docker, DockerClient, DockerPs},
+    get_latest_oci_manifest, get_oci_token, ghcr_registry,
     oci::download_oci_tarball,
 };
 
@@ -44,6 +48,29 @@ impl DevContainerConfig {
         Self {
             name: "root".to_string(),
             config_path: PathBuf::from(".devcontainer.json"),
+        }
+    }
+}
+
+/// A running container that can be attached to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerSummary {
+    pub id: String,
+    pub name: String,
+    pub image: String,
+}
+
+impl From<DockerPs> for ContainerSummary {
+    fn from(docker_ps: DockerPs) -> Self {
+        let name = docker_ps
+            .names
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| docker_ps.id.chars().take(12).collect());
+        Self {
+            id: docker_ps.id,
+            name,
+            image: docker_ps.image,
         }
     }
 }
@@ -161,6 +188,50 @@ pub fn find_devcontainer_configs(workspace: &Workspace, cx: &gpui::App) -> Vec<D
 
     let worktree = worktree.read(cx);
     find_configs_in_snapshot(worktree)
+}
+
+/// Lists all running containers.
+pub async fn list_running_containers(
+    use_podman: bool,
+) -> Result<Vec<ContainerSummary>, DevContainerError> {
+    let docker = docker_for_running_containers(use_podman).await?;
+    let containers = docker.list_running_containers().await?;
+    Ok(containers.into_iter().map(ContainerSummary::from).collect())
+}
+
+/// Builds a connection to an already running container, returning it along
+/// with the container's working directory to be opened.
+pub async fn connection_for_running_container(
+    container: &ContainerSummary,
+    use_podman: bool,
+) -> Result<(DevContainerConnection, String), DevContainerError> {
+    let docker = docker_for_running_containers(use_podman).await?;
+    let inspect = docker.inspect(&container.id).await?;
+
+    let remote_user = remote_user_from_inspect(&inspect);
+    let starting_directory = inspect
+        .config
+        .working_dir
+        .filter(|directory| !directory.is_empty())
+        .unwrap_or_else(|| "/".to_string());
+
+    let connection = DevContainerConnection {
+        name: container.name.clone(),
+        container_id: container.id.clone(),
+        use_podman,
+        remote_user,
+        extension_ids: Vec::new(),
+        // inherit the container's environment
+        remote_env: Default::default(),
+    };
+    Ok((connection, starting_directory))
+}
+
+async fn docker_for_running_containers(use_podman: bool) -> Result<Docker, DevContainerError> {
+    check_for_docker(use_podman).await?;
+    let docker_cli = if use_podman { "podman" } else { "docker" };
+    // BuildKit only affects image builds, so is not needed when attaching to running containers
+    Ok(Docker::new(docker_cli, None).await)
 }
 
 /// Scans a worktree snapshot for devcontainer configurations.
