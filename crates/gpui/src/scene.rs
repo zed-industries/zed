@@ -41,6 +41,7 @@ impl From<bool> for PaddedBool32 {
 pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
+    ordering_indices: Vec<usize>,
     layer_stack: Vec<DrawOrder>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
@@ -62,6 +63,7 @@ impl Scene {
     pub fn clear(&mut self) {
         self.paint_operations.clear();
         self.primitive_bounds.clear();
+        self.ordering_indices.clear();
         self.layer_stack.clear();
         self.paths.clear();
         self.shadows.clear();
@@ -82,6 +84,7 @@ impl Scene {
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
+        self.ordering_indices.push(self.primitive_bounds.len());
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
         self.paint_operations
@@ -89,17 +92,24 @@ impl Scene {
     }
 
     pub fn pop_layer(&mut self) {
+        self.ordering_indices.push(self.primitive_bounds.len());
         self.layer_stack.pop();
         self.paint_operations.push(PaintOperation::EndLayer);
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
-        if let Some(operation) = self.prepare_primitive(primitive.into()) {
+        let ordering_index = self.primitive_bounds.len();
+        if let Some(operation) = self.prepare_primitive(primitive.into(), None) {
+            self.ordering_indices.push(ordering_index);
             self.paint_operations.push(operation);
         }
     }
 
-    fn prepare_primitive(&mut self, primitive: Primitive) -> Option<PaintOperation> {
+    fn prepare_primitive(
+        &mut self,
+        primitive: Primitive,
+        previous: Option<(&BoundsTree<ScaledPixels>, usize)>,
+    ) -> Option<PaintOperation> {
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
@@ -108,11 +118,14 @@ impl Scene {
             return None;
         }
 
-        let order = self
-            .layer_stack
-            .last()
-            .copied()
-            .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
+        let order = self.layer_stack.last().copied().unwrap_or_else(|| {
+            if let Some((previous, index)) = previous {
+                self.primitive_bounds
+                    .insert_replayed(clipped_bounds, previous, index)
+            } else {
+                self.primitive_bounds.insert(clipped_bounds)
+            }
+        });
         let primitive = match primitive {
             Primitive::Shadow(mut shadow) => {
                 shadow.order = order;
@@ -187,9 +200,12 @@ impl Scene {
             prev_scene.consumed_segments.push(range.clone());
         }
         let start = self.paint_operations.len();
+        let previous_start = range.start;
         self.paint_operations
             .extend_from_slice(&prev_scene.paint_operations[range]);
         for index in start..self.paint_operations.len() {
+            let previous_index = prev_scene.ordering_indices[previous_start + index - start];
+            self.ordering_indices.push(self.primitive_bounds.len());
             let operation = self.paint_operations[index];
             #[cfg(any(test, feature = "bench-support"))]
             match operation {
@@ -274,12 +290,19 @@ impl Scene {
                             Primitive::Surface(surface.clone())
                         }
                     };
-                    if let Some(operation) = self.prepare_primitive(primitive) {
+                    if let Some(operation) = self.prepare_primitive(
+                        primitive,
+                        Some((&prev_scene.primitive_bounds, previous_index)),
+                    ) {
                         self.paint_operations[index] = operation;
                     }
                 }
                 PaintOperation::StartLayer(bounds) => {
-                    let order = self.primitive_bounds.insert(bounds);
+                    let order = self.primitive_bounds.insert_replayed(
+                        bounds,
+                        &prev_scene.primitive_bounds,
+                        previous_index,
+                    );
                     self.layer_stack.push(order);
                 }
                 PaintOperation::EndLayer => {
@@ -1612,5 +1635,74 @@ mod tests {
         target.replay(0..source.len(), &mut source, &mut stats);
         target.finish();
         assert_eq!(target.reuse_snapshot(), expected);
+    }
+
+    #[test]
+    fn retained_segments_match_fresh_paint_with_overlapping_layers() {
+        use rand::{Rng, SeedableRng};
+        for seed in 0..16 {
+            let mut random = rand::rngs::StdRng::seed_from_u64(seed);
+            let mut segments: Vec<Vec<Quad>> = (0..24)
+                .map(|_| {
+                    (0..4)
+                        .map(|_| {
+                            let mut quad = quad();
+                            quad.bounds.origin = point(
+                                ScaledPixels(random.random_range(-32.0..64.0)),
+                                ScaledPixels(random.random_range(-32.0..64.0)),
+                            );
+                            quad.content_mask.bounds = quad.bounds;
+                            quad
+                        })
+                        .collect()
+                })
+                .collect();
+            let mut previous = Scene::default();
+            let paint = |scene: &mut Scene, segment: &[Quad], layered: bool| {
+                if layered {
+                    scene.push_layer(quad().bounds);
+                }
+                for quad in segment {
+                    scene.insert_primitive(*quad);
+                }
+                if layered {
+                    scene.pop_layer();
+                }
+            };
+            for (index, segment) in segments.iter().enumerate() {
+                paint(&mut previous, segment, index % 3 == 0);
+            }
+            previous.finish();
+            for iteration in 0..8 {
+                let mut target = Scene::default();
+                let mut fresh = Scene::default();
+                let mut source_start = 0;
+                for (index, segment) in segments.iter_mut().enumerate() {
+                    let layered = index % 3 == 0;
+                    let length = segment.len() + if layered { 2 } else { 0 };
+                    if random.random_range(0..4) == 0 {
+                        segment[0].bounds.origin.x += ScaledPixels(8.);
+                        segment[0].content_mask.bounds = segment[0].bounds;
+                        paint(&mut target, segment, layered);
+                    } else {
+                        target.replay(
+                            source_start..source_start + length,
+                            &mut previous,
+                            &mut crate::ViewReuseStats::default(),
+                        );
+                    }
+                    paint(&mut fresh, segment, layered);
+                    source_start += length;
+                }
+                target.finish();
+                fresh.finish();
+                assert_eq!(
+                    target.reuse_snapshot(),
+                    fresh.reuse_snapshot(),
+                    "seed={seed} frame={iteration}"
+                );
+                previous = target;
+            }
+        }
     }
 }

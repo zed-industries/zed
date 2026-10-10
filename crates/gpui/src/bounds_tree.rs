@@ -1,403 +1,332 @@
-use crate::{Bounds, Half};
+use crate::Bounds;
 use std::{
-    cmp,
     fmt::Debug,
-    ops::{Add, Sub},
-    ptr::NonNull,
+    ops::Add,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
-/// Maximum children per internal node (R-tree style branching factor).
-/// Higher values = shorter tree = fewer cache misses, but more work per node.
-const MAX_CHILDREN: usize = 12;
+// Glyphs and decorations are usually a few dozen scaled pixels across. A 64-pixel
+// cell keeps their duplication small without making every text line one long list.
+const CELL_SIZE: f64 = 64.0;
+const MAX_CELLS: usize = 256;
+const MAX_CELLS_PER_BOUNDS: usize = 16;
+const NONE: usize = usize::MAX;
+const REPLAY_COMPARISONS: usize = 32_768;
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-/// A spatial tree optimized for finding maximum ordering among intersecting bounds.
-///
-/// This is an R-tree variant specifically designed for the use case of assigning
-/// z-order to overlapping UI elements. Key optimizations:
-/// - Tracks the leaf with global max ordering for O(1) fast-path queries
-/// - Keeps leaves at equal depth by splitting overflowing internal nodes
-/// - Aggressive pruning during search based on max_order metadata
+/// Assigns one plus the greatest order of previously inserted intersecting bounds.
 #[derive(Debug)]
-pub(crate) struct BoundsTree<U>
-where
-    U: Clone + Debug + Default + PartialEq,
-{
-    /// All nodes stored contiguously for cache efficiency.
-    nodes: Vec<Node<U>>,
-    // Leaves and search pruning need no child arrays. Keep them out of the node stride,
-    // at the cost of a second allocation lane whose capacity also survives clear().
-    internal_children: Vec<NodeChildren>,
-    /// Index of the root node, if any.
-    root: Option<usize>,
-    /// Index of the leaf with the highest ordering (for fast-path lookups).
-    max_leaf: Option<usize>,
-    /// Reusable stack for tree traversal during insertion.
-    insert_path: Vec<usize>,
-    /// Reusable stack for search operations.
-    search_stack: Vec<NonNull<Node<U>>>,
+pub(crate) struct BoundsTree<U: Clone + Debug + Default + PartialEq> {
+    columns: usize,
+    rows: usize,
+    cells: Vec<Cell>,
+    links: Vec<Link>,
+    bounds: Vec<(Bounds<U>, u32)>,
+    exceptional: Vec<Exceptional>,
+    maximum: Option<usize>,
+    generation: u64,
+    replay_generation: u64,
+    compared: usize,
+    changed: Vec<Bounds<U>>,
+    comparisons_left: usize,
 }
 
-/// A node in the bounds tree.
-#[derive(Debug, Clone)]
-struct Node<U>
-where
-    U: Clone + Debug + Default + PartialEq,
-{
-    /// Bounding box containing this node and all descendants.
-    bounds: Bounds<U>,
-    /// Maximum ordering value in this subtree.
-    max_order: u32,
-    /// Node-specific data.
-    kind: NodeKind,
+#[derive(Clone, Copy, Debug)]
+struct Cell {
+    head: usize,
+    cover: u32,
+    maximum: u32,
 }
 
-#[derive(Debug, Clone)]
-enum NodeKind {
-    /// Leaf node containing actual bounds data.
-    Leaf {
-        /// The ordering assigned to this bounds.
-        order: u32,
-    },
-    /// Internal node with children.
-    Internal {
-        /// Index into BoundsTree::internal_children.
-        children: usize,
-    },
+impl Cell {
+    const EMPTY: Self = Self {
+        head: NONE,
+        cover: 0,
+        maximum: 0,
+    };
 }
 
-/// Fixed-size array for child indices, avoiding heap allocation.
-#[derive(Debug, Clone)]
-struct NodeChildren {
-    // Keeps an invariant where the max order child is always at the end
-    indices: [usize; MAX_CHILDREN],
-    len: u8,
+#[derive(Debug)]
+struct Link {
+    bounds: usize,
+    next: usize,
+    maximum: u32,
 }
 
-impl NodeChildren {
-    fn new() -> Self {
-        Self {
-            indices: [0; MAX_CHILDREN],
-            len: 0,
-        }
+#[derive(Debug)]
+struct Exceptional {
+    bounds: usize,
+    maximum: u32,
+}
+
+#[derive(Clone, Copy)]
+struct Extent {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+fn cell_at(coordinate: f64, count: usize) -> usize {
+    ((coordinate / CELL_SIZE) as usize).min(count - 1)
+}
+
+fn cell_start(index: usize) -> f64 {
+    if index == 0 {
+        f64::NEG_INFINITY
+    } else {
+        index as f64 * CELL_SIZE
     }
+}
 
-    fn push(&mut self, index: usize) {
-        debug_assert!((self.len as usize) < MAX_CHILDREN);
-        self.indices[self.len as usize] = index;
-        self.len += 1;
-    }
-
-    fn len(&self) -> usize {
-        self.len as usize
-    }
-
-    fn as_slice(&self) -> &[usize] {
-        &self.indices[..self.len as usize]
+fn cell_end(index: usize, count: usize) -> f64 {
+    if index + 1 == count {
+        f64::INFINITY
+    } else {
+        (index + 1) as f64 * CELL_SIZE
     }
 }
 
 impl<U> BoundsTree<U>
 where
-    U: Clone
-        + Debug
-        + PartialEq
-        + PartialOrd
-        + Add<U, Output = U>
-        + Sub<Output = U>
-        + Half
-        + Default,
+    U: Clone + Debug + Default + PartialEq + PartialOrd + Add<Output = U> + Into<f64>,
 {
-    /// Clears all nodes from the tree.
     pub fn clear(&mut self) {
-        self.nodes.clear();
-        self.internal_children.clear();
-        self.root = None;
-        self.max_leaf = None;
-        self.insert_path.clear();
-        self.search_stack.clear();
+        self.cells.fill(Cell::EMPTY);
+        self.links.clear();
+        self.bounds.clear();
+        self.exceptional.clear();
+        self.maximum = None;
+        self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        self.replay_generation = 0;
+        self.compared = 0;
+        self.changed.clear();
+        self.comparisons_left = REPLAY_COMPARISONS;
     }
 
-    /// Inserts bounds into the tree and returns its assigned ordering.
-    ///
-    /// The ordering is one greater than the maximum ordering of any
-    /// existing bounds that intersect with the new bounds.
-    pub fn insert(&mut self, new_bounds: Bounds<U>) -> u32 {
-        // Find maximum ordering among intersecting bounds
-        let max_intersecting = self.find_max_ordering(&new_bounds);
-        let ordering = max_intersecting + 1;
-
-        // Insert the new leaf
-        let new_leaf_idx = self.insert_leaf(new_bounds, ordering);
-
-        // Update max_leaf tracking
-        self.max_leaf = match self.max_leaf {
-            None => Some(new_leaf_idx),
-            Some(old_idx) if self.nodes[old_idx].max_order < ordering => Some(new_leaf_idx),
-            some => some,
-        };
-
-        ordering
+    pub fn len(&self) -> usize {
+        self.bounds.len()
     }
 
-    /// Finds the maximum ordering among all bounds that intersect with the query.
-    fn find_max_ordering(&mut self, query: &Bounds<U>) -> u32 {
-        let Some(root_idx) = self.root else {
-            return 0;
-        };
-
-        // Fast path: check if the max-ordering leaf intersects
-        if let Some(max_idx) = self.max_leaf {
-            let max_node = &self.nodes[max_idx];
-            if query.intersects(&max_node.bounds) {
-                return max_node.max_order;
-            }
+    /// An unchanged bounds has its old order if no difference in the preceding
+    /// insertion stream intersects it. Both sides of each difference count:
+    /// removing an overlap can lower the answer just as adding one can raise it.
+    /// Prefix entries include their orders, so propagation through earlier reused
+    /// bounds is covered too. Layers enter this stream once, not per primitive;
+    /// nothing here assumes that primitives sharing a layer order are disjoint.
+    pub fn insert_replayed(&mut self, bounds: Bounds<U>, previous: &Self, index: usize) -> u32 {
+        if self.replay_generation != previous.generation {
+            self.replay_generation = previous.generation;
+            self.compared = 0;
+            self.changed.clear();
         }
-
-        // Slow path: search the tree
-        self.search_stack.clear();
-        self.search_stack.push(NonNull::from(&self.nodes[root_idx]));
-
-        let mut max_found = 0u32;
-
-        while let Some(node) = self.search_stack.pop() {
-            // SAFETY: `node` is guaranteed to be valid as the `nodes` stack is unmodified in this function
-            // and the `search_stack` only contains pointers from this function call.
-            let node = unsafe { node.as_ref() };
-
-            // Pruning: skip if this subtree can't improve our result
-            if node.max_order <= max_found {
-                continue;
-            }
-
-            // Spatial pruning: skip if bounds don't intersect
-            if !query.intersects(&node.bounds) {
-                continue;
-            }
-
-            match &node.kind {
-                NodeKind::Leaf { order } => {
-                    max_found = cmp::max(max_found, *order);
-                }
-                NodeKind::Internal { children } => {
-                    // Children are maintained with highest max_order at the end.
-                    // Push in forward order to highest (last) is popped first.
-                    self.search_stack.extend(
-                        self.internal_children[*children]
-                            .as_slice()
-                            .iter()
-                            .map(|&child_idx| &self.nodes[child_idx])
-                            .filter(|node| node.max_order > max_found)
-                            .map(NonNull::from),
-                    );
+        if index == self.bounds.len()
+            && self.comparisons_left > 0
+            && let Some((old_bounds, old_order)) = previous.bounds.get(index)
+            && *old_bounds == bounds
+        {
+            for position in self.compared..index {
+                let old = &previous.bounds[position];
+                let current = &self.bounds[position];
+                if old != current {
+                    self.changed.push(old.0.clone());
+                    self.changed.push(current.0.clone());
                 }
             }
+            self.compared = index;
+            // Bound the cumulative cost of checking differences. Once exhausted,
+            // the grid answers all remaining inserts without more replay work.
+            if let Some(remaining) = self.comparisons_left.checked_sub(self.changed.len()) {
+                self.comparisons_left = remaining;
+                if !self
+                    .changed
+                    .iter()
+                    .any(|changed| bounds.intersects(changed))
+                {
+                    let order = *old_order;
+                    self.register(bounds, order);
+                    return order;
+                }
+            } else {
+                self.comparisons_left = 0;
+            }
         }
-
-        max_found
+        self.insert(bounds)
     }
 
-    /// Inserts a leaf node with the given bounds and ordering.
-    /// Returns the index of the new leaf.
-    fn insert_leaf(&mut self, bounds: Bounds<U>, order: u32) -> usize {
-        let new_leaf_idx = self.nodes.len();
-        self.nodes.push(Node {
-            bounds: bounds.clone(),
-            max_order: order,
-            kind: NodeKind::Leaf { order },
-        });
+    fn extent(bounds: &Bounds<U>) -> Option<Extent> {
+        let left = bounds.origin.x.clone().into();
+        let top = bounds.origin.y.clone().into();
+        let right = (bounds.origin.x.clone() + bounds.size.width.clone()).into();
+        let bottom = (bounds.origin.y.clone() + bounds.size.height.clone()).into();
+        // Zero and negative sizes can still intersect under Bounds::intersects.
+        // NaNs and infinite origins also need the exact predicate, not cell covers.
+        (left.is_finite() && top.is_finite() && right > left && bottom > top).then_some(Extent {
+            left,
+            top,
+            right,
+            bottom,
+        })
+    }
 
-        let Some(root_idx) = self.root else {
-            // Tree is empty, new leaf becomes root
-            self.root = Some(new_leaf_idx);
-            return new_leaf_idx;
-        };
+    pub fn insert(&mut self, bounds: Bounds<U>) -> u32 {
+        let order = self.find_max_ordering(&bounds) + 1;
+        self.register(bounds, order);
+        order
+    }
 
-        if matches!(self.nodes[root_idx].kind, NodeKind::Leaf { .. }) {
-            let mut children = NodeChildren::new();
-            children.push(root_idx);
-            children.push(new_leaf_idx);
-            self.root = Some(self.push_internal(children));
-            return new_leaf_idx;
+    fn register(&mut self, bounds: Bounds<U>, order: u32) {
+        let extent = Self::extent(&bounds);
+        let index = self.bounds.len();
+        self.bounds.push((bounds, order));
+        if self
+            .maximum
+            .is_none_or(|maximum| self.bounds[maximum].1 < order)
+        {
+            self.maximum = Some(index);
         }
-
-        self.insert_path.clear();
-        let mut current_idx = root_idx;
-        loop {
-            let current = &self.nodes[current_idx];
-            let NodeKind::Internal { children } = &current.kind else {
-                unreachable!("Should only traverse internal nodes");
+        if let Some(extent) = extent {
+            let needed = |end: f64, current: usize| {
+                let cells = ((end / CELL_SIZE).ceil() as usize).clamp(1, MAX_CELLS);
+                current.max(cells.next_power_of_two().min(MAX_CELLS))
             };
-            let children = &self.internal_children[*children];
+            let columns = needed(extent.right, self.columns);
+            let rows = needed(extent.bottom, self.rows);
+            if columns != self.columns || rows != self.rows {
+                self.columns = columns;
+                self.rows = rows;
+                self.cells.clear();
+                self.cells.resize(columns * rows, Cell::EMPTY);
+                self.links.clear();
+                self.exceptional.clear();
+                // Growing changes the formerly unbounded edge cells.
+                for index in 0..self.bounds.len() {
+                    self.add_to_cells(index);
+                }
+                return;
+            }
+        }
+        self.add_to_cells(index);
+    }
 
-            self.insert_path.push(current_idx);
-            let mut best_child_idx = children.as_slice()[0];
-            if matches!(self.nodes[best_child_idx].kind, NodeKind::Leaf { .. }) {
+    fn add_to_cells(&mut self, index: usize) {
+        let (bounds, order) = &self.bounds[index];
+        let extent = Self::extent(bounds);
+        let extent = extent.filter(|extent| {
+            let columns =
+                cell_at(extent.right, self.columns) - cell_at(extent.left, self.columns) + 1;
+            let rows = cell_at(extent.bottom, self.rows) - cell_at(extent.top, self.rows) + 1;
+            columns * rows <= MAX_CELLS_PER_BOUNDS
+        });
+        let Some(extent) = extent else {
+            // Large overlays would duplicate their boundary lists across the grid.
+            // Keep them once, with prefix maxima so reverse searches can stop early.
+            self.exceptional.push(Exceptional {
+                bounds: index,
+                maximum: self
+                    .exceptional
+                    .last()
+                    .map_or(*order, |entry| entry.maximum.max(*order)),
+            });
+            return;
+        };
+        for row in cell_at(extent.top, self.rows)..=cell_at(extent.bottom, self.rows) {
+            for column in cell_at(extent.left, self.columns)..=cell_at(extent.right, self.columns) {
+                let cell = &mut self.cells[row * self.columns + column];
+                cell.maximum = cell.maximum.max(*order);
+                if extent.top <= cell_start(row)
+                    && extent.bottom >= cell_end(row, self.rows)
+                    && extent.left <= cell_start(column)
+                    && extent.right >= cell_end(column, self.columns)
+                {
+                    cell.cover = cell.cover.max(*order);
+                } else {
+                    let maximum = self
+                        .links
+                        .get(cell.head)
+                        .map_or(*order, |link| link.maximum.max(*order));
+                    self.links.push(Link {
+                        bounds: index,
+                        next: cell.head,
+                        maximum,
+                    });
+                    cell.head = self.links.len() - 1;
+                }
+            }
+        }
+    }
+
+    fn find_max_ordering(&self, query: &Bounds<U>) -> u32 {
+        if let Some(index) = self.maximum
+            && query.intersects(&self.bounds[index].0)
+        {
+            return self.bounds[index].1;
+        }
+        let Some(extent) = Self::extent(query) else {
+            return self
+                .bounds
+                .iter()
+                .filter(|(bounds, _)| query.intersects(bounds))
+                .map(|(_, order)| *order)
+                .max()
+                .unwrap_or(0);
+        };
+        let mut maximum = 0;
+        for entry in self.exceptional.iter().rev() {
+            if entry.maximum <= maximum {
                 break;
             }
-            let mut best_cost = bounds
-                .union(&self.nodes[best_child_idx].bounds)
-                .half_perimeter();
-            for &child_idx in &children.as_slice()[1..] {
-                let cost = bounds.union(&self.nodes[child_idx].bounds).half_perimeter();
-                if cost < best_cost {
-                    best_cost = cost;
-                    best_child_idx = child_idx;
-                }
+            let (bounds, order) = &self.bounds[entry.bounds];
+            if *order > maximum && query.intersects(bounds) {
+                maximum = *order;
             }
-            current_idx = best_child_idx;
         }
-
-        let mut pending = Some(new_leaf_idx);
-        let mut updated_child = new_leaf_idx;
-        while let Some(index) = self.insert_path.pop() {
-            let NodeKind::Internal { children } = self.nodes[index].kind else {
-                unreachable!("insertion path contains internal nodes");
-            };
-            if let Some(sibling) = pending.take() {
-                if self.internal_children[children].len() == MAX_CHILDREN {
-                    pending = Some(self.split(index, children, sibling));
-                    updated_child = index;
+        for row in cell_at(extent.top, self.rows)..=cell_at(extent.bottom, self.rows) {
+            for column in cell_at(extent.left, self.columns)..=cell_at(extent.right, self.columns) {
+                let cell = &self.cells[row * self.columns + column];
+                if cell.maximum <= maximum {
                     continue;
                 }
-                self.internal_children[children].push(sibling);
-                self.move_max_to_end(children);
-            } else if self.nodes[index].max_order < order {
-                let children = &mut self.internal_children[children];
-                let position = children
-                    .as_slice()
-                    .iter()
-                    .position(|&child| child == updated_child)
-                    .expect("updated child belongs to its parent");
-                let last = children.len() - 1;
-                children.indices.swap(position, last);
-            }
-            let node = &mut self.nodes[index];
-            node.bounds = node.bounds.union(&bounds);
-            node.max_order = cmp::max(node.max_order, order);
-            updated_child = index;
-        }
-        if let Some(sibling) = pending {
-            let mut children = NodeChildren::new();
-            children.push(root_idx);
-            children.push(sibling);
-            self.root = Some(self.push_internal(children));
-        }
-        new_leaf_idx
-    }
-
-    fn move_max_to_end(&mut self, children: usize) {
-        let children = &mut self.internal_children[children];
-        let mut maximum = 0;
-        for position in 1..children.len() {
-            if self.nodes[children.indices[position]].max_order
-                > self.nodes[children.indices[maximum]].max_order
-            {
-                maximum = position;
-            }
-        }
-        let last = children.len() - 1;
-        children.indices.swap(maximum, last);
-    }
-
-    fn group_bounds(&self, indices: &[usize]) -> Bounds<U> {
-        let mut bounds = self.nodes[indices[0]].bounds.clone();
-        for &index in &indices[1..] {
-            bounds = bounds.union(&self.nodes[index].bounds);
-        }
-        bounds
-    }
-
-    fn internal_node(&mut self, children: usize) -> Node<U> {
-        self.move_max_to_end(children);
-        let indices = self.internal_children[children].as_slice();
-        Node {
-            bounds: self.group_bounds(indices),
-            max_order: self.nodes[indices[indices.len() - 1]].max_order,
-            kind: NodeKind::Internal { children },
-        }
-    }
-
-    fn push_internal(&mut self, children: NodeChildren) -> usize {
-        let lane = self.internal_children.len();
-        self.internal_children.push(children);
-        let node = self.internal_node(lane);
-        let index = self.nodes.len();
-        self.nodes.push(node);
-        index
-    }
-
-    fn split(&mut self, index: usize, children: usize, sibling: usize) -> usize {
-        let mut indices = [sibling; MAX_CHILDREN + 1];
-        indices[..MAX_CHILDREN].copy_from_slice(self.internal_children[children].as_slice());
-        let mut best_indices = indices;
-        let mut best_split = MAX_CHILDREN / 2;
-        let mut best_key = None;
-
-        // Compare overlap and the larger/smaller union perimeters lexicographically:
-        // summing or subtracting costs would narrow the supported scalar domain.
-        // Half-full groups bound height even for identical or nested bounds.
-        for axis in 0..2 {
-            for position in 1..indices.len() {
-                let mut cursor = position;
-                while cursor > 0 {
-                    let left = &self.nodes[indices[cursor]].bounds.origin;
-                    let right = &self.nodes[indices[cursor - 1]].bounds.origin;
-                    let precedes = if axis == 0 {
-                        left.x < right.x
-                    } else {
-                        left.y < right.y
-                    };
-                    if !precedes {
+                // Merely touching a cell edge does not intersect its covers.
+                if extent.top < cell_end(row, self.rows)
+                    && extent.bottom > cell_start(row)
+                    && extent.left < cell_end(column, self.columns)
+                    && extent.right > cell_start(column)
+                {
+                    maximum = maximum.max(cell.cover);
+                }
+                let mut cursor = cell.head;
+                while let Some(link) = self.links.get(cursor) {
+                    if link.maximum <= maximum {
                         break;
                     }
-                    indices.swap(cursor, cursor - 1);
-                    cursor -= 1;
-                }
-            }
-            for partition in MAX_CHILDREN / 2..=indices.len() - MAX_CHILDREN / 2 {
-                let left = self.group_bounds(&indices[..partition]);
-                let right = self.group_bounds(&indices[partition..]);
-                let left_cost = left.half_perimeter();
-                let right_cost = right.half_perimeter();
-                let (larger, smaller) = if left_cost < right_cost {
-                    (right_cost, left_cost)
-                } else {
-                    (left_cost, right_cost)
-                };
-                let key = (left.intersects(&right), larger, smaller);
-                if best_key.as_ref().is_none_or(|best| key < *best) {
-                    best_key = Some(key);
-                    best_indices = indices;
-                    best_split = partition;
+                    let (bounds, order) = &self.bounds[link.bounds];
+                    if *order > maximum && query.intersects(bounds) {
+                        maximum = *order;
+                    }
+                    cursor = link.next;
                 }
             }
         }
-        let mut left = NodeChildren::new();
-        let mut right = NodeChildren::new();
-        for &child in &best_indices[..best_split] {
-            left.push(child);
-        }
-        for &child in &best_indices[best_split..] {
-            right.push(child);
-        }
-        self.internal_children[children] = left;
-        self.nodes[index] = self.internal_node(children);
-        self.push_internal(right)
+        maximum
     }
 }
 
-impl<U> Default for BoundsTree<U>
-where
-    U: Clone + Debug + Default + PartialEq,
-{
+impl<U: Clone + Debug + Default + PartialEq> Default for BoundsTree<U> {
     fn default() -> Self {
-        BoundsTree {
-            nodes: Vec::new(),
-            internal_children: Vec::new(),
-            root: None,
-            max_leaf: None,
-            insert_path: Vec::new(),
-            search_stack: Vec::new(),
+        Self {
+            columns: 1,
+            rows: 1,
+            cells: vec![Cell::EMPTY],
+            links: Vec::new(),
+            bounds: Vec::new(),
+            exceptional: Vec::new(),
+            maximum: None,
+            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
+            replay_generation: 0,
+            compared: 0,
+            changed: Vec::new(),
+            comparisons_left: REPLAY_COMPARISONS,
         }
     }
 }
@@ -405,78 +334,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Bounds, Point, Size};
+    use crate::{Half, Point, Size};
     use rand::{Rng, SeedableRng};
+    use std::ops::Sub;
 
     fn rectangle(x: f32, y: f32, width: f32, height: f32) -> Bounds<f32> {
         Bounds {
             origin: Point { x, y },
             size: Size { width, height },
-        }
-    }
-
-    fn assert_topology<U>(tree: &BoundsTree<U>, leaf_count: usize)
-    where
-        U: Clone + Debug + Default + PartialEq,
-    {
-        let mut visited = vec![false; tree.nodes.len()];
-        let mut visited_children = vec![false; tree.internal_children.len()];
-        let mut pending: Vec<_> = tree.root.into_iter().map(|index| (index, 1)).collect();
-        let mut leaves = 0;
-        let mut leaf_depth = None;
-        while let Some((index, depth)) = pending.pop() {
-            assert!(!visited[index], "node {index} is reachable twice");
-            visited[index] = true;
-            let node = &tree.nodes[index];
-            match &node.kind {
-                NodeKind::Leaf { order } => {
-                    leaves += 1;
-                    assert_eq!(node.max_order, *order);
-                    assert_eq!(*leaf_depth.get_or_insert(depth), depth);
-                }
-                NodeKind::Internal { children } => {
-                    assert!(!visited_children[*children]);
-                    visited_children[*children] = true;
-                    let children = tree.internal_children[*children].as_slice();
-                    let minimum = if Some(index) == tree.root {
-                        2
-                    } else {
-                        MAX_CHILDREN / 2
-                    };
-                    assert!((minimum..=MAX_CHILDREN).contains(&children.len()));
-                    let maximum = children
-                        .iter()
-                        .map(|&child| tree.nodes[child].max_order)
-                        .max();
-                    assert_eq!(maximum, Some(node.max_order));
-                    assert_eq!(
-                        children.last().map(|&child| tree.nodes[child].max_order),
-                        maximum,
-                        "maximum-order child must remain last",
-                    );
-                    pending.extend(children.iter().map(|&child| (child, depth + 1)));
-                }
-            }
-        }
-        assert_eq!(leaves, leaf_count);
-        let mut power = 1usize;
-        let mut height_bound = 1;
-        while power < leaf_count {
-            power *= MAX_CHILDREN / 2;
-            height_bound += 1;
-        }
-        assert!(leaf_depth.unwrap_or(0) <= height_bound);
-        assert!(visited.into_iter().all(|visited| visited));
-        assert!(visited_children.into_iter().all(|visited| visited));
-        assert_eq!(tree.nodes.len(), leaves + tree.internal_children.len());
-        if let Some(index) = tree.max_leaf {
-            assert!(matches!(tree.nodes[index].kind, NodeKind::Leaf { .. }));
-            assert_eq!(
-                Some(tree.nodes[index].max_order),
-                tree.nodes.iter().map(|node| node.max_order).max(),
-            );
-        } else {
-            assert_eq!(leaf_count, 0);
         }
     }
 
@@ -489,7 +354,8 @@ mod tests {
             + PartialOrd
             + Add<U, Output = U>
             + Sub<Output = U>
-            + Half,
+            + Half
+            + Into<f64>,
     {
         let mut original: Vec<(Bounds<U>, u32)> = Vec::new();
         for (index, bounds) in bounds.iter().enumerate() {
@@ -506,7 +372,6 @@ mod tests {
                 "{label}: insertion {index}"
             );
             original.push((bounds.clone(), expected));
-            assert_topology(tree, index + 1);
         }
         for (index, query) in bounds.iter().enumerate() {
             let expected = original
@@ -524,44 +389,11 @@ mod tests {
 
     fn capacities(tree: &BoundsTree<f32>) -> (usize, usize, usize, usize) {
         (
-            tree.nodes.capacity(),
-            tree.internal_children.capacity(),
-            tree.insert_path.capacity(),
-            tree.search_stack.capacity(),
+            tree.bounds.capacity(),
+            tree.cells.capacity(),
+            tree.links.capacity(),
+            tree.exceptional.capacity(),
         )
-    }
-
-    fn report_layout(tree: &BoundsTree<f32>, label: &str) {
-        let node_size = std::mem::size_of::<Node<f32>>();
-        let children_size = std::mem::size_of::<NodeChildren>();
-        let mut height = 0;
-        let mut current = tree.root;
-        while let Some(index) = current {
-            height += 1;
-            current = match tree.nodes[index].kind {
-                NodeKind::Leaf { .. } => None,
-                NodeKind::Internal { children } => {
-                    tree.internal_children[children].as_slice().first().copied()
-                }
-            };
-        }
-        eprintln!(
-            "{label}: height={height}, node_f32_bytes={node_size}, node_scaled_pixels_bytes={}, \
-             kind_bytes={}, children_bytes={children_size}, \
-             leaves={}, internals={}, nodes_len={}, nodes_capacity={}, \
-             children_capacity={}, insert_path_capacity={}, search_stack_capacity={}, \
-             lane_capacity_bytes={}",
-            std::mem::size_of::<Node<crate::ScaledPixels>>(),
-            std::mem::size_of::<NodeKind>(),
-            tree.nodes.len() - tree.internal_children.len(),
-            tree.internal_children.len(),
-            tree.nodes.len(),
-            tree.nodes.capacity(),
-            tree.internal_children.capacity(),
-            tree.insert_path.capacity(),
-            tree.search_stack.capacity(),
-            tree.nodes.capacity() * node_size + tree.internal_children.capacity() * children_size,
-        );
     }
 
     #[test]
@@ -635,14 +467,12 @@ mod tests {
         for (label, bounds) in patterns {
             tree.clear();
             assert_orders(&mut tree, &bounds, label);
-            report_layout(&tree, label);
             let retained = capacities(&tree);
             tree.clear();
-            assert_topology(&tree, 0);
-            assert!(tree.root.is_none());
-            assert!(tree.max_leaf.is_none());
-            assert!(tree.insert_path.is_empty());
-            assert!(tree.search_stack.is_empty());
+            assert!(tree.bounds.is_empty());
+            assert!(tree.maximum.is_none());
+            assert!(tree.links.is_empty());
+            assert!(tree.exceptional.is_empty());
             assert_eq!(capacities(&tree), retained);
             assert_eq!(tree.find_max_ordering(&overlay), 0);
             assert_orders(&mut tree, &bounds, label);
@@ -668,7 +498,6 @@ mod tests {
                 let label = format!("seed={seed}, extent={extent}");
                 let mut tree = BoundsTree::default();
                 assert_orders(&mut tree, &bounds, &label);
-                report_layout(&tree, &label);
             }
         }
     }
@@ -788,5 +617,101 @@ mod tests {
                 assert_eq!(actual_ordering, expected_ordering);
             }
         }
+    }
+
+    #[test]
+    fn huge_negative_and_degenerate_bounds_match_oracle() {
+        for seed in 0..32 {
+            let mut random = rand::rngs::StdRng::seed_from_u64(seed);
+            let coordinate = |random: &mut rand::rngs::StdRng| match random.random_range(0..8) {
+                0 => f32::MAX,
+                1 => -f32::MAX,
+                2 => f32::INFINITY,
+                3 => f32::NEG_INFINITY,
+                4 => f32::NAN,
+                _ => random.random_range(-100_000.0..100_000.0),
+            };
+            let length = |random: &mut rand::rngs::StdRng| match random.random_range(0..6) {
+                0 => 0.0,
+                1 => f32::MAX,
+                2 => f32::INFINITY,
+                _ => random.random_range(-128.0..256.0),
+            };
+            let bounds: Vec<_> = (0..128)
+                .map(|_| {
+                    rectangle(
+                        coordinate(&mut random),
+                        coordinate(&mut random),
+                        length(&mut random),
+                        length(&mut random),
+                    )
+                })
+                .collect();
+            assert_orders(&mut BoundsTree::default(), &bounds, &format!("seed={seed}"));
+        }
+    }
+
+    #[test]
+    fn replay_matches_fresh_orders_across_changed_prefixes() {
+        for seed in 0..32 {
+            let mut random = rand::rngs::StdRng::seed_from_u64(seed);
+            let mut frame: Vec<_> = (0..256)
+                .map(|_| {
+                    rectangle(
+                        random.random_range(-128.0..512.0),
+                        random.random_range(-128.0..512.0),
+                        random.random_range(-8.0..256.0),
+                        random.random_range(-8.0..256.0),
+                    )
+                })
+                .collect();
+            let mut previous = BoundsTree::default();
+            for bounds in &frame {
+                previous.insert(*bounds);
+            }
+            for iteration in 0..8 {
+                let mut replayed = BoundsTree::default();
+                let mut fresh = BoundsTree::default();
+                if iteration == 4 {
+                    replayed.comparisons_left = 1;
+                }
+                for (index, bounds) in frame.iter_mut().enumerate() {
+                    let retained = random.random_range(0..8) != 0;
+                    if !retained {
+                        bounds.origin.x += random.random_range(-64.0..64.0);
+                    }
+                    let expected = fresh.insert(*bounds);
+                    let actual = if retained {
+                        replayed.insert_replayed(*bounds, &previous, index)
+                    } else {
+                        replayed.insert(*bounds)
+                    };
+                    assert_eq!(
+                        actual, expected,
+                        "seed={seed} frame={iteration} index={index}"
+                    );
+                }
+                previous = replayed;
+            }
+        }
+    }
+
+    #[test]
+    fn replay_handles_removal_addition_and_a_different_source() {
+        let bounds = rectangle(0.0, 0.0, 128.0, 128.0);
+        let mut previous = BoundsTree::default();
+        let mut other = BoundsTree::default();
+        for _ in 0..8 {
+            previous.insert(bounds);
+            other.insert(bounds);
+        }
+        let mut target = BoundsTree::default();
+        assert_eq!(target.insert_replayed(bounds, &previous, 0), 1);
+        assert_eq!(target.insert_replayed(bounds, &other, 1), 2);
+        assert_eq!(target.insert_replayed(bounds, &previous, 3), 3);
+        assert_eq!(target.insert_replayed(bounds, &previous, 4), 4);
+        target.insert(bounds);
+        assert_eq!(target.insert_replayed(bounds, &previous, 5), 6);
+        assert!(target.changed.is_empty());
     }
 }
