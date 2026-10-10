@@ -808,6 +808,13 @@ impl EditorElement {
                         cx.propagate();
                     }
                 });
+                register_action(editor, window, |editor, action, window, cx| {
+                    if let Some(task) = editor.format_modifications(action, window, cx) {
+                        editor.detach_and_notify_err(task, window, cx);
+                    } else {
+                        cx.propagate();
+                    }
+                });
             }
             register_action(editor, window, |editor, action, window, cx| {
                 if let Some(task) = editor.organize_imports(action, window, cx) {

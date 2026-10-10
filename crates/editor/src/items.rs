@@ -998,7 +998,7 @@ impl Item for Editor {
 
         cx.spawn_in(window, async move |this, cx| {
             if options.format {
-                let format_task = this.update_in(cx, |editor, window, cx| {
+                let format_tasks = this.update_in(cx, |editor, window, cx| {
                     let format_target = compute_format_target(
                         &buffers_to_save,
                         format_trigger,
@@ -1006,11 +1006,20 @@ impl Item for Editor {
                         project.read(cx).git_store(),
                         cx,
                     );
-                    format_target.map(|target| {
-                        editor.perform_format(project.clone(), format_trigger, target, window, cx)
-                    })
+                    format_target
+                        .into_iter()
+                        .map(|target| {
+                            editor.perform_format(
+                                project.clone(),
+                                format_trigger,
+                                target,
+                                window,
+                                cx,
+                            )
+                        })
+                        .collect::<Vec<_>>()
                 })?;
-                if let Some(format_task) = format_task {
+                for format_task in format_tasks {
                     format_task.await?;
                 }
             }
@@ -2422,33 +2431,66 @@ fn compute_format_target(
     multi_buffer: &Entity<MultiBuffer>,
     git_store: &Entity<GitStore>,
     cx: &App,
-) -> Option<FormatTarget> {
-    if trigger == FormatTrigger::Manual {
-        return Some(FormatTarget::Buffers(buffers.clone()));
-    }
+) -> Vec<FormatTarget> {
+    let mode_fn = |settings: &LanguageSettings| {
+        if trigger == FormatTrigger::Manual {
+            return FormatTargetComputeMode::Full;
+        }
 
+        match settings.format_on_save {
+            FormatOnSave::On | FormatOnSave::Off => FormatTargetComputeMode::Full,
+            FormatOnSave::Modifications => FormatTargetComputeMode::Modifications,
+            FormatOnSave::ModificationsIfAvailable => {
+                FormatTargetComputeMode::ModificationsIfAvailable
+            }
+        }
+    };
+
+    compute_format_target_impl(mode_fn, buffers, multi_buffer, git_store, cx)
+}
+
+#[derive(PartialEq, Eq)]
+pub(crate) enum FormatTargetComputeMode {
+    Full,
+    Modifications,
+    ModificationsIfAvailable,
+}
+
+pub(crate) fn compute_format_target_impl<ModeFn>(
+    mode_fn: ModeFn,
+    buffers: &HashSet<Entity<Buffer>>,
+    multi_buffer: &Entity<MultiBuffer>,
+    git_store: &Entity<GitStore>,
+    cx: &App,
+) -> Vec<FormatTarget>
+where
+    ModeFn: Fn(&LanguageSettings) -> FormatTargetComputeMode,
+{
     let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
     let git_store = git_store.read(cx);
 
-    let mut fall_back_to_full_format = false;
+    let mut modified_buffers: HashSet<Entity<Buffer>> = HashSet::default();
     let mut modified_ranges: Vec<Range<Point>> = Vec::new();
 
     for buffer_entity in buffers.iter() {
         let buffer = buffer_entity.read(cx);
         let settings = LanguageSettings::for_buffer(buffer, cx);
-        match settings.format_on_save {
-            FormatOnSave::On | FormatOnSave::Off => {
-                return Some(FormatTarget::Buffers(buffers.clone()));
+        let mode = mode_fn(&settings);
+        match mode {
+            FormatTargetComputeMode::Full => {
+                modified_buffers.insert(buffer_entity.clone());
+                continue;
             }
-            FormatOnSave::Modifications | FormatOnSave::ModificationsIfAvailable => {}
+            FormatTargetComputeMode::Modifications
+            | FormatTargetComputeMode::ModificationsIfAvailable => {}
         }
 
         let Some(diff_snapshot) = git_store
             .get_unstaged_diff(buffer.remote_id(), cx)
             .map(|diff| diff.read(cx).snapshot(cx))
         else {
-            if settings.format_on_save == FormatOnSave::ModificationsIfAvailable {
-                fall_back_to_full_format = true;
+            if mode == FormatTargetComputeMode::ModificationsIfAvailable {
+                modified_buffers.insert(buffer_entity.clone());
             }
             continue;
         };
@@ -2469,13 +2511,17 @@ fn compute_format_target(
         }
     }
 
-    if fall_back_to_full_format {
-        Some(FormatTarget::Buffers(buffers.clone()))
-    } else if modified_ranges.is_empty() {
-        None
-    } else {
-        Some(FormatTarget::Ranges(modified_ranges))
+    let mut targets = Vec::with_capacity(2);
+
+    if !modified_buffers.is_empty() {
+        targets.push(FormatTarget::Buffers(modified_buffers));
     }
+
+    if !modified_ranges.is_empty() {
+        targets.push(FormatTarget::Ranges(modified_ranges));
+    }
+
+    targets
 }
 
 /// Computes the buffer ranges that have unstaged changes, expanded to full lines and
