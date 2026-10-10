@@ -16,8 +16,8 @@ use lsp::{
 
 use crate::lsp_store::{
     LanguageServerState, LspStore, RenamePathsWatchedForServer,
-    completion_trigger_characters_for_buffer, document_filter_pattern_matcher,
-    lsp_workspace_diagnostics_refresh,
+    completion_trigger_characters_for_buffer, lsp_workspace_diagnostics_refresh,
+    validate_document_filter_pattern,
 };
 
 #[derive(Debug)]
@@ -1275,7 +1275,7 @@ fn validate_document_selector(document_selector: Option<&lsp::DocumentSelector>)
         .flatten()
         .filter_map(|filter| filter.pattern.as_ref())
     {
-        document_filter_pattern_matcher(pattern)
+        validate_document_filter_pattern(pattern)
             .with_context(|| format!("invalid document filter pattern {pattern:?}"))?;
     }
     Ok(())
