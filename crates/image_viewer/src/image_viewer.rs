@@ -30,7 +30,10 @@ use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
-    item::{HighlightedText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
+    item::{
+        HighlightedText, Item, ItemHandle, ItemNavigation, ProjectItem, SerializableItem,
+        TabContentParams,
+    },
 };
 
 pub use crate::image_info::*;
@@ -539,6 +542,10 @@ impl EventEmitter<ImageViewEvent> for ImageView {}
 
 impl Item for ImageView {
     type Event = ImageViewEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         match event {

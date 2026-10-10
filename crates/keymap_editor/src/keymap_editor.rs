@@ -39,8 +39,8 @@ use ui::{
 use ui_input::InputField;
 use util::ResultExt;
 use workspace::{
-    Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
-    register_serializable_item, with_active_or_new_workspace,
+    Item, ItemNavigation, ModalView, SerializableItem, Workspace,
+    notifications::NotifyTaskExt as _, register_serializable_item, with_active_or_new_workspace,
 };
 
 pub use ui_components::*;
@@ -1970,6 +1970,10 @@ fn muted_styled_text(text: SharedString, cx: &App) -> StyledText {
 
 impl Item for KeymapEditor {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> ui::SharedString {
         "Keymap Editor".into()

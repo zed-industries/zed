@@ -29,7 +29,7 @@ use crate::{
 };
 use ui::{Toggleable as _, Tooltip, prelude::*, render_modifiers};
 use workspace::{
-    ActivatePaneLeft, ActivatePaneRight, Item, ToolbarItemLocation, Workspace,
+    ActivatePaneLeft, ActivatePaneRight, Item, ItemNavigation, ToolbarItemLocation, Workspace,
     item::{ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
     searchable::{SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
@@ -2035,20 +2035,10 @@ impl Item for SplittableEditor {
             .update(cx, |editor, cx| editor.reload(project, window, cx))
     }
 
-    fn navigate(
-        &mut self,
-        data: Arc<dyn std::any::Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.focused_editor()
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
-    }
-
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focused_editor().update(cx, |editor, cx| {
-            editor.deactivated(window, cx);
-        });
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        // Positions are always recorded in the right-hand editor, as only its anchors stay valid
+        // when switching between the split and unified views.
+        ItemNavigation::delegate(self.rhs_editor.clone())
     }
 
     fn added_to_workspace(
@@ -2343,14 +2333,14 @@ mod tests {
     use settings::{DiffViewStyle, SettingsStore};
     use ui::{VisualContext as _, div, px};
     use util::rel_path::rel_path;
-    use workspace::{Item, MultiWorkspace};
+    use workspace::{Item, MultiWorkspace, Workspace};
 
     use crate::display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, FoldPlaceholder,
     };
     use crate::inlays::Inlay;
     use crate::test::{editor_content_with_blocks_and_width, set_block_content_for_tests};
-    use crate::{Editor, SplittableEditor};
+    use crate::{Editor, RecordNavigation, SelectionEffects, SplittableEditor};
     use multi_buffer::MultiBufferOffset;
 
     async fn init_test(
@@ -2358,6 +2348,19 @@ mod tests {
         soft_wrap: SoftWrap,
         style: DiffViewStyle,
     ) -> (Entity<SplittableEditor>, &mut VisualTestContext) {
+        let (editor, _workspace, cx) = init_test_with_workspace(cx, soft_wrap, style).await;
+        (editor, cx)
+    }
+
+    async fn init_test_with_workspace(
+        cx: &mut gpui::TestAppContext,
+        soft_wrap: SoftWrap,
+        style: DiffViewStyle,
+    ) -> (
+        Entity<SplittableEditor>,
+        Entity<Workspace>,
+        &mut VisualTestContext,
+    ) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
@@ -2384,7 +2387,7 @@ mod tests {
                 style,
                 rhs_multibuffer.clone(),
                 project.clone(),
-                workspace,
+                workspace.clone(),
                 window,
                 cx,
             );
@@ -2393,7 +2396,7 @@ mod tests {
             });
             editor
         });
-        (editor, cx)
+        (editor, workspace, cx)
     }
 
     fn buffer_with_diff(
@@ -6438,6 +6441,96 @@ mod tests {
                 .unindent(),
             &mut cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_go_back_restores_cursor_moved_in_lhs_editor(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+
+        let (editor, workspace, cx) =
+            init_test_with_workspace(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let base_text = (0..40)
+            .map(|row| format!("line {row}\n"))
+            .collect::<String>();
+        let current_text = base_text.replacen("line 1\n", "changed line 1\n", 1);
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, cx);
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        let (lhs_editor, rhs_editor) = editor.read_with(cx, |editor, _| {
+            (
+                editor.lhs_editor().cloned().expect("should be split"),
+                editor.rhs_editor().clone(),
+            )
+        });
+        let cursor_position = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
+            editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head()
+            })
+        };
+
+        // Moving in the focused left-hand editor syncs the cursor to the right-hand editor, which
+        // is where the location gets recorded.
+        lhs_editor.update_in(cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle, cx);
+            editor.change_selections(
+                SelectionEffects::no_scroll().record_navigation(RecordNavigation::Never),
+                window,
+                cx,
+                |selections| selections.select_ranges([Point::new(30, 0)..Point::new(30, 0)]),
+            );
+        });
+        cx.run_until_parked();
+        let recorded_position = cursor_position(&rhs_editor, cx);
+        assert_eq!(recorded_position.row, 30);
+
+        let other_item = cx.new(workspace::item::test::TestItem::new);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(other_item), None, true, window, cx);
+        });
+        cx.run_until_parked();
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(
+                SelectionEffects::no_scroll().record_navigation(RecordNavigation::Never),
+                window,
+                cx,
+                |selections| selections.select_ranges([Point::zero()..Point::zero()]),
+            );
+        });
+        cx.run_until_parked();
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.active_item().map(|item| item.item_id()),
+                Some(editor.entity_id())
+            );
+        });
+        assert_eq!(cursor_position(&rhs_editor, cx), recorded_position);
     }
 
     #[gpui::test]

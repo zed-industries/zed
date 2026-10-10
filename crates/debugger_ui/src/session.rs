@@ -11,7 +11,7 @@ use running::RunningState;
 use ui::prelude::*;
 use workspace::{
     CollaboratorId, FollowableItem, ViewId, Workspace,
-    item::{self, Item},
+    item::{self, Item, ItemNavigation},
 };
 
 pub struct DebugSession {
@@ -100,6 +100,10 @@ impl Focusable for DebugSession {
 
 impl Item for DebugSession {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Excluded
+    }
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Debugger".into()
     }

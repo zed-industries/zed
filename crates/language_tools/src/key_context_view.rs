@@ -10,7 +10,7 @@ use ui::{
     LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
     h_flex, px, v_flex,
 };
-use workspace::{Item, SplitDirection, Workspace};
+use workspace::{Item, ItemNavigation, SplitDirection, Workspace};
 use zed_actions::dev::OpenKeyContextView;
 
 pub fn init(cx: &mut App) {
@@ -134,6 +134,10 @@ impl KeyContextView {
 
 impl Item for KeyContextView {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 

@@ -14,7 +14,7 @@ use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
 use settings::Settings;
 use std::{
-    any::{Any, TypeId},
+    any::TypeId,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -22,7 +22,7 @@ use ui::{Color, Icon, IconName};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use workspace::{
-    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
+    Item, ItemHandle as _, ItemNavigation, ToolbarItemLocation, Workspace,
     item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
@@ -299,9 +299,8 @@ impl Item for MultiDiffView {
         Some("Diff View Opened")
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.deactivated(window, cx));
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.editor.clone())
     }
 
     fn act_as_type<'a>(
@@ -323,29 +322,6 @@ impl Item for MultiDiffView {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.editor.read(cx).active_project_path(cx)
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.rhs_editor().update(cx, |editor, _| {
-                editor.set_nav_history(Some(nav_history));
-            });
-        });
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.editor
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
     fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {

@@ -62,7 +62,7 @@ use ui::{
 };
 use util::{ResultExt, debug_panic};
 use workspace::{
-    ItemNavHistory, ModalView, Workspace,
+    ItemNavigation, ModalView, Workspace,
     item::{Item, ItemEvent, TabTooltipContent},
 };
 
@@ -1481,7 +1481,6 @@ pub struct GitGraph {
     commit_details_message_collapsed: bool,
     changed_files_expanded_dirs: HashMap<RepoPath, bool>,
     pending_select_sha: Option<Oid>,
-    nav_history: Option<ItemNavHistory>,
 }
 
 impl GitGraph {
@@ -1746,7 +1745,6 @@ impl GitGraph {
             commit_details_message_collapsed: false,
             changed_files_expanded_dirs: HashMap::default(),
             pending_select_sha: None,
-            nav_history: None,
         };
 
         this.fetch_initial_graph_data(cx);
@@ -4807,19 +4805,8 @@ impl Item for GitGraph {
         f(*event)
     }
 
-    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(nav_history) = self.nav_history.as_mut() {
-            nav_history.push::<()>(None, None, cx);
-        }
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        self.nav_history = Some(nav_history);
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
     }
 }
 

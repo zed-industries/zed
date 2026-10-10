@@ -32,7 +32,7 @@ use project::{
 };
 use settings::Settings;
 use std::{
-    any::{Any, TypeId},
+    any::TypeId,
     cmp,
     ops::{Range, RangeInclusive},
     sync::Arc,
@@ -45,7 +45,7 @@ pub use toolbar_controls::ToolbarControls;
 use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
 use workspace::{
-    ItemNavHistory, Workspace,
+    ItemNavigation, Workspace,
     item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -736,19 +736,8 @@ impl Item for ProjectDiagnosticsEditor {
         Editor::to_item_events(event, f)
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.deactivated(window, cx));
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.editor
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.editor.clone())
     }
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
@@ -812,17 +801,6 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.editor.read(cx).active_project_path(cx)
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
-        });
     }
 
     fn can_split(&self) -> bool {

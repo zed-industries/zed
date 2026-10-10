@@ -33,7 +33,7 @@ use workspace::{
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
-    item::SerializableItem,
+    item::{ItemNavigation, SerializableItem},
     move_active_item, pane,
 };
 
@@ -1462,6 +1462,10 @@ impl EventEmitter<()> for FailedToSpawnTerminal {}
 
 impl workspace::Item for FailedToSpawnTerminal {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Excluded
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         SharedString::new_static("Failed to spawn terminal")

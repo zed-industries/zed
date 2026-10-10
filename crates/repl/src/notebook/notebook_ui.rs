@@ -21,7 +21,7 @@ use settings::Settings as _;
 use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
-use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
+use workspace::{Item, ItemHandle, ItemNavigation, Pane, ProjectItem, ToolbarItemLocation};
 
 use super::{Cell, CellEvent, CellPosition, MarkdownCellEvent, RenderableCell};
 
@@ -1824,6 +1824,10 @@ impl EventEmitter<()> for NotebookEditor {}
 impl Item for NotebookEditor {
     type Event = ();
 
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
+
     fn can_split(&self) -> bool {
         true
     }
@@ -1889,15 +1893,6 @@ impl Item for NotebookEditor {
     // TODO
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         None
-    }
-
-    fn set_nav_history(
-        &mut self,
-        _: workspace::ItemNavHistory,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) {
-        // TODO
     }
 
     fn can_save(&self, _cx: &App) -> bool {

@@ -32,7 +32,7 @@ use theme::ActiveTheme;
 use ui::{CommonAnimationExt as _, KeyBinding, prelude::*};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
-    CloseActiveItem, ItemNavHistory, Workspace,
+    CloseActiveItem, Workspace,
     item::{Item, SaveOptions},
 };
 use ztracing::instrument;
@@ -763,35 +763,6 @@ impl DiffMultibuffer {
     ) {
         self.editor.update(cx, |editor, cx| {
             editor.added_to_workspace(workspace, window, cx)
-        });
-    }
-
-    pub(crate) fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
-            editor.rhs_editor().update(cx, |primary_editor, cx| {
-                primary_editor.deactivated(window, cx);
-            })
-        });
-    }
-
-    pub(crate) fn navigate(
-        &mut self,
-        data: Arc<dyn std::any::Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.editor.update(cx, |editor, cx| {
-            editor.rhs_editor().update(cx, |primary_editor, cx| {
-                primary_editor.navigate(data, window, cx)
-            })
-        })
-    }
-
-    pub(crate) fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
-            editor.rhs_editor().update(cx, |primary_editor, _| {
-                primary_editor.set_nav_history(Some(nav_history));
-            })
         });
     }
 

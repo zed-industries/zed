@@ -24,8 +24,8 @@ use ui::{
     Icon, IconButton, IconName, IconSize, Label, TextSize, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
-    Item, ItemHandle, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
-    notifications::NotificationId,
+    Item, ItemHandle, ItemNavigation, Toast, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace, notifications::NotificationId,
 };
 
 const MAX_EVENTS: usize = 10_000;
@@ -482,6 +482,10 @@ impl EventEmitter<TelemetryLogEvent> for TelemetryLogView {}
 
 impl Item for TelemetryLogView {
     type Event = TelemetryLogEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Telemetry Log".into()
