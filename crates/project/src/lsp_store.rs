@@ -305,7 +305,8 @@ pub struct DocumentDiagnostics {
 
 #[derive(Clone, Debug)]
 struct DocumentSelectorContext {
-    language_id: String,
+    /// `None` for documents without a language, which no `language` filter matches.
+    language_id: Option<String>,
     scheme: &'static str,
 }
 
@@ -5987,7 +5988,7 @@ impl LspStore {
             .find(|adapter| &adapter.name() == server_name)
             .map(|adapter| adapter.language_id(language))?;
         Some(DocumentSelectorContext {
-            language_id,
+            language_id: Some(language_id),
             scheme: "file",
         })
     }
@@ -9577,10 +9578,15 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let language_servers: Vec<_> = buffer.update(cx, |buffer, cx| {
+            let local = self.as_local()?;
             Some(
-                self.as_local()?
+                local
                     .language_servers_for_buffer(buffer, cx)
-                    .map(|i| i.1.clone())
+                    .map(|(adapter, server)| {
+                        let sync_kind =
+                            text_document_sync_kind_for_buffer(local, buffer, adapter, server);
+                        (server.clone(), sync_kind)
+                    })
                     .collect(),
             )
         })?;
@@ -9595,9 +9601,7 @@ impl LspStore {
         let next_snapshot = buffer.text_snapshot();
         let line_ending = next_snapshot.line_ending();
 
-        for language_server in language_servers {
-            let language_server = language_server.clone();
-
+        for (language_server, document_sync_kind) in language_servers {
             let buffer_snapshots = self
                 .as_local_mut()?
                 .buffer_snapshots
@@ -9640,15 +9644,6 @@ impl LspStore {
                     })
                     .collect()
             };
-
-            let document_sync_kind = language_server
-                .capabilities()
-                .text_document_sync
-                .as_ref()
-                .and_then(|sync| match sync {
-                    lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
-                    lsp::TextDocumentSyncCapability::Options(options) => options.change,
-                });
 
             let build_change = || {
                 if line_ending_changed {
@@ -9710,22 +9705,33 @@ impl LspStore {
         };
         let local = self.as_local()?;
 
-        for server in local.language_servers_for_worktree(worktree_id) {
-            if let Some(include_text) = include_text(server.as_ref()) {
-                let text = if include_text {
-                    Some(buffer.read(cx).text())
-                } else {
-                    None
+        // `didSave` registrations may select documents that were never opened in the server,
+        // so every server of the worktree is a candidate.
+        let servers_to_notify = local
+            .language_servers_for_worktree(worktree_id)
+            .filter_map(|server| {
+                let LanguageServerState::Running { adapter, .. } =
+                    local.language_servers.get(&server.server_id())?
+                else {
+                    return None;
                 };
-                server
-                    .notify::<lsp::notification::DidSaveTextDocument>(
-                        lsp::DidSaveTextDocumentParams {
-                            text_document: text_document.clone(),
-                            text,
-                        },
-                    )
-                    .ok();
-            }
+                let include_text =
+                    did_save_include_text_for_buffer(local, buffer.read(cx), adapter, server)?;
+                Some((server.clone(), include_text))
+            })
+            .collect::<Vec<_>>();
+        for (server, include_text) in servers_to_notify {
+            let text = if include_text {
+                Some(buffer.read(cx).text())
+            } else {
+                None
+            };
+            server
+                .notify::<lsp::notification::DidSaveTextDocument>(lsp::DidSaveTextDocumentParams {
+                    text_document: text_document.clone(),
+                    text,
+                })
+                .ok();
         }
 
         let language_servers = buffer.update(cx, |buffer, cx| {
@@ -14899,12 +14905,14 @@ impl LspStore {
 fn document_selector_context_for_buffer(
     buffer: &Buffer,
     adapter: &CachedLspAdapter,
-) -> Option<DocumentSelectorContext> {
-    let language = buffer.language()?;
-    Some(document_selector_context_for_language(
-        &language.name(),
-        adapter,
-    ))
+) -> DocumentSelectorContext {
+    match buffer.language() {
+        Some(language) => document_selector_context_for_language(&language.name(), adapter),
+        None => DocumentSelectorContext {
+            language_id: None,
+            scheme: "file",
+        },
+    }
 }
 
 fn document_selector_context_for_language(
@@ -14912,7 +14920,7 @@ fn document_selector_context_for_language(
     adapter: &CachedLspAdapter,
 ) -> DocumentSelectorContext {
     DocumentSelectorContext {
-        language_id: adapter.language_id(language),
+        language_id: Some(adapter.language_id(language)),
         scheme: "file",
     }
 }
@@ -14927,7 +14935,7 @@ fn document_selector_matches(
 
     document_selector.iter().any(|filter| {
         if let Some(language) = &filter.language
-            && language != &context.language_id
+            && context.language_id.as_ref() != Some(language)
         {
             return false;
         }
@@ -14985,10 +14993,7 @@ fn dynamic_text_document_registration_allows_buffer(
     buffer: &Buffer,
     adapter: &CachedLspAdapter,
 ) -> bool {
-    let Some(context) = document_selector_context_for_buffer(buffer, adapter) else {
-        return true;
-    };
-
+    let context = document_selector_context_for_buffer(buffer, adapter);
     document_selector_matches(registration.document_selector.as_ref(), &context)
 }
 
@@ -16775,21 +16780,84 @@ fn related_information_from_lsp(
     )
 }
 
-fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
-    match server.capabilities().text_document_sync.as_ref()? {
-        lsp::TextDocumentSyncCapability::Options(opts) => match opts.save.as_ref()? {
-            // Server wants didSave but didn't specify includeText.
-            lsp::TextDocumentSyncSaveOptions::Supported(true) => Some(false),
-            // Server doesn't want didSave at all.
-            lsp::TextDocumentSyncSaveOptions::Supported(false) => None,
-            // Server provided SaveOptions.
-            lsp::TextDocumentSyncSaveOptions::SaveOptions(save_options) => {
-                Some(save_options.include_text.unwrap_or(false))
-            }
-        },
-        // We do not have any save info. Kind affects didChange only.
-        lsp::TextDocumentSyncCapability::Kind(_) => None,
+/// Returns `None` when the server does not want `didSave` for the buffer, otherwise whether
+/// the notification should include the buffer's text.
+fn did_save_include_text_for_buffer(
+    local: &LocalLspStore,
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+    server: &LanguageServer,
+) -> Option<bool> {
+    fn save_options(
+        capabilities: &lsp::ServerCapabilities,
+    ) -> Option<&lsp::TextDocumentSyncSaveOptions> {
+        match capabilities.text_document_sync.as_ref()? {
+            lsp::TextDocumentSyncCapability::Options(options) => options.save.as_ref(),
+            // We do not have any save info. Kind affects didChange only.
+            lsp::TextDocumentSyncCapability::Kind(_) => None,
+        }
     }
+
+    let server_id = server.server_id();
+    let opened_in_server = local
+        .buffers_opened_in_servers
+        .get(&buffer.remote_id())
+        .is_some_and(|servers| servers.contains(&server_id));
+    let context = document_selector_context_for_buffer(buffer, adapter);
+    // Later registrations take precedence over earlier ones. Registrations without a selector
+    // stand for the documents the client selects for the server, like the static options.
+    let registered_save_options = local
+        .language_server_dynamic_registrations
+        .get(&server_id)
+        .and_then(|registrations| registrations.text_documents.get("textDocument/didSave"))
+        .into_iter()
+        .flat_map(|registrations| registrations.values())
+        .filter(|registration| match registration.document_selector {
+            Some(_) => document_selector_matches(registration.document_selector.as_ref(), &context),
+            None => opened_in_server,
+        })
+        .filter_map(|registration| save_options(&registration.server_capabilities))
+        .next_back();
+    // Static options only cover the documents the server was opened with, while
+    // registrations may select any document, like the manifests a server reloads on save.
+    let save_options = match registered_save_options {
+        Some(save_options) => save_options,
+        None if opened_in_server => {
+            save_options(local.initial_server_capabilities.get(&server_id)?)?
+        }
+        None => return None,
+    };
+    match save_options {
+        // Server wants didSave but didn't specify includeText.
+        lsp::TextDocumentSyncSaveOptions::Supported(true) => Some(false),
+        // Server doesn't want didSave at all.
+        lsp::TextDocumentSyncSaveOptions::Supported(false) => None,
+        // Server provided SaveOptions.
+        lsp::TextDocumentSyncSaveOptions::SaveOptions(save_options) => {
+            Some(save_options.include_text.unwrap_or(false))
+        }
+    }
+}
+
+fn text_document_sync_kind_for_buffer(
+    local: &LocalLspStore,
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+    server: &LanguageServer,
+) -> Option<lsp::TextDocumentSyncKind> {
+    // Later registrations take precedence over earlier ones and the static options.
+    text_document_capabilities_for_buffer(local, "textDocument/didChange", buffer, adapter, server)
+        .filter_map(|capabilities| {
+            match capabilities
+                .server_capabilities
+                .text_document_sync
+                .as_ref()?
+            {
+                lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
+                lsp::TextDocumentSyncCapability::Options(options) => options.change,
+            }
+        })
+        .last()
 }
 
 /// Completion items are displayed in a `UniformList`.
@@ -17438,7 +17506,7 @@ mod tests {
 
     fn rust_file_context() -> DocumentSelectorContext {
         DocumentSelectorContext {
-            language_id: "rust".to_string(),
+            language_id: Some("rust".to_string()),
             scheme: "file",
         }
     }

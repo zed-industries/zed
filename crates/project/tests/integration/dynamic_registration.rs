@@ -2744,6 +2744,300 @@ async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::Tes
     );
 }
 
+#[gpui::test]
+async fn test_did_change_registration_respects_document_selector(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, mut fake_server) = setup_dynamic_registration_test(
+        cx,
+        lsp::ServerCapabilities {
+            text_document_sync: Some(lsp::TextDocumentSyncCapability::Kind(
+                lsp::TextDocumentSyncKind::INCREMENTAL,
+            )),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/didChange";
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let uri = lsp::Uri::from_file_path(path!("/the-root/a.rs")).unwrap();
+    let sync_options = |sync_kind: lsp::TextDocumentSyncKind| {
+        Some(lsp::TextDocumentSyncCapability::Options(
+            lsp::TextDocumentSyncOptions {
+                change: Some(sync_kind),
+                ..lsp::TextDocumentSyncOptions::default()
+            },
+        ))
+    };
+
+    register_capability(
+        &fake_server,
+        method,
+        "change-python",
+        Some(json!({
+            "documentSelector": [{ "language": "python" }],
+            "syncKind": 1,
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).text_document_sync,
+        sync_options(lsp::TextDocumentSyncKind::FULL),
+        "expected the latest registration to be mirrored into the merged capabilities",
+    );
+    assert_eq!(
+        edit_and_receive_change(&buffer, &mut fake_server, cx).await,
+        (uri.clone(), true),
+        "expected the static incremental sync for a document outside the registration's selector",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "change-rust",
+        Some(json!({
+            "documentSelector": [{ "language": "rust" }],
+            "syncKind": 1,
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        edit_and_receive_change(&buffer, &mut fake_server, cx).await,
+        (uri.clone(), false),
+        "expected the matching registration's full sync to be used",
+    );
+
+    unregister_capabilities(&fake_server, method, &["change-python", "change-rust"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).text_document_sync,
+        sync_options(lsp::TextDocumentSyncKind::INCREMENTAL),
+        "expected unregistering to restore the static sync kind",
+    );
+    assert_eq!(
+        edit_and_receive_change(&buffer, &mut fake_server, cx).await,
+        (uri, true),
+        "expected the static incremental sync after unregistering",
+    );
+}
+
+#[gpui::test]
+async fn test_did_save_registration_respects_document_selector(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, mut fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let method = "textDocument/didSave";
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let uri = lsp::Uri::from_file_path(path!("/the-root/a.rs")).unwrap();
+    let save = async |cx: &mut gpui::TestAppContext| {
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+    };
+
+    // A save notified through this registration would carry the buffer's text.
+    register_capability(
+        &fake_server,
+        method,
+        "save-python",
+        Some(json!({
+            "documentSelector": [{ "language": "python" }],
+            "includeText": true,
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    save(cx).await;
+
+    register_capability(
+        &fake_server,
+        method,
+        "save-rust",
+        Some(json!({
+            "documentSelector": [{ "language": "rust" }],
+            "includeText": false,
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    save(cx).await;
+    let params = fake_server
+        .receive_notification::<lsp::notification::DidSaveTextDocument>()
+        .await;
+    assert_eq!(
+        (params.text_document.uri, params.text),
+        (uri.clone(), None),
+        "expected only the registration matching the document to notify its saves",
+    );
+
+    unregister_capabilities(&fake_server, method, &["save-python", "save-rust"]).await;
+    register_capability(&fake_server, method, "save-all", None).await;
+    cx.executor().run_until_parked();
+    save(cx).await;
+    let params = fake_server
+        .receive_notification::<lsp::notification::DidSaveTextDocument>()
+        .await;
+    assert_eq!(
+        (params.text_document.uri, params.text),
+        (uri, None),
+        "expected a registration without options to apply to every document, without text",
+    );
+}
+
+#[gpui::test]
+async fn test_did_save_registration_selects_documents_not_opened_in_server(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, mut fake_server) = setup_dynamic_registration_test(
+        cx,
+        lsp::ServerCapabilities {
+            text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                lsp::TextDocumentSyncOptions {
+                    save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
+                    ..lsp::TextDocumentSyncOptions::default()
+                },
+            )),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await;
+    let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+    fs.insert_tree(path!("/the-root"), json!({ "Cargo.toml": "" }))
+        .await;
+    let method = "textDocument/didSave";
+
+    let (rust_buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let manifest_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/the-root/Cargo.toml"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let rust_uri = lsp::Uri::from_file_path(path!("/the-root/a.rs")).unwrap();
+    let manifest_uri = lsp::Uri::from_file_path(path!("/the-root/Cargo.toml")).unwrap();
+    let save = async |buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext| {
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+    };
+
+    // The static save capability does not cover the manifest, so the next notification is
+    // the one for the Rust buffer.
+    save(&manifest_buffer, cx).await;
+    save(&rust_buffer, cx).await;
+    assert_eq!(
+        fake_server
+            .receive_notification::<lsp::notification::DidSaveTextDocument>()
+            .await
+            .text_document
+            .uri,
+        rust_uri,
+        "expected the static save capability to only cover documents opened in the server",
+    );
+
+    // The manifest has no language, so a registration for a language does not select it.
+    register_capability(
+        &fake_server,
+        method,
+        "save-rust",
+        Some(json!({ "documentSelector": [{ "language": "rust" }] })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    save(&manifest_buffer, cx).await;
+    save(&rust_buffer, cx).await;
+    assert_eq!(
+        fake_server
+            .receive_notification::<lsp::notification::DidSaveTextDocument>()
+            .await
+            .text_document
+            .uri,
+        rust_uri,
+        "expected a language filter not to select a document without a language",
+    );
+
+    // A registration without a selector stands for the documents the server was opened with.
+    register_capability(&fake_server, method, "save-opened", None).await;
+    cx.executor().run_until_parked();
+    save(&manifest_buffer, cx).await;
+    save(&rust_buffer, cx).await;
+    assert_eq!(
+        fake_server
+            .receive_notification::<lsp::notification::DidSaveTextDocument>()
+            .await
+            .text_document
+            .uri,
+        rust_uri,
+        "expected a registration without a selector to only cover documents opened in the server",
+    );
+
+    // Like the registration rust-analyzer makes to reload its workspace on manifest saves.
+    register_capability(
+        &fake_server,
+        method,
+        "save-files",
+        Some(json!({
+            "documentSelector": [{ "scheme": "file" }],
+            "includeText": false,
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    save(&manifest_buffer, cx).await;
+    let params = fake_server
+        .receive_notification::<lsp::notification::DidSaveTextDocument>()
+        .await;
+    assert_eq!(
+        (params.text_document.uri, params.text),
+        (manifest_uri, None),
+        "expected a registration selecting the manifest to notify its saves",
+    );
+}
+
+/// Returns the URI of the change notification and whether the change was incremental.
+async fn edit_and_receive_change(
+    buffer: &Entity<Buffer>,
+    fake_server: &mut lsp::FakeLanguageServer,
+    cx: &mut gpui::TestAppContext,
+) -> (lsp::Uri, bool) {
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "x")], None, cx));
+    let params = fake_server
+        .receive_notification::<lsp::notification::DidChangeTextDocument>()
+        .await;
+    let [change] = params.content_changes.as_slice() else {
+        panic!("expected a single content change, got {params:?}");
+    };
+    (params.text_document.uri, change.range.is_some())
+}
+
 async fn setup_dynamic_registration_test(
     cx: &mut gpui::TestAppContext,
     capabilities: lsp::ServerCapabilities,
