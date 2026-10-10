@@ -1,4 +1,5 @@
-use super::{AnyWeakView, ViewElementCacheKey, ViewElementState, paint_view, prepaint_view};
+use super::{AnyWeakView, RetainedViewCacheKey, RetainedViewState, paint_view, prepaint_view};
+use crate::element::InternedHandle;
 use crate::{
     AnyElement, App, EntityId, GlobalElementId, PaintIndex, PrepaintStateIndex, ReusedSubtree,
     Window, window::ViewExecutionScope,
@@ -19,6 +20,7 @@ pub(crate) enum SpliceFallback {
     Transaction,
     Autoscroll,
     Accessibility,
+    #[cfg_attr(not(any(feature = "inspector", debug_assertions)), allow(dead_code))]
     Inspector,
     ExecutionScope,
     MissingView,
@@ -36,9 +38,9 @@ struct ViewRecord {
 
 struct RetainedView {
     entity: EntityId,
-    global_id: GlobalElementId,
+    element_path: InternedHandle,
     view: Option<AnyWeakView>,
-    state: Option<ViewElementState>,
+    state: Option<Box<RetainedViewState>>,
     prepaint_scope: Option<ViewExecutionScope>,
     paint_scope: Option<ViewExecutionScope>,
     pending_paint: Option<Vec<SpliceChild>>,
@@ -56,15 +58,30 @@ struct SpliceChild {
 #[derive(Default)]
 pub(crate) struct ViewStore {
     records: Vec<ViewRecord>,
-    cold: Vec<Option<Box<RetainedView>>>,
+    cold: Vec<Option<RetainedView>>,
     free: Vec<u32>,
-    by_occurrence: FxHashMap<(EntityId, GlobalElementId), ViewOccurrenceId>,
+    by_occurrence: FxHashMap<(EntityId, InternedHandle), ViewOccurrenceId>,
     by_entity: FxHashMap<EntityId, Vec<ViewOccurrenceId>>,
     by_dependency: FxHashMap<EntityId, Vec<ViewOccurrenceId>>,
     epoch: u64,
 }
 
 impl ViewStore {
+    pub(crate) fn element_path(&self, id: ViewOccurrenceId) -> InternedHandle {
+        self.retained(id).element_path
+    }
+
+    pub(crate) fn extend_accessed(
+        &self,
+        id: ViewOccurrenceId,
+        entities: &mut collections::FxHashSet<EntityId>,
+    ) {
+        let retained = self.retained(id);
+        entities.insert(retained.entity);
+        entities.extend(retained.own_prepaint_entities.iter().copied());
+        entities.extend(retained.own_paint_entities.iter().copied());
+    }
+
     fn record(&self, id: ViewOccurrenceId) -> &ViewRecord {
         let record = &self.records[id.index as usize];
         debug_assert_eq!(record.generation, id.generation);
@@ -79,25 +96,25 @@ impl ViewStore {
 
     fn retained(&self, id: ViewOccurrenceId) -> &RetainedView {
         self.cold[id.index as usize]
-            .as_deref()
+            .as_ref()
             .expect("live occurrence")
     }
 
     fn retained_mut(&mut self, id: ViewOccurrenceId) -> &mut RetainedView {
         self.cold[id.index as usize]
-            .as_deref_mut()
+            .as_mut()
             .expect("live occurrence")
     }
 
     fn insert(
         &mut self,
         entity: EntityId,
-        global_id: &GlobalElementId,
+        element_path: InternedHandle,
         parent: Option<ViewOccurrenceId>,
         view: Option<&AnyWeakView>,
         fallback: Option<SpliceFallback>,
     ) -> ViewOccurrenceId {
-        let key = (entity, global_id.clone());
+        let key = (entity, element_path);
         let id = if let Some(id) = self.by_occurrence.get(&key) {
             *id
         } else {
@@ -119,9 +136,13 @@ impl ViewStore {
                 index,
                 generation: self.records[index as usize].generation,
             };
-            self.cold[index as usize] = Some(Box::new(RetainedView {
+            self.records[index as usize].own_dirty = false;
+            self.records[index as usize].descendant_dirty = false;
+            self.records[index as usize].blocked = None;
+            self.records[index as usize].dirty_path_blocked = None;
+            self.cold[index as usize] = Some(RetainedView {
                 entity,
-                global_id: global_id.clone(),
+                element_path,
                 view: view.cloned(),
                 state: None,
                 prepaint_scope: None,
@@ -129,7 +150,7 @@ impl ViewStore {
                 pending_paint: None,
                 own_prepaint_entities: Default::default(),
                 own_paint_entities: Default::default(),
-            }));
+            });
             self.by_occurrence.insert(key, id);
             self.by_entity.entry(entity).or_default().push(id);
             id
@@ -177,15 +198,17 @@ impl ViewStore {
                     }
                 }
                 self.by_occurrence
-                    .remove(&(retained.entity, retained.global_id));
+                    .remove(&(retained.entity, retained.element_path));
                 if let Some(occurrences) = self.by_entity.get_mut(&retained.entity) {
                     occurrences.retain(|id| id.index as usize != index);
                     if occurrences.is_empty() {
                         self.by_entity.remove(&retained.entity);
                     }
                 }
-                record.generation = record.generation.wrapping_add(1);
-                self.free.push(index as u32);
+                if let Some(generation) = record.generation.checked_add(1) {
+                    record.generation = generation;
+                    self.free.push(index as u32);
+                }
             } else {
                 record.own_dirty = false;
                 record.descendant_dirty = false;
@@ -263,8 +286,7 @@ impl ViewStore {
     pub(crate) fn append_own_access(
         &mut self,
         mut parent: Option<ViewOccurrenceId>,
-        own: collections::FxHashSet<EntityId>,
-        all: collections::FxHashSet<EntityId>,
+        mut own: collections::FxHashSet<EntityId>,
         paint: bool,
     ) {
         while let Some(id) = parent {
@@ -273,6 +295,7 @@ impl ViewStore {
                 continue;
             }
             let retained = self.retained_mut(id);
+            own.remove(&retained.entity);
             let new_dependencies = own
                 .iter()
                 .filter(|entity| {
@@ -286,12 +309,6 @@ impl ViewStore {
             } else {
                 retained.own_prepaint_entities.extend(own);
             }
-            retained
-                .state
-                .as_mut()
-                .expect("cached state")
-                .accessed_entities
-                .extend(all);
             for entity in new_dependencies {
                 self.by_dependency.entry(entity).or_default().push(id);
             }
@@ -302,11 +319,20 @@ impl ViewStore {
     pub(super) fn set_own_access(
         &mut self,
         id: ViewOccurrenceId,
-        own: collections::FxHashSet<EntityId>,
-        all: collections::FxHashSet<EntityId>,
+        mut own: collections::FxHashSet<EntityId>,
         paint: bool,
     ) {
         let retained = self.retained_mut(id);
+        own.remove(&retained.entity);
+        if own.is_empty() {
+            own = Default::default();
+        }
+        if own.is_empty()
+            && retained.own_prepaint_entities.is_empty()
+            && retained.own_paint_entities.is_empty()
+        {
+            return;
+        }
         let old_dependencies = retained
             .own_prepaint_entities
             .union(&retained.own_paint_entities)
@@ -314,20 +340,9 @@ impl ViewStore {
             .collect::<Vec<_>>();
         if paint {
             retained.own_paint_entities = own;
-            retained
-                .state
-                .as_mut()
-                .expect("cached state")
-                .accessed_entities
-                .extend(all);
         } else {
             retained.own_prepaint_entities = own;
             retained.own_paint_entities.clear();
-            retained
-                .state
-                .as_mut()
-                .expect("cached state")
-                .accessed_entities = all;
         }
         let dependencies = retained
             .own_prepaint_entities
@@ -377,18 +392,22 @@ impl ViewStore {
         self.record(id).descendant_dirty
     }
 
-    pub(super) fn state(&self, id: ViewOccurrenceId) -> Option<&ViewElementState> {
-        self.retained(id).state.as_ref()
+    pub(super) fn state(&self, id: ViewOccurrenceId) -> Option<&RetainedViewState> {
+        self.retained(id).state.as_deref()
     }
 
     pub(super) fn set_state(
         &mut self,
         id: ViewOccurrenceId,
-        state: ViewElementState,
+        state: RetainedViewState,
         scope: ViewExecutionScope,
     ) {
         let retained = self.retained_mut(id);
-        retained.state = Some(state);
+        if let Some(previous) = retained.state.as_mut() {
+            **previous = state;
+        } else {
+            retained.state = Some(Box::new(state));
+        }
         retained.prepaint_scope = Some(scope);
         retained.pending_paint = None;
     }
@@ -469,15 +488,37 @@ impl Window {
         if view.is_none() && self.current_view_occurrence.is_none() {
             return None;
         }
+        global_id?;
         let id = self.view_store.insert(
             entity,
-            global_id?,
+            self.element_id_stack.handle(),
             self.current_view_occurrence,
             view,
             self.retained_scope_fallback,
         );
         self.next_frame.prepaint_views.push(id);
         Some(id)
+    }
+
+    pub(crate) fn register_retained_access(&mut self, id: ViewOccurrenceId, cx: &mut App) {
+        if let Some(entities) = self.cached_entity_access_stack.last_mut() {
+            self.view_store.extend_accessed(id, entities);
+        } else {
+            self.view_store
+                .extend_accessed(id, &mut cx.entities.accessed_entities.get_mut());
+        }
+    }
+
+    pub(crate) fn reuse_retained_prepaint(
+        &mut self,
+        range: Range<PrepaintStateIndex>,
+        cx: &mut App,
+    ) {
+        let start = self.next_frame.prepaint_views.len();
+        self.reuse_prepaint(range);
+        for index in start..self.next_frame.prepaint_views.len() {
+            self.register_retained_access(self.next_frame.prepaint_views[index], cx);
+        }
     }
 
     fn dirty_view_children(&self, id: ViewOccurrenceId) -> Vec<ViewOccurrenceId> {
@@ -584,13 +625,13 @@ impl Window {
             old_paint_range.start.views_index -= 1;
             // The cached-state access is outside the content range in both phases.
             old_paint_range.start = old_paint_range.start.with_cached_state_access();
-            let cache_key: ViewElementCacheKey = state.cache_key.clone();
-            let global_id = retained.global_id.clone();
+            let cache_key: RetainedViewCacheKey = state.cache_key.clone();
+            let global_id = self.element_id_interner.global_id(retained.element_path);
             let entity = retained.entity;
             let view = retained.view.clone().expect("retained child renderer");
             let mut scope = retained.prepaint_scope.clone().expect("prepaint scope");
             let paint_scope = retained.paint_scope.clone().expect("paint scope");
-            self.reuse_prepaint(cursor..child_range.start);
+            self.reuse_retained_prepaint(cursor..child_range.start, cx);
             scope.dispatch_node = self
                 .dispatch_replay
                 .iter()
@@ -620,7 +661,7 @@ impl Window {
             });
             cursor = child_range.end;
         }
-        self.reuse_prepaint(cursor..ancestor_range.end);
+        self.reuse_retained_prepaint(cursor..ancestor_range.end, cx);
         self.view_store.retained_mut(id).pending_paint = Some(pending_paint);
     }
 
@@ -644,7 +685,7 @@ impl Window {
         for mut child in children {
             self.reuse_paint(cursor..child.old_paint_range.start);
             let retained = self.view_store.retained(child.occurrence);
-            let global_id = retained.global_id.clone();
+            let global_id = self.element_id_interner.global_id(retained.element_path);
             let entity = retained.entity;
             child.paint_scope.dispatch_node = self
                 .dispatch_replay
@@ -689,6 +730,7 @@ mod tests {
         hover_color: Rc<Cell<u32>>,
         tooltip_color: Rc<Cell<u32>>,
         tooltip: Option<Entity<crate::EmptyView>>,
+        dependency: Option<Entity<Cell<usize>>>,
     }
 
     impl Render for Leaf {
@@ -700,6 +742,7 @@ mod tests {
             let tooltip_color = self.tooltip_color.clone();
             let focus = self.focus.clone();
             let focus_on_prepaint = self.focus_on_prepaint;
+            let dependency = self.dependency.clone();
             let content = div()
                 .id("leaf")
                 .size(px(20.))
@@ -727,7 +770,11 @@ mod tests {
                             window.focus(focus, cx);
                         }
                     },
-                    |_, _, _, _| {},
+                    move |_, _, _, cx| {
+                        if let Some(dependency) = dependency.as_ref() {
+                            std::hint::black_box(dependency.read(cx).get());
+                        }
+                    },
                 ))
                 .child(content)
         }
@@ -1330,6 +1377,60 @@ mod tests {
             })
             .expect("tooltip for spliced child");
         }
+    }
+
+    #[crate::test]
+    fn spliced_paint_dependency_survives_complete_ancestor_reuse(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx, false, false, false);
+        let dependency = cx.new(|_| Cell::new(0));
+        fixture.capture(cx);
+        fixture.leaves[0].update(cx, |leaf, cx| {
+            leaf.dependency = Some(dependency.clone());
+            cx.notify();
+        });
+        fixture.capture(cx);
+        let renders = fixture.leaves[0].read_with(cx, |leaf, _| leaf.renders.get());
+        for _ in 0..3 {
+            fixture.capture(cx);
+        }
+        dependency.update(cx, |dependency, cx| {
+            dependency.set(1);
+            cx.notify();
+        });
+        fixture.capture(cx);
+        assert_eq!(
+            fixture.leaves[0].read_with(cx, |leaf, _| leaf.renders.get()),
+            renders + 1
+        );
+        assert_eq!(fixture.branch_renders.get(), 1);
+        assert_eq!(fixture.outer_renders.get(), 1);
+    }
+
+    #[crate::test]
+    fn disabled_splicing_does_not_allocate_retained_storage(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx, true, false, false);
+        fixture.capture(cx);
+        cx.update_window(fixture.window, |_, window, _| {
+            assert_eq!(window.view_store.records.capacity(), 0);
+            assert_eq!(window.view_store.cold.capacity(), 0);
+            assert_eq!(window.view_store.by_occurrence.capacity(), 0);
+            assert_eq!(window.dispatch_replay.capacity(), 0);
+            assert_eq!(window.next_frame.prepaint_views.capacity(), 0);
+            assert_eq!(window.rendered_frame.paint_views.capacity(), 0);
+        })
+        .expect("legacy path allocates no retention metadata");
+    }
+
+    #[test]
+    fn retained_storage_footprint() {
+        eprintln!(
+            "retained storage: hot={} cold={} cache={} scope={}",
+            std::mem::size_of::<super::ViewRecord>(),
+            std::mem::size_of::<Option<super::RetainedView>>(),
+            std::mem::size_of::<super::RetainedViewState>(),
+            std::mem::size_of::<crate::window::ViewExecutionScope>(),
+        );
+        assert!(std::mem::size_of::<crate::window::ViewExecutionScope>() <= 128);
     }
 
     #[crate::test]

@@ -306,6 +306,7 @@ impl DispatchTree {
 
             if source_stack.is_empty()
                 && let Some(parent) = source_node.parent.and_then(&mut remap_parent)
+                && self.active_node_id() != Some(parent)
             {
                 self.set_active_node(parent);
             }
@@ -321,7 +322,9 @@ impl DispatchTree {
             self.pop_node();
         }
         if let Some(original_node) = original_node {
-            self.set_active_node(original_node);
+            if self.active_node_id() != Some(original_node) {
+                self.set_active_node(original_node);
+            }
         } else {
             while self.active_node_id().is_some() {
                 self.pop_node();

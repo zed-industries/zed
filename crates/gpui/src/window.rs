@@ -1027,6 +1027,7 @@ pub(crate) struct DeferredDraw {
     parent_node: DispatchNodeId,
     element_id_stack: ElementIdStack,
     text_style_stack: Vec<TextStyleRefinement>,
+    text_style_base: Option<Rc<TextStyle>>,
     content_mask: Option<ContentMask<Pixels>>,
     rem_size: Pixels,
     element: Option<AnyElement>,
@@ -1140,13 +1141,13 @@ impl PaintIndex {
 
 #[derive(Clone)]
 pub(crate) struct ViewExecutionScope {
-    element_ids: ElementIdStack,
-    text_styles: Vec<TextStyleRefinement>,
-    rendered_entities: Vec<EntityId>,
-    offsets: Vec<Point<Pixels>>,
-    content_masks: Vec<ContentMask<Pixels>>,
-    rem_overrides: SmallVec<[Pixels; 8]>,
-    image_caches: Vec<AnyImageCache>,
+    element_path: InternedHandle,
+    text_style: Rc<TextStyle>,
+    current_view: Option<EntityId>,
+    offset: Point<Pixels>,
+    content_mask: ContentMask<Pixels>,
+    rem_override: Option<Pixels>,
+    image_cache: Option<Rc<AnyImageCache>>,
     opacity: f32,
     rem_size: Pixels,
     scale_factor: f32,
@@ -1451,6 +1452,9 @@ pub struct Window {
     text_style_stack: Vec<TextStyleRefinement>,
     // Keep the large resolved value off Window and retain its allocation across invalidations.
     resolved_text_style: RefCell<Option<Box<Option<TextStyle>>>>,
+    retained_text_style: RefCell<Option<Rc<TextStyle>>>,
+    retained_text_style_base: Option<Rc<TextStyle>>,
+    scope_image_caches: FxHashMap<EntityId, std::rc::Weak<AnyImageCache>>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
@@ -2374,6 +2378,9 @@ impl Window {
             element_id_interner,
             text_style_stack: Vec::new(),
             resolved_text_style: RefCell::new(None),
+            retained_text_style: RefCell::new(None),
+            retained_text_style_base: None,
+            scope_image_caches: FxHashMap::default(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -2525,15 +2532,34 @@ impl Window {
         (own, all)
     }
 
-    pub(crate) fn capture_view_scope(&self) -> ViewExecutionScope {
+    pub(crate) fn capture_view_scope(&mut self) -> ViewExecutionScope {
+        let image_cache = self.image_cache_stack.last().map(|cache| {
+            let entity = cache.entity_id();
+            if let Some(cache) = self
+                .scope_image_caches
+                .get(&entity)
+                .and_then(std::rc::Weak::upgrade)
+            {
+                cache
+            } else {
+                let cache = Rc::new(cache.clone());
+                self.scope_image_caches
+                    .insert(entity, Rc::downgrade(&cache));
+                cache
+            }
+        });
         ViewExecutionScope {
-            element_ids: self.element_id_stack.clone(),
-            text_styles: self.text_style_stack.clone(),
-            rendered_entities: self.rendered_entity_stack.clone(),
-            offsets: self.element_offset_stack.clone(),
-            content_masks: self.content_mask_stack.clone(),
-            rem_overrides: self.rem_size_override_stack.clone(),
-            image_caches: self.image_cache_stack.clone(),
+            element_path: self.element_id_stack.handle(),
+            text_style: self.retained_text_style_handle(),
+            current_view: self.rendered_entity_stack.last().copied(),
+            offset: self
+                .element_offset_stack
+                .last()
+                .copied()
+                .unwrap_or_default(),
+            content_mask: self.content_mask(),
+            rem_override: self.rem_size_override_stack.last().copied(),
+            image_cache,
             opacity: self.element_opacity,
             rem_size: self.rem_size,
             scale_factor: self.scale_factor,
@@ -2560,16 +2586,35 @@ impl Window {
         self.next_frame
             .dispatch_tree
             .set_active_node(scope.dispatch_node);
-        mem::swap(&mut self.element_id_stack, &mut scope.element_ids);
-        mem::swap(&mut self.text_style_stack, &mut scope.text_styles);
-        mem::swap(
+        let global_id = self.element_id_interner.global_id(scope.element_path);
+        let mut element_ids = ElementIdStack::new(&self.element_id_interner);
+        for id in &*global_id {
+            element_ids.push(id.clone(), &mut self.element_id_interner);
+        }
+        let element_ids = mem::replace(&mut self.element_id_stack, element_ids);
+        let text_styles = mem::take(&mut self.text_style_stack);
+        let text_style_base = self
+            .retained_text_style_base
+            .replace(scope.text_style.clone());
+        let rendered_entities = mem::replace(
             &mut self.rendered_entity_stack,
-            &mut scope.rendered_entities,
+            scope.current_view.into_iter().collect(),
         );
-        mem::swap(&mut self.element_offset_stack, &mut scope.offsets);
-        mem::swap(&mut self.content_mask_stack, &mut scope.content_masks);
-        mem::swap(&mut self.rem_size_override_stack, &mut scope.rem_overrides);
-        mem::swap(&mut self.image_cache_stack, &mut scope.image_caches);
+        let offsets = mem::replace(&mut self.element_offset_stack, vec![scope.offset]);
+        let content_masks = mem::replace(&mut self.content_mask_stack, vec![scope.content_mask]);
+        let rem_overrides = mem::replace(
+            &mut self.rem_size_override_stack,
+            scope.rem_override.into_iter().collect(),
+        );
+        let image_caches = mem::replace(
+            &mut self.image_cache_stack,
+            scope
+                .image_cache
+                .as_ref()
+                .map(|cache| (**cache).clone())
+                .into_iter()
+                .collect(),
+        );
         mem::swap(&mut self.element_opacity, &mut scope.opacity);
         mem::swap(
             &mut self.current_view_occurrence,
@@ -2578,16 +2623,14 @@ impl Window {
         mem::swap(&mut self.retained_scope_fallback, &mut scope.fallback);
         self.invalidate_text_style();
         let result = f(self);
-        mem::swap(&mut self.element_id_stack, &mut scope.element_ids);
-        mem::swap(&mut self.text_style_stack, &mut scope.text_styles);
-        mem::swap(
-            &mut self.rendered_entity_stack,
-            &mut scope.rendered_entities,
-        );
-        mem::swap(&mut self.element_offset_stack, &mut scope.offsets);
-        mem::swap(&mut self.content_mask_stack, &mut scope.content_masks);
-        mem::swap(&mut self.rem_size_override_stack, &mut scope.rem_overrides);
-        mem::swap(&mut self.image_cache_stack, &mut scope.image_caches);
+        self.element_id_stack = element_ids;
+        self.text_style_stack = text_styles;
+        self.retained_text_style_base = text_style_base;
+        self.rendered_entity_stack = rendered_entities;
+        self.element_offset_stack = offsets;
+        self.content_mask_stack = content_masks;
+        self.rem_size_override_stack = rem_overrides;
+        self.image_cache_stack = image_caches;
         mem::swap(&mut self.element_opacity, &mut scope.opacity);
         mem::swap(
             &mut self.current_view_occurrence,
@@ -2693,17 +2736,19 @@ impl Window {
         entity_id: EntityId,
         inspector: bool,
         cached: bool,
+        first_mount: bool,
     ) {
         if !cached && !inspector && self.cached_reconstruction_depth == 0 {
             self.view_reuse_stats.render_uncached += 1;
             return;
         }
-        if self
-            .rendered_frame
-            .dispatch_tree
-            .view_path_reversed(entity_id)
-            .next()
-            .is_none()
+        if first_mount
+            || self
+                .rendered_frame
+                .dispatch_tree
+                .view_path_reversed(entity_id)
+                .next()
+                .is_none()
         {
             self.view_reuse_stats.render_first_mount += 1;
         } else if self.own_dirty_views.contains(&entity_id) {
@@ -2730,7 +2775,7 @@ impl Window {
     }
 
     fn mark_view_dirty(&mut self, view_id: EntityId) {
-        let retained = self.view_store.mark_dirty(view_id);
+        let retained = !self.view_splicing || self.view_store.mark_dirty(view_id);
         #[cfg(any(test, feature = "bench-support"))]
         self.own_dirty_views.insert(view_id);
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
@@ -2955,7 +3000,11 @@ impl Window {
         let resolved = cache.get_or_insert_with(|| Box::new(None));
         resolved
             .get_or_insert_with(|| {
-                let mut style = TextStyle::default();
+                let mut style = self
+                    .retained_text_style_base
+                    .as_deref()
+                    .cloned()
+                    .unwrap_or_default();
                 for refinement in &self.text_style_stack {
                     style.refine(refinement);
                 }
@@ -2964,9 +3013,19 @@ impl Window {
             .clone()
     }
 
+    pub(crate) fn retained_text_style_handle(&self) -> Rc<TextStyle> {
+        self.retained_text_style
+            .borrow_mut()
+            .get_or_insert_with(|| Rc::new(self.text_style()))
+            .clone()
+    }
+
     fn invalidate_text_style(&mut self) {
         if let Some(resolved) = self.resolved_text_style.get_mut() {
             **resolved = None;
+        }
+        if self.view_splicing {
+            self.retained_text_style.get_mut().take();
         }
     }
 
@@ -3945,8 +4004,10 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
-        self.view_store.begin_frame();
-        self.dispatch_replay.clear();
+        if self.view_splicing {
+            self.view_store.begin_frame();
+            self.dispatch_replay.clear();
+        }
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
@@ -3983,7 +4044,11 @@ impl Window {
             }
         }
         self.dirty_views.clear();
-        self.view_store.finish_frame();
+        if self.view_splicing {
+            self.view_store.finish_frame();
+            self.scope_image_caches
+                .retain(|_, cache| cache.strong_count() > 0);
+        }
         #[cfg(any(test, feature = "bench-support"))]
         self.own_dirty_views.clear();
         self.next_frame.window_active = self.active.get();
@@ -4414,6 +4479,12 @@ impl Window {
                     )
                 };
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
+                let previous_text_style_base = mem::replace(
+                    &mut self.retained_text_style_base,
+                    self.next_frame.deferred_draws[deferred_draw_ix]
+                        .text_style_base
+                        .clone(),
+                );
                 let previous_occurrence = mem::replace(
                     &mut self.current_view_occurrence,
                     self.next_frame.deferred_draws[deferred_draw_ix].parent_occurrence,
@@ -4439,20 +4510,25 @@ impl Window {
                         .accessed_entities
                         .extend(all.iter().copied());
                     self.view_store
-                        .append_own_access(parent_occurrence, own, all, false);
+                        .append_own_access(parent_occurrence, own, false);
                     self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
                 } else {
                     // Deferred work lies outside its containing view's access scope.
                     cx.entities.extend_accessed(
                         &self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities,
                     );
-                    self.reuse_prepaint(prepaint_range);
+                    if self.view_splicing {
+                        self.reuse_retained_prepaint(prepaint_range, cx);
+                    } else {
+                        self.reuse_prepaint(prepaint_range);
+                    }
                 }
                 let prepaint_end = self.prepaint_index();
                 self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
                     prepaint_start..prepaint_end;
                 self.current_view_occurrence = previous_occurrence;
                 self.retained_scope_fallback = previous_fallback;
+                self.retained_text_style_base = previous_text_style_base;
             }
 
             self.element_id_stack.clear();
@@ -4495,7 +4571,7 @@ impl Window {
                 let (own, all) = self.end_cached_entity_access(previous_access, cx);
                 deferred_draw.accessed_entities.extend(all.iter().copied());
                 self.view_store
-                    .append_own_access(deferred_draw.parent_occurrence, own, all, true);
+                    .append_own_access(deferred_draw.parent_occurrence, own, true);
             } else {
                 cx.entities
                     .extend_accessed(&deferred_draw.accessed_entities);
@@ -4608,6 +4684,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    text_style_base: deferred_draw.text_style_base.clone(),
                     content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
@@ -4623,9 +4700,13 @@ impl Window {
         {
             self.view_store
                 .reuse_prepaint(*occurrence, &range.start, &new_start, &reused_subtree);
+            self.element_id_interner
+                .mark_used(self.view_store.element_path(*occurrence));
             self.next_frame.prepaint_views.push(*occurrence);
         }
-        self.dispatch_replay.push(reused_subtree);
+        if self.view_splicing {
+            self.dispatch_replay.push(reused_subtree);
+        }
     }
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
@@ -5168,6 +5249,7 @@ impl Window {
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            text_style_base: self.retained_text_style_base.clone(),
             content_mask,
             rem_size: self.rem_size(),
             priority,
