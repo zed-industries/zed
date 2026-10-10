@@ -1,13 +1,14 @@
 use crate::{
-    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, cursor_excerpt,
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, cursor_excerpt, deepseek_fim,
     open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
     prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, AppContext as _, Entity, Task};
+use gpui::{App, AppContext as _, Entity, Task, http_client};
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, ToOffset, ToPoint as _,
-    ZetaVersion, language_settings::all_language_settings,
+    ZetaVersion,
+    language_settings::{OpenAiCompatibleEditPredictionSettings, all_language_settings},
 };
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{Zeta2PromptInput, compute_editable_and_context_ranges};
@@ -97,20 +98,12 @@ pub fn request_prediction(
         let cursor_in_editable = cursor_offset_in_excerpt.saturating_sub(editable_range.start);
         let prefix = editable_text[..cursor_in_editable].to_string();
         let suffix = editable_text[cursor_in_editable..].to_string();
-        let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
-        let stop_tokens = fim_stop_tokens(prompt_format)
-            .iter()
-            .map(|token| token.to_string())
-            .collect();
-
-        let max_tokens = settings.max_output_tokens;
-
-        let (response_text, request_id) = open_ai_compatible::send_custom_server_request(
+        let (response_text, request_id) = send_fim_request(
             provider,
+            prompt_format,
             &settings,
-            prompt,
-            max_tokens,
-            stop_tokens,
+            &prefix,
+            &suffix,
             api_key,
             &http_client,
         )
@@ -168,6 +161,39 @@ pub fn request_prediction(
     })
 }
 
+async fn send_fim_request(
+    provider: settings::EditPredictionProvider,
+    prompt_format: EditPredictionPromptFormat,
+    settings: &OpenAiCompatibleEditPredictionSettings,
+    prefix: &str,
+    suffix: &str,
+    api_key: Option<Arc<str>>,
+    http_client: &Arc<dyn http_client::HttpClient>,
+) -> Result<(String, String)> {
+    if provider == settings::EditPredictionProvider::OpenAiCompatibleApi {
+        if let Some(response) =
+            deepseek_fim::try_request(settings, prefix, suffix, api_key.clone(), http_client)
+                .await?
+        {
+            return Ok(response);
+        }
+    }
+
+    open_ai_compatible::send_custom_server_request(
+        provider,
+        settings,
+        format_fim_prompt(prompt_format, prefix, suffix),
+        settings.max_output_tokens,
+        fim_stop_tokens(prompt_format)
+            .iter()
+            .map(|token| token.to_string())
+            .collect(),
+        api_key,
+        http_client,
+    )
+    .await
+}
+
 /// Infers the FIM prompt format from an Ollama/OpenAI-compatible model name.
 /// Returns `None` if the model isn't a known FIM-capable model.
 pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
@@ -182,6 +208,10 @@ pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
         "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
         "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
         "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
+        "deepseek-flash" => {
+            // This selects the FIM route; the official API uses a native suffix instead of Coder markers.
+            EditPredictionPromptFormat::DeepseekCoder
+        }
         "qwen2.5-coder" | "qwen-coder" | "qwen" => EditPredictionPromptFormat::Qwen,
         "codegemma" => EditPredictionPromptFormat::CodeGemma,
         "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
@@ -290,6 +320,68 @@ fn clean_fim_completion(response: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::AsyncReadExt as _;
+    use gpui::http_client::FakeHttpClient;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn deepseek_flash_uses_native_fim_with_separate_suffix() -> Result<()> {
+        futures::executor::block_on(async {
+            for api_url in [
+                "https://api.deepseek.com/v1/completions",
+                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.deepseek.com/beta/completions",
+            ] {
+                let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::create(
+                    |mut request| async move {
+                        assert_eq!(
+                            request.uri().to_string(),
+                            "https://api.deepseek.com/beta/completions"
+                        );
+                        let mut body = String::new();
+                        request.body_mut().read_to_string(&mut body).await?;
+                        let body: Value = serde_json::from_str(&body)?;
+                        assert_eq!(
+                            body,
+                            json!({
+                                "model": "deepseek-flash",
+                                "prompt": "def square(number):\n    return number ",
+                                "suffix": " number\n",
+                                "max_tokens": 32
+                            })
+                        );
+                        Ok(http_client::Response::builder().status(200).body(json!({
+                            "id": "native-fim", "object": "text_completion", "created": 0,
+                            "model": "deepseek-flash",
+                            "choices": [{"text": "*", "finish_reason": "stop"}],
+                            "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}
+                        }).to_string().into())?)
+                    },
+                );
+                let settings = OpenAiCompatibleEditPredictionSettings {
+                    model: "deepseek-flash".into(),
+                    api_url: api_url.into(),
+                    max_output_tokens: 32,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    send_fim_request(
+                        settings::EditPredictionProvider::OpenAiCompatibleApi,
+                        EditPredictionPromptFormat::DeepseekCoder,
+                        &settings,
+                        "def square(number):\n    return number ",
+                        " number\n",
+                        None,
+                        &http_client
+                    )
+                    .await?,
+                    ("*".into(), "native-fim".into()),
+                    "{api_url}"
+                );
+            }
+            Ok(())
+        })
+    }
 
     #[test]
     fn infer_prompt_format_matches_known_model_families() {
@@ -303,6 +395,10 @@ mod tests {
         );
         assert_eq!(
             infer_prompt_format("deepseek-coder-v2:16b"),
+            Some(EditPredictionPromptFormat::DeepseekCoder)
+        );
+        assert_eq!(
+            infer_prompt_format("deepseek-flash"),
             Some(EditPredictionPromptFormat::DeepseekCoder)
         );
         assert_eq!(

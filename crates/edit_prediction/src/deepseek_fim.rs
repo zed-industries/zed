@@ -1,0 +1,58 @@
+use anyhow::{Context as _, Result};
+use cloud_llm_client::predict_edits_v3::RawCompletionResponse;
+use futures::AsyncReadExt as _;
+use gpui::http_client;
+use language::language_settings::OpenAiCompatibleEditPredictionSettings;
+use serde_json::json;
+use std::sync::Arc;
+
+pub(crate) async fn try_request(
+    settings: &OpenAiCompatibleEditPredictionSettings,
+    prefix: &str,
+    suffix: &str,
+    api_key: Option<Arc<str>>,
+    http_client: &Arc<dyn http_client::HttpClient>,
+) -> Result<Option<(String, String)>> {
+    if settings.model != "deepseek-flash"
+        || !matches!(
+            settings.api_url.as_ref(),
+            "https://api.deepseek.com/v1/completions"
+                | "https://api.deepseek.com/v1/chat/completions"
+                | "https://api.deepseek.com/beta/completions"
+        )
+    {
+        return Ok(None);
+    }
+
+    let request_body = json!({
+        "model": settings.model,
+        "prompt": prefix,
+        "suffix": suffix,
+        "max_tokens": settings.max_output_tokens,
+    });
+    let mut request_builder = http_client::Request::builder()
+        .method(http_client::Method::POST)
+        .uri("https://api.deepseek.com/beta/completions")
+        .header("Content-Type", "application/json");
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"));
+    }
+    let request = request_builder.body(http_client::AsyncBody::from(serde_json::to_string(
+        &request_body,
+    )?))?;
+    let mut response = http_client.send(request).await?;
+    let status = response.status();
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+    if !status.is_success() {
+        anyhow::bail!("DeepSeek FIM request failed: {status} - {body}");
+    }
+    let response: RawCompletionResponse =
+        serde_json::from_str(&body).context("Failed to parse DeepSeek FIM response")?;
+    let choice = response
+        .choices
+        .into_iter()
+        .next()
+        .context("DeepSeek FIM response contained no choices")?;
+    Ok(Some((choice.text, response.id)))
+}

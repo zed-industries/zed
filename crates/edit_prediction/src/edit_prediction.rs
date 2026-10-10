@@ -78,6 +78,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 
 pub mod cursor_excerpt;
 pub mod data_collection;
+mod deepseek_fim;
 pub mod example_spec;
 pub mod fim;
 mod license_detection;
