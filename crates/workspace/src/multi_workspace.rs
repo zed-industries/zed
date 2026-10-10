@@ -1126,7 +1126,7 @@ impl MultiWorkspace {
         let app_state = self.workspace().read(cx).app_state().clone();
         let window_handle = window.window_handle().downcast::<MultiWorkspace>();
         let connect_task = connect_remote(connection_options.clone(), window, cx);
-        let paths_vec = paths.paths().to_vec();
+        let paths_vec: Vec<PathBuf> = paths.ordered_paths().cloned().collect();
 
         cx.spawn(async move |_this, cx| {
             let session = connect_task
@@ -1165,7 +1165,7 @@ impl MultiWorkspace {
                         !paths_vec.is_empty() && resolved.iter().all(|resolved| resolved.is_none());
 
                     if all_paths_missing {
-                        project_group.path_list().paths().to_vec()
+                        project_group.path_list().ordered_paths().cloned().collect()
                     } else {
                         paths_vec
                     }
@@ -1214,7 +1214,7 @@ impl MultiWorkspace {
             return Task::ready(Ok(workspace));
         }
 
-        let paths = path_list.paths().to_vec();
+        let paths: Vec<PathBuf> = path_list.ordered_paths().cloned().collect();
         let app_state = self.workspace().read(cx).app_state().clone();
         let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
         let fs = <dyn Fs>::global(cx);
@@ -1266,7 +1266,7 @@ impl MultiWorkspace {
             let result = cx
                 .update(|cx| {
                     Workspace::new_local(
-                        effective_path_list.paths().to_vec(),
+                        effective_path_list.ordered_paths().cloned().collect(),
                         app_state,
                         requesting_window,
                         None,
