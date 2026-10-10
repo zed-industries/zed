@@ -50,6 +50,7 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    sprite_sort_keys: Vec<u128>,
 }
 
 #[expect(missing_docs)]
@@ -149,17 +150,67 @@ impl Scene {
     }
 
     pub fn finish(&mut self) {
-        self.shadows.sort_by_key(|shadow| shadow.order);
-        self.quads.sort_by_key(|quad| quad.order);
-        self.paths.sort_by_key(|path| path.order);
-        self.underlines.sort_by_key(|underline| underline.order);
-        self.monochrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.subpixel_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.polychrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.surfaces.sort_by_key(|surface| surface.order);
+        #[cfg(feature = "bench-support")]
+        if *{
+            static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            ENABLED.get_or_init(|| std::env::var_os("GPUI_SCENE_SORT_STATS").is_some())
+        } {
+            macro_rules! report {
+                ($field:ident, $key:expr) => {
+                    eprintln!(
+                        "scene-sort {} len={} sorted={}",
+                        stringify!($field),
+                        self.$field.len(),
+                        self.$field.is_sorted_by_key($key)
+                    );
+                };
+            }
+            report!(shadows, |primitive| primitive.order);
+            report!(quads, |primitive| primitive.order);
+            report!(paths, |primitive| primitive.order);
+            report!(underlines, |primitive| primitive.order);
+            report!(monochrome_sprites, |primitive| (
+                primitive.order,
+                primitive.tile.tile_id
+            ));
+            report!(subpixel_sprites, |primitive| (
+                primitive.order,
+                primitive.tile.tile_id
+            ));
+            report!(polychrome_sprites, |primitive| (
+                primitive.order,
+                primitive.tile.tile_id
+            ));
+            report!(surfaces, |primitive| primitive.order);
+        }
+        sort_if_needed(&mut self.shadows, |shadow| shadow.order);
+        sort_if_needed(&mut self.quads, |quad| quad.order);
+        sort_if_needed(&mut self.paths, |path| path.order);
+        sort_if_needed(&mut self.underlines, |underline| underline.order);
+        let sprite_count = self
+            .monochrome_sprites
+            .len()
+            .max(self.subpixel_sprites.len())
+            .max(self.polychrome_sprites.len());
+        if self.sprite_sort_keys.capacity() > sprite_count.saturating_mul(2) {
+            self.sprite_sort_keys.shrink_to(sprite_count);
+        }
+        sort_sprites(
+            &mut self.monochrome_sprites,
+            &mut self.sprite_sort_keys,
+            |sprite| (sprite.order, sprite.tile.tile_id.0),
+        );
+        sort_sprites(
+            &mut self.subpixel_sprites,
+            &mut self.sprite_sort_keys,
+            |sprite| (sprite.order, sprite.tile.tile_id.0),
+        );
+        sort_sprites(
+            &mut self.polychrome_sprites,
+            &mut self.sprite_sort_keys,
+            |sprite| (sprite.order, sprite.tile.tile_id.0),
+        );
+        sort_if_needed(&mut self.surfaces, |surface| surface.order);
     }
 
     #[cfg_attr(
@@ -187,6 +238,282 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+        }
+    }
+}
+
+fn sort_if_needed<T, K: Ord>(primitives: &mut [T], key: impl Fn(&T) -> K) {
+    if !primitives.is_sorted_by_key(&key) {
+        primitives.sort_by_key(key);
+    }
+}
+
+fn sort_sprites<T: Copy>(
+    primitives: &mut [T],
+    keys: &mut Vec<u128>,
+    key: impl Fn(&T) -> (u32, u32),
+) {
+    if primitives.is_sorted_by_key(&key) {
+        return;
+    }
+    if primitives.len() < 256 || u32::try_from(primitives.len()).is_err() {
+        primitives.sort_by_key(key);
+        return;
+    }
+
+    keys.clear();
+    keys.extend(primitives.iter().enumerate().map(|(index, primitive)| {
+        let (order, tile_id) = key(primitive);
+        // Equal-key sprites can overlap, so the insertion index must remain
+        // the final tie-breaker even though the compact keys use an unstable sort.
+        ((order as u128) << 64) | ((tile_id as u128) << 32) | index as u128
+    }));
+    keys.sort_unstable();
+    for start in 0..keys.len() {
+        if keys[start] as u32 as usize == start {
+            continue;
+        }
+        let primitive = primitives[start];
+        let mut destination = start;
+        loop {
+            let source = keys[destination] as u32 as usize;
+            // The low bits double as a visited marker; the sorted high bits
+            // are no longer needed once the permutation has been constructed.
+            keys[destination] = destination as u128;
+            if source == start {
+                primitives[destination] = primitive;
+                break;
+            }
+            primitives[destination] = primitives[source];
+            destination = source;
+        }
+    }
+    keys.clear();
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::*;
+
+    #[test]
+    fn already_sorted_preserves_stable_order() {
+        for count in [0, 1, 16, 255, 256, 8192] {
+            let original: Vec<_> = (0..count).map(|index| (index % 7, index)).collect();
+            let mut expected = original.clone();
+            expected.sort_by_key(|primitive| primitive.0);
+            let mut actual = original;
+            sort_if_needed(&mut actual, |primitive| primitive.0);
+            assert_eq!(actual, expected);
+            sort_if_needed(&mut actual, |primitive| primitive.0);
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn compact_keys_preserve_stable_order() {
+        use rand::{Rng, SeedableRng, rngs::StdRng};
+
+        let mut keys = Vec::new();
+        for seed in 0..32 {
+            let mut random = StdRng::seed_from_u64(seed);
+            for count in [0, 1, 16, 255, 256, 257, 8192] {
+                let original: Vec<_> = (0..count)
+                    .map(|index| (random.random_range(0..8), random.random_range(0..8), index))
+                    .collect();
+                let mut expected = original.clone();
+                expected.sort_by_key(|primitive| (primitive.0, primitive.1));
+                let mut actual = original;
+                sort_sprites(&mut actual, &mut keys, |primitive| {
+                    (primitive.0, primitive.1)
+                });
+                assert_eq!(actual, expected);
+                sort_sprites(&mut actual, &mut keys, |primitive| {
+                    (primitive.0, primitive.1)
+                });
+                assert_eq!(actual, expected);
+                assert!(keys.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn sprite_sort_releases_oversized_scratch() {
+        let mut scene = Scene::default();
+        scene.sprite_sort_keys.reserve(8192);
+        scene.finish();
+        assert_eq!(scene.sprite_sort_keys.capacity(), 0);
+    }
+
+    #[test]
+    fn scene_finish_matches_stable_sort_and_batches() {
+        use crate::{AtlasTextureKind, DevicePixels, TileId, size};
+        use rand::{Rng, SeedableRng, rngs::StdRng};
+
+        for seed in 0..16 {
+            let mut random = StdRng::seed_from_u64(seed);
+            for count in [0, 1, 255, 256, 257, 2048] {
+                let mut scene = Scene::default();
+                for index in 0..count {
+                    let bounds = Bounds {
+                        origin: point(
+                            ScaledPixels(random.random_range(0.0..8.0)),
+                            ScaledPixels(random.random_range(0.0..8.0)),
+                        ),
+                        size: size(ScaledPixels(32.0), ScaledPixels(32.0)),
+                    };
+                    let content_mask = ContentMask { bounds };
+                    let color = Hsla {
+                        h: index as f32 / count as f32,
+                        s: 0.5,
+                        l: 0.5,
+                        a: 1.0,
+                    };
+                    if index % 16 == 0 {
+                        scene.push_layer(bounds);
+                    }
+                    let tile = AtlasTile {
+                        texture_id: AtlasTextureId {
+                            index: random.random_range(0..3),
+                            kind: AtlasTextureKind::Monochrome,
+                        },
+                        tile_id: TileId(random.random_range(0..8)),
+                        padding: index,
+                        bounds: Bounds {
+                            origin: point(DevicePixels(0), DevicePixels(0)),
+                            size: size(DevicePixels(8), DevicePixels(8)),
+                        },
+                    };
+                    let transformation = TransformationMatrix::unit()
+                        .rotate(Radians(random.random_range(-3.0..3.0)))
+                        .translate(point(ScaledPixels(64.0), ScaledPixels(-64.0)));
+                    scene.insert_primitive(MonochromeSprite {
+                        order: 0,
+                        pad: 0,
+                        bounds,
+                        content_mask,
+                        color,
+                        tile,
+                        transformation,
+                    });
+                    scene.insert_primitive(SubpixelSprite {
+                        order: 0,
+                        pad: 0,
+                        bounds,
+                        content_mask,
+                        color,
+                        tile: AtlasTile {
+                            texture_id: AtlasTextureId {
+                                kind: AtlasTextureKind::Subpixel,
+                                ..tile.texture_id
+                            },
+                            ..tile
+                        },
+                        transformation,
+                    });
+                    scene.insert_primitive(PolychromeSprite {
+                        order: 0,
+                        pad: 0,
+                        grayscale: (index % 2 == 0).into(),
+                        opacity: color.h,
+                        bounds,
+                        content_mask,
+                        corner_radii: Corners::default(),
+                        tile: AtlasTile {
+                            texture_id: AtlasTextureId {
+                                kind: AtlasTextureKind::Polychrome,
+                                ..tile.texture_id
+                            },
+                            ..tile
+                        },
+                    });
+                    scene.insert_primitive(Quad {
+                        bounds,
+                        content_mask,
+                        border_color: color,
+                        ..Quad::default()
+                    });
+                    scene.insert_primitive(Shadow {
+                        order: 0,
+                        blur_radius: ScaledPixels(index as f32),
+                        bounds,
+                        corner_radii: Corners::default(),
+                        content_mask,
+                        color,
+                        element_bounds: bounds,
+                        element_corner_radii: Corners::default(),
+                        inset: index % 2,
+                        pad: 0,
+                    });
+                    scene.insert_primitive(Underline {
+                        order: 0,
+                        pad: 0,
+                        bounds,
+                        content_mask,
+                        color,
+                        thickness: ScaledPixels(index as f32),
+                        wavy: (index % 2 == 0).into(),
+                    });
+                    let mut path = Path::new(point(Pixels(0.0), Pixels(0.0))).scale(1.0);
+                    path.bounds = bounds;
+                    path.content_mask = content_mask;
+                    scene.insert_primitive(path);
+                    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+                    scene.insert_primitive(PaintSurface {
+                        order: 0,
+                        bounds,
+                        content_mask,
+                    });
+                    if index % 16 == 15 || index + 1 == count {
+                        scene.pop_layer();
+                    }
+                }
+
+                let mut expected = Scene::default();
+                macro_rules! stable_sort {
+                    ($field:ident, $key:expr) => {
+                        expected.$field = scene.$field.clone();
+                        expected.$field.sort_by_key($key);
+                    };
+                }
+                stable_sort!(shadows, |primitive| primitive.order);
+                stable_sort!(quads, |primitive| primitive.order);
+                stable_sort!(paths, |primitive| primitive.order);
+                stable_sort!(underlines, |primitive| primitive.order);
+                stable_sort!(monochrome_sprites, |primitive| (
+                    primitive.order,
+                    primitive.tile.tile_id
+                ));
+                stable_sort!(subpixel_sprites, |primitive| (
+                    primitive.order,
+                    primitive.tile.tile_id
+                ));
+                stable_sort!(polychrome_sprites, |primitive| (
+                    primitive.order,
+                    primitive.tile.tile_id
+                ));
+                stable_sort!(surfaces, |primitive| primitive.order);
+                scene.finish();
+                macro_rules! compare {
+                    ($field:ident) => {
+                        assert_eq!(scene.$field.len(), expected.$field.len());
+                        for (actual, expected) in scene.$field.iter().zip(&expected.$field) {
+                            assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+                        }
+                    };
+                }
+                compare!(shadows);
+                compare!(quads);
+                compare!(paths);
+                compare!(underlines);
+                compare!(monochrome_sprites);
+                compare!(subpixel_sprites);
+                compare!(polychrome_sprites);
+                compare!(surfaces);
+                assert_eq!(
+                    format!("{:?}", scene.batches().collect::<Vec<_>>()),
+                    format!("{:?}", expected.batches().collect::<Vec<_>>())
+                );
+            }
         }
     }
 }
