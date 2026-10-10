@@ -22,7 +22,10 @@ use extension::{
 };
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, BackgroundExecutor, Entity, EntityId, TaskExt, TestAppContext};
+use gpui::{
+    AppContext as _, BackgroundExecutor, BorrowAppContext as _, Entity, EntityId, TaskExt,
+    TestAppContext,
+};
 use http_client::{FakeHttpClient, Response};
 use language::{
     BinaryStatus, LanguageConfig, LanguageMatcher, LanguageName, LanguageRegistry, QueryFiles,
@@ -793,11 +796,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         }
     }
 
-    let root_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let root_dir = util::dev_repo_root().expect("test extension requires a repository checkout");
     let cache_dir = root_dir.join("target");
     let test_extension_id = "test-extension";
     let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
@@ -3557,6 +3556,111 @@ async fn test_uninstalling_extension_restores_surviving_extensions_language(
         None,
         "the uninstalled extension's language config should be gone"
     );
+}
+
+#[gpui::test]
+async fn test_extension_reload_removes_dropped_semantic_token_rules(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let proxy = Arc::new(ExtensionHostProxy::new());
+    language_extension::init(LspAccess::Noop, proxy.clone(), language_registry.clone());
+    insert_language_extension(&fs, "ext-a", "Shared", "shared").await;
+    fs.insert_tree(
+        "/extensions/installed/ext-a/languages/lang",
+        json!({ "semantic_token_rules.json": "[]" }),
+    )
+    .await;
+    let store = create_extension_store_with(fs.clone(), proxy, cx);
+    cx.update(|cx| {
+        assert!(
+            cx.global::<SettingsStore>()
+                .language_semantic_token_rules("Shared")
+                .is_some()
+        );
+    });
+
+    fs.remove_file(
+        Path::new("/extensions/installed/ext-a/languages/lang/semantic_token_rules.json"),
+        RemoveOptions {
+            recursive: false,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    store.update(cx, |store, cx| drop(store.reload(Some("ext-a".into()), cx)));
+    cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
+    cx.run_until_parked();
+
+    assert_eq!(
+        language_registry.language_name_for_extension("shared"),
+        Some(LanguageName::new("Shared")),
+    );
+    cx.update(|cx| {
+        assert!(
+            cx.global::<SettingsStore>()
+                .language_semantic_token_rules("Shared")
+                .is_none()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rejected_readded_language_keeps_native_semantic_token_rules(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let proxy = Arc::new(ExtensionHostProxy::new());
+    language_extension::init(LspAccess::Noop, proxy.clone(), language_registry.clone());
+
+    language_registry.register_test_language(LanguageConfig {
+        name: LanguageName::new("Shared"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["builtin".into()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, _cx| {
+            store.set_language_semantic_token_rules(
+                "Shared".into(),
+                settings::SemanticTokenRules::default(),
+            );
+        });
+    });
+    insert_language_extension(&fs, "ext-a", "Shared", "shadowed-a").await;
+    insert_language_extension(&fs, "ext-b", "Shared", "shadowed-b").await;
+    let store = create_extension_store_with(fs.clone(), proxy, cx);
+
+    fs.remove_dir(
+        Path::new("/extensions/installed/ext-b"),
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    store.update(cx, |store, cx| drop(store.reload(None, cx)));
+    cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
+    cx.run_until_parked();
+
+    assert_eq!(
+        language_registry.language_name_for_extension("builtin"),
+        Some(LanguageName::new("Shared")),
+    );
+    cx.update(|cx| {
+        assert!(
+            cx.global::<SettingsStore>()
+                .language_semantic_token_rules("Shared")
+                .is_some(),
+            "re-adding a language that a native language shadows must keep the native rules"
+        );
+    });
 }
 
 #[gpui::test]
