@@ -211,6 +211,36 @@ fn measure_in_window(
         window.take_render_phase_timings();
     });
 
+    if let Ok(frame_count) = std::env::var("GPUI_RETAINED_PHASE_FRAMES") {
+        let frame_count: usize = frame_count.parse().expect("fixed phase frame count");
+        assert!(frame_count > 0);
+        let mut entity_renders = 0;
+        cx.bench_iter(|cx| {
+            for frame in 0..frame_count {
+                window.update(|window, cx| {
+                    tree.update(cx, |tree, cx| {
+                        tree.reset_work_counters();
+                        mutate(tree, window, cx);
+                    });
+                });
+                cx.run_until_idle();
+                entity_renders += tree.read_with(cx, |tree, _| {
+                    assert!(tree.work_counters().element_render_count() > 0);
+                    tree.work_counters().entity_render_count()
+                });
+                window.update(|window, _| {
+                    let stats = window.take_view_reuse_stats();
+                    eprintln!("phase frame {group}/{} #{frame}: {stats:?}", input.family);
+                    report_render_phases(window, &format!("{group}/{} #{frame}", input.family));
+                });
+            }
+        });
+        return Measured {
+            frames: frame_count,
+            entity_renders,
+        };
+    }
+
     // Each iteration reads what the previous frame rendered before resetting for its own
     // mutation. Frame pacing may coalesce two mutations into one drawn frame, the more
     // often the faster the frames, so some observation windows legitimately see no draw;

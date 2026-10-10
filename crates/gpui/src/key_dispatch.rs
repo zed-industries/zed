@@ -729,6 +729,10 @@ impl DispatchTree {
     }
 
     fn active_node(&mut self) -> &mut DispatchNode {
+        #[cfg(feature = "bench-support")]
+        let _timer = crate::window::RenderPhaseTimer::start(
+            crate::window::RenderPhase::DispatchPayloadIndex,
+        );
         let active_node_id = self.active_node_id().unwrap();
         let index = self
             .payload_nodes

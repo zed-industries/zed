@@ -1330,12 +1330,21 @@ pub(crate) enum RenderPhase {
     TextMeasure,
     TextShape,
     TextWrap,
+    BoundaryBookkeeping,
+    DependencyPush,
+    DependencyPop,
+    ScopeCapture,
+    LayoutInputCapture,
+    SceneIndex,
+    DispatchPayloadIndex,
+    ViewStoreGrowth,
+    GeometryValidation,
 }
 
 #[cfg(feature = "bench-support")]
 thread_local! {
-    static RENDER_PHASE_TIMINGS: std::cell::Cell<[(Duration, usize); 14]> =
-        const { std::cell::Cell::new([(Duration::ZERO, 0); 14]) };
+    static RENDER_PHASE_TIMINGS: std::cell::RefCell<[(Duration, usize); 23]> =
+        const { std::cell::RefCell::new([(Duration::ZERO, 0); 23]) };
 }
 
 #[cfg(feature = "bench-support")]
@@ -1362,10 +1371,9 @@ impl Drop for RenderPhaseTimer {
     fn drop(&mut self) {
         let elapsed = self.start.elapsed();
         RENDER_PHASE_TIMINGS.with(|timings| {
-            let mut values = timings.get();
+            let mut values = timings.borrow_mut();
             values[self.phase as usize].0 += elapsed;
             values[self.phase as usize].1 += 1;
-            timings.set(values);
         });
     }
 }
@@ -2627,9 +2635,9 @@ impl Window {
     /// Takes opt-in foreground phase totals. Timings are inclusive: replay and
     /// layout totals are also included in the enclosing root phase.
     #[cfg(feature = "bench-support")]
-    pub fn take_render_phase_timings(&self) -> [(&'static str, Duration, usize); 14] {
+    pub fn take_render_phase_timings(&self) -> [(&'static str, Duration, usize); 23] {
         let values =
-            RENDER_PHASE_TIMINGS.with(|timings| timings.replace([(Duration::ZERO, 0); 14]));
+            RENDER_PHASE_TIMINGS.with(|timings| timings.replace([(Duration::ZERO, 0); 23]));
         let names = [
             "layout",
             "retain",
@@ -2645,6 +2653,15 @@ impl Window {
             "text measure",
             "platform text shape",
             "text wrap",
+            "boundary bookkeeping",
+            "dependency push",
+            "dependency pop",
+            "scope capture",
+            "layout input capture",
+            "scene index",
+            "dispatch payload index",
+            "ViewStore growth",
+            "geometry validation",
         ];
         std::array::from_fn(|index| (names[index], values[index].0, values[index].1))
     }
@@ -2662,6 +2679,8 @@ impl Window {
         cx: &mut App,
         collect_descendants: bool,
     ) -> FxHashSet<EntityId> {
+        #[cfg(feature = "bench-support")]
+        let _timer = RenderPhaseTimer::start(RenderPhase::DependencyPush);
         if self.implicit_view_splicing {
             self.cached_global_access_stack.push((
                 cx.tracking_retained_globals.replace(true),
@@ -2679,6 +2698,8 @@ impl Window {
         previous: FxHashSet<EntityId>,
         cx: &mut App,
     ) -> (FxHashSet<EntityId>, FxHashSet<EntityId>) {
+        #[cfg(feature = "bench-support")]
+        let _timer = RenderPhaseTimer::start(RenderPhase::DependencyPop);
         if self.implicit_view_splicing {
             let (tracking, previous, occurrence) = self
                 .cached_global_access_stack
@@ -2722,7 +2743,7 @@ impl Window {
 
     pub(crate) fn capture_view_scope(&mut self) -> ViewExecutionScope {
         #[cfg(feature = "bench-support")]
-        let _timer = RenderPhaseTimer::start(RenderPhase::BoundaryChecks);
+        let _timer = RenderPhaseTimer::start(RenderPhase::ScopeCapture);
         let image_cache = self.image_cache_stack.last().map(|cache| {
             let entity = cache.entity_id();
             if let Some(cache) = self

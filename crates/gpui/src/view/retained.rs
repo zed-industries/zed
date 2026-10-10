@@ -131,10 +131,16 @@ impl ViewStore {
         view: Option<&AnyWeakView>,
         fallback: Option<SpliceFallback>,
     ) -> ViewOccurrenceId {
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         let key = (entity, element_path);
         let id = if let Some(id) = self.by_occurrence.get(&key) {
             *id
         } else {
+            #[cfg(feature = "bench-support")]
+            let _timer =
+                crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::ViewStoreGrowth);
             let index = self.free.pop().unwrap_or_else(|| {
                 let index = self.records.len() as u32;
                 self.records.push(ViewRecord {
@@ -201,6 +207,9 @@ impl ViewStore {
     }
 
     pub(crate) fn finish_frame(&mut self) {
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         for (index, record) in self.records.iter_mut().enumerate() {
             if self.cold[index].is_none() {
                 continue;
@@ -409,6 +418,9 @@ impl ViewStore {
         mut own: collections::FxHashSet<EntityId>,
         paint: bool,
     ) {
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         let retained = self.retained_mut(id);
         own.remove(&retained.entity);
         if own.is_empty() {
@@ -547,6 +559,9 @@ impl ViewStore {
         state: RetainedViewState,
         scope: ViewExecutionScope,
     ) {
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         let retained = self.retained_mut(id);
         if let Some(previous) = retained.state.as_mut() {
             **previous = state;
@@ -579,6 +594,9 @@ impl ViewStore {
         range: Range<PaintIndex>,
         scope: ViewExecutionScope,
     ) {
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         let retained = self.retained_mut(id);
         retained.state.as_mut().expect("cached state").paint_range = range;
         retained.paint_scope = Some(scope);
@@ -844,7 +862,7 @@ impl Window {
     pub(super) fn implicit_prepaint_layout(&mut self, id: ViewOccurrenceId) -> bool {
         #[cfg(feature = "bench-support")]
         let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryChecks);
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture);
         let geometry_unchanged = self
             .view_store
             .retained(id)
@@ -871,6 +889,9 @@ impl Window {
     }
 
     fn implicit_geometry_unchanged(&self, id: ViewOccurrenceId) -> bool {
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::GeometryValidation);
         let Some(layout) = self.view_store.retained(id).layout.as_ref() else {
             return true;
         };

@@ -123,6 +123,8 @@ impl Scene {
     }
 
     pub(crate) fn index(&self) -> SceneIndex {
+        #[cfg(feature = "bench-support")]
+        let _timer = crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::SceneIndex);
         SceneIndex {
             operations: self.paint_operations.len(),
             ordering: self.primitive_bounds.len(),

@@ -102,6 +102,9 @@ struct BoundaryLayout {
 
 impl RetainedLayouts {
     fn set_layout(&mut self, node: NodeId, layout: taffy::Layout) {
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture);
         if let Some(previous) = self.layouts.insert(node.into(), layout)
             && previous != layout
         {
@@ -175,11 +178,16 @@ where
         input: taffy::LayoutInput,
         block: Option<&mut taffy::BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
+        #[cfg(feature = "bench-support")]
+        let timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture);
         if input.run_mode == taffy::RunMode::PerformLayout
             && let Some(boundary) = self.retained.boundaries.get_mut(&node)
         {
             boundary.input = Some(input);
         }
+        #[cfg(feature = "bench-support")]
+        drop(timer);
         if input.run_mode == taffy::RunMode::PerformHiddenLayout {
             return taffy::compute_hidden_layout(self, node);
         }
@@ -202,6 +210,9 @@ where
                 }
             }
         });
+        #[cfg(feature = "bench-support")]
+        let _timer =
+            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture);
         if input.run_mode == taffy::RunMode::PerformLayout
             && let Some(boundary) = self.retained.boundaries.get_mut(&node)
         {
