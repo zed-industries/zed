@@ -4,7 +4,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use calloop::ping::Ping;
@@ -16,7 +16,7 @@ use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{
     Proxy,
-    protocol::{wl_callback, wl_output, wl_seat, wl_surface},
+    protocol::{wl_output, wl_seat, wl_surface},
 };
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
@@ -133,7 +133,9 @@ pub struct WaylandWindowState {
     hovered: bool,
     redraw_requested: bool,
     presentation: PresentationState,
-    pending_frame_callback: Option<wl_callback::WlCallback>,
+    frame_callback: FrameCallback,
+    /// From `wp_presentation` feedback.
+    refresh_interval: Option<Duration>,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -635,7 +637,8 @@ impl WaylandWindowState {
             hovered: false,
             redraw_requested: false,
             presentation: PresentationState::Unpresented,
-            pending_frame_callback: None,
+            frame_callback: FrameCallback::None,
+            refresh_interval: None,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -747,13 +750,23 @@ mod presentation_state_tests {
     }
 }
 
+/// Our `wl_surface.frame` request. We never wait on more than one at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameCallback {
+    None,
+    Pending,
+    PendingBehindNewerFrame,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FrameLoop {
     Unconfigured,
     Ticking,
     RescheduleRequested,
     PresentationFailed,
+    Presented,
     AwaitingCallback,
+    AwaitingCallbackUntil(Instant),
     Scheduled,
     RetryScheduled,
     Parked,
@@ -936,6 +949,7 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn frame(&self, signal_at: Option<Instant>, signal_source: FrameRequestSource) {
+        let tick_started_at = Instant::now();
         self.frame_loop.set(FrameLoop::Ticking);
         let mut state = self.state.borrow_mut();
         state.resize_throttle = false;
@@ -959,14 +973,29 @@ impl WaylandWindowStatePtr {
         self.update_ime_enabled();
         drop(callbacks);
 
-        self.complete_frame();
+        self.complete_frame(tick_started_at);
     }
 
-    fn complete_frame(&self) {
+    fn complete_frame(&self, tick_started_at: Instant) {
         let mut state = self.state.borrow_mut();
 
         let frame_loop = self.frame_loop.get();
-        if frame_loop == FrameLoop::AwaitingCallback {
+        if frame_loop == FrameLoop::Presented {
+            let Some(refresh_interval) = state.refresh_interval else {
+                self.frame_loop.set(FrameLoop::AwaitingCallback);
+                return;
+            };
+            // A compositor may hold a frame callback back until a repaint has used its
+            // frame, so a frame that misses a repaint would delay the next tick by a whole
+            // refresh, halving the frame rate. The added quarter refresh keeps the timer
+            // from firing just before a callback that is on time.
+            let deadline = tick_started_at + refresh_interval + refresh_interval / 4;
+            self.frame_loop
+                .set(FrameLoop::AwaitingCallbackUntil(deadline));
+            let surface_id = state.surface.id();
+            let client = state.client.clone();
+            drop(state);
+            client.schedule_refresh_tick(&surface_id, deadline);
             return;
         }
 
@@ -977,9 +1006,9 @@ impl WaylandWindowStatePtr {
             if frame_loop == FrameLoop::PresentationFailed
                 && state.presentation == PresentationState::RetryAfterPresent
             {
-                if state.pending_frame_callback.is_none() {
-                    let callback = state.surface.frame(&state.globals.qh, state.surface.id());
-                    state.pending_frame_callback = Some(callback);
+                if state.frame_callback == FrameCallback::None {
+                    state.surface.frame(&state.globals.qh, state.surface.id());
+                    state.frame_callback = FrameCallback::Pending;
                 }
                 state.surface.commit();
                 self.frame_loop.set(FrameLoop::AwaitingCallback);
@@ -1009,10 +1038,17 @@ impl WaylandWindowStatePtr {
     pub fn frame_callback_fired(&self, signal_at: Option<Instant>) {
         // Another wl_surface commit may have carried this callback while a retry
         // timer owned the render-loop wakeup.
-        self.state.borrow_mut().pending_frame_callback = None;
-        if self.frame_loop.get() == FrameLoop::AwaitingCallback {
+        self.state.borrow_mut().frame_callback = FrameCallback::None;
+        if matches!(
+            self.frame_loop.get(),
+            FrameLoop::AwaitingCallback | FrameLoop::AwaitingCallbackUntil(_)
+        ) {
             self.frame(signal_at, FrameRequestSource::NativeCallback);
         }
+    }
+
+    pub fn frame_presented(&self, refresh_interval: Option<Duration>) {
+        self.state.borrow_mut().refresh_interval = refresh_interval;
     }
 
     pub fn scheduled_frame_fired(&self) {
@@ -1033,6 +1069,22 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    pub fn refresh_timer_fired(&self, deadline: Instant) {
+        if self.frame_loop.get() != FrameLoop::AwaitingCallbackUntil(deadline) {
+            return;
+        }
+        // Waiting for the callback here stops a hidden window from drawing nonstop,
+        // because the compositor stops or slows down its callbacks.
+        if self.state.borrow().frame_callback == FrameCallback::PendingBehindNewerFrame {
+            self.frame_loop.set(FrameLoop::AwaitingCallback);
+            return;
+        }
+        self.frame(
+            PlatformFrameSignal::capture(|| deadline),
+            FrameRequestSource::LocalSchedule,
+        );
+    }
+
     pub fn is_configured(&self) -> bool {
         self.frame_loop.get() != FrameLoop::Unconfigured
     }
@@ -1048,8 +1100,9 @@ impl WaylandWindowStatePtr {
             FrameLoop::Ticking => {
                 self.frame_loop.set(FrameLoop::RescheduleRequested);
             }
-            // A wake is already armed: a ping or retry timer is in flight, or a
-            // presented buffer guarantees a compositor frame callback.
+            // A wake is already armed: a ping, retry, or refresh timer is in flight, a
+            // presented buffer guarantees a compositor frame callback, or the current
+            // tick will arm one when it completes.
             _ => {}
         }
     }
@@ -2039,13 +2092,24 @@ impl PlatformWindow for WaylandWindow {
 
         // Surface state changed during this GPUI tick is included in this presentation.
         state.redraw_requested = false;
-        if state.pending_frame_callback.is_none() {
-            let callback = state.surface.frame(&state.globals.qh, state.surface.id());
-            state.pending_frame_callback = Some(callback);
+        let frame_callback_pending = state.frame_callback != FrameCallback::None;
+        if !frame_callback_pending {
+            state.surface.frame(&state.globals.qh, state.surface.id());
+            state.frame_callback = FrameCallback::Pending;
+        }
+        // A draw that failed before the first present left its feedback request on the
+        // surface, where it applies to this presentation.
+        if state.presentation != PresentationState::RetryBeforeFirstPresent
+            && let Some(presentation) = &state.globals.presentation
+        {
+            presentation.feedback(&state.surface, &state.globals.qh, state.surface.id());
         }
         if renderer.draw(scene) {
             state.presentation = PresentationState::Presented;
-            self.0.frame_loop.set(FrameLoop::AwaitingCallback);
+            if frame_callback_pending {
+                state.frame_callback = FrameCallback::PendingBehindNewerFrame;
+            }
+            self.0.frame_loop.set(FrameLoop::Presented);
         } else {
             state.presentation = state.presentation.failed();
             self.0.frame_loop.set(FrameLoop::PresentationFailed);
