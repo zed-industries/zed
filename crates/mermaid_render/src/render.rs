@@ -1,6 +1,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, anyhow};
+use merman::{
+    Engine, OperationControl, RenderOutput, RenderRequest, Renderer, SvgEnvironment, SvgRequest,
+};
 
 use crate::{MermaidTheme, css_color};
 
@@ -9,11 +12,6 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let diagram_id = format!("merman-{id}");
 
-    let config = to_merman_config(theme);
-    let renderer = merman::svg::HeadlessRenderer::new()
-        .with_site_config(config)
-        .with_vendored_text_measurer()
-        .with_diagram_id(&diagram_id);
     // Apply merman's raster-safe pipeline before Zed-specific styling. The
     // pipeline handles generic rasterizer compatibility cleanup: foreignObject
     // fallback text, unsupported CSS removal, and invalid SVG attribute cleanup.
@@ -22,11 +20,24 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
     let pipeline = merman::svg::SvgPipeline::resvg_safe()
         .with_postprocessor(merman::svg::CssOverridePostprocessor::strip_existing_important());
 
-    let svg = renderer
-        .render_svg_with_pipeline_sync(source, &pipeline)
-        .context("merman render failed")?
-        .ok_or_else(|| anyhow!("merman returned no SVG for the given input"))?;
+    let request = SvgRequest {
+        environment: SvgEnvironment::deterministic(),
+        options: merman::svg::SvgRenderOptions {
+            diagram_id: Some(diagram_id),
+            ..Default::default()
+        },
+        pipeline: Some(pipeline),
+        ..Default::default()
+    };
+    let output = Renderer::new()
+        .with_engine(Engine::new().with_site_config(to_merman_config(theme)))
+        .render(RenderRequest::svg(source, OperationControl::new(), request))
+        .context("merman render failed")?;
+    let RenderOutput::Svg(Some(svg)) = output else {
+        return Err(anyhow!("merman returned no SVG for the given input"));
+    };
 
+    let (svg, _) = svg.into_parts();
     Ok(svg)
 }
 
@@ -120,6 +131,8 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
 
     merman::MermaidConfig::from_value(serde_json::json!({
         "theme": "base",
+        // Mermaid 12 defaults to the `neo` look; Zed's injected CSS targets classic output.
+        "look": "classic",
         "darkMode": theme.dark_mode,
         "fontFamily": theme.font_family,
         // resvg can't rasterize HTML `<foreignObject>` labels, so merman's
