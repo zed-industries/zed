@@ -1,4 +1,4 @@
-use super::{AnyWeakView, RetainedViewState, paint_view, prepaint_view};
+use super::{AnyWeakView, RetainedViewCacheKey, RetainedViewState, paint_view, prepaint_view};
 use crate::element::InternedHandle;
 use crate::{
     AnyElement, App, EntityId, GlobalElementId, LayoutId, PaintIndex, PrepaintStateIndex,
@@ -44,9 +44,6 @@ struct ViewRecord {
     own_dirty: bool,
     descendant_dirty: bool,
     painted: bool,
-    rendered: bool,
-    render_streak: u8,
-    recording: bool,
     blocked: Option<SpliceFallback>,
     dirty_path_blocked: Option<SpliceFallback>,
 }
@@ -146,8 +143,6 @@ impl ViewStore {
         parent: Option<ViewOccurrenceId>,
         view: Option<&AnyWeakView>,
         fallback: Option<SpliceFallback>,
-        adaptive: bool,
-        dirty: bool,
     ) -> ViewOccurrenceId {
         #[cfg(feature = "bench-support")]
         let _timer =
@@ -168,9 +163,6 @@ impl ViewStore {
                     own_dirty: false,
                     descendant_dirty: false,
                     painted: false,
-                    rendered: false,
-                    render_streak: 0,
-                    recording: true,
                     blocked: None,
                     dirty_path_blocked: None,
                 });
@@ -184,8 +176,6 @@ impl ViewStore {
             self.records[index as usize].own_dirty = false;
             self.records[index as usize].descendant_dirty = false;
             self.records[index as usize].painted = false;
-            self.records[index as usize].rendered = false;
-            self.records[index as usize].render_streak = 0;
             self.records[index as usize].blocked = None;
             self.records[index as usize].dirty_path_blocked = None;
             self.cold[index as usize] = Some(RetainedView {
@@ -210,11 +200,6 @@ impl ViewStore {
         let epoch = self.epoch;
         let record = self.record_mut(id);
         record.parent = parent;
-        if record.last_drawn != epoch {
-            record.recording = !adaptive
-                || record.render_streak < 2
-                || !(dirty || record.own_dirty || record.descendant_dirty);
-        }
         record.last_drawn = epoch;
         // An uncached occurrence must not become a relayout boundary merely because
         // another embedding of this entity is cached.
@@ -282,12 +267,6 @@ impl ViewStore {
                 record.own_dirty = false;
                 record.descendant_dirty = false;
                 record.dirty_path_blocked = None;
-                record.render_streak = if record.rendered {
-                    record.render_streak.saturating_add(1)
-                } else {
-                    0
-                };
-                record.rendered = false;
                 let retained = self.cold[index].as_mut().expect("live occurrence");
                 retained.prepared = None;
                 // Hidden ancestors still prepaint children, but their previous
@@ -605,14 +584,6 @@ impl ViewStore {
         self.retained(id).paint_scope.is_some()
     }
 
-    pub(super) fn recording(&self, id: ViewOccurrenceId) -> bool {
-        self.record(id).recording
-    }
-
-    pub(super) fn rendered(&mut self, id: ViewOccurrenceId) {
-        self.record_mut(id).rendered = true;
-    }
-
     pub(super) fn set_state(
         &mut self,
         id: ViewOccurrenceId,
@@ -757,8 +728,6 @@ impl Window {
             self.current_view_occurrence,
             Some(view),
             self.retained_scope_fallback,
-            self.adaptive_view_recording,
-            self.refreshing || self.implicit_ancestor_dirty,
         );
         if let Some((layout, element)) = self.view_store.retained_mut(occurrence).prepared.take() {
             self.layout_engine
@@ -767,7 +736,6 @@ impl Window {
                 .retain_subtree(layout);
             return (layout, Some(element));
         }
-        let recording = self.view_store.recording(occurrence);
         let scope = self.capture_view_scope();
         let previous_parent = self.current_view_occurrence.replace(occurrence);
         #[cfg(any(test, feature = "bench-support"))]
@@ -775,7 +743,6 @@ impl Window {
         #[cfg(not(any(test, feature = "bench-support")))]
         let force = false;
         let can_retain = allow_reuse
-            && recording
             && !self.implicit_ancestor_dirty
             && self.view_store.retained(occurrence).layout.is_some()
             && self.view_store.state(occurrence).is_some()
@@ -789,10 +756,6 @@ impl Window {
                 .layout
                 .as_ref()
                 .is_some_and(|layout| self.view_layout_scope_matches(&layout.scope, &scope))
-            && self
-                .view_store
-                .state(occurrence)
-                .is_some_and(|state| state.cache_key.is_some())
             && !self.a11y.is_active();
         if can_retain {
             let result = if self.view_store.is_descendant_dirty(occurrence) {
@@ -828,12 +791,8 @@ impl Window {
             self.view_store.state(occurrence).is_none(),
         );
         self.view_store.clear_global_access(occurrence);
-        self.view_store.rendered(occurrence);
         let previous_access = self.begin_view_entity_access(cx);
         let ancestor_dirty = self.implicit_ancestor_dirty;
-        // An own-dirty ancestor may change visibility or paint opacity, which
-        // are not part of a descendant's prepaint reuse key. Explicit cached
-        // children keep their existing, separately opted-in reuse contract.
         self.implicit_ancestor_dirty |= self.view_store.is_own_dirty(occurrence);
         let mut element = self.with_rendered_view(entity, |window| render(window, cx));
         let layout = self.with_rendered_view(entity, |window| element.request_layout(window, cx));
@@ -885,7 +844,13 @@ impl Window {
             let input = layout.input.ok_or(SpliceFallback::LayoutConstraints)?;
             let old_output = layout.output;
             let scope = layout.scope.clone();
-            let old_size = retained.state.as_ref().expect("retained state").bounds.size;
+            let old_size = retained
+                .state
+                .as_ref()
+                .expect("retained state")
+                .cache_key
+                .bounds
+                .size;
             let view = retained.view.clone().ok_or(SpliceFallback::MissingView)?;
             let global_id = self.element_id_interner.global_id(retained.element_path);
             let entity = retained.entity;
@@ -1045,8 +1010,6 @@ impl Window {
             self.current_view_occurrence,
             view,
             self.retained_scope_fallback,
-            self.adaptive_view_recording,
-            self.refreshing || self.dirty_views.contains(&entity),
         );
         self.next_frame.prepaint_views.push(id);
         Some(id)
@@ -1197,7 +1160,7 @@ impl Window {
                 child_range.start.accessed_element_states_index -= 1;
                 old_paint_range.start = old_paint_range.start.with_cached_state_access();
             }
-            let bounds = state.bounds;
+            let cache_key: RetainedViewCacheKey = state.cache_key.clone();
             let global_id = self.element_id_interner.global_id(retained.element_path);
             let entity = retained.entity;
             let view = retained.view.clone().expect("retained child renderer");
@@ -1220,7 +1183,7 @@ impl Window {
                 prepaint_view(
                     entity,
                     Some(&global_id),
-                    bounds,
+                    cache_key.bounds,
                     &mut element,
                     Some(&view),
                     &mut None,
@@ -1358,59 +1321,6 @@ mod tests {
                     .cached(StyleRefinement::default().size(px(30.))),
             )
         }
-    }
-
-    #[crate::test]
-    fn hot_boundary_keeps_placement_and_recovers_content_after_cooling(cx: &mut TestAppContext) {
-        let renders = Rc::new(Cell::new(0));
-        let window = cx.add_window(|window, _| {
-            window.set_implicit_view_splicing(true);
-            ImplicitLeaf {
-                renders: renders.clone(),
-                width: px(20.),
-                margin: px(0.),
-                color: 0xff0000,
-                intrinsic: false,
-            }
-        });
-        let root = window.root(cx).expect("root");
-        cx.run_until_parked();
-        if !cx
-            .update_window(window.into(), |_, window, _| window.implicit_view_splicing)
-            .expect("window")
-        {
-            return;
-        }
-        for _ in 0..3 {
-            root.update(cx, |leaf, cx| {
-                leaf.color ^= 0xffffff;
-                cx.notify();
-            });
-            cx.run_until_parked();
-        }
-        cx.update_window(window.into(), |_, window, _| {
-            let occurrence = window.view_store.by_entity[&root.entity_id()][0];
-            let retained = window.view_store.retained(occurrence);
-            assert!(
-                retained
-                    .state
-                    .as_ref()
-                    .expect("placement")
-                    .cache_key
-                    .is_none()
-            );
-            assert!(retained.layout.is_some());
-            assert!(retained.prepaint_scope.is_some());
-            assert!(retained.paint_scope.is_some());
-        })
-        .expect("hot placement");
-        let hot_renders = renders.get();
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .expect("cooling draw");
-        assert_eq!(renders.get(), hot_renders + 1);
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .expect("reusable draw");
-        assert_eq!(renders.get(), hot_renders + 1);
     }
 
     #[crate::test]
@@ -1631,6 +1541,7 @@ mod tests {
                     .view_store
                     .state(occurrence)
                     .expect("sibling state")
+                    .cache_key
                     .bounds;
                 Some((window.take_view_reuse_stats(), bounds))
             })
