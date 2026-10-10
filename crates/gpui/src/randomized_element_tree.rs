@@ -1557,14 +1557,17 @@ mod tests {
 
     #[gpui::test(iterations = 12)]
     fn cached_views_match_forced_reconstruction(mut rng: StdRng, cx: &mut TestAppContext) {
-        for topology in RandomizedElementTreeTopology::ALL {
+        for (topology, splice) in RandomizedElementTreeTopology::ALL
+            .into_iter()
+            .flat_map(|topology| [false, true].map(|splice| (topology, splice)))
+        {
             let config = RandomizedElementTreeConfig::new(rng.random(), ELEMENT_COUNT)
                 .with_topology(topology)
                 .with_entity_density(0.5)
                 .with_handler_density(0.5)
                 .with_cached_views(true);
             let reused = cx.open_window(WINDOW_SIZE, move |window, cx| {
-                window.set_view_splicing(true);
+                window.set_view_splicing(splice);
                 RandomizedElementTree::new_with_config(config, cx)
             });
             let reconstructed = cx.open_window(WINDOW_SIZE, move |window, cx| {
