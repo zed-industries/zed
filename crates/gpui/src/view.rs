@@ -389,6 +389,7 @@ impl<V: View> Element for ViewElement<V> {
                         entity_id,
                         id.expect("entity view id"),
                         retained_view,
+                        true,
                         cx,
                         &mut |window, cx| {
                             self.view
@@ -608,6 +609,7 @@ fn prepaint_view(
             });
             if element.is_none()
                 && let Some(element_state) = element_state
+                && (!window.is_implicit_view(occurrence) || window.view_store.has_paint(occurrence))
                 && element_state.cache_key.bounds == bounds
                 && element_state.cache_key.content_mask == content_mask
                 && element_state.cache_key.text_style == text_style
@@ -646,8 +648,9 @@ fn prepaint_view(
                 }
             }
 
+            let implicit = window.is_implicit_view(occurrence);
             #[cfg(any(test, feature = "bench-support"))]
-            let synthetic_refresh = !window.refreshing;
+            let synthetic_refresh = !implicit && !window.refreshing;
             #[cfg(any(test, feature = "bench-support"))]
             {
                 let stats = &mut window.view_reuse_stats;
@@ -677,13 +680,15 @@ fn prepaint_view(
                     window.cached_reconstruction_depth += 1;
                 }
             }
-            let refreshing = mem::replace(&mut window.refreshing, true);
+            // Ordinary entity ancestors do not invalidate explicit cached children
+            // on reconstruction. Only an explicit cached miss implies a refresh.
+            let refreshing = window.refreshing;
+            window.refreshing |= !implicit;
             let previous_access = window.begin_view_entity_access(cx);
             window
                 .view_store
                 .begin_reconstruction(occurrence, scope.as_ref().expect("cached view scope"));
             let prepaint_start = window.prepaint_index();
-            let implicit = window.is_implicit_view(occurrence);
             let mut element = if let Some(element) = element.take() {
                 element
             } else if implicit {
@@ -772,7 +777,8 @@ fn paint_view(
                     if let Some(element) = element {
                         let parent_occurrence = window.current_view_occurrence.replace(occurrence);
                         let previous_access = window.begin_view_entity_access(cx);
-                        let refreshing = mem::replace(&mut window.refreshing, true);
+                        let refreshing = window.refreshing;
+                        window.refreshing |= !window.is_implicit_view(occurrence);
                         element.paint(window, cx);
                         window.refreshing = refreshing;
                         let (own, _) = window.end_cached_entity_access(previous_access, cx);

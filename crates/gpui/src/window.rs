@@ -1579,7 +1579,7 @@ pub struct Window {
     pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) view_splicing: bool,
     pub(crate) implicit_view_splicing: bool,
-    root_view_changed: bool,
+    pub(crate) implicit_ancestor_dirty: bool,
     window_root_layout: Option<LayoutId>,
     retained_a11y_active: bool,
     retained_font_generation: Option<usize>,
@@ -2516,7 +2516,7 @@ impl Window {
             implicit_view_splicing: std::env::var("GPUI_VIEW_SPLICE")
                 .is_ok_and(|value| value == "all")
                 && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1"),
-            root_view_changed: false,
+            implicit_ancestor_dirty: false,
             window_root_layout: None,
             retained_a11y_active: false,
             retained_font_generation: None,
@@ -3030,14 +3030,6 @@ impl Window {
     }
 
     fn mark_view_dirty(&mut self, view_id: EntityId) {
-        if self.implicit_view_splicing
-            && self
-                .root
-                .as_ref()
-                .is_some_and(|root| root.entity_id() == view_id)
-        {
-            self.root_view_changed = true;
-        }
         let retained = !self.view_splicing || self.view_store.mark_dirty(view_id);
         #[cfg(any(test, feature = "bench-support"))]
         self.own_dirty_views.insert(view_id);
@@ -4320,7 +4312,6 @@ impl Window {
             }
         }
         self.dirty_views.clear();
-        self.root_view_changed = false;
         if self.view_splicing {
             self.view_store.finish_frame();
             self.scope_image_caches
@@ -4527,7 +4518,6 @@ impl Window {
 
     fn draw_roots(&mut self, cx: &mut App) {
         let refreshing = self.refreshing;
-        self.refreshing |= self.implicit_view_splicing && self.root_view_changed;
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 

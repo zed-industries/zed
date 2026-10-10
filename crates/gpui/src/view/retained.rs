@@ -43,6 +43,7 @@ struct ViewRecord {
     last_drawn: u64,
     own_dirty: bool,
     descendant_dirty: bool,
+    painted: bool,
     blocked: Option<SpliceFallback>,
     dirty_path_blocked: Option<SpliceFallback>,
 }
@@ -149,6 +150,7 @@ impl ViewStore {
                     last_drawn: 0,
                     own_dirty: false,
                     descendant_dirty: false,
+                    painted: false,
                     blocked: None,
                     dirty_path_blocked: None,
                 });
@@ -161,6 +163,7 @@ impl ViewStore {
             };
             self.records[index as usize].own_dirty = false;
             self.records[index as usize].descendant_dirty = false;
+            self.records[index as usize].painted = false;
             self.records[index as usize].blocked = None;
             self.records[index as usize].dirty_path_blocked = None;
             self.cold[index as usize] = Some(RetainedView {
@@ -252,7 +255,14 @@ impl ViewStore {
                 record.own_dirty = false;
                 record.descendant_dirty = false;
                 record.dirty_path_blocked = None;
-                self.cold[index].as_mut().expect("live occurrence").prepared = None;
+                let retained = self.cold[index].as_mut().expect("live occurrence");
+                retained.prepared = None;
+                // Hidden ancestors still prepaint children, but their previous
+                // paint ranges no longer name records in the rendered frame.
+                if !record.painted {
+                    retained.paint_scope = None;
+                }
+                record.painted = false;
             }
         }
     }
@@ -553,6 +563,10 @@ impl ViewStore {
         self.retained(id).state.as_deref()
     }
 
+    pub(super) fn has_paint(&self, id: ViewOccurrenceId) -> bool {
+        self.retained(id).paint_scope.is_some()
+    }
+
     pub(super) fn set_state(
         &mut self,
         id: ViewOccurrenceId,
@@ -597,6 +611,7 @@ impl ViewStore {
         #[cfg(feature = "bench-support")]
         let _timer =
             crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
+        self.record_mut(id).painted = true;
         let retained = self.retained_mut(id);
         retained.state.as_mut().expect("cached state").paint_range = range;
         retained.paint_scope = Some(scope);
@@ -629,6 +644,7 @@ impl ViewStore {
         new: &PaintIndex,
         dispatch: &[ReusedSubtree],
     ) {
+        self.record_mut(id).painted = true;
         let retained = self.retained_mut(id);
         if let Some(state) = retained.state.as_mut() {
             state.paint_range =
@@ -685,6 +701,7 @@ impl Window {
         entity: EntityId,
         _global_id: &GlobalElementId,
         view: &AnyWeakView,
+        allow_reuse: bool,
         cx: &mut App,
         render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
     ) -> (LayoutId, Option<AnyElement>) {
@@ -708,7 +725,9 @@ impl Window {
         let force = self.force_view_reconstruction;
         #[cfg(not(any(test, feature = "bench-support")))]
         let force = false;
-        let can_retain = self.view_store.retained(occurrence).layout.is_some()
+        let can_retain = allow_reuse
+            && !self.implicit_ancestor_dirty
+            && self.view_store.retained(occurrence).layout.is_some()
             && self.view_store.state(occurrence).is_some()
             && !self.view_store.is_own_dirty(occurrence)
             && !self.refreshing
@@ -756,8 +775,11 @@ impl Window {
         );
         self.view_store.clear_global_access(occurrence);
         let previous_access = self.begin_view_entity_access(cx);
+        let ancestor_dirty = self.implicit_ancestor_dirty;
+        self.implicit_ancestor_dirty |= self.view_store.is_own_dirty(occurrence);
         let mut element = self.with_rendered_view(entity, |window| render(window, cx));
         let layout = self.with_rendered_view(entity, |window| element.request_layout(window, cx));
+        self.implicit_ancestor_dirty = ancestor_dirty;
         let (own, _) = self.end_cached_entity_access(previous_access, cx);
         self.view_store.set_layout_access(occurrence, own);
         self.layout_engine
@@ -825,6 +847,7 @@ impl Window {
                     entity,
                     &global_id,
                     &view,
+                    true,
                     cx,
                     &mut |window, cx| {
                         let view = view.upgrade().expect("validated retained renderer");
@@ -938,7 +961,7 @@ impl Window {
             .expect("layout engine")
             .reset_retained_subtree(layout_id);
         let (layout, element) = self.with_view_layout_scope(scope, |window| {
-            window.request_implicit_view_layout(entity, &global_id, &view, cx, render)
+            window.request_implicit_view_layout(entity, &global_id, &view, false, cx, render)
         });
         let mut engine = self.layout_engine.take().expect("layout engine");
         engine.compute_retained_layout(layout, input, self, cx);
@@ -1266,6 +1289,106 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div().child(self.0.clone())
         }
+    }
+
+    struct ImplicitCachedRoot(Entity<ImplicitLeaf>);
+
+    impl Render for ImplicitCachedRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(
+                self.0
+                    .clone()
+                    .cached(StyleRefinement::default().size(px(30.))),
+            )
+        }
+    }
+
+    #[crate::test]
+    fn ordinary_ancestor_notification_preserves_explicit_cached_children(cx: &mut TestAppContext) {
+        for implicit in [false, true] {
+            let renders = Rc::new(Cell::new(0));
+            let leaf = cx.new(|_| ImplicitLeaf {
+                renders: renders.clone(),
+                width: px(30.),
+                margin: px(0.),
+                color: 0xff0000,
+                intrinsic: false,
+            });
+            let window = cx.add_window(|window, _| {
+                window.set_implicit_view_splicing(implicit);
+                ImplicitCachedRoot(leaf)
+            });
+            let root = window.root(cx).expect("root");
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("initial draw");
+            cx.run_until_parked();
+            let first_renders = renders.get();
+            cx.update_window(window.into(), |_, window, _| window.take_view_reuse_stats())
+                .expect("reset stats");
+            root.update(cx, |_, cx| cx.notify());
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("notification draw");
+            let stats = cx
+                .update_window(window.into(), |_, window, _| window.take_view_reuse_stats())
+                .expect("stats");
+            assert_eq!(
+                renders.get(),
+                first_renders,
+                "implicit={implicit}: {stats:?}"
+            );
+            cx.update_window(window.into(), |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+            .expect("refresh draw");
+            assert_eq!(renders.get(), first_renders + 1);
+        }
+    }
+
+    #[crate::test]
+    fn implicit_layout_fallback_preserves_clean_sibling(cx: &mut TestAppContext) {
+        let clean_renders = Rc::new(Cell::new(0));
+        let dirty_renders = Rc::new(Cell::new(0));
+        let clean = cx.new(|_| ImplicitLeaf {
+            renders: clean_renders.clone(),
+            width: px(20.),
+            margin: px(0.),
+            color: 0xff0000,
+            intrinsic: false,
+        });
+        let dirty = cx.new(|_| ImplicitLeaf {
+            renders: dirty_renders.clone(),
+            width: px(20.),
+            margin: px(0.),
+            color: 0x00ff00,
+            intrinsic: false,
+        });
+        let branch = cx.new(|_| ImplicitBranch {
+            renders: Rc::new(Cell::new(0)),
+            children: vec![clean, dirty.clone()],
+        });
+        let window = cx.add_window(|window, _| {
+            window.set_implicit_view_splicing(true);
+            ImplicitRoot(branch)
+        });
+        if !cx
+            .update_window(window.into(), |_, window, _| window.layout_cache_enabled())
+            .expect("window")
+        {
+            return;
+        }
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("initial draw");
+        let first_clean_renders = clean_renders.get();
+        let first_dirty_renders = dirty_renders.get();
+        dirty.update(cx, |leaf, cx| {
+            leaf.width = px(30.);
+            cx.notify();
+        });
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("fallback draw");
+        assert_eq!(clean_renders.get(), first_clean_renders);
+        assert_eq!(dirty_renders.get(), first_dirty_renders + 1);
     }
 
     #[crate::test]
