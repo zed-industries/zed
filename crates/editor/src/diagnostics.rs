@@ -1,4 +1,5 @@
 use super::*;
+use std::cmp::Reverse;
 
 pub trait DiagnosticRenderer {
     fn render_group(
@@ -50,6 +51,114 @@ pub(super) struct InlineDiagnostic {
     pub(super) is_primary: bool,
     pub(super) start: Point,
     pub(super) severity: lsp::DiagnosticSeverity,
+}
+
+#[derive(Default)]
+pub(super) struct InlineDiagnostics {
+    entries: Vec<(Anchor, InlineDiagnostic)>,
+    best: RangeMinimum,
+    best_primary: RangeMinimum,
+    groups: HashMap<usize, Vec<usize>>,
+}
+
+impl InlineDiagnostics {
+    pub(super) fn new(
+        mut entries: Vec<(Anchor, InlineDiagnostic)>,
+        buffer: &MultiBufferSnapshot,
+    ) -> Self {
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right, buffer));
+        let precedes = |left: usize, right: usize| precedes(&entries, left, right);
+        let best = RangeMinimum::new(entries.len(), |_| true, &precedes);
+        let best_primary = RangeMinimum::new(
+            entries.len(),
+            |index| entries[index].1.is_primary,
+            &precedes,
+        );
+        let mut groups = HashMap::<usize, Vec<usize>>::default();
+        for (index, (_, diagnostic)) in entries.iter().enumerate() {
+            groups.entry(diagnostic.group_id).or_default().push(index);
+        }
+        Self {
+            entries,
+            best,
+            best_primary,
+            groups,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    pub(super) fn per_row(
+        &self,
+        snapshot: &DisplaySnapshot,
+        rows: Range<DisplayRow>,
+        max_severity: lsp::DiagnosticSeverity,
+        excluded_group: Option<usize>,
+    ) -> Vec<(DisplayRow, &InlineDiagnostic)> {
+        let len = self.entries.len();
+        let row = |index: usize| self.entries[index].0.to_display_point(snapshot).row();
+        let mut start = self
+            .entries
+            .partition_point(|(anchor, _)| anchor.to_display_point(snapshot).row() < rows.start);
+        let mut diagnostics = Vec::new();
+        while start < len {
+            let display_row = row(start);
+            if display_row >= rows.end {
+                break;
+            }
+            let mut bound = 1;
+            while start + bound < len && row(start + bound) == display_row {
+                bound *= 2;
+            }
+            let low = start + bound / 2 + 1;
+            let high = (start + bound).min(len);
+            let end = low
+                + self.entries[low..high].partition_point(|(anchor, _)| {
+                    anchor.to_display_point(snapshot).row() <= display_row
+                });
+            if let Some(index) = self.winner(start..end, max_severity, excluded_group) {
+                diagnostics.push((display_row, &self.entries[index].1));
+            }
+            start = end;
+        }
+        diagnostics
+    }
+
+    fn winner(
+        &self,
+        range: Range<usize>,
+        max_severity: lsp::DiagnosticSeverity,
+        excluded_group: Option<usize>,
+    ) -> Option<usize> {
+        let excluded = excluded_group
+            .and_then(|group| self.groups.get(&group))
+            .map_or(&[][..], |indices| {
+                let start = indices.partition_point(|index| *index < range.start);
+                let end = indices.partition_point(|index| *index < range.end);
+                &indices[start..end]
+            });
+        let precedes = |left: usize, right: usize| precedes(&self.entries, left, right);
+        let best_in = |tree: &RangeMinimum| {
+            let mut best = None;
+            let mut start = range.start;
+            for &end in excluded.iter().chain([&range.end]) {
+                best = RangeMinimum::better(best, tree.min(start..end, &precedes), &precedes);
+                start = end + 1;
+            }
+            best
+        };
+        let passes = |index: &usize| self.entries[*index].1.severity <= max_severity;
+        best_in(&self.best_primary)
+            .filter(passes)
+            .or_else(|| best_in(&self.best).filter(passes))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -510,23 +619,18 @@ impl Editor {
                                     .clone()
                             });
                         let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
-                        let (Ok(i) | Err(i)) = inline_diagnostics
-                            .binary_search_by(|(probe, _)| probe.cmp(&start_anchor, &snapshot));
-                        inline_diagnostics.insert(
-                            i,
-                            (
-                                start_anchor,
-                                InlineDiagnostic {
-                                    message,
-                                    group_id: diagnostic_entry.diagnostic.group_id,
-                                    start: diagnostic_entry.range.start.to_point(&snapshot),
-                                    is_primary: diagnostic_entry.diagnostic.is_primary,
-                                    severity: diagnostic_entry.diagnostic.severity,
-                                },
-                            ),
-                        );
+                        inline_diagnostics.push((
+                            start_anchor,
+                            InlineDiagnostic {
+                                message,
+                                group_id: diagnostic_entry.diagnostic.group_id,
+                                start: diagnostic_entry.range.start.to_point(&snapshot),
+                                is_primary: diagnostic_entry.diagnostic.is_primary,
+                                severity: diagnostic_entry.diagnostic.severity,
+                            },
+                        ));
                     }
-                    inline_diagnostics
+                    InlineDiagnostics::new(inline_diagnostics, &snapshot)
                 })
                 .await;
 
@@ -605,8 +709,87 @@ impl Editor {
     }
 }
 
+#[derive(Default)]
+struct RangeMinimum {
+    leaves: usize,
+    nodes: Vec<Option<u32>>,
+}
+
+impl RangeMinimum {
+    fn new(
+        len: usize,
+        include: impl Fn(usize) -> bool,
+        precedes: &impl Fn(usize, usize) -> bool,
+    ) -> Self {
+        let leaves = len.next_power_of_two();
+        let mut nodes = vec![None; 2 * leaves];
+        for index in (0..len).filter(|index| include(*index)) {
+            nodes[leaves + index] = u32::try_from(index).ok();
+        }
+        for node in (1..leaves).rev() {
+            let left = nodes[2 * node].map(|index| index as usize);
+            let right = nodes[2 * node + 1].map(|index| index as usize);
+            nodes[node] =
+                Self::better(left, right, precedes).and_then(|index| u32::try_from(index).ok());
+        }
+        Self { leaves, nodes }
+    }
+
+    fn min(&self, range: Range<usize>, precedes: &impl Fn(usize, usize) -> bool) -> Option<usize> {
+        let node = |node: usize| {
+            self.nodes
+                .get(node)
+                .copied()
+                .flatten()
+                .map(|index| index as usize)
+        };
+        let mut best = None;
+        let mut left = range.start + self.leaves;
+        let mut right = range.end + self.leaves;
+        while left < right {
+            if left % 2 == 1 {
+                best = Self::better(best, node(left), precedes);
+                left += 1;
+            }
+            if right % 2 == 1 {
+                right -= 1;
+                best = Self::better(best, node(right), precedes);
+            }
+            left /= 2;
+            right /= 2;
+        }
+        best
+    }
+
+    fn better(
+        left: Option<usize>,
+        right: Option<usize>,
+        precedes: &impl Fn(usize, usize) -> bool,
+    ) -> Option<usize> {
+        match (left, right) {
+            (Some(left), Some(right)) => Some(if precedes(right, left) { right } else { left }),
+            (left, right) => left.or(right),
+        }
+    }
+}
+
+fn precedes(entries: &[(Anchor, InlineDiagnostic)], left: usize, right: usize) -> bool {
+    let key = |index: usize| {
+        let diagnostic = &entries[index].1;
+        (
+            diagnostic.severity,
+            Reverse(diagnostic.is_primary),
+            diagnostic.start.row,
+            diagnostic.start.column,
+            index,
+        )
+    };
+    key(left) < key(right)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{InlineDiagnostic, InlineDiagnostics};
     use crate::{
         actions::{
             ToggleCodeLens, ToggleDiagnostics, ToggleInlayHints, ToggleInlineDiagnostics,
@@ -615,11 +798,16 @@ mod tests {
         editor_tests::init_test,
         test::editor_test_context::EditorTestContext,
     };
+    use gpui::SharedString;
     use gpui::{Action, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::DiagnosticSourceKind;
+    use language::Point;
     use lsp::LanguageServerId;
+    use multi_buffer::{Anchor, MultiBuffer};
+    use rand::prelude::*;
     use settings::{DelayMs, SettingsStore};
+    use std::cmp::Reverse;
     use std::sync::{
         Arc,
         atomic::{self, AtomicUsize},
@@ -894,5 +1082,64 @@ mod tests {
                 "ToggleInlineDiagnostics should not be available in editors with inline diagnostics permanently disabled"
             );
         });
+    }
+
+    #[gpui::test(iterations = 20)]
+    fn test_inline_diagnostic_winner_matches_sorted_selection(cx: &mut gpui::App, mut rng: StdRng) {
+        let buffer = MultiBuffer::build_simple("", cx).read(cx).snapshot(cx);
+        let severities = [
+            lsp::DiagnosticSeverity::ERROR,
+            lsp::DiagnosticSeverity::WARNING,
+            lsp::DiagnosticSeverity::INFORMATION,
+            lsp::DiagnosticSeverity::HINT,
+        ];
+        let entries = (0..rng.random_range(0..64))
+            .map(|_| {
+                (
+                    Anchor::Min,
+                    InlineDiagnostic {
+                        message: SharedString::default(),
+                        group_id: rng.random_range(0..4),
+                        is_primary: rng.random(),
+                        start: Point::new(0, rng.random_range(0..8)),
+                        severity: severities[rng.random_range(0..severities.len())],
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let diagnostics = InlineDiagnostics::new(entries.clone(), &buffer);
+        for _ in 0..100 {
+            let start = rng.random_range(0..=entries.len());
+            let end = rng.random_range(start..=entries.len());
+            let max_severity = severities[rng.random_range(0..severities.len())];
+            let excluded_group = rng.random_bool(0.5).then(|| rng.random_range(0..4));
+
+            let mut candidates = (start..end)
+                .filter(|index| {
+                    let diagnostic = &entries[*index].1;
+                    diagnostic.severity <= max_severity
+                        && Some(diagnostic.group_id) != excluded_group
+                })
+                .collect::<Vec<_>>();
+            candidates.sort_by_key(|index| {
+                let diagnostic = &entries[*index].1;
+                (
+                    diagnostic.severity,
+                    Reverse(diagnostic.is_primary),
+                    diagnostic.start.row,
+                    diagnostic.start.column,
+                )
+            });
+            let expected = candidates
+                .iter()
+                .find(|index| entries[**index].1.is_primary)
+                .or_else(|| candidates.first())
+                .copied();
+
+            assert_eq!(
+                diagnostics.winner(start..end, max_severity, excluded_group),
+                expected
+            );
+        }
     }
 }

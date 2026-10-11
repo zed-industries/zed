@@ -9,7 +9,8 @@ use crate::{
     ChunkRenderer, HighlightStyles,
     inlays::{Inlay, InlayContent},
 };
-use collections::BTreeSet;
+use collections::{BTreeSet, HashMap, HashSet};
+use gpui::Pixels;
 use language::{Chunk, Edit, LanguageAwareStyling, Point, TextSummary};
 use multi_buffer::{
     Anchor, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
@@ -18,12 +19,12 @@ use multi_buffer::{
 use project::InlayId;
 use smallvec::SmallVec;
 use std::{
-    cmp, iter,
+    cmp, iter, mem,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
     slice,
     sync::Arc,
 };
-use sum_tree::{Bias, Cursor, Dimensions, SumTree};
+use sum_tree::{Bias, Cursor, Dimensions, SumTree, TreeMap};
 use text::{ChunkBitmaps, Patch};
 use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
@@ -41,6 +42,7 @@ pub struct InlayMap {
 pub struct InlaySnapshot {
     pub buffer: MultiBufferSnapshot,
     transforms: SumTree<Transform>,
+    renderer_widths: TreeMap<InlayId, Pixels>,
     pub version: usize,
 }
 
@@ -368,7 +370,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                                     .into_any_element()
                             }),
                             constrain_width: false,
-                            measured_width: None,
+                            measured_width: self.snapshot.renderer_widths.get(&inlay.id).copied(),
                         });
                         self.highlight_styles.inlay_hint
                     }
@@ -398,7 +400,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                                         .into_any_element()
                                 }),
                                 constrain_width: false,
-                                measured_width: None,
+                                measured_width: self
+                                    .snapshot
+                                    .renderer_widths
+                                    .get(&inlay.id)
+                                    .copied(),
                             });
                         }
                         self.highlight_styles.inlay_hint
@@ -559,6 +565,7 @@ impl InlayMap {
                 (),
             ),
             buffer,
+            renderer_widths: TreeMap::default(),
             version,
         };
 
@@ -741,6 +748,7 @@ impl InlayMap {
             if !retain {
                 let offset = inlay.position.to_offset(&snapshot.buffer);
                 edits.insert(offset);
+                snapshot.renderer_widths.remove(&inlay.id);
             }
             retain
         });
@@ -776,6 +784,72 @@ impl InlayMap {
         let buffer_snapshot = snapshot.buffer.clone();
         let (snapshot, edits) = self.sync(buffer_snapshot, buffer_edits);
         (snapshot, edits)
+    }
+
+    #[ztracing::instrument(skip_all)]
+    pub(crate) fn update_renderer_widths(
+        &mut self,
+        invalidate: bool,
+        new_widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
+    ) -> (InlaySnapshot, Vec<InlayEdit>) {
+        let new_widths = new_widths
+            .into_iter()
+            .filter_map(|(id, width)| match id {
+                ChunkRendererId::Inlay(id) => Some((id, width)),
+                ChunkRendererId::Fold(_) => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let previous_widths = if invalidate {
+            mem::take(&mut self.snapshot.renderer_widths)
+        } else {
+            self.snapshot.renderer_widths.clone()
+        };
+        let mut changed_ids = HashSet::default();
+        if invalidate {
+            changed_ids.extend(
+                previous_widths
+                    .iter()
+                    .filter(|(id, width)| new_widths.get(id) != Some(width))
+                    .map(|(id, _)| *id),
+            );
+        }
+        let mut new_widths = new_widths
+            .into_iter()
+            .filter(|(id, width)| {
+                let unchanged = previous_widths.get(id) == Some(width);
+                if unchanged && invalidate {
+                    self.snapshot.renderer_widths.insert(*id, *width);
+                }
+                !unchanged
+            })
+            .collect::<HashMap<_, _>>();
+        for inlay in &self.inlays {
+            if new_widths.is_empty() {
+                break;
+            }
+            if let Some(width) = new_widths.remove(&inlay.id) {
+                self.snapshot.renderer_widths.insert(inlay.id, width);
+                changed_ids.insert(inlay.id);
+            }
+        }
+        if changed_ids.is_empty() {
+            return (self.snapshot.clone(), Vec::new());
+        }
+        let edits = self
+            .inlays
+            .iter()
+            .filter(|inlay| changed_ids.contains(&inlay.id))
+            .map(|inlay| inlay.position.to_offset(&self.snapshot.buffer))
+            .collect::<BTreeSet<_>>();
+        let buffer_edits = edits
+            .into_iter()
+            .map(|offset| Edit {
+                old: offset..offset,
+                new: offset..offset,
+            })
+            .collect();
+        let buffer_snapshot = self.snapshot.buffer.clone();
+        self.sync(buffer_snapshot, buffer_edits)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1134,6 +1208,35 @@ impl InlaySnapshot {
         }
     }
 
+    pub(super) fn clip_point_to_char_boundary(&self, point: InlayPoint, bias: Bias) -> InlayPoint {
+        let (start, end, item) =
+            self.transforms
+                .find::<Dimensions<InlayPoint, Point>, _>((), &point, Bias::Right);
+        match item {
+            Some(Transform::Isomorphic(_)) => {
+                let buffer_point = start.1 + (point.0 - start.0.0);
+                let offset = self.buffer.point_to_offset(buffer_point);
+                let clipped = self
+                    .buffer
+                    .offset_to_point(self.buffer.clip_offset(offset, bias));
+                InlayPoint(start.0.0 + (clipped - start.1))
+            }
+            Some(Transform::Inlay(inlay)) if has_chunk_renderer(inlay) => {
+                if point == start.0 || bias == Bias::Left {
+                    start.0
+                } else {
+                    end.0
+                }
+            }
+            Some(Transform::Inlay(inlay)) => {
+                let text = inlay.text();
+                let offset = text.clip_offset(text.point_to_offset(point.0 - start.0.0), bias);
+                InlayPoint(start.0.0 + text.offset_to_point(offset))
+            }
+            None => self.max_point(),
+        }
+    }
+
     pub fn inlay_bias_at_point(&self, point: InlayPoint) -> Option<Bias> {
         let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
         cursor.seek(&point, Bias::Left);
@@ -1204,35 +1307,6 @@ impl InlaySnapshot {
         }
 
         summary
-    }
-
-    pub fn has_inlays_matching(
-        &self,
-        range: Range<InlayPoint>,
-        mut predicate: impl FnMut(&Inlay, Range<usize>) -> bool,
-    ) -> bool {
-        let mut cursor = self.transforms.cursor::<InlayPoint>(());
-        cursor.seek(&range.start, Bias::Right);
-        while let Some(transform) = cursor.item() {
-            let transform_start = *cursor.start();
-            if transform_start >= range.end {
-                break;
-            }
-            if let Transform::Inlay(inlay) = transform {
-                let transform_end = cursor.end();
-                let start = range.start.max(transform_start).0 - transform_start.0;
-                let end = range.end.min(transform_end).0 - transform_start.0;
-                let text = inlay.text();
-                if predicate(
-                    inlay,
-                    text.point_to_offset(start)..text.point_to_offset(end),
-                ) {
-                    return true;
-                }
-            }
-            cursor.next();
-        }
-        false
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1496,7 +1570,7 @@ impl BufferOffsetToInlayPointCursor<'_> {
     }
 }
 
-pub(super) fn has_chunk_renderer(inlay: &Inlay) -> bool {
+fn has_chunk_renderer(inlay: &Inlay) -> bool {
     match inlay.id {
         InlayId::ReplResult(_) => true,
         InlayId::Color(_) => matches!(inlay.content, InlayContent::Color(_)),

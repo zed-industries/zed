@@ -116,7 +116,6 @@ extend-ignore-re = [
 check-filename = true
 
 [default.extend-words]
-falt = "falt"
 flate = "flate"
 scap = "scap"
 writeable = "writeable"

@@ -242,6 +242,28 @@ impl TabSnapshot {
         }
     }
 
+    pub(crate) fn max_line_len_bound(&self, rows: Range<u32>) -> u32 {
+        let max_point = self.fold_snapshot.max_point();
+        if rows.start > max_point.row() {
+            return 0;
+        }
+        let end = if rows.end > max_point.row() {
+            max_point
+        } else {
+            FoldPoint::new(rows.end, 0)
+        };
+        let longest_row_chars = self
+            .fold_snapshot
+            .text_summary_for_range(FoldPoint::new(rows.start, 0)..end)
+            .longest_row_chars;
+        let tab_size = self.tab_size.get();
+        let without_tab_limit = longest_row_chars.saturating_mul(tab_size.max(4));
+        let with_tab_limit = longest_row_chars
+            .saturating_mul(4)
+            .saturating_add(self.max_expansion_column.saturating_mul(tab_size - 1));
+        without_tab_limit.min(with_tab_limit)
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn text_summary(&self) -> TextSummary {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
@@ -258,13 +280,16 @@ impl TabSnapshot {
         let (first_line_output_bytes, first_line_input_bytes) =
             if range.start.row() == range.end.row() {
                 (
-                    range.end.column() - range.start.column(),
-                    input_end.column() - input_start.column(),
+                    range.end.column().saturating_sub(range.start.column()),
+                    input_end.column().saturating_sub(input_start.column()),
                 )
             } else {
                 (
-                    self.line_len(range.start.row()) - range.start.column(),
-                    self.fold_snapshot.line_len(input_start.row()) - input_start.column(),
+                    self.line_len(range.start.row())
+                        .saturating_sub(range.start.column()),
+                    self.fold_snapshot
+                        .line_len(input_start.row())
+                        .saturating_sub(input_start.column()),
                 )
             };
         let first_line_chars = tab_expanded_chars(

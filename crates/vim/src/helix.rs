@@ -7,7 +7,7 @@ mod surround;
 
 use editor::display_map::{DisplayRow, DisplaySnapshot};
 use editor::{
-    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, NavigationOverlayLabel,
+    Anchor, DisplayPoint, Editor, EditorSettings, MultiBufferOffset, NavigationOverlayLabel,
     NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
@@ -1201,9 +1201,13 @@ impl Vim {
             let snapshot = editor.snapshot(window, cx);
             let display_snapshot = &snapshot.display_snapshot;
             let buffer_snapshot = display_snapshot.buffer_snapshot();
-            let visible_range = Self::visible_jump_range(editor, &snapshot, display_snapshot, cx);
-            let start_offset = buffer_snapshot.point_to_offset(visible_range.start);
-            let end_offset = buffer_snapshot.point_to_offset(visible_range.end);
+            let visible_ranges = Self::visible_jump_ranges(editor, &snapshot, display_snapshot, cx)
+                .into_iter()
+                .map(|range| {
+                    buffer_snapshot.point_to_offset(range.start)
+                        ..buffer_snapshot.point_to_offset(range.end)
+                })
+                .collect::<Vec<_>>();
 
             let selections = editor.selections.all::<Point>(&display_snapshot);
             let skip_data = Self::selection_skip_offsets(
@@ -1216,7 +1220,8 @@ impl Vim {
             let cursor_offset = selections
                 .first()
                 .map(|s| buffer_snapshot.point_to_offset(s.head()))
-                .unwrap_or(start_offset);
+                .or_else(|| visible_ranges.first().map(|range| range.start))
+                .unwrap_or(MultiBufferOffset(0));
 
             let style = editor.style(cx);
             let font = style.text.font();
@@ -1225,8 +1230,7 @@ impl Vim {
 
             Self::build_helix_jump_ui_data(
                 buffer_snapshot,
-                start_offset,
-                end_offset,
+                &visible_ranges,
                 cursor_offset,
                 label_color,
                 &skip_data,
@@ -1237,15 +1241,15 @@ impl Vim {
         })
     }
 
-    fn visible_jump_range(
+    fn visible_jump_ranges(
         editor: &Editor,
         snapshot: &editor::EditorSnapshot,
         display_snapshot: &DisplaySnapshot,
         cx: &App,
-    ) -> Range<Point> {
+    ) -> Vec<Range<Point>> {
         let visible_range = editor.multi_buffer_visible_range(display_snapshot, cx);
         if editor.visible_line_count().is_some() || visible_range.start != visible_range.end {
-            return visible_range;
+            return editor.visible_text_ranges(display_snapshot, cx);
         }
 
         let scroll_position = snapshot.scroll_position();
@@ -1260,14 +1264,15 @@ impl Vim {
         let end_display_point =
             DisplayPoint::new(DisplayRow(top_row.saturating_add(visible_rows)), 0);
 
-        display_snapshot.display_point_to_point(start_display_point, Bias::Left)
-            ..display_snapshot.display_point_to_point(end_display_point, Bias::Right)
+        vec![
+            display_snapshot.display_point_to_point(start_display_point, Bias::Left)
+                ..display_snapshot.display_point_to_point(end_display_point, Bias::Right),
+        ]
     }
 
     fn build_helix_jump_ui_data(
         buffer: &MultiBufferSnapshot,
-        start_offset: MultiBufferOffset,
-        end_offset: MultiBufferOffset,
+        ranges: &[Range<MultiBufferOffset>],
         cursor_offset: MultiBufferOffset,
         label_color: Hsla,
         skip_data: &HelixJumpSkipData,
@@ -1275,12 +1280,14 @@ impl Vim {
         font: Font,
         font_size: Pixels,
     ) -> HelixJumpUiData {
-        if start_offset >= end_offset {
-            return HelixJumpUiData::default();
-        }
-
         // First pass: collect all word candidates without assigning labels
-        let candidates = Self::collect_jump_candidates(buffer, start_offset, end_offset, skip_data);
+        let candidates = ranges
+            .iter()
+            .filter(|range| range.start < range.end)
+            .flat_map(|range| {
+                Self::collect_jump_candidates(buffer, range.start, range.end, skip_data)
+            })
+            .collect::<Vec<_>>();
 
         if candidates.is_empty() {
             return HelixJumpUiData::default();
@@ -1328,7 +1335,7 @@ impl Vim {
                 Self::fit_proportional_jump_label(
                     buffer,
                     &candidate,
-                    end_offset,
+                    candidate.range_end,
                     label_width,
                     &width_of,
                 )
@@ -1364,8 +1371,13 @@ impl Vim {
     ) -> Vec<JumpCandidate> {
         let mut candidates = Vec::new();
 
+        let starts_mid_word = buffer
+            .reversed_chars_at(start_offset)
+            .next()
+            .is_some_and(is_jump_word_char);
         let mut offset = start_offset;
         let mut in_word = false;
+        let mut partial_word = false;
         let mut word_start = start_offset;
         let mut first_two_end = start_offset;
         let mut char_count = 0;
@@ -1377,6 +1389,7 @@ impl Vim {
                 if is_word {
                     if !in_word {
                         in_word = true;
+                        partial_word = starts_mid_word && absolute == start_offset;
                         word_start = absolute;
                         char_count = 0;
                     }
@@ -1388,12 +1401,14 @@ impl Vim {
 
                 if !is_word && in_word {
                     if char_count >= 2
+                        && !partial_word
                         && !Self::should_skip_jump_candidate(word_start, absolute, skip_data)
                     {
                         candidates.push(JumpCandidate {
                             word_start,
                             word_end: absolute,
                             first_two_end,
+                            range_end: end_offset,
                         });
                     }
                     in_word = false;
@@ -1403,18 +1418,43 @@ impl Vim {
         }
 
         // Handle word at end of buffer
-        if in_word
-            && char_count >= 2
-            && !Self::should_skip_jump_candidate(word_start, end_offset, skip_data)
-        {
-            candidates.push(JumpCandidate {
-                word_start,
-                word_end: end_offset,
-                first_two_end,
-            });
+        if in_word && !partial_word {
+            if char_count == 1
+                && let Some(next) = buffer
+                    .chars_at(end_offset)
+                    .next()
+                    .filter(|next| is_jump_word_char(*next))
+            {
+                first_two_end = end_offset + next.len_utf8();
+                char_count += 1;
+            }
+            let word_end = end_offset.max(first_two_end);
+            if char_count >= 2 && !Self::should_skip_jump_candidate(word_start, word_end, skip_data)
+            {
+                candidates.push(JumpCandidate {
+                    word_start,
+                    word_end,
+                    first_two_end,
+                    range_end: word_end,
+                });
+            }
         }
 
         candidates
+    }
+
+    pub(crate) fn jump_target_word_end(buffer: &MultiBufferSnapshot, end: Anchor) -> Anchor {
+        let offset = end.to_offset(buffer);
+        let continuation = buffer
+            .chars_at(offset)
+            .take_while(|ch| is_jump_word_char(*ch))
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if continuation == 0 {
+            end
+        } else {
+            buffer.anchor_after(offset + continuation)
+        }
     }
 
     fn selection_skip_offsets(
@@ -1765,6 +1805,7 @@ struct JumpCandidate {
     word_start: MultiBufferOffset,
     word_end: MultiBufferOffset,
     first_two_end: MultiBufferOffset,
+    range_end: MultiBufferOffset,
 }
 
 struct HelixJumpSkipData {
@@ -1879,7 +1920,7 @@ mod test {
     use futures::StreamExt;
     use std::{fmt::Write, time::Duration};
 
-    use editor::{HighlightKey, MultiBufferOffset};
+    use editor::{HighlightKey, MultiBufferOffset, ToOffset};
     use gpui::{
         Bounds, DispatchEventResult, ElementInputHandler, KeyBinding, KeyDownEvent, Keystroke,
         PlatformInput, PlatformInputHandler, UpdateGlobal, VisualTestContext,
@@ -1894,7 +1935,9 @@ mod test {
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
 
-    use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
+    use multi_buffer::MultiBuffer;
+
+    use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpSkipData, HelixJumpToWord};
     use crate::{
         HELIX_JUMP_OVERLAY_KEY, SwitchToHelixNormalMode, Vim, VimAddon,
         state::{Mode, Operator},
@@ -2044,8 +2087,7 @@ mod test {
             let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
             let data = Vim::build_helix_jump_ui_data(
                 buffer_snapshot,
-                MultiBufferOffset(0),
-                buffer_snapshot.len(),
+                &[MultiBufferOffset(0)..buffer_snapshot.len()],
                 cursor_offset,
                 label_color,
                 &skip_data,
@@ -4083,8 +4125,7 @@ mod test {
             let font_size = style.text.font_size.to_pixels(window.rem_size());
             let data = Vim::build_helix_jump_ui_data(
                 buffer_snapshot,
-                MultiBufferOffset(0),
-                buffer_snapshot.len(),
+                &[MultiBufferOffset(0)..buffer_snapshot.len()],
                 cursor_offset,
                 configured_label_color,
                 &skip_data,
@@ -4795,5 +4836,34 @@ mod test {
         cx.assert_state("hello worldˇ\n", Mode::HelixNormal);
         cx.simulate_keystrokes("o");
         cx.assert_state("hello world\nˇ\n", Mode::Insert);
+    }
+
+    #[gpui::test]
+    fn test_helix_jump_candidates_stay_within_range_edges(cx: &mut gpui::App) {
+        let buffer = MultiBuffer::build_simple("foobar baz qux", cx)
+            .read(cx)
+            .snapshot(cx);
+        let candidates = Vim::collect_jump_candidates(
+            &buffer,
+            MultiBufferOffset(3),
+            MultiBufferOffset(12),
+            &HelixJumpSkipData {
+                points: Vec::new(),
+                ranges: Vec::new(),
+            },
+        );
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.word_start.0..candidate.word_end.0)
+                .collect::<Vec<_>>(),
+            [7..10, 11..13]
+        );
+        let word_end = |offset| {
+            Vim::jump_target_word_end(&buffer, buffer.anchor_after(MultiBufferOffset(offset)))
+                .to_offset(&buffer)
+                .0
+        };
+        assert_eq!([word_end(10), word_end(13)], [10, 14]);
     }
 }

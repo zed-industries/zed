@@ -31,7 +31,7 @@ impl Editor {
         let accents = accent_data.colors.0.clone();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
 
-        let visible_excerpts = self.visible_buffer_ranges(cx);
+        let visible_excerpts = self.visible_text_buffer_ranges(cx);
         let excerpt_data: Vec<(
             BufferSnapshot,
             Range<BufferOffset>,

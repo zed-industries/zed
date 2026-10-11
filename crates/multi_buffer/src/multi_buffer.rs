@@ -6609,6 +6609,34 @@ impl MultiBufferSnapshot {
         range: &'a Range<Anchor>,
         include_local: bool,
     ) -> impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)> {
+        self.clamped_selections_in_range(range, range, None, include_local)
+    }
+
+    pub fn selections_in_ranges<'a>(
+        &'a self,
+        ranges: &'a [Range<Anchor>],
+        clamp: &'a Range<Anchor>,
+        include_local: bool,
+    ) -> impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)> {
+        let mut yielded = HashSet::default();
+        ranges
+            .iter()
+            .flat_map(move |range| {
+                self.clamped_selections_in_range(range, clamp, Some(false), include_local)
+            })
+            .chain(self.clamped_selections_in_range(clamp, clamp, Some(true), include_local))
+            .filter(move |(replica_id, _, _, selection)| {
+                yielded.insert((*replica_id, selection.id, selection.start, selection.end))
+            })
+    }
+
+    fn clamped_selections_in_range<'a>(
+        &'a self,
+        range: &'a Range<Anchor>,
+        clamp: &'a Range<Anchor>,
+        line_mode_filter: Option<bool>,
+        include_local: bool,
+    ) -> impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)> {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
         cursor.seek(&range.start.seek_target(self), Bias::Left);
         cursor
@@ -6633,16 +6661,19 @@ impl MultiBufferSnapshot {
 
                 buffer_snapshot
                     .selections_in_range(query_range, include_local)
+                    .filter(move |(_, line_mode, _, _)| {
+                        line_mode_filter.is_none_or(|filter| filter == *line_mode)
+                    })
                     .flat_map(move |(replica_id, line_mode, cursor_shape, selections)| {
                         selections.map(move |selection| {
                             let mut start =
                                 Anchor::in_buffer(excerpt.path_key_index, selection.start);
                             let mut end = Anchor::in_buffer(excerpt.path_key_index, selection.end);
-                            if range.start.cmp(&start, self).is_gt() {
-                                start = range.start;
+                            if clamp.start.cmp(&start, self).is_gt() {
+                                start = clamp.start;
                             }
-                            if range.end.cmp(&end, self).is_lt() {
-                                end = range.end;
+                            if clamp.end.cmp(&end, self).is_lt() {
+                                end = clamp.end;
                             }
 
                             (

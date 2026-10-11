@@ -58,10 +58,6 @@ impl SyntaxTheme {
         )
     }
 
-    pub fn highlights(&self) -> impl Iterator<Item = &HighlightStyle> {
-        self.highlights.iter()
-    }
-
     pub fn get(&self, highlight_index: impl Into<usize>) -> Option<&HighlightStyle> {
         self.highlights.get(highlight_index.into())
     }

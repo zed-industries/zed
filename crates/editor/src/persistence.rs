@@ -227,6 +227,11 @@ impl Domain for EditorDb {
             CREATE INDEX editor_selections_editor_id_workspace_id
             ON editor_selections (editor_id, workspace_id);
         ),
+        sql!(
+            ALTER TABLE editors ADD COLUMN scroll_horizontal_anchor_row INTEGER;
+            ALTER TABLE editors ADD COLUMN scroll_horizontal_anchor_column INTEGER;
+            ALTER TABLE editors ADD COLUMN scroll_horizontal_anchor_offset REAL;
+        ),
     ];
 }
 
@@ -265,8 +270,8 @@ impl EditorDb {
 
     // Returns the scroll top row, and offset
     query! {
-        pub fn get_scroll_position(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(u32, f64, f64)>> {
-            SELECT scroll_top_row, scroll_horizontal_offset, scroll_vertical_offset
+        pub fn get_scroll_position(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(u32, f64, f64, Option<u32>, Option<u32>, Option<f64>)>> {
+            SELECT scroll_top_row, scroll_horizontal_offset, scroll_vertical_offset, scroll_horizontal_anchor_row, scroll_horizontal_anchor_column, scroll_horizontal_anchor_offset
             FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }
@@ -278,13 +283,19 @@ impl EditorDb {
             workspace_id: WorkspaceId,
             top_row: u32,
             vertical_offset: f64,
-            horizontal_offset: f64
+            horizontal_offset: f64,
+            horizontal_anchor_row: Option<u32>,
+            horizontal_anchor_column: Option<u32>,
+            horizontal_anchor_offset: Option<f64>
         ) -> Result<()> {
             UPDATE OR IGNORE editors
             SET
                 scroll_top_row = ?3,
                 scroll_horizontal_offset = ?4,
-                scroll_vertical_offset = ?5
+                scroll_vertical_offset = ?5,
+                scroll_horizontal_anchor_row = ?6,
+                scroll_horizontal_anchor_column = ?7,
+                scroll_horizontal_anchor_offset = ?8
             WHERE item_id = ?1 AND workspace_id = ?2
         }
     }

@@ -83,7 +83,7 @@ pub use completions::CompletionProvider;
 #[cfg(test)]
 pub(crate) use completions::snippet_candidate_suffixes;
 pub(crate) use completions::split_words;
-use diagnostics::{ActiveDiagnostic, GlobalDiagnosticRenderer, InlineDiagnostic};
+use diagnostics::{ActiveDiagnostic, GlobalDiagnosticRenderer, InlineDiagnostics};
 pub use diagnostics::{DiagnosticRenderer, set_diagnostic_renderer};
 pub use display_map::{
     ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder, HighlightKey,
@@ -172,9 +172,9 @@ use gpui::{
     FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, IsZero,
     KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
-    Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
-    pulsating_between, px, relative, size,
+    Subscription, Task, TextAlign, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point,
+    prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -233,7 +233,7 @@ use rand::seq::SliceRandom;
 use regex::Regex;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, ScrollAnchor, ScrollManager, SharedScrollAnchor};
-use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
+use selections_collection::{GoalOrigins, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
     GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
@@ -253,6 +253,7 @@ use std::{
     ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
+    slice,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -525,7 +526,7 @@ impl EditorMode {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug)]
 pub enum SoftWrap {
     /// Do not soft-wrap.
     None,
@@ -994,7 +995,7 @@ pub struct Editor {
     inline_diagnostics_enabled: bool,
     diagnostics_enabled: bool,
     word_completions_enabled: bool,
-    inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
+    inline_diagnostics: InlineDiagnostics,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     hard_wrap: Option<usize>,
     project: Option<Entity<Project>>,
@@ -1331,6 +1332,7 @@ pub struct RemoteSelection {
 #[derive(Clone, Debug)]
 struct SelectionHistoryEntry {
     selections: Arc<[Selection<Anchor>]>,
+    goal_origins: GoalOrigins,
     select_next_state: Option<SelectNextState>,
     select_prev_state: Option<SelectNextState>,
     add_selections_state: Option<AddSelectionsState>,
@@ -1433,6 +1435,8 @@ pub struct TransactionSelections {
     pub redo: Option<Arc<[Selection<Anchor>]>>,
     undo_add_selections_state: Option<AddSelectionsState>,
     redo_add_selections_state: Option<AddSelectionsState>,
+    undo_goal_origins: GoalOrigins,
+    redo_goal_origins: GoalOrigins,
 }
 
 #[derive(Default)]
@@ -1450,6 +1454,7 @@ impl SelectionHistory {
         transaction_id: TransactionId,
         selections: Arc<[Selection<Anchor>]>,
         add_selections_state: Option<AddSelectionsState>,
+        goal_origins: GoalOrigins,
     ) {
         if selections.is_empty() {
             log::error!(
@@ -1465,6 +1470,8 @@ impl SelectionHistory {
                 redo: None,
                 undo_add_selections_state: add_selections_state,
                 redo_add_selections_state: None,
+                undo_goal_origins: goal_origins,
+                redo_goal_origins: GoalOrigins::default(),
             },
         );
     }
@@ -2365,7 +2372,7 @@ impl Editor {
             active_diagnostics: ActiveDiagnostic::None,
             show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
             inline_diagnostics_update: Task::ready(()),
-            inline_diagnostics: Vec::new(),
+            inline_diagnostics: InlineDiagnostics::default(),
             soft_wrap_mode_override,
             diagnostics_max_severity,
             hard_wrap: None,
@@ -4100,6 +4107,50 @@ impl Editor {
             ..display_snapshot
                 .clip_point(target_end, Bias::Right)
                 .to_point(display_snapshot)
+    }
+
+    pub fn visible_text_ranges(
+        &self,
+        display_snapshot: &DisplaySnapshot,
+        cx: &App,
+    ) -> Vec<Range<Point>> {
+        self.text_ranges_in_view(display_snapshot, LongRow::visible_window, cx)
+    }
+
+    pub(crate) fn painted_text_ranges(
+        &self,
+        display_snapshot: &DisplaySnapshot,
+        cx: &App,
+    ) -> Vec<Range<Point>> {
+        self.text_ranges_in_view(display_snapshot, LongRow::window, cx)
+    }
+
+    fn text_ranges_in_view(
+        &self,
+        display_snapshot: &DisplaySnapshot,
+        long_row_window: fn(&LongRow, ScrollPixelOffset, TextAlign, ScrollPixelOffset) -> RowWindow,
+        cx: &App,
+    ) -> Vec<Range<Point>> {
+        let visible_range = self.multi_buffer_visible_range(display_snapshot, cx);
+        let Some(em_width) = display_snapshot.long_row_em_width() else {
+            return vec![visible_range];
+        };
+        let rows = visible_range.start.to_display_point(display_snapshot).row()
+            ..visible_range
+                .end
+                .to_display_point(display_snapshot)
+                .row()
+                .next_row();
+        let scroll_x = self.scroll_manager.scroll_position(display_snapshot, cx).x * em_width;
+        let viewport_width = self.visible_column_count().unwrap_or(0.) * em_width;
+        let text_align = self
+            .style
+            .as_ref()
+            .map_or(TextAlign::Left, |style| style.text.text_align);
+        let long_rows = display_snapshot.long_rows_in_view(rows, |long_row| {
+            long_row_window(long_row, scroll_x, text_align, viewport_width)
+        });
+        display_snapshot.visible_buffer_ranges(visible_range, &long_rows)
     }
 
     pub fn display_cursor_names(
@@ -7949,12 +8000,16 @@ impl Editor {
 
     fn restore_selections(
         &mut self,
-        selections: Option<(Arc<[Selection<Anchor>]>, Option<AddSelectionsState>)>,
+        selections: Option<(
+            Arc<[Selection<Anchor>]>,
+            Option<AddSelectionsState>,
+            GoalOrigins,
+        )>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((selections, add_selections_state)) =
-            selections.filter(|(selections, _)| !selections.is_empty())
+        if let Some((selections, add_selections_state, goal_origins)) =
+            selections.filter(|(selections, ..)| !selections.is_empty())
         {
             self.with_selection_effects_deferred(window, cx, |editor, window, cx| {
                 editor.change_selections(
@@ -7962,7 +8017,8 @@ impl Editor {
                     window,
                     cx,
                     |selection_collection| {
-                        selection_collection.select_anchors_unexpanded(selections.to_vec());
+                        selection_collection
+                            .select_anchors_unexpanded(selections.to_vec(), goal_origins);
                     },
                 );
                 editor.add_selections_state = add_selections_state;
@@ -7984,6 +8040,7 @@ impl Editor {
                 (
                     transaction.undo.clone(),
                     transaction.undo_add_selections_state.clone(),
+                    transaction.undo_goal_origins.clone(),
                 )
             });
             self.restore_selections(selections, window, cx);
@@ -8012,7 +8069,11 @@ impl Editor {
                     .transaction(transaction_id)
                     .and_then(|transaction| {
                         transaction.redo.clone().map(|selections| {
-                            (selections, transaction.redo_add_selections_state.clone())
+                            (
+                                selections,
+                                transaction.redo_add_selections_state.clone(),
+                                transaction.redo_goal_origins.clone(),
+                            )
                         })
                     });
             self.restore_selections(selections, window, cx);
@@ -8262,7 +8323,7 @@ impl Editor {
                     window.focus(&rename_focus_handle, cx);
                     let block_id = this.insert_blocks(
                         [BlockProperties {
-                            style: BlockStyle::Flex,
+                            style: BlockStyle::FlexWithAnchor,
                             placement: BlockPlacement::Below(range.start),
                             height: Some(1),
                             render: Arc::new({
@@ -8541,7 +8602,7 @@ impl Editor {
         buffers.retain(|buffer| !buffer.read(cx).read_only());
 
         let transaction_id_prev = buffer.read(cx).last_transaction_id(cx);
-        let (selections_prev, add_selections_state_prev) = transaction_id_prev
+        let (selections_prev, add_selections_state_prev, goal_origins_prev) = transaction_id_prev
             .and_then(|transaction_id_prev| {
                 // default to selections as they were after the last edit, if we have them,
                 // instead of how they are now.
@@ -8553,6 +8614,7 @@ impl Editor {
                         (
                             transaction.undo.clone(),
                             transaction.undo_add_selections_state.clone(),
+                            transaction.undo_goal_origins.clone(),
                         )
                     })
             })
@@ -8560,6 +8622,7 @@ impl Editor {
                 (
                     self.selections.disjoint_anchors_arc(),
                     self.add_selections_state.clone(),
+                    self.selections.goal_origins(),
                 )
             });
 
@@ -8597,6 +8660,7 @@ impl Editor {
                                 transaction_id_now,
                                 selections_prev,
                                 add_selections_state_prev,
+                                goal_origins_prev,
                             );
                         })
                         .ok();
@@ -8771,6 +8835,7 @@ impl Editor {
                 tx_id,
                 self.selections.disjoint_anchors_arc(),
                 self.add_selections_state.clone(),
+                self.selections.goal_origins(),
             );
             cx.emit(EditorEvent::TransactionBegun {
                 transaction_id: tx_id,
@@ -8793,6 +8858,7 @@ impl Editor {
             if let Some(transaction) = self.selection_history.transaction_mut(transaction_id) {
                 transaction.redo = Some(self.selections.disjoint_anchors_arc());
                 transaction.redo_add_selections_state = self.add_selections_state.clone();
+                transaction.redo_goal_origins = self.selections.goal_origins();
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
@@ -8817,9 +8883,11 @@ impl Editor {
                 modify(transaction);
                 if undo != transaction.undo {
                     transaction.undo_add_selections_state = None;
+                    transaction.undo_goal_origins = GoalOrigins::default();
                 }
                 if redo != transaction.redo {
                     transaction.redo_add_selections_state = None;
+                    transaction.redo_goal_origins = GoalOrigins::default();
                 }
             })
             .is_some()
@@ -9735,33 +9803,51 @@ impl Editor {
         display_snapshot: &DisplaySnapshot,
         theme: &Theme,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
+        self.background_highlights_in_ranges(
+            slice::from_ref(&search_range),
+            display_snapshot,
+            theme,
+        )
+    }
+
+    pub fn background_highlights_in_ranges(
+        &self,
+        search_ranges: &[Range<Anchor>],
+        display_snapshot: &DisplaySnapshot,
+        theme: &Theme,
+    ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let mut results = Vec::new();
         for (color_fetcher, ranges) in self.background_highlights.values() {
-            let start_ix = match ranges.binary_search_by(|probe| {
-                let cmp = probe
-                    .end
-                    .cmp(&search_range.start, &display_snapshot.buffer_snapshot());
-                if cmp.is_gt() {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
+            let mut next_ix = 0;
+            for search_range in search_ranges {
+                let start_ix = match ranges.binary_search_by(|probe| {
+                    let cmp = probe
+                        .end
+                        .cmp(&search_range.start, &display_snapshot.buffer_snapshot());
+                    if cmp.is_gt() {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Less
+                    }
+                }) {
+                    Ok(i) | Err(i) => i,
                 }
-            }) {
-                Ok(i) | Err(i) => i,
-            };
-            for (index, range) in ranges[start_ix..].iter().enumerate() {
-                if range
-                    .start
-                    .cmp(&search_range.end, &display_snapshot.buffer_snapshot())
-                    .is_ge()
-                {
-                    break;
-                }
+                .max(next_ix);
+                for (index, range) in ranges.iter().enumerate().skip(start_ix) {
+                    if range
+                        .start
+                        .cmp(&search_range.end, &display_snapshot.buffer_snapshot())
+                        .is_ge()
+                    {
+                        break;
+                    }
 
-                let color = color_fetcher(&(start_ix + index), theme);
-                let start = range.start.to_display_point(display_snapshot);
-                let end = range.end.to_display_point(display_snapshot);
-                results.push((start..end, color))
+                    let color = color_fetcher(&index, theme);
+                    let start = range.start.to_display_point(display_snapshot);
+                    let end = range.end.to_display_point(display_snapshot);
+                    results.push((start..end, color));
+                    next_ix = index + 1;
+                }
             }
         }
         results
@@ -11157,14 +11243,10 @@ impl Editor {
         if source.row().as_f64() < scroll_top.floor() {
             return None;
         }
-        let em_width = ScrollPixelOffset::from(text_layout_details.em_layout_width());
-        let scroll_left = window.pixel_snap_f64(scroll_position.x * em_width);
-        let source_x = editor_snapshot.x_for_display_point(source, &text_layout_details);
-        let source_y = (source.row().as_f64() - scroll_top) * f64::from(line_height);
-        Some(gpui::Point::new(
-            Pixels::from(source_x - scroll_left),
-            Pixels::from(source_y),
-        ))
+        let source_x = editor_snapshot.x_for_display_point(source, &text_layout_details)
+            - self.horizontal_scroll_pixels(scroll_position.x, &text_layout_details, window);
+        let source_y = line_height * (source.row().as_f64() - scroll_top) as f32;
+        Some(gpui::Point::new(Pixels::from(source_x), source_y))
     }
 
     pub fn register_addon<T: Addon>(&mut self, instance: T) {
@@ -11205,6 +11287,23 @@ impl Editor {
             em_width,
             line_height,
         }
+    }
+
+    fn horizontal_scroll_pixels(
+        &self,
+        scroll_x: ScrollOffset,
+        text_layout_details: &TextLayoutDetails,
+        window: &Window,
+    ) -> ScrollPixelOffset {
+        let text_style = &text_layout_details.editor_style.text;
+        let font_id = text_layout_details
+            .text_system
+            .resolve_font(&text_style.font());
+        let font_size = text_style.font_size.to_pixels(text_layout_details.rem_size);
+        let em_layout_width = text_layout_details
+            .text_system
+            .em_layout_width(font_id, font_size);
+        window.pixel_snap_f64(scroll_x * ScrollPixelOffset::from(em_layout_width))
     }
 
     pub fn wait_for_diff_to_load(&self) -> Option<Shared<Task<()>>> {
@@ -12148,45 +12247,26 @@ impl EditorSnapshot {
         collaboration_hub: &dyn CollaborationHub,
         cx: &'a App,
     ) -> impl 'a + Iterator<Item = RemoteSelection> {
-        let participant_names = collaboration_hub.user_names(cx);
-        let participant_indices = collaboration_hub.user_participant_indices(cx);
-        let collaborators_by_peer_id = collaboration_hub.collaborators(cx);
-        let collaborators_by_replica_id = collaborators_by_peer_id
-            .values()
-            .map(|collaborator| (collaborator.replica_id, collaborator))
-            .collect::<HashMap<_, _>>();
-        self.buffer_snapshot()
-            .selections_in_range(range, false)
-            .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
-                if replica_id == ReplicaId::AGENT {
-                    Some(RemoteSelection {
-                        replica_id,
-                        selection,
-                        cursor_shape,
-                        line_mode,
-                        collaborator_id: CollaboratorId::Agent,
-                        user_name: Some("Agent".into()),
-                        color: cx.theme().players().agent(),
-                    })
-                } else {
-                    let collaborator = collaborators_by_replica_id.get(&replica_id)?;
-                    let participant_index = participant_indices.get(&collaborator.user_id).copied();
-                    let user_name = participant_names.get(&collaborator.user_id).cloned();
-                    Some(RemoteSelection {
-                        replica_id,
-                        selection,
-                        cursor_shape,
-                        line_mode,
-                        collaborator_id: CollaboratorId::PeerId(collaborator.peer_id),
-                        user_name,
-                        color: if let Some(index) = participant_index {
-                            cx.theme().players().color_for_participant(index.0)
-                        } else {
-                            cx.theme().players().absent()
-                        },
-                    })
-                }
-            })
+        self.remote_selections(
+            self.buffer_snapshot().selections_in_range(range, false),
+            collaboration_hub,
+            cx,
+        )
+    }
+
+    pub fn remote_selections_in_ranges<'a>(
+        &'a self,
+        ranges: &'a [Range<Anchor>],
+        clamp: &'a Range<Anchor>,
+        collaboration_hub: &dyn CollaborationHub,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = RemoteSelection> {
+        self.remote_selections(
+            self.buffer_snapshot()
+                .selections_in_ranges(ranges, clamp, false),
+            collaboration_hub,
+            cx,
+        )
     }
 
     pub fn language_at<T: ToOffset>(&self, position: T) -> Option<&Arc<Language>> {
@@ -12529,6 +12609,51 @@ impl EditorSnapshot {
                 (relative_line_number != 0 || is_deleted).then_some((row, relative_line_number))
             })
             .collect()
+    }
+
+    fn remote_selections<'a>(
+        &'a self,
+        selections: impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)>,
+        collaboration_hub: &dyn CollaborationHub,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = RemoteSelection> {
+        let participant_names = collaboration_hub.user_names(cx);
+        let participant_indices = collaboration_hub.user_participant_indices(cx);
+        let collaborators_by_peer_id = collaboration_hub.collaborators(cx);
+        let collaborators_by_replica_id = collaborators_by_peer_id
+            .values()
+            .map(|collaborator| (collaborator.replica_id, collaborator))
+            .collect::<HashMap<_, _>>();
+        selections.filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
+            if replica_id == ReplicaId::AGENT {
+                Some(RemoteSelection {
+                    replica_id,
+                    selection,
+                    cursor_shape,
+                    line_mode,
+                    collaborator_id: CollaboratorId::Agent,
+                    user_name: Some("Agent".into()),
+                    color: cx.theme().players().agent(),
+                })
+            } else {
+                let collaborator = collaborators_by_replica_id.get(&replica_id)?;
+                let participant_index = participant_indices.get(&collaborator.user_id).copied();
+                let user_name = participant_names.get(&collaborator.user_id).cloned();
+                Some(RemoteSelection {
+                    replica_id,
+                    selection,
+                    cursor_shape,
+                    line_mode,
+                    collaborator_id: CollaboratorId::PeerId(collaborator.peer_id),
+                    user_name,
+                    color: if let Some(index) = participant_index {
+                        cx.theme().players().color_for_participant(index.0)
+                    } else {
+                        cx.theme().players().absent()
+                    },
+                })
+            }
+        })
     }
 }
 

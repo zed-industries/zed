@@ -2346,7 +2346,8 @@ mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::display_map::{
-        BlockPlacement, BlockProperties, BlockStyle, Crease, FoldPlaceholder,
+        BlockPlacement, BlockProperties, BlockStyle, ChunkRendererId, Crease, FoldPlaceholder,
+        RendererWidthsKey,
     };
     use crate::inlays::Inlay;
     use crate::test::{editor_content_with_blocks_and_width, set_block_content_for_tests};
@@ -4479,6 +4480,73 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_split_sides_show_same_text_at_left_edge(cx: &mut gpui::TestAppContext) {
+        use crate::{DisplayPoint, display_map::ToDisplayPoint as _};
+        use gpui::{IntoElement as _, point, size};
+        use rope::Point;
+        use text::Bias;
+
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+        let content = format!("{}\nend", "x".repeat(4_000));
+        let (buffer, diff) = buffer_with_diff(&content, &content, cx);
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let (rhs_editor, lhs_editor) = editor.update(cx, |editor, _| {
+            let lhs = editor.lhs.as_ref().expect("should have lhs editor");
+            (editor.rhs_editor.clone(), lhs.editor.clone())
+        });
+        rhs_editor.update(cx, |editor, cx| {
+            let position = editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_after(Point::new(0, 10));
+            editor.splice_inlays(
+                &[],
+                vec![Inlay::mock_hint(0, position, "h".repeat(500))],
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(point(2_000., 0.), window, cx);
+        });
+        let left_edge = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
+            cx.draw(gpui::Point::default(), size(px(300.), px(300.)), |_, _| {
+                editor.clone().into_any_element()
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let details = editor.text_layout_details(window, cx);
+                let em_width = snapshot
+                    .display_snapshot
+                    .long_row_em_width()
+                    .expect("long rows");
+                let row = Point::new(0, 0).to_display_point(&snapshot).row();
+                let column = snapshot.display_column_for_x(
+                    row,
+                    snapshot.scroll_position().x * em_width,
+                    &details,
+                );
+                snapshot.display_point_to_point(DisplayPoint::new(row, column), Bias::Left)
+            })
+        };
+        let rhs = left_edge(&rhs_editor, cx);
+        let lhs = left_edge(&lhs_editor, cx);
+        assert!(rhs.column > 1_000, "{rhs:?}");
+        assert_eq!(lhs, rhs);
+    }
+
+    #[gpui::test]
     async fn test_edit_line_before_soft_wrapped_line_preceding_hunk(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
@@ -6167,6 +6235,85 @@ mod tests {
                 .unindent(),
             &mut cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_renderer_widths_keep_spacers(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let base_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..Point::new(2, 0)],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let rhs_editor = editor.read_with(cx, |editor, _| editor.rhs_editor.clone());
+        rhs_editor.update(cx, |rhs_editor, cx| {
+            let snapshot = rhs_editor.buffer().read(cx).snapshot(cx);
+            rhs_editor.splice_inlays(
+                &[],
+                vec![Inlay::color(
+                    0,
+                    snapshot.anchor_after(Point::new(0, 3)),
+                    gpui::rgba(0xff0000ff),
+                )],
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let expected_rhs = "
+            § <no file>
+            § -----
+            aaa◼
+            § spacer
+            ccc"
+        .unindent();
+        let expected_lhs = "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+        .unindent();
+        assert_split_content(&editor, expected_rhs.clone(), expected_lhs.clone(), &mut cx);
+
+        let key = RendererWidthsKey {
+            rem_size: px(16.),
+            font: crate::test::test_font(),
+            font_size: px(14.),
+        };
+        rhs_editor.update(cx, |rhs_editor, cx| {
+            rhs_editor.update_renderer_widths(
+                key,
+                [(ChunkRendererId::Inlay(project::InlayId::Color(0)), px(97.))],
+                cx,
+            );
+        });
+        assert_split_content(&editor, expected_rhs, expected_lhs, &mut cx);
     }
 
     #[gpui::test]

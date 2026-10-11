@@ -569,10 +569,9 @@ mod tests {
                             server_id: LanguageServerId(0),
                             precedence: 0,
                         };
-                        display_map.set_semantic_highlights(
+                        Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
                             snapshot.remote_id(),
-                            Arc::from([token]),
-                            Arc::new(interner),
+                            (Arc::from([token]), Arc::new(interner)),
                         );
                     }
                     assert_eq!(

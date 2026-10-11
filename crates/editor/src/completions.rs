@@ -16,10 +16,7 @@ impl Editor {
             rem_size: window.rem_size(),
             scroll_anchor: self.scroll_manager.shared_scroll_anchor(cx),
             visible_rows: self.visible_line_count(),
-            visible_columns: self.visible_column_count(),
             vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
-            grid_cell: OnceCell::new(),
-            semantic_tokens_enabled: self.semantic_token_state.enabled(),
         }
     }
 
@@ -182,10 +179,37 @@ impl Editor {
     )> {
         let display_snapshot = self.display_snapshot(cx);
         let visible_range = self.multi_buffer_visible_range(&display_snapshot, cx);
-        display_snapshot
-            .buffer_snapshot()
-            .range_to_buffer_ranges(visible_range)
+        Self::buffer_ranges(&display_snapshot, [visible_range])
+    }
+
+    pub(super) fn visible_text_buffer_ranges(
+        &self,
+        cx: &mut Context<Editor>,
+    ) -> Vec<(
+        BufferSnapshot,
+        Range<BufferOffset>,
+        ExcerptRange<text::Anchor>,
+    )> {
+        let display_snapshot = self.display_snapshot(cx);
+        let visible_ranges = self.painted_text_ranges(&display_snapshot, cx);
+        Self::buffer_ranges(&display_snapshot, visible_ranges)
+    }
+
+    fn buffer_ranges(
+        display_snapshot: &DisplaySnapshot,
+        ranges: impl IntoIterator<Item = Range<Point>>,
+    ) -> Vec<(
+        BufferSnapshot,
+        Range<BufferOffset>,
+        ExcerptRange<text::Anchor>,
+    )> {
+        ranges
             .into_iter()
+            .flat_map(|visible_range| {
+                display_snapshot
+                    .buffer_snapshot()
+                    .range_to_buffer_ranges(visible_range)
+            })
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .map(|(buffer_snapshot, buffer_offset_range, excerpt_range)| {
                 (buffer_snapshot.clone(), buffer_offset_range, excerpt_range)

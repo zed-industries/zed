@@ -3,7 +3,6 @@ mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
-mod shaping_invariance;
 
 pub use font_fallbacks::*;
 pub use font_features::*;
@@ -12,7 +11,6 @@ pub use line_layout::*;
 pub use line_wrapper::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-pub use shaping_invariance::*;
 
 use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
@@ -232,7 +230,6 @@ impl Drop for MissingGlyphReceiver {
 pub struct TextSystem {
     platform_text_system: Arc<dyn PlatformTextSystem>,
     font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
-    ascii_shaping_preserves_advances: RwLock<FxHashMap<Font, bool>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
@@ -253,7 +250,6 @@ impl TextSystem {
             font_metrics: RwLock::default(),
             raster_bounds: RwLock::default(),
             font_ids_by_font: RwLock::default(),
-            ascii_shaping_preserves_advances: RwLock::default(),
             wrapper_pool: Mutex::default(),
             font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
@@ -299,7 +295,6 @@ impl TextSystem {
     pub fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.platform_text_system.add_fonts(fonts)?;
         self.font_ids_by_font.write().clear();
-        self.ascii_shaping_preserves_advances.write().clear();
         self.missing_glyph_reporter.reset();
         self.font_generation.fetch_add(1, Ordering::Release);
         Ok(())
@@ -406,22 +401,6 @@ impl TextSystem {
             }
         }
         self.platform_text_system.prewarm_fonts(&font_ids);
-    }
-
-    /// Returns whether shaping printable ASCII in the given font can only produce runs whose
-    /// advances equal the sum of the characters' own advances.
-    pub fn ascii_shaping_preserves_advances(&self, font: &Font) -> bool {
-        if let Some(preserves) = self.ascii_shaping_preserves_advances.read().get(font) {
-            return *preserves;
-        }
-        let font_id = self.resolve_font(font);
-        let preserves = self
-            .platform_text_system
-            .ascii_shaping_preserves_advances(font_id, &font.features);
-        self.ascii_shaping_preserves_advances
-            .write()
-            .insert(font.clone(), preserves);
-        preserves
     }
 
     /// Get the bounding box for the given font and font size.
@@ -911,10 +890,31 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
-        let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
+        self.push_font_runs(runs, &mut font_runs);
 
+        let layout = self.line_layout_cache.layout_line(
+            &SharedString::new(text),
+            font_size,
+            &font_runs,
+            force_width,
+        );
+
+        self.font_runs_pool.lock().push(font_runs);
+
+        layout
+    }
+
+    /// Returns the font runs that [`Self::layout_line`] shapes the given text runs with.
+    pub fn font_runs(&self, runs: &[TextRun]) -> Vec<FontRun> {
+        let mut font_runs = Vec::new();
+        self.push_font_runs(runs, &mut font_runs);
+        font_runs
+    }
+
+    fn push_font_runs(&self, runs: &[TextRun], font_runs: &mut Vec<FontRun>) {
+        let mut last_run = None::<&TextRun>;
         for run in runs.iter() {
             let decoration_changed = if let Some(last_run) = last_run
                 && last_run.color == run.color
@@ -942,17 +942,6 @@ impl WindowTextSystem {
                 });
             }
         }
-
-        let layout = self.line_layout_cache.layout_line(
-            &SharedString::new(text),
-            font_size,
-            &font_runs,
-            force_width,
-        );
-
-        self.font_runs_pool.lock().push(font_runs);
-
-        layout
     }
 
     /// Returns the shaped layout width of for the given character, in the given font and size.

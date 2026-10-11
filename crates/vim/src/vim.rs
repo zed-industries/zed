@@ -1889,8 +1889,10 @@ impl Vim {
     ) {
         self.update_editor(cx, |_, editor, cx| match behaviour {
             HelixJumpBehaviour::Move => {
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                let word_end = Vim::jump_target_word_end(&buffer, candidate.range.end);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_anchor_ranges([candidate.range.clone()])
+                    s.select_anchor_ranges([candidate.range.start..word_end])
                 });
             }
             HelixJumpBehaviour::MoveToWordStart => {
@@ -1916,10 +1918,12 @@ impl Vim {
                 });
             }
             HelixJumpBehaviour::Extend => {
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                let word_end = Vim::jump_target_word_end(&buffer, candidate.range.end);
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
                         let word_start = candidate.range.start.to_display_point(map);
-                        let word_end = candidate.range.end.to_display_point(map);
+                        let word_end = word_end.to_display_point(map);
                         let tail = selection.tail();
 
                         if word_start >= tail {

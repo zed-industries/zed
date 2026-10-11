@@ -4,6 +4,7 @@ use super::{
     Highlights,
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
 };
+use collections::HashMap;
 use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, SharedString, Stateful, Window};
 use language::{Edit, HighlightId, LanguageAwareStyling, Point};
 use multi_buffer::{
@@ -316,18 +317,31 @@ impl FoldMapWriter<'_> {
     #[ztracing::instrument(skip_all)]
     pub(crate) fn update_fold_widths(
         &mut self,
+        invalidate: bool,
         new_widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
         let inlay_snapshot = self.0.snapshot.inlay_snapshot.clone();
         let buffer = &inlay_snapshot.buffer;
 
-        for (id, new_width) in new_widths {
-            let ChunkRendererId::Fold(id) = id else {
-                continue;
-            };
+        let mut updates = new_widths
+            .into_iter()
+            .filter_map(|(id, width)| match id {
+                ChunkRendererId::Fold(id) => Some((id, Some(width))),
+                ChunkRendererId::Inlay(_) => None,
+            })
+            .collect::<HashMap<_, _>>();
+        if invalidate {
+            for (id, metadata) in self.0.snapshot.fold_metadata_by_id.iter() {
+                if metadata.width.is_some() {
+                    updates.entry(*id).or_insert(None);
+                }
+            }
+        }
+
+        for (id, new_width) in updates {
             if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned()
-                && Some(new_width) != metadata.width
+                && new_width != metadata.width
             {
                 let buffer_start = metadata.range.start.to_offset(buffer);
                 let buffer_end = metadata.range.end.to_offset(buffer);
@@ -342,7 +356,7 @@ impl FoldMapWriter<'_> {
                     id,
                     FoldMetadata {
                         range: metadata.range,
-                        width: Some(new_width),
+                        width: new_width,
                     },
                 );
             }
@@ -1077,6 +1091,19 @@ impl FoldSnapshot {
 
     #[ztracing::instrument(skip_all)]
     pub fn clip_point(&self, point: FoldPoint, bias: Bias) -> FoldPoint {
+        self.clip_point_with(point, bias, InlaySnapshot::clip_point)
+    }
+
+    pub(super) fn clip_point_to_char_boundary(&self, point: FoldPoint, bias: Bias) -> FoldPoint {
+        self.clip_point_with(point, bias, InlaySnapshot::clip_point_to_char_boundary)
+    }
+
+    fn clip_point_with(
+        &self,
+        point: FoldPoint,
+        bias: Bias,
+        clip_inlay_point: impl FnOnce(&InlaySnapshot, InlayPoint, Bias) -> InlayPoint,
+    ) -> FoldPoint {
         let (start, end, item) = self
             .transforms
             .find::<Dimensions<FoldPoint, InlayPoint>, _>((), &point, Bias::Right);
@@ -1091,7 +1118,7 @@ impl FoldSnapshot {
             } else {
                 let overshoot = InlayPoint(point.0 - transform_start);
                 let inlay_point = start.1 + overshoot;
-                let clipped_inlay_point = self.inlay_snapshot.clip_point(inlay_point, bias);
+                let clipped_inlay_point = clip_inlay_point(&self.inlay_snapshot, inlay_point, bias);
                 FoldPoint(start.0.0 + (clipped_inlay_point - start.1).0)
             }
         } else {
@@ -1514,7 +1541,7 @@ pub struct Chunk<'a> {
     pub newlines: u128,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ChunkRendererId {
     Fold(FoldId),
     Inlay(InlayId),

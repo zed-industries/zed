@@ -1,4 +1,4 @@
-use crate::{FontId, Pixels, SharedString, TextRun, TextSystem, px};
+use crate::{FontId, FontRun, LineLayout, Pixels, SharedString, TextRun, TextSystem, px};
 use collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
 
@@ -540,8 +540,9 @@ impl LineWrapper {
         matches!(c, '\u{202F}' | '\u{00A0}' | '\u{2011}')
     }
 
+    /// Returns the width of the given character as measured for wrapping, caching the result.
     #[inline(always)]
-    fn width_for_char(&mut self, c: char) -> Pixels {
+    pub fn width_for_char(&mut self, c: char) -> Pixels {
         if (c as u32) < 128 {
             if let Some(cached_width) = self.cached_ascii_char_widths[c as usize] {
                 cached_width
@@ -561,6 +562,18 @@ impl LineWrapper {
             self.cached_other_char_widths.insert(c, width);
             width
         }
+    }
+
+    /// Returns the font this wrapper measures with.
+    pub fn font_id(&self) -> FontId {
+        self.font_id
+    }
+
+    /// Shapes the given single line of text with the given font runs at this wrapper's font size, without caching.
+    pub fn layout_line(&self, text: &str, runs: &[FontRun]) -> LineLayout {
+        self.text_system
+            .platform_text_system
+            .layout_line(text, self.font_size, runs)
     }
 }
 

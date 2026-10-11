@@ -303,6 +303,7 @@ impl<P: Debug> Debug for BlockProperties<P> {
 pub enum BlockStyle {
     Fixed,
     Flex,
+    FlexWithAnchor,
     /// Like `Flex` but doesn't use the gutter:
     /// - block content scrolls with buffer content
     /// - doesn't paint in gutter
@@ -2627,6 +2628,17 @@ impl BlockSnapshot {
     pub(super) fn replacement_block_input_range(&self, row: WrapRow) -> Option<Range<WrapRow>> {
         let (start, end, item) = self.transforms.find::<WrapRow, _>((), &row, Bias::Right);
         item?.block.as_ref()?.is_replacement().then_some(start..end)
+    }
+
+    pub(super) fn ascending_wrap_row_replaced_checker(&self) -> impl FnMut(WrapRow) -> bool + '_ {
+        let mut cursor = self.transforms.cursor::<WrapRow>(());
+        move |row| {
+            cursor.seek_forward(&row, Bias::Right);
+            cursor
+                .item()
+                .and_then(|transform| transform.block.as_ref())
+                .is_some_and(Block::is_replacement)
+        }
     }
 }
 

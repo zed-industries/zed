@@ -1,10 +1,12 @@
 use super::{
-    Highlights,
+    ChunkRenderer, ChunkRendererId, Highlights,
     dimensions::RowDelta,
     fold_map::{Chunk, FoldRows},
-    invisibles::{is_invisible, is_standalone_grapheme, replacement},
+    invisibles::replacement,
+    long_rows::{LongRows, MeasureRequest, StandaloneInvisibles},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
+use crate::MAX_LINE_LEN;
 
 use collections::HashMap;
 use futures_lite::future::yield_now;
@@ -51,6 +53,8 @@ pub struct WrapMap {
     soft_wrap_indent: SoftWrapIndent,
     background_task: Option<Task<()>>,
     font_with_size: (Font, Pixels),
+    long_rows_task: Option<Task<()>>,
+    long_row_edits: Vec<(TabSnapshot, Vec<TabEdit>)>,
 }
 
 #[derive(Clone)]
@@ -58,6 +62,7 @@ pub struct WrapSnapshot {
     pub(super) tab_snapshot: TabSnapshot,
     transforms: SumTree<Transform>,
     interpolated: bool,
+    pub(super) long_rows: LongRows,
 }
 
 impl std::ops::Deref for WrapSnapshot {
@@ -94,6 +99,8 @@ struct LineFragmentBuilder {
     font_id: FontId,
     font_size: Pixels,
     cached_replacement_widths: HashMap<char, Pixels>,
+    standalone_invisibles: StandaloneInvisibles,
+    renderer_run: Option<ChunkRendererId>,
 }
 
 impl LineFragmentBuilder {
@@ -104,31 +111,64 @@ impl LineFragmentBuilder {
             font_id,
             font_size,
             cached_replacement_widths: HashMap::default(),
+            standalone_invisibles: StandaloneInvisibles::default(),
+            renderer_run: None,
         }
     }
 
-    fn push_fragments<'a>(&mut self, fragments: &mut Vec<gpui::LineFragment<'a>>, text: &'a str) {
+    fn reset(&mut self) {
+        self.standalone_invisibles.reset();
+        self.renderer_run = None;
+    }
+
+    fn push_fragments<'a>(
+        &mut self,
+        fragments: &mut Vec<gpui::LineFragment<'a>>,
+        text: &'a str,
+        next: Option<char>,
+    ) {
+        self.renderer_run = None;
         let mut prefix_start = 0;
-        for (offset, ch) in text.char_indices() {
-            if !is_invisible(ch) {
-                continue;
-            }
-            let ch_end = offset + ch.len_utf8();
-            if !is_standalone_grapheme(text, offset, ch_end) {
-                continue;
-            }
-            let Some(width) = self.replacement_width(ch) else {
+        for range in self.standalone_invisibles.find(text, next) {
+            let Some(width) = text[range.clone()]
+                .chars()
+                .next()
+                .and_then(|ch| self.replacement_width(ch))
+            else {
                 continue;
             };
-            if prefix_start < offset {
-                fragments.push(gpui::LineFragment::text(&text[prefix_start..offset]));
+            if prefix_start < range.start {
+                fragments.push(gpui::LineFragment::text(&text[prefix_start..range.start]));
             }
-            fragments.push(gpui::LineFragment::element(width, ch_end - offset));
-            prefix_start = ch_end;
+            fragments.push(gpui::LineFragment::element(width, range.len()));
+            prefix_start = range.end;
         }
         if prefix_start < text.len() || text.is_empty() {
             fragments.push(gpui::LineFragment::text(&text[prefix_start..]));
         }
+    }
+
+    fn push_renderer<'a>(
+        &mut self,
+        fragments: &mut Vec<gpui::LineFragment<'a>>,
+        renderer: &ChunkRenderer,
+        text: &'a str,
+    ) {
+        self.standalone_invisibles.reset();
+        let Some(width) = renderer.measured_width else {
+            self.renderer_run = None;
+            fragments.push(gpui::LineFragment::text(text));
+            return;
+        };
+        match fragments.last_mut() {
+            Some(gpui::LineFragment::Element { len_utf8, .. })
+                if self.renderer_run == Some(renderer.id) =>
+            {
+                *len_utf8 += text.len();
+            }
+            _ => fragments.push(gpui::LineFragment::element(width, text.len())),
+        }
+        self.renderer_run = Some(renderer.id);
     }
 
     fn replacement_width(&mut self, ch: char) -> Option<Pixels> {
@@ -198,8 +238,12 @@ impl WrapMap {
                 edits_since_sync: Default::default(),
                 snapshot: WrapSnapshot::new(tab_snapshot),
                 background_task: None,
+                long_rows_task: None,
+                long_row_edits: Vec::new(),
             };
-            this.set_wrap_width(wrap_width, cx);
+            if !this.set_wrap_width(wrap_width, cx) {
+                this.rewrap(cx);
+            }
             mem::take(&mut this.edits_since_sync);
             this
         });
@@ -226,6 +270,11 @@ impl WrapMap {
                 .edits_since_sync
                 .compose(self.snapshot.interpolate(tab_snapshot, &edits));
             self.snapshot.interpolated = false;
+            if self.long_rows_task.is_some() && !edits.is_empty() {
+                self.long_row_edits
+                    .push((self.snapshot.tab_snapshot.clone(), edits));
+            }
+            self.measure_long_rows(Duration::from_millis(1), cx);
         }
 
         debug_assert!(
@@ -287,6 +336,9 @@ impl WrapMap {
         self.background_task.take();
         self.interpolated_edits.clear();
         self.pending_edits.clear();
+        self.long_rows_task.take();
+        self.long_row_edits.clear();
+        self.snapshot.long_rows = LongRows::default();
 
         if let Some(wrap_width) = self.wrap_width {
             let mut new_snapshot = self.snapshot.clone();
@@ -361,6 +413,8 @@ impl WrapMap {
             let old_rows = self.snapshot.transforms.summary().output.lines.row + 1;
             self.snapshot.transforms = SumTree::default();
             let summary = self.snapshot.tab_snapshot.text_summary();
+            let may_have_long_rows =
+                self.snapshot.tab_snapshot.max_line_len_bound(0..u32::MAX) as usize > MAX_LINE_LEN;
             if !summary.lines.is_zero() {
                 self.snapshot
                     .transforms
@@ -372,6 +426,54 @@ impl WrapMap {
                 old: WrapRow(0)..WrapRow(old_rows),
                 new: WrapRow(0)..WrapRow(new_rows),
             }]));
+            let (font, font_size) = self.font_with_size.clone();
+            self.snapshot.long_rows = LongRows::new(cx.text_system().line_wrapper(font, font_size));
+            if !may_have_long_rows {
+                self.snapshot.long_rows.clear_pending();
+            }
+            self.measure_long_rows(Duration::from_millis(5), cx);
+        }
+    }
+
+    pub(crate) fn measure_long_row_columns(&mut self, requests: &[MeasureRequest]) -> bool {
+        match self
+            .snapshot
+            .long_rows
+            .measure(&self.snapshot.tab_snapshot, requests)
+        {
+            Some(long_rows) => {
+                self.snapshot.long_rows = long_rows;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn measure_long_rows(&mut self, timeout: Duration, cx: &mut Context<Self>) {
+        if self.long_rows_task.is_some() || !self.snapshot.long_rows.has_pending() {
+            return;
+        }
+        let (font, font_size) = self.font_with_size.clone();
+        let task = cx.background_spawn(self.snapshot.long_rows.clone().measure_pending(
+            self.snapshot.tab_snapshot.clone(),
+            cx.text_system().line_wrapper(font, font_size),
+        ));
+        match cx.foreground_executor().block_with_timeout(timeout, task) {
+            Ok(long_rows) => self.snapshot.long_rows = long_rows,
+            Err(task) => {
+                self.long_rows_task = Some(cx.spawn(async move |wrap_map, cx| {
+                    let long_rows = task.await;
+                    wrap_map
+                        .update(cx, |wrap_map, cx| {
+                            wrap_map.long_rows_task = None;
+                            wrap_map.snapshot.long_rows =
+                                long_rows.replay(mem::take(&mut wrap_map.long_row_edits));
+                            wrap_map.measure_long_rows(Duration::from_millis(1), cx);
+                            cx.notify();
+                        })
+                        .ok();
+                }));
+            }
         }
     }
 
@@ -506,6 +608,7 @@ impl WrapSnapshot {
             transforms,
             tab_snapshot,
             interpolated: true,
+            long_rows: LongRows::default(),
         }
     }
 
@@ -568,12 +671,14 @@ impl WrapSnapshot {
             }
         }
 
+        let long_rows = self.long_rows.interpolate(&new_tab_snapshot, tab_edits);
         let old_snapshot = mem::replace(
             self,
             WrapSnapshot {
                 tab_snapshot: new_tab_snapshot,
                 transforms: new_transforms,
                 interpolated: true,
+                long_rows,
             },
         );
         self.check_invariants();
@@ -643,20 +748,24 @@ impl WrapSnapshot {
                 let mut line = String::new();
                 let mut line_fragments = Vec::new();
                 let mut remaining = None;
-                let mut chunks = new_tab_snapshot.chunks(
-                    TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
-                    LanguageAwareStyling {
-                        tree_sitter: false,
-                        diagnostics: false,
-                    },
-                    Highlights::default(),
-                );
+                let mut chunks = new_tab_snapshot
+                    .chunks(
+                        TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
+                        LanguageAwareStyling {
+                            tree_sitter: false,
+                            diagnostics: false,
+                        },
+                        Highlights::default(),
+                    )
+                    .filter(non_empty_chunk as fn(&Chunk<'_>) -> bool)
+                    .peekable();
+                fragment_builder.reset();
                 let mut edit_transforms = Vec::<Transform>::new();
                 for (i, _) in (edit.new_rows.start..edit.new_rows.end).enumerate() {
                     while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
                         if let Some(ix) = chunk.text.find('\n') {
                             let (prefix, suffix) = chunk.text.split_at(ix + 1);
-                            fragment_builder.push_fragments(&mut line_fragments, prefix);
+                            fragment_builder.push_fragments(&mut line_fragments, prefix, None);
                             line.push_str(prefix);
                             remaining = Some(Chunk {
                                 text: suffix,
@@ -664,13 +773,22 @@ impl WrapSnapshot {
                             });
                             break;
                         } else {
-                            if let Some(width) =
-                                chunk.renderer.as_ref().and_then(|r| r.measured_width)
-                            {
-                                line_fragments
-                                    .push(gpui::LineFragment::element(width, chunk.text.len()));
+                            if let Some(renderer) = &chunk.renderer {
+                                fragment_builder.push_renderer(
+                                    &mut line_fragments,
+                                    renderer,
+                                    chunk.text,
+                                );
                             } else {
-                                fragment_builder.push_fragments(&mut line_fragments, chunk.text);
+                                let next = chunks
+                                    .peek()
+                                    .filter(|next| next.renderer.is_none())
+                                    .and_then(|next| next.text.chars().next());
+                                fragment_builder.push_fragments(
+                                    &mut line_fragments,
+                                    chunk.text,
+                                    next,
+                                );
                             }
                             line.push_str(chunk.text);
                         }
@@ -746,6 +864,7 @@ impl WrapSnapshot {
                 tab_snapshot: new_tab_snapshot,
                 transforms: new_transforms,
                 interpolated: false,
+                long_rows: LongRows::default(),
             },
         );
         self.check_invariants();
@@ -1373,6 +1492,10 @@ impl sum_tree::Item for Transform {
     }
 }
 
+fn non_empty_chunk(chunk: &Chunk<'_>) -> bool {
+    !chunk.text.is_empty() || chunk.renderer.is_some()
+}
+
 fn push_isomorphic(transforms: &mut Vec<Transform>, summary: TextSummary) {
     if let Some(last_transform) = transforms.last_mut()
         && last_transform.is_isomorphic()
@@ -1505,6 +1628,7 @@ mod tests {
         display_map::{
             fold_map::{FoldMap, FoldSnapshot},
             inlay_map::InlayMap,
+            invisibles::is_invisible,
             tab_map::TabMap,
         },
         test::test_font,
@@ -1687,7 +1811,7 @@ mod tests {
         let mut fragment_builder = LineFragmentBuilder::new(text_system, &font, font_size);
 
         let mut fragments = Vec::new();
-        fragment_builder.push_fragments(&mut fragments, "ab\u{7f}cd\u{80}\u{81}e");
+        fragment_builder.push_fragments(&mut fragments, "ab\u{7f}cd\u{80}\u{81}e", None);
         let shapes = fragments
             .iter()
             .map(|fragment| match fragment {
@@ -1718,7 +1842,7 @@ mod tests {
         );
 
         let mut plain_fragments = Vec::new();
-        fragment_builder.push_fragments(&mut plain_fragments, "plain text");
+        fragment_builder.push_fragments(&mut plain_fragments, "plain text", None);
         assert_eq!(
             plain_fragments.len(),
             1,
@@ -1733,7 +1857,7 @@ mod tests {
         );
 
         let mut preserved_fragments = Vec::new();
-        fragment_builder.push_fragments(&mut preserved_fragments, "a\u{200d}b");
+        fragment_builder.push_fragments(&mut preserved_fragments, "a\u{200d}b", None);
         assert_eq!(
             preserved_fragments.len(),
             1,

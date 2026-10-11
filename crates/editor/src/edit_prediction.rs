@@ -489,6 +489,7 @@ impl Editor {
                                     transaction_id_now,
                                     selections,
                                     self.add_selections_state.clone(),
+                                    self.selections.goal_origins(),
                                 );
                             }
                         }
@@ -2062,9 +2063,8 @@ impl Editor {
                 editor_snapshot,
                 style,
                 editor_width,
-                None,
+                0.,
                 |_| false,
-                &[],
                 window,
                 cx,
             )

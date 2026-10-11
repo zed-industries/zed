@@ -160,7 +160,7 @@ impl Editor {
         );
         let block_ids = self.insert_blocks(
             [BlockProperties {
-                style: BlockStyle::Flex,
+                style: BlockStyle::FlexWithAnchor,
                 placement: BlockPlacement::Below(position),
                 height: Some(1),
                 render: render_inline_input_block(input.clone(), None),

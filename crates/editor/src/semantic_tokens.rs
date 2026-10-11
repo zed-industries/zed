@@ -121,7 +121,10 @@ impl Editor {
         if !self.lsp_data_enabled() || !self.semantic_token_state.enabled() {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
-                display_map.clear_semantic_highlights();
+                match Arc::get_mut(&mut display_map.semantic_token_highlights) {
+                    Some(highlights) => highlights.clear(),
+                    None => display_map.semantic_token_highlights = Arc::new(Default::default()),
+                };
             });
             self.semantic_token_state.update_task = Task::ready(());
             cx.notify();
@@ -168,8 +171,9 @@ impl Editor {
         for buffer_with_disabled_tokens in self
             .display_map
             .read(cx)
-            .all_semantic_token_highlights()
-            .map(|(buffer_id, _)| *buffer_id)
+            .semantic_token_highlights
+            .keys()
+            .copied()
             .filter(|buffer_id| !buffers_to_query.contains_key(buffer_id))
             .filter(|buffer_id| {
                 !self
@@ -323,10 +327,9 @@ impl Editor {
                                         .cmp(&b.range.start, &multi_buffer_snapshot)
                                         .then_with(|| a.precedence.cmp(&b.precedence))
                                 });
-                                display_map.set_semantic_highlights(
+                                Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
                                     buffer_id,
-                                    Arc::from(token_highlights),
-                                    Arc::new(interner),
+                                    (Arc::from(token_highlights), Arc::new(interner)),
                                 );
                             });
                         });
@@ -1956,7 +1959,8 @@ mod tests {
             editor
                 .display_map
                 .read(cx)
-                .all_semantic_token_highlights()
+                .semantic_token_highlights
+                .iter()
                 .flat_map(|(_, (v, _))| v.iter())
                 .map(|highlights| highlights.range.to_offset(&multi_buffer_snapshot))
                 .collect()
@@ -2927,7 +2931,8 @@ mod tests {
             editor
                 .display_map
                 .read(cx)
-                .all_semantic_token_highlights()
+                .semantic_token_highlights
+                .iter()
                 .flat_map(|(_, (v, interner))| {
                     v.iter().map(|highlights| interner[highlights.style])
                 })

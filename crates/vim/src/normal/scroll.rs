@@ -136,11 +136,13 @@ impl Vim {
                 return;
             };
 
-            let Some(visible_column_count) = editor.visible_column_count() else {
+            let display_snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let text_layout_details = editor.text_layout_details(window, cx);
+            let Some(visible_x) =
+                editor.visible_x_range(&display_snapshot, &text_layout_details, cx)
+            else {
                 return;
             };
-
-            let display_snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
             let top = editor.scroll_top_display_point(&display_snapshot, cx);
             let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
 
@@ -206,35 +208,9 @@ impl Vim {
                     head.row()
                 };
 
-                // The minimum column position that the cursor position can be
-                // at is either the scroll manager's anchor column, which is the
-                // left-most column in the visible area, or the scroll manager's
-                // old anchor column, in case the cursor position is being
-                // preserved. This is necessary for motions like `ctrl-d` in
-                // case there's not enough content to scroll half page down, in
-                // which case the scroll manager's anchor column will be the
-                // maximum column for the current line, so the minimum column
-                // would end up being the same as the maximum column.
-                let min_column = match preserve_cursor_position {
-                    true => old_top.column(),
-                    false => top.column(),
-                };
-
-                // As for the maximum column position, that should be either the
-                // right-most column in the visible area, which we can easily
-                // calculate by adding the visible column count to the minimum
-                // column position, or the right-most column in the current
-                // line, seeing as the cursor might be in a short line, in which
-                // case we don't want to go past its last column.
-                let max_row_column = if new_row <= map.max_point().row() {
-                    map.line_len(new_row)
-                } else {
-                    0
-                };
-                let max_column = match min_column + visible_column_count as u32 {
-                    max_column if max_column >= max_row_column => max_row_column,
-                    max_column => max_column,
-                };
+                let visible_columns =
+                    map.visible_display_columns(new_row, visible_x.clone(), &text_layout_details);
+                let (min_column, max_column) = (*visible_columns.start(), *visible_columns.end());
 
                 // Ensure that the cursor's column stays within the visible
                 // area, otherwise clip it at either the left or right edge of
@@ -289,7 +265,7 @@ mod test {
     use editor::ScrollBeyondLastLine;
     use gpui::{AppContext as _, point, px, size};
     use indoc::indoc;
-    use language::Point;
+    use language::{Point, language_settings::SoftWrap};
     use settings::SettingsStore;
 
     pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {
@@ -579,5 +555,44 @@ mod test {
 
         cx.simulate_shared_keystrokes("z l").await;
         cx.shared_state().await.assert_eq("0ˇ1234567890123456789");
+    }
+
+    #[gpui::test]
+    async fn test_ctrl_d_keeps_column_when_scrolled_horizontally(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.soft_wrap = Some(SoftWrap::None);
+            });
+        });
+        let line = "x".repeat(400);
+        let text = format!(
+            "\n{}ˇ{}\n{}",
+            &line[..200],
+            &line[200..],
+            format!("{line}\n").repeat(40)
+        );
+        cx.set_state(&text, Mode::Normal);
+        cx.simulate_window_resize(cx.window, size(px(400.), px(400.)));
+        cx.update_editor(|editor, window, cx| {
+            editor.set_scroll_position(point(180., 0.), window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
+            assert_eq!(
+                editor.snapshot(window, cx).scroll_position(),
+                point(180., 0.)
+            );
+        });
+
+        cx.simulate_keystrokes("ctrl-d");
+        cx.update_editor(|editor, _, cx| {
+            let head = editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head();
+            assert_ne!(head.row, 1);
+            assert_eq!(head.column, 200);
+        });
     }
 }
