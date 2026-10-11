@@ -326,6 +326,10 @@ impl Item for StagedDiff {
         self.diff.read(cx).for_each_project_item(cx, f);
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.diff.read(cx).active_project_path(cx)
+    }
+
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
@@ -687,7 +691,7 @@ impl Render for StagedDiffToolbar {
 mod tests {
     use crate::project_diff::{self, ProjectDiff};
     use git::repository::RepoPath;
-    use gpui::{Action as _, TestAppContext};
+    use gpui::TestAppContext;
     use language::Point;
     use project::{FakeFs, Fs as _};
     use serde_json::json;

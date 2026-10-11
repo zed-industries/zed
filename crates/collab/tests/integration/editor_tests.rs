@@ -17,7 +17,11 @@ use editor::{
     },
 };
 use fs::Fs;
-use futures::{SinkExt, StreamExt, channel::mpsc, lock::Mutex};
+use futures::{
+    FutureExt as _, SinkExt, StreamExt,
+    channel::{mpsc, oneshot},
+    lock::Mutex,
+};
 use git::repository::repo_path;
 use gpui::{
     App, AppContext as _, Entity, Rgba, SharedString, TestAppContext, UpdateGlobal, VisualContext,
@@ -41,13 +45,14 @@ use project::{
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
-use rpc::RECEIVE_TIMEOUT;
+use rpc::{ProtoClient as _, RECEIVE_TIMEOUT};
 use serde_json::json;
 use settings::{
     DocumentFoldingRanges, DocumentSymbols, InlayHintSettingsContent, InlineBlameSettings,
-    SemanticTokens, SettingsStore,
+    SemanticTokens, Settings as _, SettingsStore,
 };
 use std::{
+    any::TypeId,
     collections::BTreeSet,
     num::NonZeroU32,
     ops::{Deref as _, Range},
@@ -1607,6 +1612,209 @@ async fn test_remote_dynamic_call_hierarchy_followups_use_prepared_server(
 }
 
 #[gpui::test]
+async fn test_remote_dynamic_document_highlight_registration_refreshes_guest_editor(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    cx_b.update(editor::init);
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    client_a.language_registry().add(rust_lang());
+    let mut fake_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            initializer: Some(Box::new({
+                let request_count = request_count.clone();
+                move |fake_server| {
+                    let request_count = request_count.clone();
+                    fake_server
+                        .set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
+                            move |_, _| {
+                                request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                                async move {
+                                    Ok(Some(vec![lsp::DocumentHighlight {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(0, 2),
+                                        ),
+                                        kind: Some(lsp::DocumentHighlightKind::READ),
+                                    }]))
+                                }
+                            },
+                        );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), json!({ "one.rs": "fn one() {}" }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    let debounce = Duration::from_millis(cx_b.update(|_, cx| {
+        editor::EditorSettings::get_global(cx)
+            .lsp_highlight_debounce
+            .0
+    }));
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected no document highlight request before the capability is registered",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "rust-document-highlight".to_string(),
+                    method: "textDocument/documentHighlight".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected the guest editor to request document highlights after the host registration",
+    );
+    assert!(editor_b.read_with(cx_b, |editor, _| {
+        editor.has_background_highlights(editor::HighlightKey::DocumentHighlightRead)
+    }));
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "rust-document-highlight".to_string(),
+                    method: "textDocument/documentHighlight".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected no document highlight request after the host unregistration",
+    );
+    assert!(
+        !editor_b.read_with(cx_b, |editor, _| {
+            editor.has_background_highlights(editor::HighlightKey::DocumentHighlightRead)
+        }),
+        "expected the guest editor to clear stale document highlights after the host unregistration",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "rust-document-highlight".to_string(),
+                    method: "textDocument/documentHighlight".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(request_count.load(atomic::Ordering::SeqCst), 2);
+    assert!(editor_b.read_with(cx_b, |editor, _| {
+        editor.has_background_highlights(editor::HighlightKey::DocumentHighlightRead)
+    }));
+
+    let server_id = fake_server.server.server_id();
+    let buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    project_a.update(cx_a, |project, cx| {
+        project.stop_language_servers_for_buffers(vec![buffer_a], HashSet::default(), cx);
+    });
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(
+        project_b.read_with(cx_b, |project, cx| {
+            project
+                .language_server_statuses(cx)
+                .map(|(server_id, _)| server_id)
+                .collect::<Vec<_>>()
+        }),
+        Vec::<lsp::LanguageServerId>::new(),
+        "expected the guest to drop the stopped server {server_id}",
+    );
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        2,
+        "expected no document highlight request after the host stopped the server",
+    );
+    assert!(
+        !editor_b.read_with(cx_b, |editor, _| {
+            editor.has_background_highlights(editor::HighlightKey::DocumentHighlightRead)
+        }),
+        "expected the guest editor to clear stale document highlights after the host stopped the server",
+    );
+}
+
+#[gpui::test]
 async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -3006,14 +3214,121 @@ async fn test_inlay_hint_refresh_is_forwarded(
     });
 
     let capabilities = lsp::ServerCapabilities {
-        inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+        inlay_hint_provider: Some(lsp::OneOf::Right(
+            lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                resolve_provider: Some(true),
+                ..lsp::InlayHintOptions::default()
+            }),
+        )),
         ..lsp::ServerCapabilities::default()
     };
     client_a.language_registry().add(rust_lang());
+    let hint_phase = Arc::new(AtomicUsize::new(0));
+    let closure_hint_phase = Arc::clone(&hint_phase);
+    let (resolve_started_tx, resolve_started_rx) = async_channel::unbounded();
+    let (release_resolve, resolve_gate) = async_channel::bounded(1);
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: capabilities.clone(),
+            initializer: Some(Box::new(move |fake_language_server| {
+                let hint_phase = Arc::clone(&closure_hint_phase);
+                fake_language_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |params, _| {
+                        let hint_phase = Arc::clone(&hint_phase);
+                        async move {
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                            );
+                            let hint_phase = hint_phase.load(atomic::Ordering::Acquire);
+                            let character = if hint_phase == 0 { 2 } else { 0 };
+                            let label = match hint_phase {
+                                0 => "initial hint",
+                                1 => "other hint",
+                                _ => "resolve hint",
+                            };
+                            Ok(Some(vec![
+                                lsp::InlayHint {
+                                    position: lsp::Position::new(0, character),
+                                    label: lsp::InlayHintLabel::String(label.to_string()),
+                                    kind: None,
+                                    text_edits: (hint_phase < 2).then(|| {
+                                        vec![lsp::TextEdit {
+                                            range: lsp::Range::new(
+                                                lsp::Position::new(0, 0),
+                                                lsp::Position::new(0, 0),
+                                            ),
+                                            new_text: "pub ".to_string(),
+                                        }]
+                                    }),
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: None,
+                                    data: (hint_phase == 2).then(|| json!("resolve edits")),
+                                },
+                                lsp::InlayHint {
+                                    position: lsp::Position::new(1090, 1090),
+                                    label: lsp::InlayHintLabel::String(
+                                        "out-of-bounds hint".to_string(),
+                                    ),
+                                    kind: None,
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: None,
+                                    data: None,
+                                },
+                                lsp::InlayHint {
+                                    position: lsp::Position::new(1091, 1091),
+                                    label: lsp::InlayHintLabel::String(
+                                        "out-of-bounds parameter hint".to_string(),
+                                    ),
+                                    kind: Some(lsp::InlayHintKind::PARAMETER),
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: None,
+                                    data: None,
+                                },
+                            ]))
+                        }
+                    },
+                );
+                let resolve_started_tx = resolve_started_tx.clone();
+                let resolve_gate = resolve_gate.clone();
+                fake_language_server
+                    .set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
+                        move |mut hint, _| {
+                            let resolve_started_tx = resolve_started_tx.clone();
+                            let resolve_gate = resolve_gate.clone();
+                            async move {
+                                assert_eq!(hint.position, lsp::Position::new(0, 0));
+                                assert_eq!(hint.data, Some(json!("resolve edits")));
+                                assert_eq!(hint.text_edits, None);
+                                resolve_started_tx.send(()).await.unwrap();
+                                resolve_gate.recv().await.unwrap();
+                                hint.text_edits = Some(vec![
+                                    lsp::TextEdit {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 34),
+                                            lsp::Position::new(0, 35),
+                                        ),
+                                        new_text: "answer".to_string(),
+                                    },
+                                    lsp::TextEdit {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 25),
+                                            lsp::Position::new(0, 25),
+                                        ),
+                                        new_text: ": &str".to_string(),
+                                    },
+                                ]);
+                                Ok(hint)
+                            }
+                        },
+                    );
+            })),
             ..FakeLspAdapter::default()
         },
     );
@@ -3073,51 +3388,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .downcast::<Editor>()
         .unwrap();
 
-    let other_hints = Arc::new(AtomicBool::new(false));
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    let closure_other_hints = Arc::clone(&other_hints);
-    fake_language_server
-        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_other_hints = Arc::clone(&closure_other_hints);
-            async move {
-                assert_eq!(
-                    params.text_document.uri,
-                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
-                );
-                let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
-                let character = if other_hints { 0 } else { 2 };
-                let label = if other_hints {
-                    "other hint"
-                } else {
-                    "initial hint"
-                };
-                Ok(Some(vec![
-                    lsp::InlayHint {
-                        position: lsp::Position::new(0, character),
-                        label: lsp::InlayHintLabel::String(label.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    },
-                    lsp::InlayHint {
-                        position: lsp::Position::new(1090, 1090),
-                        label: lsp::InlayHintLabel::String("out-of-bounds hint".to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    },
-                ]))
-            }
-        })
-        .next()
-        .await
-        .unwrap();
 
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
@@ -3136,7 +3407,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         );
     });
 
-    other_hints.fetch_or(true, atomic::Ordering::Release);
+    hint_phase.store(1, atomic::Ordering::Release);
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
@@ -3158,6 +3429,142 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Guest should get a /refresh LSP request propagated by host despite host hints are off"
         );
     });
+
+    cx_b.focus(&editor_b);
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+        });
+    });
+    cx_b.dispatch_action(editor::actions::AcceptInlayHint);
+
+    let expected_text =
+        "pub fn main() { a } // and some long comment to ensure inlay hints are not trimmed out";
+    assert_eq!(
+        editor_b.read_with(cx_b, |editor, cx| editor.text(cx)),
+        expected_text,
+    );
+    assert_eq!(
+        editor_a.read_with(cx_a, |editor, cx| editor.text(cx)),
+        expected_text,
+    );
+
+    let buffer_a = editor_a.read_with(cx_a, |editor, cx| {
+        editor.buffer().read(cx).as_singleton().unwrap()
+    });
+    let buffer_b = editor_b.read_with(cx_b, |editor, cx| {
+        editor.buffer().read(cx).as_singleton().unwrap()
+    });
+    let resolve_text = "pub fn main() { let value = \"😀\"; a }\n";
+    hint_phase.store(2, atomic::Ordering::Release);
+    buffer_a.update(cx_a, |buffer, cx| {
+        buffer.edit([(0..buffer.len(), resolve_text)], None, cx);
+    });
+    executor.run_until_parked();
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        assert_eq!(extract_hint_labels(editor, cx), vec!["resolve hint"]);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+        });
+    });
+    let resolve_version = buffer_b.read_with(cx_b, |buffer, _| buffer.version());
+    assert_eq!(
+        buffer_a.read_with(cx_a, |buffer, _| buffer.version()),
+        resolve_version,
+    );
+    cx_b.dispatch_action(editor::actions::AcceptInlayHint);
+    resolve_started_rx.recv().await.unwrap();
+
+    let (release_updates, update_gate) = oneshot::channel();
+    let update_gate = update_gate.shared();
+    let update_message_type = TypeId::of::<rpc::proto::UpdateBuffer>();
+    let update_handler = {
+        let mut handlers = client_b.client().message_handler_set().lock();
+        let update_handler = handlers
+            .message_handlers
+            .remove(&update_message_type)
+            .unwrap();
+        handlers.message_handlers.insert(
+            update_message_type,
+            Arc::new({
+                let update_handler = update_handler.clone();
+                move |entity, message, client, cx| {
+                    let update_handler = update_handler.clone();
+                    let update_gate = update_gate.clone();
+                    async move {
+                        update_gate.await.unwrap();
+                        update_handler(entity, message, client, cx).await
+                    }
+                    .boxed_local()
+                }
+            }),
+        );
+        update_handler
+    };
+    buffer_a.update(cx_a, |buffer, cx| {
+        buffer.edit([(buffer.len()..buffer.len(), "\n")], None, cx);
+    });
+    let response_version = buffer_a.read_with(cx_a, |buffer, _| buffer.version());
+    assert!(response_version.changed_since(&resolve_version));
+    release_resolve.send(()).await.unwrap();
+    executor.run_until_parked();
+    assert_eq!(
+        buffer_b.read_with(cx_b, |buffer, _| buffer.version()),
+        resolve_version,
+    );
+    assert_eq!(
+        editor_b.read_with(cx_b, |editor, cx| editor.text(cx)),
+        resolve_text,
+    );
+    let lsp_store_b = project_b.read_with(cx_b, |project, _| project.lsp_store());
+    lsp_store_b.update(cx_b, |lsp_store, cx| {
+        let hints = lsp_store
+            .latest_lsp_data(&buffer_b, cx)
+            .inlay_hints()
+            .all_cached_hints();
+        assert_eq!(
+            hints
+                .iter()
+                .map(|hint| &hint.resolve_state)
+                .collect::<Vec<_>>(),
+            vec![&project::ResolveState::Resolving],
+        );
+    });
+
+    client_b
+        .client()
+        .message_handler_set()
+        .lock()
+        .message_handlers
+        .insert(update_message_type, update_handler);
+    release_updates.send(()).unwrap();
+    executor.run_until_parked();
+    assert_eq!(
+        buffer_b.read_with(cx_b, |buffer, _| buffer.version()),
+        response_version,
+    );
+    let updated_text = "pub fn main() { let value = \"😀\"; a }\n\n";
+    assert_eq!(
+        editor_b.read_with(cx_b, |editor, cx| editor.text(cx)),
+        updated_text,
+    );
+    assert_eq!(
+        editor_a.read_with(cx_a, |editor, cx| editor.text(cx)),
+        updated_text,
+    );
+
+    release_resolve.send(()).await.unwrap();
+    cx_b.dispatch_action(editor::actions::AcceptInlayHint);
+    resolve_started_rx.recv().await.unwrap();
+    let expected_text = "pub fn main() { let value: &str = \"😀\"; answer }\n\n";
+    assert_eq!(
+        editor_b.read_with(cx_b, |editor, cx| editor.text(cx)),
+        expected_text,
+    );
+    assert_eq!(
+        editor_a.read_with(cx_a, |editor, cx| editor.text(cx)),
+        expected_text,
+    );
 }
 
 #[gpui::test(iterations = 10)]

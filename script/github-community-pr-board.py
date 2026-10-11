@@ -5,8 +5,8 @@ and surface signal fields (Size, Issue Linked, Contributor, Upvotes) that the
 board's views can filter and sort on.
 
 Reads the event payload dispatched by the GitHub Actions workflow and:
-- On `labeled`: adds the PR to the board (idempotent), sets the Track
-  field to the most specific matching track, and recomputes signal fields.
+- On `labeled` or `reopened`: adds the PR to the board (idempotent), sets the
+  Track field to the most specific matching track, and recomputes signal fields.
 - On `unlabeled`: re-resolves Track from remaining labels, or clears it
   if no area/platform labels remain (PR stays on the board for visibility).
   Signals are recomputed if the PR is on the board.
@@ -46,16 +46,17 @@ Usage (called by the workflow, not directly):
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 import requests
+from github_helpers import (
+    add_github_project_item,
+    fetch_github_project,
+    github_graphql,
+    github_rest_api,
+    set_github_project_field,
+)
 
-RETRYABLE_STATUS_CODES = {502, 503, 504}
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 5
-
-GITHUB_API_URL = "https://api.github.com"
 REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
 STAFF_TEAM_SLUG = "staff"
@@ -81,7 +82,7 @@ def sync_track_from_labels(pr, project_number):
     pr_labels = {label["name"] for label in pr.get("labels", [])}
     track_name = resolve_track(pr_labels, load_mapping())
 
-    project = github_fetch_project(project_number)
+    project = fetch_github_project(project_number)
     project_item = github_find_project_item(project["id"], pr["node_id"])
 
     if not track_name:
@@ -97,8 +98,8 @@ def sync_track_from_labels(pr, project_number):
     print(f"Resolved track: {track_name}")
 
     if not project_item:
-        project_item = github_add_to_project(project["id"], pr["node_id"])
-    github_set_project_field(project, project_item, "Track", track_name)
+        project_item = add_github_project_item(project["id"], pr["node_id"])
+    set_github_project_field(project, project_item, "Track", track_name)
     return project, project_item
 
 
@@ -108,13 +109,13 @@ def set_progress_status_on_assignment(pr, assignee_login, project_number):
         print(f"Assignee '{assignee_login}' is not a staff member, skipping")
         return
 
-    project = github_fetch_project(project_number)
+    project = fetch_github_project(project_number)
     item_id = github_find_project_item(project["id"], pr["node_id"])
     if not item_id:
         print(f"PR #{pr['number']} not on board, skipping assignment status update")
         return
 
-    github_set_project_field(project, item_id, "Status", STATUS_IN_PROGRESS_US)
+    set_github_project_field(project, item_id, "Status", STATUS_IN_PROGRESS_US)
 
 
 def return_to_reviewer(pr, project_number, reason):
@@ -123,7 +124,7 @@ def return_to_reviewer(pr, project_number, reason):
     Called when the author signals they're ready for re-review, either
     by re-requesting review or by commenting on the PR.
     """
-    project = github_fetch_project(project_number)
+    project = fetch_github_project(project_number)
     item_id = github_find_project_item(project["id"], pr["node_id"])
     if not item_id:
         print(f"PR #{pr['number']} not on board, skipping")
@@ -134,7 +135,7 @@ def return_to_reviewer(pr, project_number, reason):
         print(
             f"{reason}, flipping status from '{current_status}' to '{STATUS_IN_PROGRESS_US}'"
         )
-        github_set_project_field(project, item_id, "Status", STATUS_IN_PROGRESS_US)
+        set_github_project_field(project, item_id, "Status", STATUS_IN_PROGRESS_US)
     else:
         print(f"Current status is '{current_status}', not flipping ({reason})")
 
@@ -193,7 +194,7 @@ def recompute_signals(pr, project, project_item):
 
 def refresh_signals_if_on_board(pr, project_number):
     """Recompute signals for a PR only if it's already on the board."""
-    project = github_fetch_project(project_number)
+    project = fetch_github_project(project_number)
     project_item = github_find_project_item(project["id"], pr["node_id"])
     if not project_item:
         print(f"PR #{pr['number']} not on board, skipping signal refresh")
@@ -207,7 +208,7 @@ def refresh_all_board_items(project_number):
     Backstop for the daily refresh workflow. Individual PR failures are
     logged and don't abort the rest of the run.
     """
-    project = github_fetch_project(project_number)
+    project = fetch_github_project(project_number)
     processed = skipped = errors = 0
     for item in github_list_project_items(project["id"]):
         if item.get("isArchived"):
@@ -262,114 +263,27 @@ def resolve_track(pr_labels, tracks):
     return None
 
 
-def github_graphql(query, variables):
-    """Execute a GitHub GraphQL query. Retries on transient server errors."""
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.post(
-            f"{GITHUB_API_URL}/graphql",
-            headers=GITHUB_HEADERS,
-            json={"query": query, "variables": variables},
-        )
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            print(
-                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
-            )
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        result = response.json()
-        if "errors" in result:
-            raise RuntimeError(f"GraphQL error: {result['errors']}")
-        return result["data"]
-    raise RuntimeError("github_graphql: retry loop exited without return")
-
-
-def github_rest_get(path):
-    """GET from the GitHub REST API. Retries on transient server errors."""
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.get(f"{GITHUB_API_URL}/{path}", headers=GITHUB_HEADERS)
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            print(
-                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
-            )
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        return response.json()
-    raise RuntimeError("github_rest_get: retry loop exited without return")
-
-
 def github_is_staff_member(username):
     """Check if a user is a member of the staff team."""
     try:
-        response = requests.get(
-            f"{GITHUB_API_URL}/orgs/{REPO_OWNER}/teams/{STAFF_TEAM_SLUG}/members/{username}",
-            headers=GITHUB_HEADERS,
+        github_rest_api(
+            "GET", f"orgs/{REPO_OWNER}/teams/{STAFF_TEAM_SLUG}/members/{username}"
         )
-        if response.status_code == 204:
-            return True
-        if response.status_code == 404:
+        return True
+    except requests.HTTPError as error:
+        if error.response.status_code == 404:
             return False
-        print(
-            f"Warning: unexpected status {response.status_code} checking staff membership for '{username}'"
-        )
+        print(f"Warning: failed to check staff membership for '{username}': {error}")
         return False
-    except requests.RequestException as exc:
-        print(f"Warning: failed to check staff membership for '{username}': {exc}")
+    except requests.RequestException as error:
+        print(f"Warning: failed to check staff membership for '{username}': {error}")
         return False
 
 
 def github_fetch_pr(pr_number):
     """Fetch a PR by number via the REST API."""
-    return github_rest_get(f"repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}")
+    return github_rest_api("GET", f"repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}")
 
-
-def github_fetch_project(project_number):
-    """Fetch a GitHub project board's metadata including fields and their options."""
-    data = github_graphql(
-        """
-        query($owner: String!, $number: Int!) {
-          organization(login: $owner) {
-            projectV2(number: $number) {
-              id
-              fields(first: 50) {
-                nodes {
-                  ... on ProjectV2Field {
-                    id
-                    name
-                    dataType
-                  }
-                  ... on ProjectV2SingleSelectField {
-                    id
-                    name
-                    options { id name }
-                  }
-                }
-              }
-            }
-          }
-        }
-        """,
-        {"owner": REPO_OWNER, "number": project_number},
-    )
-    return data["organization"]["projectV2"]
-
-
-def github_add_to_project(project_id, content_node_id):
-    """Add a PR to the project board. Returns the new project item ID."""
-    data = github_graphql(
-        """
-        mutation($projectId: ID!, $contentId: ID!) {
-          addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
-            item { id }
-          }
-        }
-        """,
-        {"projectId": project_id, "contentId": content_node_id},
-    )
-    item_id = data["addProjectV2ItemById"]["item"]["id"]
-    print(f"Added PR to board (item: {item_id})")
-    return item_id
 
 
 def github_list_project_items(project_id):
@@ -563,58 +477,6 @@ def github_find_project_item(project_id, content_node_id):
     return None
 
 
-def github_set_project_field(project, item_id, field_name, option_name):
-    """Set a single-select field on a project item."""
-    field_id = None
-    option_id = None
-    for field in project["fields"]["nodes"]:
-        if field.get("name") == field_name:
-            field_id = field["id"]
-            for option in field.get("options", []):
-                if option["name"] == option_name:
-                    option_id = option["id"]
-                    break
-            break
-
-    if not field_id:
-        available = [f["name"] for f in project["fields"]["nodes"] if "name" in f]
-        raise RuntimeError(
-            f"Field '{field_name}' not found on project. Available: {available}"
-        )
-    if not option_id:
-        available = [
-            opt["name"]
-            for f in project["fields"]["nodes"]
-            if f.get("name") == field_name
-            for opt in f.get("options", [])
-        ]
-        raise RuntimeError(
-            f"Option '{option_name}' not found in field '{field_name}'. "
-            f"Available: {available}"
-        )
-
-    github_graphql(
-        """
-        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-          updateProjectV2ItemFieldValue(input: {
-            projectId: $projectId
-            itemId: $itemId
-            fieldId: $fieldId
-            value: { singleSelectOptionId: $optionId }
-          }) {
-            projectV2Item { id }
-          }
-        }
-        """,
-        {
-            "projectId": project["id"],
-            "itemId": item_id,
-            "fieldId": field_id,
-            "optionId": option_id,
-        },
-    )
-    print(f"Set '{field_name}' to '{option_name}'")
-
 
 def set_field_optional(project, item_id, field_name, option_name):
     """Set a single-select field, logging and skipping if the field or
@@ -764,11 +626,6 @@ def github_get_field_value(item_id, field_name):
 
 
 if __name__ == "__main__":
-    GITHUB_HEADERS = {
-        "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
 
     project_number = int(os.environ["PROJECT_NUMBER"])
 
@@ -824,7 +681,7 @@ if __name__ == "__main__":
 
     print(f"Processing PR #{pr['number']}: action={action}")
 
-    if action in ("labeled", "unlabeled"):
+    if action in ("labeled", "unlabeled", "reopened"):
         project, project_item = sync_track_from_labels(pr, project_number)
         if project_item:
             recompute_signals(pr, project, project_item)
