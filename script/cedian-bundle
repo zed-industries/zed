@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Assemble `cedian.app` from the release build (U13, ADR-0058's packaging unit).
+#
+# The bundle is built unsigned by default: signing and notarization need the
+# owner's Apple identity, so with no `CODESIGN_IDENTITY` this script says what
+# is missing instead of failing. `script/cedian-build-omp` builds the pinned OMP
+# sidecar from `vendor/omp-revision.json` (ADR-0003's recorded triple); set
+# `CEDIAN_SKIP_OMP=1` to skip it, and the bundle then needs an `omp` on PATH.
+#
+#   script/cedian-bundle
+#   CODESIGN_IDENTITY="Developer ID Application: …" script/cedian-bundle
+set -euo pipefail
+cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+
+BIN=${CEDIAN_BIN:-target/release/cedian}
+APP=${CEDIAN_APP:-cedian.app}
+VERSION=${CEDIAN_VERSION:-0.1.0}
+IDENTITY=${CODESIGN_IDENTITY:-}
+BUNDLE_ID=${CEDIAN_BUNDLE_ID:-dev.cedian.Cedian}
+
+[ -x "$BIN" ] || {
+  echo "cedian-bundle: $BIN is not built; build it with:" >&2
+  echo "  cargo build -j4 --release -p zed --bin cedian --features gpui_platform/runtime_shaders" >&2
+  exit 2
+}
+
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$BIN" "$APP/Contents/MacOS/cedian"
+
+cat >"$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>cedian</string>
+  <key>CFBundleDisplayName</key><string>cedian</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+  <key>CFBundleExecutable</key><string>cedian</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+</dict>
+</plist>
+PLIST
+
+# The icon is U13's branding step: there is no cedian asset yet, so the bundle
+# ships without one rather than shipping Zed's.
+if [ ! -f "$APP/Contents/Resources/AppIcon.icns" ]; then
+  echo "cedian-bundle: no Contents/Resources/AppIcon.icns: the cedian icon asset is U13's branding step" >&2
+fi
+
+if [ "${CEDIAN_SKIP_OMP:-0}" = 1 ]; then
+  echo "cedian-bundle: CEDIAN_SKIP_OMP=1: no Contents/Resources/omp; cedian then finds an omp on PATH or in ~/.local/bin (ADR-0057 decision 4)" >&2
+else
+  script/cedian-build-omp
+fi
+
+if [ -n "$IDENTITY" ]; then
+  codesign --force --deep --options runtime --timestamp --sign "$IDENTITY" "$APP"
+  echo "cedian-bundle: signed as $IDENTITY"
+  echo "cedian-bundle: notarize with: xcrun notarytool submit <zip> --keychain-profile <profile> --wait && xcrun stapler staple $APP" >&2
+else
+  echo "cedian-bundle: built unsigned; set CODESIGN_IDENTITY to sign, and notarization needs the owner's Apple Developer account" >&2
+fi
+echo "cedian-bundle: $APP"

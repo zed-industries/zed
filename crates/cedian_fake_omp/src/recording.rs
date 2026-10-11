@@ -34,6 +34,14 @@ pub fn arm_app(sessions: &Path, scratch: &Path) {
     let wrapper = session_wrapper(&omp, sessions, &scratch.join("omp-in-temp-store"))
         .unwrap_or_else(|e| panic!("the session wrapper: {e}"));
     crate::arm_record(sessions, &wrapper).unwrap_or_else(|e| panic!("arm record: {e}"));
+    // A review spawns the reviewer's own OMP from the same binary, which in a
+    // record lane is the test's: it proxies only where a marker says so. Its
+    // session dir is `<state>/reviewer/run/session` (one implementer session's
+    // reviewer dir), beside the app's session dir this call is given.
+    if let Some(state) = sessions.parent() {
+        let reviewer = state.join("reviewer/run/session");
+        let _ = crate::arm_record(&reviewer, &wrapper);
+    }
 }
 
 /// The pinned OMP version (`vendor/omp-revision.json`).

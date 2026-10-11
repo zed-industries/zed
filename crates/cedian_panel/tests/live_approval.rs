@@ -58,11 +58,24 @@ fn main() {
         .ok()
         .and_then(|turns| turns.parse().ok())
         .unwrap_or(0);
+    // U12e's release measurement cannot drive the UI: GPUI's debug bounds are
+    // a debug-build feature, so no test click reaches a dialog. With
+    // `CEDIAN_U12_APP_POLICY=omp` the run takes OMP's own config (the person's
+    // approval mode), which asks for nothing, and the scenario skips the
+    // dialog. The frame budget is about streaming either way.
+    let dialog = std::env::var("CEDIAN_U12_APP_POLICY").as_deref() != Ok("omp");
     let live = record || warm > 0;
     let root = std::env::temp_dir().join(format!("cedian-u4-live-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("ws")).unwrap();
-    std::fs::write(root.join("cedian.toml"), "schema = 1\n").unwrap();
+    let mut config = "schema = 1\n".to_string();
+    if !dialog {
+        config.push_str(&format!(
+            "[projects.\"{}\"]\npolicy = \"omp\"\n",
+            root.canonicalize().unwrap().join("ws").display()
+        ));
+    }
+    std::fs::write(root.join("cedian.toml"), config).unwrap();
     let root = root.canonicalize().unwrap();
     // SAFETY: single-threaded here; nothing else reads the environment yet.
     unsafe {
@@ -86,7 +99,8 @@ fn main() {
         Box::new(move |dispatcher| {
             let exec = std::sync::Arc::new(dispatcher.clone());
             let mut cx = TestAppContext::build(dispatcher.clone(), Some("live_approval"));
-            gpui::ForegroundExecutor::new(exec).block_test(scenario(&mut cx, &root, record, warm));
+            gpui::ForegroundExecutor::new(exec)
+                .block_test(scenario(&mut cx, &root, record, warm, dialog));
             cx.run_until_parked();
             cx.update(|cx| cx.quit());
             cx.run_until_parked();
@@ -97,7 +111,7 @@ fn main() {
     println!("ok");
 }
 
-async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool, warm: usize) {
+async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool, warm: usize, dialog: bool) {
     let live = record || warm > 0;
     cx.executor().allow_parking();
     cx.update(|cx| {
@@ -133,33 +147,42 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool, warm: usiz
             panel.submit(window, cx);
         })
         .unwrap();
-    wait(cx, &window, "OMP's approval", |p| {
-        !p.dialog_ids().is_empty()
-    });
-    let (id, approve) = window
-        .update(cx, |p, _, _| {
-            let id = p.dialog_ids().remove(0);
-            let request = p.dialog(&id).unwrap().request().clone();
-            let ExtensionUiRequest::Select(select) = request else {
-                panic!("not an approval select: {request:?}");
-            };
-            assert!(
-                select.title.starts_with("Allow tool: bash"),
-                "{}",
-                select.title
-            );
-            let approve = select
-                .options
-                .iter()
-                .find(|o| o.to_ascii_lowercase().starts_with("approve"))
-                .unwrap_or_else(|| panic!("no Approve in {:?}", select.options))
-                .clone();
-            (id, approve)
-        })
-        .unwrap();
-    // debug_bounds takes a &'static str; this id is only known at run time.
-    let button: &'static str = format!("cedian-dialog-{id}-{approve}").leak();
-    click(&mut vcx, button);
+    if dialog {
+        wait(cx, &window, "OMP's approval", |p| {
+            !p.dialog_ids().is_empty()
+        });
+    } else {
+        // OMP's own approval mode (policy = omp) asks nothing: the turn runs.
+        wait(cx, &window, "the first turn to run", |p| {
+            p.turn() != &Turn::Idle || p.dialog_ids().is_empty()
+        });
+    }
+    if dialog {
+        let (id, approve) = window
+            .update(cx, |p, _, _| {
+                let id = p.dialog_ids().remove(0);
+                let request = p.dialog(&id).unwrap().request().clone();
+                let ExtensionUiRequest::Select(select) = request else {
+                    panic!("not an approval select: {request:?}");
+                };
+                assert!(
+                    select.title.starts_with("Allow tool: bash"),
+                    "{}",
+                    select.title
+                );
+                let approve = select
+                    .options
+                    .iter()
+                    .find(|o| o.to_ascii_lowercase().starts_with("approve"))
+                    .unwrap_or_else(|| panic!("no Approve in {:?}", select.options))
+                    .clone();
+                (id, approve)
+            })
+            .unwrap();
+        // debug_bounds takes a &'static str; this id is only known at run time.
+        let button: &'static str = format!("cedian-dialog-{id}-{approve}").leak();
+        click(&mut vcx, button);
+    }
     wait(cx, &window, "the approved turn to complete", |p| {
         p.dialog_ids().is_empty() && p.turn() == &Turn::Idle
     });
@@ -171,18 +194,20 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool, warm: usiz
         );
     }
     let transcript = window.update(cx, |p, _, _| p.transcript()).unwrap();
-    assert!(
-        transcript
-            .iter()
-            .any(|l| l.contains("[Done]") && l.contains("echo cedian") && l.contains("→ cedian")),
-        "the bash card with its output: {transcript:#?}"
-    );
-    assert!(
-        transcript
-            .iter()
-            .any(|l| l.starts_with("Assistant") && l.contains("done")),
-        "the final text: {transcript:#?}"
-    );
+    if dialog {
+        assert!(
+            transcript.iter().any(|l| l.contains("[Done]")
+                && l.contains("echo cedian")
+                && l.contains("→ cedian")),
+            "the bash card with its output: {transcript:#?}"
+        );
+        assert!(
+            transcript
+                .iter()
+                .any(|l| l.starts_with("Assistant") && l.contains("done")),
+            "the final text: {transcript:#?}"
+        );
+    }
     let gates: Vec<Value> = std::fs::read_to_string(state.join("audit.jsonl"))
         .unwrap()
         .lines()
@@ -190,15 +215,22 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool, warm: usiz
         .map(|row| row["item"].clone())
         .filter(|item| item["kind"] == "gate")
         .collect();
-    assert_eq!(gates.len(), 1, "{gates:?}");
-    assert_eq!(
-        (
-            gates[0]["decision"].as_str(),
-            gates[0]["answered_by"].as_str(),
-            gates[0]["tool"].as_str()
-        ),
-        (Some("allow"), Some("user"), Some("bash")),
-    );
+    if dialog {
+        assert_eq!(gates.len(), 1, "{gates:?}");
+        assert_eq!(
+            (
+                gates[0]["decision"].as_str(),
+                gates[0]["answered_by"].as_str(),
+                gates[0]["tool"].as_str()
+            ),
+            (Some("allow"), Some("user"), Some("bash")),
+        );
+    } else {
+        assert!(
+            gates.is_empty(),
+            "OMP's own approval mode asks nothing: {gates:?}"
+        );
+    }
     let connection = window.update(cx, |p, _, _| p.connection().clone()).unwrap();
     assert!(
         matches!(connection, Connection::Ready { .. }),

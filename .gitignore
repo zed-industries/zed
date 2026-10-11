@@ -61,3 +61,6 @@ crates/docs_preprocessor/actions.json
 
 .local*
 .cache
+
+# cedian's bundle (script/cedian-bundle assembles it; never committed)
+cedian.app/
