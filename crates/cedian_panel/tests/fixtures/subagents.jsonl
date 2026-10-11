@@ -50,5 +50,5 @@
 {"dir":"out","frame":{"type":"agent_start"}}
 {"dir":"out","frame":{"args":{"description":"map the docs"},"toolCallId":"call-task-2","toolName":"task","type":"tool_execution_start"}}
 {"dir":"out","frame":{"type":"subagent_lifecycle","payload":{"id":"sa-3","agent":"explore","agentSource":"bundled","status":"started","index":0,"parentToolCallId":"call-task-2","description":"map the docs"}}}
-{"dir":"in","frame":{"id":"req_12","type":"abort"}}
-{"dir":"out","frame":{"command":"abort","id":"req_12","success":true,"type":"response"}}
+{"dir":"in","frame":{"id":"req_12","type":"abort_and_restore_queue"}}
+{"dir":"out","frame":{"command":"abort_and_restore_queue","data":{"steering":[],"followUp":[]},"id":"req_12","success":true,"type":"response"}}

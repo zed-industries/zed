@@ -6,11 +6,12 @@
 //!    fixture's first prompt is "one", and replay checks the text);
 //! 2. while a turn runs, the Steer button sends `steer` and Send queues
 //!    `follow_up` (ADR-0050 decision 3), both shown as OMP's queue chip; a
-//!    steer OMP refuses keeps its text in the composer; Stop takes each
-//!    queued message back out of OMP's queue (`remove_queued_message`,
-//!    since OMP's `abort` keeps them and runs a kept steer), puts them back
-//!    in the composer, and aborts the turn once, also when Stop comes while
-//!    a follow-up's call is still in flight (OMP answers it a second late);
+//!    steer OMP refuses keeps its text in the composer; Stop withdraws the
+//!    whole queue and aborts in one command (`abort_and_restore_queue`,
+//!    ADR-0059 decision 2: OMP's `abort` alone keeps the queue and a kept
+//!    steer starts a fresh run), puts OMP's own texts back in the composer,
+//!    and aborts the turn once, also when Stop comes while a follow-up's
+//!    call is still in flight (OMP answers it a second late);
 //! 3. a prompt OMP rejects returns the panel to idle with the reason;
 //! 4. an answer OMP got but the audit lost fails the turn with exactly one
 //!    abort (a second would meet the next recorded prompt and end the
@@ -22,21 +23,22 @@
 //! 6. Stop, then Restart while the old OMP is slow to exit and still holds
 //!    the session file: one abort, and the new OMP waits for the old and
 //!    opens the session, not Taken;
-//! 7. Restart with a follow-up queued, while the old OMP never answers the
-//!    abort and a process it started holds the session file: the follow-up
-//!    goes back to the composer and its chip goes, the old OMP's group is
-//!    killed and the new OMP opens the session, not Taken;
+//! 7. Restart with a follow-up queued, while the old OMP answers the abort
+//!    and then hangs holding the session file: the follow-up goes back to
+//!    the composer and its chip goes, the old OMP's group is killed and the
+//!    new OMP opens the session, not Taken;
 //! 8. a turn of ours never shows as a run OMP started on its own, not even
 //!    between its `prompt_result` and `session_settled`;
 //! 9. a steer OMP takes after our turn's last step starts a run of its
 //!    own (OMP drains a queued steer); a Stop pressed before that run
 //!    starts leaves it shown as running, and a second Stop aborts it.
 //!
-//! The frames are OMP 18.6.1's, but fixtures 1, 3 and 4 are not recorded:
-//! their order (a `queue_update` before its command's response, `abort`'s
-//! response with no `queue_update`, the runs OMP starts on its own) is
-//! hand-ordered from OMP's RPC handlers, and the `fs_sleep`s only stretch
-//! a gap real OMP leaves short.
+//! The frames are OMP 18.8.6's, but fixtures 1, 3 and 4 are not recorded:
+//! their order (a `queue_update` before its command's response,
+//! `abort_and_restore_queue`'s emptied `queue_update` only when the queue
+//! had entries, `abort`'s response with no `queue_update`, the runs OMP
+//! starts on its own) is hand-ordered from OMP's RPC handlers, and the
+//! `fs_sleep`s only stretch a gap real OMP leaves short.
 //!
 //! Their queue order is checked against OMP's own frames: in every fixture,
 //! and in `turn_lifecycle_live.jsonl` once recorded
@@ -162,8 +164,8 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
 
     // 2. While a turn runs, the Steer button sends `steer` and Send queues
     // a `follow_up` (replay checks each text); OMP's queue shows as a chip.
-    // Stop takes both back out of OMP's queue first (replay checks each
-    // text and queue), then aborts once; they go back to the composer.
+    // Stop withdraws the queue and aborts in one command, once; OMP's own
+    // texts go back to the composer.
     assert_eq!(submit(cx, &window, "one").0, Turn::Queued);
     wait(cx, &window, "turn one to stream", |p| {
         p.turn() == &Turn::Streaming
@@ -296,9 +298,9 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     });
     assert_ready(cx, &window);
 
-    // 7. Restart while the old OMP never answers the abort and a process
-    // it started holds the session file: past the wait, its whole group is
-    // killed and the new OMP opens the session.
+    // 7. Restart while the old OMP answers the abort and then hangs, a
+    // process it started holding the session file: past the wait, its whole
+    // group is killed and the new OMP opens the session.
     submit(cx, &window, "hang");
     wait(cx, &window, "the hanging turn", |p| {
         p.turn() == &Turn::Streaming
@@ -338,7 +340,8 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     // 9. A steer OMP takes once our turn's last step is done starts a run
     // of its own. Stop before that run starts sends nothing (no run, no
     // queue the panel knows of); the run then shows as running, and the
-    // second Stop takes the steer back (OMP has delivered it) and aborts.
+    // second Stop aborts it, its withdrawn queue (empty: OMP has delivered
+    // the steer) naming that steer as taken into a run.
     submit(cx, &window, "last");
     wait(cx, &window, "turn last's step to end", |p| {
         p.turn() == &Turn::Streaming && !p.prompt_open()
@@ -445,9 +448,21 @@ fn queue_order_matches_omps() {
         r#"{"dir":"out","frame":{"type":"queue_update","steering":[],"followUp":[]}}"#,
         "\n",
         r#"{"dir":"out","frame":{"id":"a","type":"response","command":"abort","success":true}}"#,
+        "\n",
+        r#"{"dir":"in","frame":{"id":"r","type":"abort_and_restore_queue"}}"#,
+        "\n",
+        r#"{"dir":"out","frame":{"id":"r","type":"response","command":"abort_and_restore_queue","success":true,"data":{"steering":[{"text":"x"}],"followUp":[]}}}"#,
+        "\n",
+        r#"{"dir":"in","frame":{"id":"q","type":"abort_and_restore_queue"}}"#,
+        "\n",
+        r#"{"dir":"out","frame":{"id":"q","type":"response","command":"abort_and_restore_queue","success":true,"data":{"steering":[],"followUp":[]}}}"#,
         "\n"
     );
-    assert_eq!(queue_order(swapped).len(), 2, "the check sees both breaks");
+    assert_eq!(
+        queue_order(swapped).len(),
+        3,
+        "the check sees each break, and not an answer that gave nothing back"
+    );
     let mut files: Vec<String> = (1..=4).map(fixture).collect();
     if Path::new(LIVE).exists() {
         files.push(LIVE.to_string());
@@ -461,8 +476,10 @@ fn queue_order_matches_omps() {
 
 /// Where `recorded` breaks OMP's queue order: a queue command that changed
 /// the queue (`steer`, `follow_up`, `remove_queued_message`) has its
-/// `queue_update` before its response; `abort` answers with no
-/// `queue_update`.
+/// `queue_update` before its response; `abort_and_restore_queue` empties it
+/// too, so an answer that gave texts back has one before its response (an
+/// answer that gave none has none: the queue was empty at Stop); `abort`
+/// answers with no `queue_update`.
 fn queue_order(recorded: &str) -> Vec<String> {
     let records: Vec<serde_json::Value> = recorded
         .lines()
@@ -475,7 +492,11 @@ fn queue_order(recorded: &str) -> Vec<String> {
         if record["dir"] != "in"
             || !matches!(
                 kind,
-                "steer" | "follow_up" | "remove_queued_message" | "abort"
+                "steer"
+                    | "follow_up"
+                    | "remove_queued_message"
+                    | "abort_and_restore_queue"
+                    | "abort"
             )
         {
             continue;
@@ -498,6 +519,15 @@ fn queue_order(recorded: &str) -> Vec<String> {
         match kind {
             "abort" if updated => broken.push(format!("abort {} sent a queue_update", frame["id"])),
             "abort" => {}
+            "abort_and_restore_queue"
+                if response["success"] == true && gave_texts_back(response) && !updated =>
+            {
+                broken.push(format!(
+                    "abort_and_restore_queue {} answered before its queue_update",
+                    frame["id"]
+                ));
+            }
+            "abort_and_restore_queue" => {}
             "remove_queued_message" if response["data"]["removed"] != true => {}
             _ if response["success"] == true && !updated => broken.push(format!(
                 "{kind} {} answered before its queue_update",
@@ -507,6 +537,15 @@ fn queue_order(recorded: &str) -> Vec<String> {
         }
     }
     broken
+}
+
+/// Whether an `abort_and_restore_queue` answer carried OMP's texts back.
+fn gave_texts_back(response: &serde_json::Value) -> bool {
+    ["steering", "followUp"].iter().any(|queue| {
+        response["data"][queue]
+            .as_array()
+            .is_some_and(|texts| !texts.is_empty())
+    })
 }
 
 fn set_prompt(cx: &mut TestAppContext, window: &WindowHandle<CedianPanel>, text: &str) {

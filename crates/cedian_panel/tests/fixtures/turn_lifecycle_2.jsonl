@@ -19,10 +19,10 @@
 {"dir":"fs","frame":{"type":"fs_hold","path":"session.jsonl"}}
 {"dir":"out","frame":{"command":"prompt","id":"req_5","success":true,"type":"response"}}
 {"dir":"out","frame":{"type":"agent_start"}}
-{"dir":"in","frame":{"id":"req_6","type":"abort"}}
+{"dir":"in","frame":{"id":"req_6","type":"abort_and_restore_queue"}}
 {"dir":"fs","frame":{"type":"fs_sleep","ms":1500}}
-{"dir":"out","frame":{"command":"abort","id":"req_6","success":true,"type":"response"}}
+{"dir":"out","frame":{"command":"abort_and_restore_queue","data":{"steering":[],"followUp":[]},"id":"req_6","success":true,"type":"response"}}
 {"dir":"out","frame":{"agentInvoked":true,"id":"req_5","sessionSettled":true,"status":"aborted","type":"prompt_result"}}
 {"dir":"out","frame":{"type":"session_settled"}}
-{"dir":"in","frame":{"id":"req_7","type":"abort"}}
+{"dir":"in","frame":{"id":"req_7","type":"abort_and_restore_queue"}}
 {"dir":"fs","frame":{"type":"fs_write","path":"old-omp-got-two-aborts","content":""}}

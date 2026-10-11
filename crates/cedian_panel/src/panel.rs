@@ -2495,8 +2495,8 @@ impl CedianPanel {
     /// OMP's queue changed: each follow-up of the panel's that left it
     /// started running, so its own turn begins in the review; several
     /// leaving at once (OMP's `followUpMode = all`) run as one turn. While
-    /// Stop takes the queue back, OMP lists each removed entry gone before
-    /// it answers the remove: those go through `take_back`, not here.
+    /// Stop takes the queue back, OMP lists it empty before it answers
+    /// `abort_and_restore_queue`: those go through `take_back`, not here.
     fn observe_follow_ups(
         &mut self,
         steering: &[String],
@@ -6429,9 +6429,9 @@ mod tests {
     }
 
     /// U10 fix round 2, M1: OMP lists the queue empty before it answers
-    /// each remove (tests/fixtures/turn_lifecycle_1.jsonl:32-34), so during
-    /// Stop a vanished follow-up is taken back, not drained: no turn opens,
-    /// the chat text goes to the composer and the edit is named.
+    /// `abort_and_restore_queue` (tests/fixtures/turn_lifecycle_1.jsonl:31-33),
+    /// so during Stop a vanished follow-up is taken back, not drained: no
+    /// turn opens, the chat text goes to the composer and the edit is named.
     #[gpui::test]
     async fn stop_takes_back_queued_follow_ups_in_omps_order(cx: &mut TestAppContext) {
         let (f, buffer) = fixture(cx).await;

@@ -469,10 +469,15 @@ mod tests {
             path
         };
         let pinned = fake("pinned", &pinned_version());
-        let newer = fake("newer", "18.8.6");
+        // Not a version at all, only "not the pin": a pin bump cannot make
+        // this pass by accident.
+        let off_pin = fake("other", &format!("{}-next", pinned_version()));
         assert_eq!(check_pinned(&pinned), Ok(()));
-        let refused = check_pinned(&newer).unwrap_err();
-        assert!(refused.contains("18.8.6"), "{refused}");
+        let refused = check_pinned(&off_pin).unwrap_err();
+        assert!(
+            refused.contains(&pinned_version()) && refused.contains("-next"),
+            "{refused}"
+        );
         assert!(check_pinned(&dir.join("missing")).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }

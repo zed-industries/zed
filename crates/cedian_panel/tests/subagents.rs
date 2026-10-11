@@ -19,9 +19,9 @@
 //!    notes go with it (`subagents_2.jsonl` is the new OMP);
 //! 8. OMP is killed while a subagent runs: the row ends with it and offers
 //!    no Steer or Cancel, and a Cancel made then is still an audit row,
-//!    written off the UI thread. `subagents_2.jsonl` ends on an `abort`
-//!    the test never causes: it keeps replay reading stdin, so fake-omp
-//!    is still alive when the test kills it.
+//!    written off the UI thread. `subagents_2.jsonl` ends on an
+//!    `abort_and_restore_queue` the test never causes: it keeps replay
+//!    reading stdin, so fake-omp is still alive when the test kills it.
 //!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 

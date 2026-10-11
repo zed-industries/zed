@@ -38,8 +38,8 @@
 {"dir":"in","frame":{"id":"req_8","message":"What is in this image?","type":"prompt","images":[{"data":"Y2VkaWFuLXU0LWltYWdl","mimeType":"image/png"}]}}
 {"dir":"out","frame":{"command":"prompt","id":"req_8","success":true,"type":"response"}}
 {"dir":"out","frame":{"type":"agent_start"}}
-{"dir":"in","frame":{"id":"req_9","type":"abort"}}
-{"dir":"out","frame":{"command":"abort","id":"req_9","success":true,"type":"response"}}
+{"dir":"in","frame":{"id":"req_9","type":"abort_and_restore_queue"}}
+{"dir":"out","frame":{"command":"abort_and_restore_queue","data":{"steering":[],"followUp":[]},"id":"req_9","success":true,"type":"response"}}
 {"dir":"out","frame":{"agentInvoked":true,"id":"req_8","sessionSettled":true,"status":"aborted","type":"prompt_result"}}
 {"dir":"out","frame":{"type":"session_settled"}}
 {"dir":"in","frame":{"id":"req_10","message":"Ask me what you need","type":"prompt"}}
@@ -61,8 +61,8 @@
 {"dir":"out","frame":{"args":{"command":"sleep 60"},"toolCallId":"call_u4_stop","toolName":"bash","type":"tool_execution_start"}}
 {"dir":"out","frame":{"id":"u4-stop","method":"select","options":["Approve","Deny"],"title":"Allow tool: bash\nCommand: sleep 60","type":"extension_ui_request"}}
 {"dir":"in","frame":{"id":"u4-stop","type":"extension_ui_response","cancelled":true}}
-{"dir":"in","frame":{"id":"req_12","type":"abort"}}
-{"dir":"out","frame":{"command":"abort","id":"req_12","success":true,"type":"response"}}
+{"dir":"in","frame":{"id":"req_12","type":"abort_and_restore_queue"}}
+{"dir":"out","frame":{"command":"abort_and_restore_queue","data":{"steering":[],"followUp":[]},"id":"req_12","success":true,"type":"response"}}
 {"dir":"out","frame":{"isError":true,"result":{"content":[{"text":"Tool call denied by user: bash","type":"text"}],"details":{}},"toolCallId":"call_u4_stop","toolName":"bash","type":"tool_execution_end"}}
 {"dir":"out","frame":{"agentInvoked":true,"id":"req_11","sessionSettled":true,"status":"aborted","type":"prompt_result"}}
 {"dir":"out","frame":{"type":"session_settled"}}

@@ -20,8 +20,8 @@ use cedian_shell::{Policy, RunKind};
 use collections::HashMap;
 use futures::channel::mpsc::UnboundedSender;
 use omp_rpc::{
-    AbortRetryCommand, CompactCommand, CycleModelCommand, CycleThinkingLevelCommand,
-    ExtensionUiRequest, ExtensionUiResponse, GetAvailableModelsCommand,
+    AbortAndRestoreQueueResult, AbortRetryCommand, CompactCommand, CycleModelCommand,
+    CycleThinkingLevelCommand, ExtensionUiRequest, ExtensionUiResponse, GetAvailableModelsCommand,
     GetAvailableThinkingLevelsCommand, GetLoginProvidersCommand, GetStateCommand, HostTool,
     HostUri, ImageContent, InterruptMode, LoginCommand, LoginProvider, ModelInfo,
     PromoteQueuedMessageCommand, QueueMode, RpcAgentEvent, SetAutoCompactionCommand,
@@ -80,8 +80,9 @@ pub enum LinkEvent {
     /// A mid-turn steer or follow-up with this text did not reach OMP's
     /// queue, and why.
     QueueRefused { text: String, reason: String },
-    /// Stop took these queued messages back out of OMP's queue before the
-    /// abort, oldest first, for the composer.
+    /// The queue Stop took back, oldest first, for the composer: OMP's own
+    /// texts on an answered `abort_and_restore_queue`, every text the panel
+    /// knew of when that one call failed.
     Restored(Vec<String>),
     /// Stop could not take some queued messages back: what to tell the
     /// person.
@@ -468,15 +469,16 @@ struct Gate {
     control: Mutex<Option<RuntimeControl>>,
     turn: Mutex<TurnState>,
     state: Mutex<GateState>,
-    /// What OMP has queued: what Stop takes back before aborting.
+    /// What OMP has queued: the snapshot Stop hands back, cloned before the
+    /// one command goes out (OMP's own emptying `queue_update` may arrive
+    /// while that call is in flight).
     queue: Mutex<Queue>,
     /// Held by a steer or follow-up from the moment it is checked against
     /// Stop until OMP answered and it is in `queue`, and by Stop while it
     /// takes the queue back and aborts: none lands after Stop's snapshot.
-    /// So Stop can wait on one queue call OMP is slow to answer plus, on a
-    /// dead link, one timeout for its take-back and one for its abort (the
-    /// client's timeout bounds each; Restart frees them); the panel shows
-    /// Stopping meanwhile.
+    /// So Stop waits on one command, plus, on a dead link, one timeout for
+    /// the fallback abort (the client's timeout bounds each; Restart frees
+    /// them); the panel shows Stopping meanwhile.
     sending: Mutex<()>,
     /// Counts Stops; a queue call made before the latest is refused.
     stops: AtomicU64,
@@ -495,112 +497,157 @@ struct Queue {
     accepted: Vec<Queued>,
 }
 
-/// What came of Stop taking OMP's queue back, in the order tried.
+/// One queued message as the two lists name it: the text we sent
+/// (`accepted`) and the text OMP displayed for it (`listed`). OMP rewrites a
+/// template or a `^model` mention, so the two differ; either text is that
+/// message, and Stop's answer may carry the other one.
+#[derive(Debug, PartialEq, Eq)]
+struct Ours {
+    sent: String,
+    shown: Option<String>,
+}
+
+impl Queue {
+    /// Texts Stop promised to take back: what we sent for each queued
+    /// message, oldest first (steers first). `accepted` and `listed`
+    /// describe the same queue, so an exact text in both is one message, and
+    /// a message only `accepted` names is paired with a `listed` text its
+    /// own text did not claim: which text is its twin is unknown, so the
+    /// pairing is oldest first.
+    fn our_texts(&self) -> Vec<String> {
+        self.ours()
+            .into_iter()
+            .map(|message| message.sent)
+            .collect()
+    }
+
+    /// The pre-Stop queue, one entry per message, oldest first (steers
+    /// first).
+    fn ours(&self) -> Vec<Ours> {
+        let mut out = Vec::new();
+        for steering in [true, false] {
+            let mut listed: Vec<&String> = self
+                .listed
+                .iter()
+                .filter(|(_, steers)| *steers == steering)
+                .map(|(text, _)| text)
+                .collect();
+            let mut unlisted = Vec::new();
+            for (sent, _) in self
+                .accepted
+                .iter()
+                .filter(|(_, steers)| *steers == steering)
+            {
+                match listed.iter().position(|shown| *shown == sent) {
+                    Some(index) => {
+                        listed.remove(index);
+                        out.push(Ours {
+                            sent: sent.clone(),
+                            shown: Some(sent.clone()),
+                        });
+                    }
+                    None => unlisted.push(sent.clone()),
+                }
+            }
+            for sent in unlisted {
+                let shown = if listed.is_empty() {
+                    None
+                } else {
+                    Some(listed.remove(0).clone())
+                };
+                out.push(Ours { sent, shown });
+            }
+            // A text OMP displays that nothing of ours claims: a message our
+            // side never saw accepted (the panel missed OMP's answer).
+            out.extend(listed.into_iter().map(|shown| Ours {
+                sent: shown.clone(),
+                shown: Some(shown.clone()),
+            }));
+        }
+        out
+    }
+}
+
+/// What came of Stop taking OMP's queue back.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct TakenBack {
-    /// OMP gave these back: they go to the composer.
+    /// The texts handed to the composer, oldest first: OMP's own, or on a
+    /// failed call the texts Stop promised to take back.
     restored: Vec<String>,
-    /// OMP no longer held these (`removed: false`): already taken into a run.
+    /// OMP no longer held these: already taken into a run.
     gone: Vec<String>,
-    /// OMP never answered the remove: their text goes back to the
-    /// composer too, though OMP may still hold them.
-    unanswered: Vec<String>,
+    /// Came back with images the composer cannot restore.
+    images_lost: Vec<String>,
+    /// OMP dropped every entry's images: its answer was over the frame limit.
+    images_dropped: bool,
+    /// OMP's answer lists only the oldest entries: these may have run, or
+    /// been cut from the answer.
+    truncated: Vec<String>,
+    /// The one command failed; OMP may still run the queued texts.
     error: Option<String>,
 }
 
-/// Try to take back each queued message, steers first. Each accepted
-/// message is removed by the text the person typed: OMP 18.6.1 matches that
-/// first, then the content its `queue_update` shows, which differs for a
-/// template or slash command. Every listed entry no accepted message names
-/// by its text is tried too. Each accepted message OMP gave back under a text
-/// it does not list has a display twin among those entries; which one is
-/// unknown, so that many `removed: false` answers are the twins, not messages
-/// taken into a run. After the first error the link is taken as dead: the
-/// rest go back to the composer unanswered, without another timeout.
-fn take_back(
-    queue: &Queue,
-    mut remove: impl FnMut(&str, bool) -> Result<bool, String>,
-) -> TakenBack {
-    let mut out = TakenBack::default();
-    for steering in [true, false] {
-        let mut listed: Vec<&String> = queue
-            .listed
+/// What OMP's answer to `abort_and_restore_queue` leaves for the composer:
+/// OMP's own texts as given back, and, over our queued messages, the ones
+/// OMP had already taken into the run and the ones its answer could not
+/// carry. A message and an answer are paired by either text of the message
+/// (OMP restores the text it displays, which a template or a `^model`
+/// mention makes different from what we sent); an answer naming no text of
+/// ours is a rewrite we cannot place, so it absorbs one of our unpaired
+/// messages rather than claiming it ran.
+fn reconcile(queue: &Queue, result: &AbortAndRestoreQueueResult) -> TakenBack {
+    let answers: Vec<_> = result.steering.iter().chain(&result.follow_up).collect();
+    let mut out = TakenBack {
+        restored: answers.iter().map(|message| message.text.clone()).collect(),
+        images_lost: answers
             .iter()
-            .filter(|(_, s)| *s == steering)
-            .map(|(text, _)| text)
-            .collect();
-        let mut plan = Vec::new();
-        let mut display_only = Vec::new();
-        for (text, _) in queue.accepted.iter().filter(|(_, s)| *s == steering) {
-            match listed.iter().position(|shown| *shown == text) {
-                Some(index) => {
-                    listed.remove(index);
-                }
-                None => display_only.push(plan.len()),
+            .filter(|message| {
+                message
+                    .images
+                    .as_ref()
+                    .is_some_and(|images| !images.is_empty())
+            })
+            .map(|message| message.text.clone())
+            .collect(),
+        images_dropped: result.images_dropped == Some(true),
+        ..TakenBack::default()
+    };
+    let mut ours = queue.ours();
+    // An answer naming either of a message's texts is that message back,
+    // whichever text OMP chose for it.
+    let mut unpaired = 0;
+    for message in &answers {
+        let found = ours.iter().position(|queued| {
+            queued.sent == message.text || queued.shown.as_deref() == Some(message.text.as_str())
+        });
+        match found {
+            Some(index) => {
+                ours.remove(index);
             }
-            plan.push(text.clone());
+            None => unpaired += 1,
         }
-        let mut twins = 0;
-        for (index, text) in plan.into_iter().enumerate() {
-            if out.try_remove(text, steering, &mut remove) && display_only.contains(&index) {
-                twins += 1;
-            }
-        }
-        for text in listed {
-            if twins > 0 && out.error.is_none() {
-                match remove(text, steering) {
-                    Ok(false) => twins -= 1,
-                    answer => out.record(text.clone(), answer),
-                }
-            } else {
-                out.try_remove(text.clone(), steering, &mut remove);
-            }
-        }
+    }
+    // An answer naming no text of ours is a rewrite of a message we cannot
+    // place: it absorbs one, oldest first, rather than claiming it ran.
+    for _ in 0..unpaired.min(ours.len()) {
+        ours.remove(0);
+    }
+    let texts: Vec<String> = ours.into_iter().map(|message| message.sent).collect();
+    if result.truncated == Some(true) {
+        out.truncated = texts;
+    } else {
+        out.gone = texts;
     }
     out
 }
 
 impl TakenBack {
-    /// Whether OMP gave `text` back.
-    fn try_remove(
-        &mut self,
-        text: String,
-        steering: bool,
-        remove: &mut impl FnMut(&str, bool) -> Result<bool, String>,
-    ) -> bool {
-        if self.error.is_some() {
-            self.unanswered.push(text);
-            return false;
-        }
-        let answer = remove(&text, steering);
-        let given_back = answer == Ok(true);
-        self.record(text, answer);
-        given_back
-    }
-
-    fn record(&mut self, text: String, answer: Result<bool, String>) {
-        match answer {
-            Ok(true) => self.restored.push(text),
-            Ok(false) => self.gone.push(text),
-            Err(e) => {
-                log::warn!("cedian: OMP did not answer taking back a queued message: {e}");
-                self.unanswered.push(text);
-                self.error = Some(e);
-            }
-        }
-    }
-
-    /// The text to hand back to the composer, oldest first: everything
-    /// restored came before the first error, everything unanswered after.
+    /// The text to hand back to the composer, oldest first.
     fn to_composer(&self) -> Vec<String> {
-        self.restored
-            .iter()
-            .chain(&self.unanswered)
-            .cloned()
-            .collect()
+        self.restored.clone()
     }
 
-    /// What the person is told about messages Stop could not take back.
+    /// What the person is told about Stop's take-back.
     fn notice(&self) -> Option<String> {
         let mut parts = Vec::new();
         if !self.gone.is_empty() {
@@ -609,11 +656,31 @@ impl TakenBack {
                 self.gone.join(" · ")
             ));
         }
-        if !self.unanswered.is_empty() {
+        if !self.images_lost.is_empty() {
+            parts.push(format!(
+                "these came back as text only, their images are not restored: {}",
+                self.images_lost.join(" · ")
+            ));
+        }
+        if self.images_dropped {
+            parts.push(
+                "OMP dropped the images of the queue it gave back (its answer was over the frame limit)"
+                    .to_string(),
+            );
+        }
+        if !self.truncated.is_empty() {
+            parts.push(format!(
+                "OMP's answer was over the frame limit, so only the first queued messages came back; these may have run: {}",
+                self.truncated.join(" · ")
+            ));
+        }
+        if let Some(error) = &self.error
+            && !self.restored.is_empty()
+        {
             parts.push(format!(
                 "OMP did not answer taking these back, so it may still run them; the text is back in the composer: {} ({})",
-                self.unanswered.join(" · "),
-                self.error.as_deref().unwrap_or("no answer")
+                self.restored.join(" · "),
+                error
             ));
         }
         (!parts.is_empty()).then(|| parts.join("; "))
@@ -761,9 +828,9 @@ impl Gate {
         self.queue.lock().accepted.push((text.to_string(), steer));
     }
 
-    /// Abort the run. OMP's `abort` keeps queued user messages, and a kept
-    /// steer starts a new run right after it, so each queued message is
-    /// taken back first and handed to the composer.
+    /// Abort the run in one command (ADR-0059 decision 2): OMP withdraws
+    /// the queued user input it still holds and hands it back, so a queued
+    /// steer cannot start a fresh run after the abort.
     fn abort(self: &Arc<Self>) {
         let Some(control) = self.control.lock().clone() else {
             return;
@@ -777,11 +844,35 @@ impl Gate {
                 queue.accepted.clear();
                 snapshot
             };
-            let taken = take_back(&queue, |text, steering| {
-                control
-                    .remove_queued(text, steering)
-                    .map_err(|e| e.to_string())
-            });
+            let result = match control.abort_and_restore_queue() {
+                Ok(result) => result,
+                Err(e) => {
+                    // The run is still going: every queued text goes back
+                    // and the plain abort follows.
+                    log::warn!("cedian: OMP did not take the queue back: {e}");
+                    let failed = TakenBack {
+                        restored: queue.our_texts(),
+                        error: Some(e.to_string()),
+                        ..TakenBack::default()
+                    };
+                    let composer = failed.to_composer();
+                    if !composer.is_empty() {
+                        let _ = gate.events.unbounded_send(LinkEvent::Restored(composer));
+                    }
+                    if let Some(notice) = failed.notice() {
+                        let _ = gate
+                            .events
+                            .unbounded_send(LinkEvent::TakeBackNotice(notice));
+                    }
+                    if let Err(e) = control.abort() {
+                        let _ = gate
+                            .events
+                            .unbounded_send(LinkEvent::AbortFailed(e.to_string()));
+                    }
+                    return;
+                }
+            };
+            let taken = reconcile(&queue, &result);
             let composer = taken.to_composer();
             if !composer.is_empty() {
                 let _ = gate.events.unbounded_send(LinkEvent::Restored(composer));
@@ -790,11 +881,6 @@ impl Gate {
                 let _ = gate
                     .events
                     .unbounded_send(LinkEvent::TakeBackNotice(notice));
-            }
-            if let Err(e) = control.abort() {
-                let _ = gate
-                    .events
-                    .unbounded_send(LinkEvent::AbortFailed(e.to_string()));
             }
         });
     }
@@ -1713,35 +1799,27 @@ mod tests {
         assert!(gate.open.is_empty());
     }
 
-    #[test]
-    fn stop_takes_back_a_steer_whose_queue_update_is_not_read_yet() {
-        let gate = Arc::new(bare_gate());
-        gate.observe_run(&RouterEvent::Queue {
-            steering: Vec::new(),
-            follow_up: vec!["two".to_string()],
-        });
-        gate.accepted("faster", true);
-        gate.accepted("two", false);
-        let (calls, _) = removes(&gate, |_| Ok(true));
-        assert_eq!(
-            calls,
-            [steer("faster"), ("two".to_string(), false)],
-            "OMP said yes to faster: Stop takes it back; two once"
-        );
+    /// Run Stop's reconcile on `gate`'s queue with OMP's `answer`.
+    fn reconciled(gate: &Gate, answer: AbortAndRestoreQueueResult) -> TakenBack {
+        let queue = gate.queue.lock().clone();
+        reconcile(&queue, &answer)
     }
 
-    /// Run Stop's take-back on `gate`'s queue, recording each remove sent.
-    fn removes(
-        gate: &Gate,
-        answer: impl Fn(&str) -> Result<bool, String>,
-    ) -> (Vec<Queued>, TakenBack) {
-        let queue = gate.queue.lock().clone();
-        let mut calls = Vec::new();
-        let taken = take_back(&queue, |text, steering| {
-            calls.push((text.to_string(), steering));
-            answer(text)
-        });
-        (calls, taken)
+    fn restored(text: &str) -> omp_rpc::RestoredQueuedMessage {
+        omp_rpc::RestoredQueuedMessage {
+            text: text.to_string(),
+            images: None,
+        }
+    }
+
+    /// OMP's answer: the texts it still held, steering then follow-ups.
+    fn answer(steering: &[&str], follow_up: &[&str]) -> AbortAndRestoreQueueResult {
+        AbortAndRestoreQueueResult {
+            steering: steering.iter().map(|text| restored(text)).collect(),
+            follow_up: follow_up.iter().map(|text| restored(text)).collect(),
+            images_dropped: None,
+            truncated: None,
+        }
     }
 
     fn bare_gate() -> Gate {
@@ -1756,170 +1834,209 @@ mod tests {
         }
     }
 
-    fn steer(text: &str) -> (String, bool) {
-        (text.to_string(), true)
-    }
-
     #[test]
-    fn two_identical_steers_are_both_taken_back() {
-        let gate = Arc::new(bare_gate());
-        gate.accepted("again", true);
-        gate.accepted("again", true);
-        let (calls, _) = removes(&gate, |_| Ok(true));
-        assert_eq!(calls, [steer("again"), steer("again")]);
-    }
-
-    #[test]
-    fn stop_takes_back_omps_text_and_each_accepted_message_once() {
-        let gate = Arc::new(bare_gate());
-        gate.observe_run(&RouterEvent::Queue {
-            steering: vec!["/review shown".to_string()],
-            follow_up: Vec::new(),
-        });
-        gate.accepted("/review typed", true);
-        gate.accepted("later", false);
-        gate.observe_run(&RouterEvent::Queue {
-            steering: vec!["/review shown".to_string()],
-            follow_up: vec!["later".to_string()],
-        });
-        // OMP 18.6.1 removeQueuedMessage matches the raw text first, then
-        // the content queue_update shows (omp.strings ~593938).
-        let (calls, taken) = removes(&gate, |text| Ok(text != "/review shown"));
-        assert_eq!(
-            calls,
-            [
-                steer("/review typed"),
-                steer("/review shown"),
-                ("later".to_string(), false)
-            ],
-            "the typed text first; the display text after it answers false as its twin"
-        );
-        assert_eq!(taken.to_composer(), ["/review typed", "later"]);
-        assert_eq!(taken.notice(), None, "nothing was taken into a run");
-    }
-
-    #[test]
-    fn a_listed_message_ahead_of_a_display_text_is_still_taken_back() {
-        let gate = Arc::new(bare_gate());
-        gate.accepted("/review typed", true);
-        gate.observe_run(&RouterEvent::Queue {
-            steering: vec!["late".to_string(), "/review shown".to_string()],
-            follow_up: Vec::new(),
-        });
-        let (calls, taken) = removes(&gate, |text| Ok(text != "/review shown"));
-        assert_eq!(
-            calls,
-            [
-                steer("/review typed"),
-                steer("late"),
-                steer("/review shown")
-            ]
-        );
-        assert_eq!(taken.to_composer(), ["/review typed", "late"]);
-        assert_eq!(
-            taken.notice(),
-            None,
-            "the display text was the typed message, not one taken into a run"
-        );
-    }
-
-    #[test]
-    fn a_listed_message_nothing_accepted_names_is_taken_back_by_its_text() {
-        let gate = Arc::new(bare_gate());
-        gate.observe_run(&RouterEvent::Queue {
-            steering: vec!["/review shown".to_string()],
-            follow_up: Vec::new(),
-        });
-        gate.accepted("/review typed", true);
-        let (calls, taken) = removes(&gate, |text| Ok(text == "/review shown"));
-        assert_eq!(calls, [steer("/review typed"), steer("/review shown")]);
-        assert_eq!(taken.to_composer(), ["/review shown"]);
-    }
-
-    #[test]
-    fn a_dead_link_is_asked_once() {
-        let gate = Arc::new(bare_gate());
-        gate.accepted("a", true);
-        gate.accepted("b", true);
-        gate.accepted("c", false);
-        let (calls, taken) = removes(&gate, |_| Err("timed out".to_string()));
-        assert_eq!(calls, [steer("a")], "one timeout, not one per message");
-        assert_eq!(taken.to_composer(), ["a", "b", "c"]);
-    }
-
-    #[test]
-    fn the_composer_gets_the_messages_oldest_first() {
-        let gate = Arc::new(bare_gate());
-        gate.accepted("a", true);
-        gate.accepted("b", true);
-        gate.accepted("c", true);
-        let (_, taken) = removes(&gate, |text| {
-            if text == "b" {
-                Err("timed out".to_string())
-            } else {
-                Ok(true)
-            }
-        });
-        assert_eq!(taken.to_composer(), ["a", "b", "c"]);
-    }
-
-    #[test]
-    fn a_listed_message_omp_kept_was_delivered_into_the_stopped_turn() {
+    fn the_composer_gets_omps_own_texts_oldest_first() {
         let gate = Arc::new(bare_gate());
         gate.observe_run(&RouterEvent::Queue {
             steering: vec!["faster".to_string()],
             follow_up: vec!["two".to_string()],
         });
-        let queue = gate.queue.lock().clone();
-        let taken = take_back(&queue, |text, _| Ok(text == "two"));
-        assert_eq!(
-            (taken.restored, taken.gone),
-            (vec!["two".to_string()], vec!["faster".to_string()])
-        );
-    }
-
-    #[test]
-    fn an_accepted_message_omp_no_longer_holds_is_named() {
-        let gate = Arc::new(bare_gate());
-        gate.accepted("kept", true);
-        let queue = gate.queue.lock().clone();
-        let taken = take_back(&queue, |_, _| Ok(false));
-        assert_eq!(
-            taken.gone,
-            ["kept"],
-            "OMP drained it before its queue_update was read"
-        );
-        assert!(
-            taken
-                .notice()
-                .unwrap()
-                .contains("already taken these into a run")
-        );
-    }
-
-    #[test]
-    fn a_remove_that_errors_is_not_taken_back_and_keeps_the_text() {
-        let gate = Arc::new(bare_gate());
         gate.accepted("faster", true);
         gate.accepted("two", false);
-        let queue = gate.queue.lock().clone();
-        let taken = take_back(&queue, |text, _| {
-            if text == "two" {
-                Err("timed out".to_string())
-            } else {
-                Ok(true)
-            }
+        let taken = reconciled(&gate, answer(&["faster"], &["two"]));
+        assert_eq!(
+            taken.to_composer(),
+            ["faster", "two"],
+            "steering then follow-ups"
+        );
+        assert!(taken.gone.is_empty(), "nothing was taken into a run");
+        assert_eq!(taken.notice(), None);
+    }
+
+    #[test]
+    fn a_text_both_lists_carry_is_counted_once() {
+        let gate = Arc::new(bare_gate());
+        gate.observe_run(&RouterEvent::Queue {
+            steering: Vec::new(),
+            follow_up: vec!["two".to_string()],
         });
+        gate.accepted("two", false);
+        gate.observe_run(&RouterEvent::Queue {
+            steering: Vec::new(),
+            follow_up: vec!["two".to_string()],
+        });
+        let queue = gate.queue.lock().clone();
+        assert_eq!(queue.our_texts(), ["two"], "once, not once per list");
+        let taken = reconcile(&queue, &answer(&[], &["two"]));
+        assert_eq!(
+            (taken.to_composer(), taken.gone),
+            (vec!["two".to_string()], vec![]),
+            "the answer covers the one text"
+        );
+    }
+
+    #[test]
+    fn two_identical_steers_are_two_texts() {
+        let gate = Arc::new(bare_gate());
+        gate.accepted("again", true);
+        gate.accepted("again", true);
+        let taken = reconciled(&gate, answer(&["again"], &[]));
+        assert_eq!(
+            (taken.to_composer(), taken.gone),
+            (vec!["again".to_string()], vec!["again".to_string()]),
+            "one came back, the other OMP had already taken"
+        );
+    }
+
+    #[test]
+    fn an_answer_no_text_of_ours_matches_absorbs_a_rewritten_one() {
+        let gate = Arc::new(bare_gate());
+        gate.accepted("/review typed", true);
+        // OMP's own text for a template comes back where the typed one is
+        // not: the typed message came back under it, so it is not gone.
+        let taken = reconciled(&gate, answer(&["/review shown"], &[]));
+        assert_eq!(taken.to_composer(), ["/review shown"], "OMP's own text");
         assert_eq!(
             taken.gone,
             Vec::<String>::new(),
-            "not delivered: OMP never answered"
+            "the typed text came back under the display text"
         );
-        assert_eq!(taken.to_composer(), ["faster", "two"]);
+        assert_eq!(taken.notice(), None);
+    }
+
+    #[test]
+    fn a_rewritten_message_omp_gives_back_under_its_own_text_is_not_named() {
+        let gate = Arc::new(bare_gate());
+        // The queue displayed the rewrite, and we sent the text it rewrote.
+        gate.observe_run(&RouterEvent::Queue {
+            steering: vec!["/review shown".to_string()],
+            follow_up: Vec::new(),
+        });
+        gate.accepted("/review typed", true);
+        let taken = reconciled(&gate, answer(&["/review shown"], &[]));
+        assert_eq!(taken.to_composer(), ["/review shown"], "OMP's own text");
+        assert!(
+            taken.gone.is_empty(),
+            "one message under two texts, and it came back"
+        );
+        assert_eq!(taken.notice(), None, "never named as run");
+    }
+
+    #[test]
+    fn a_rewritten_message_omp_no_longer_held_is_named_by_the_text_we_sent() {
+        let gate = Arc::new(bare_gate());
+        gate.observe_run(&RouterEvent::Queue {
+            steering: vec!["/review shown".to_string()],
+            follow_up: Vec::new(),
+        });
+        gate.accepted("/review typed", true);
+        let taken = reconciled(&gate, answer(&[], &[]));
+        assert_eq!(
+            taken.gone,
+            ["/review typed"],
+            "named once, by what the person typed"
+        );
+    }
+
+    #[test]
+    fn a_queued_message_omp_no_longer_holds_is_named() {
+        let gate = Arc::new(bare_gate());
+        gate.accepted("kept", true);
+        let taken = reconciled(&gate, answer(&[], &[]));
+        assert_eq!(
+            taken.gone,
+            ["kept"],
+            "OMP drained it into the run before Stop"
+        );
+        assert!(taken.to_composer().is_empty());
         let notice = taken.notice().unwrap();
         assert!(
+            notice.contains(
+                "OMP had already taken these into a run, so they are not given back: kept"
+            ),
+            "{notice}"
+        );
+    }
+
+    #[test]
+    fn a_truncated_answer_names_its_uncarried_texts_as_maybe_run() {
+        let gate = Arc::new(bare_gate());
+        for text in ["a", "b", "c"] {
+            gate.accepted(text, true);
+        }
+        let mut reply = answer(&["a"], &[]);
+        reply.truncated = Some(true);
+        let taken = reconciled(&gate, reply);
+        assert_eq!(taken.to_composer(), ["a"]);
+        assert!(taken.gone.is_empty(), "never claimed gone");
+        assert_eq!(
+            taken.truncated,
+            ["b", "c"],
+            "cut from the answer, or already run"
+        );
+        let notice = taken.notice().unwrap();
+        assert!(
+            notice.contains("may have run")
+                && notice.contains("b · c")
+                && !notice.contains("already"),
+            "{notice}"
+        );
+    }
+
+    #[test]
+    fn an_answer_carrying_images_names_them_as_text_only() {
+        let gate = Arc::new(bare_gate());
+        gate.accepted("shot", true);
+        let mut reply = answer(&["shot"], &[]);
+        reply.steering[0].images = Some(vec![cedian_omp::image_content("image/png", b"cedian")]);
+        let taken = reconciled(&gate, reply);
+        assert_eq!(taken.images_lost, ["shot"]);
+        assert_eq!(taken.to_composer(), ["shot"]);
+        let notice = taken.notice().unwrap();
+        assert!(
+            notice.contains("these came back as text only, their images are not restored: shot"),
+            "{notice}"
+        );
+    }
+
+    #[test]
+    fn dropped_images_are_named_with_no_texts() {
+        let gate = Arc::new(bare_gate());
+        gate.accepted("shot", true);
+        let mut reply = answer(&["shot"], &[]);
+        reply.images_dropped = Some(true);
+        let taken = reconciled(&gate, reply);
+        assert!(taken.images_lost.is_empty());
+        let notice = taken.notice().unwrap();
+        assert!(
+            notice.contains(
+                "OMP dropped the images of the queue it gave back (its answer was over the frame limit)"
+            ),
+            "{notice}"
+        );
+    }
+
+    #[test]
+    fn a_failed_call_hands_every_queued_text_back_once() {
+        let gate = Arc::new(bare_gate());
+        gate.observe_run(&RouterEvent::Queue {
+            steering: vec!["faster".to_string()],
+            follow_up: vec!["two".to_string()],
+        });
+        gate.accepted("faster", true);
+        gate.accepted("two", false);
+        let queue = gate.queue.lock().clone();
+        let failed = TakenBack {
+            restored: queue.our_texts(),
+            error: Some("timed out".to_string()),
+            ..TakenBack::default()
+        };
+        assert_eq!(failed.to_composer(), ["faster", "two"]);
+        assert!(failed.gone.is_empty(), "OMP never answered");
+        let notice = failed.notice().unwrap();
+        assert!(
             notice.contains("did not answer")
-                && notice.contains("two")
+                && notice.contains("faster · two")
                 && notice.contains("timed out"),
             "{notice}"
         );
@@ -1962,8 +2079,11 @@ mod tests {
         });
         assert!(!sent, "Stop came between the click and the call");
         assert!(result.is_err(), "{result:?}");
-        let (calls, _) = removes(&gate, |_| Ok(true));
-        assert_eq!(calls, [("later".to_string(), false)], "still a follow-up");
+        assert_eq!(
+            gate.queue.lock().accepted,
+            [("later".to_string(), false)],
+            "still a follow-up"
+        );
     }
 
     #[test]
@@ -1976,8 +2096,11 @@ mod tests {
             gate.promote(gate.epoch(), "after", |_| Ok(false)),
             Ok(false)
         );
-        let (calls, _) = removes(&gate, |_| Ok(true));
-        assert_eq!(calls, [steer("later"), ("after".to_string(), false)]);
+        assert_eq!(
+            gate.queue.lock().accepted,
+            [("later".to_string(), true), ("after".to_string(), false)],
+            "the promoted one moved to the steering queue"
+        );
     }
 
     #[test]

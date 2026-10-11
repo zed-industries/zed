@@ -31,9 +31,7 @@
 {"dir":"fs","frame":{"type":"fs_sleep","ms":1000}}
 {"dir":"out","frame":{"type":"queue_update","steering":[],"followUp":[]}}
 {"dir":"out","frame":{"type":"agent_start"}}
-{"dir":"in","frame":{"id":"req_r1","message":"kept","queue":"steering","type":"remove_queued_message"}}
-{"dir":"out","frame":{"command":"remove_queued_message","data":{"removed":false},"id":"req_r1","success":true,"type":"response"}}
-{"dir":"in","frame":{"id":"req_7","type":"abort"}}
+{"dir":"in","frame":{"id":"req_7","type":"abort_and_restore_queue"}}
 {"dir":"fs","frame":{"type":"fs_write","path":"own-run-aborted","content":""}}
-{"dir":"out","frame":{"command":"abort","id":"req_7","success":true,"type":"response"}}
+{"dir":"out","frame":{"command":"abort_and_restore_queue","data":{"steering":[],"followUp":[]},"id":"req_7","success":true,"type":"response"}}
 {"dir":"out","frame":{"type":"session_settled"}}

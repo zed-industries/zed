@@ -28,14 +28,9 @@
 {"dir":"fs","frame":{"type":"fs_sleep","ms":1000}}
 {"dir":"out","frame":{"type":"queue_update","steering":["faster"],"followUp":["two"]}}
 {"dir":"out","frame":{"command":"follow_up","id":"req_f1","success":true,"type":"response"}}
-{"dir":"in","frame":{"id":"req_r1","message":"faster","queue":"steering","type":"remove_queued_message"}}
-{"dir":"out","frame":{"type":"queue_update","steering":[],"followUp":["two"]}}
-{"dir":"out","frame":{"command":"remove_queued_message","data":{"removed":true},"id":"req_r1","success":true,"type":"response"}}
-{"dir":"in","frame":{"id":"req_r2","message":"two","queue":"followUp","type":"remove_queued_message"}}
+{"dir":"in","frame":{"id":"req_6","type":"abort_and_restore_queue"}}
 {"dir":"out","frame":{"type":"queue_update","steering":[],"followUp":[]}}
-{"dir":"out","frame":{"command":"remove_queued_message","data":{"removed":true},"id":"req_r2","success":true,"type":"response"}}
-{"dir":"in","frame":{"id":"req_6","type":"abort"}}
-{"dir":"out","frame":{"command":"abort","id":"req_6","success":true,"type":"response"}}
+{"dir":"out","frame":{"command":"abort_and_restore_queue","data":{"steering":[{"text":"faster"}],"followUp":[{"text":"two"}]},"id":"req_6","success":true,"type":"response"}}
 {"dir":"out","frame":{"agentInvoked":true,"id":"req_5","sessionSettled":true,"status":"aborted","type":"prompt_result"}}
 {"dir":"out","frame":{"type":"session_settled"}}
 {"dir":"in","frame":{"id":"req_7","message":"three","type":"prompt"}}
@@ -45,8 +40,8 @@
 {"dir":"out","frame":{"type":"agent_start"}}
 {"dir":"out","frame":{"id":"u4-audit","method":"select","options":["Approve","Deny"],"title":"Allow tool: bash\nCommand: ls","type":"extension_ui_request"}}
 {"dir":"in","frame":{"id":"u4-audit","type":"extension_ui_response","value":"Approve"}}
-{"dir":"in","frame":{"id":"req_9","type":"abort"}}
-{"dir":"out","frame":{"command":"abort","id":"req_9","success":true,"type":"response"}}
+{"dir":"in","frame":{"id":"req_9","type":"abort_and_restore_queue"}}
+{"dir":"out","frame":{"command":"abort_and_restore_queue","data":{"steering":[],"followUp":[]},"id":"req_9","success":true,"type":"response"}}
 {"dir":"out","frame":{"agentInvoked":true,"id":"req_8","sessionSettled":true,"status":"aborted","type":"prompt_result"}}
 {"dir":"out","frame":{"type":"session_settled"}}
 {"dir":"in","frame":{"id":"req_11","message":"four","type":"prompt"}}

@@ -27,8 +27,7 @@
 {"dir":"in","frame":{"id":"req_f1","message":"later","type":"follow_up"}}
 {"dir":"out","frame":{"type":"queue_update","steering":[],"followUp":["later"]}}
 {"dir":"out","frame":{"command":"follow_up","id":"req_f1","success":true,"type":"response"}}
-{"dir":"in","frame":{"id":"req_r1","message":"later","queue":"followUp","type":"remove_queued_message"}}
+{"dir":"in","frame":{"id":"req_7","type":"abort_and_restore_queue"}}
 {"dir":"out","frame":{"type":"queue_update","steering":[],"followUp":[]}}
-{"dir":"out","frame":{"command":"remove_queued_message","data":{"removed":true},"id":"req_r1","success":true,"type":"response"}}
-{"dir":"in","frame":{"id":"req_7","type":"abort"}}
+{"dir":"out","frame":{"command":"abort_and_restore_queue","data":{"steering":[],"followUp":[{"text":"later"}]},"id":"req_7","success":true,"type":"response"}}
 {"dir":"fs","frame":{"type":"fs_sleep","ms":60000}}

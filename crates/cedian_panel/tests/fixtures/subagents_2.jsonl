@@ -20,4 +20,4 @@
 {"dir":"out","frame":{"type":"agent_start"}}
 {"dir":"out","frame":{"args":{"description":"map the tests"},"toolCallId":"call-task-3","toolName":"task","type":"tool_execution_start"}}
 {"dir":"out","frame":{"type":"subagent_lifecycle","payload":{"id":"sa-4","agent":"explore","agentSource":"bundled","status":"started","index":0,"parentToolCallId":"call-task-3","description":"map the tests"}}}
-{"dir":"in","frame":{"id":"req_6","type":"abort"}}
+{"dir":"in","frame":{"id":"req_6","type":"abort_and_restore_queue"}}

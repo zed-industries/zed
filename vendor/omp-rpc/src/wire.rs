@@ -3448,6 +3448,18 @@ pub struct LoginProvider {
 	pub authenticated: bool,
 }
 
+/// A stored credential `logout` can remove; `active` marks credentials the session may be using.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogoutAccount {
+	#[serde(rename = "credentialId")]
+	pub credential_id: i64,
+	pub provider: String,
+	pub label: String,
+	pub detail: String,
+	pub r#type: LogoutAccountType,
+	pub active: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandoffResult {
 	#[serde(rename = "savedPath", default, skip_serializing_if = "Option::is_none")]
@@ -5390,6 +5402,31 @@ pub struct LoginResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetLogoutAccountsParams {
+	#[serde(rename = "providerId")]
+	pub provider_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetLogoutAccountsResult {
+	pub accounts: Vec<LogoutAccount>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogoutParams {
+	#[serde(rename = "providerId")]
+	pub provider_id: String,
+	#[serde(rename = "credentialId")]
+	pub credential_id: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogoutResult {
+	#[serde(rename = "remainingSource", default, skip_serializing_if = "Option::is_none")]
+	pub remaining_source: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PredictWordParams {
 	pub text: String,
 	pub cursor: i64,
@@ -5658,6 +5695,24 @@ impl<'de> Deserialize<'de> for LitCompleted {
 			Ok(Self)
 		} else {
 			Err(D::Error::custom(format!("expected \"completed\", got {value}")))
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LogoutAccountType {
+	#[serde(rename = "api_key")]
+	ApiKey,
+	#[serde(rename = "oauth")]
+	Oauth,
+}
+
+impl LogoutAccountType {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::ApiKey => "api_key",
+			Self::Oauth => "oauth",
 		}
 	}
 }
@@ -6803,6 +6858,42 @@ impl Command for LoginCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<LoginResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.provider_id)
+	}
+}
+
+/// List the stored credentials `logout` can remove for a provider, active first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetLogoutAccountsCommand {
+	#[serde(rename = "providerId")]
+	pub provider_id: String,
+}
+
+impl Command for GetLogoutAccountsCommand {
+	const NAME: &'static str = "get_logout_accounts";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = Vec<LogoutAccount>;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<GetLogoutAccountsResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.accounts)
+	}
+}
+
+/// Remove one stored credential; fails when it is no longer stored. `remainingSource` names auth that still applies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogoutCommand {
+	#[serde(rename = "providerId")]
+	pub provider_id: String,
+	#[serde(rename = "credentialId")]
+	pub credential_id: i64,
+}
+
+impl Command for LogoutCommand {
+	const NAME: &'static str = "logout";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = LogoutResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<LogoutResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
 	}
 }
 

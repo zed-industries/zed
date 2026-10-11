@@ -20,8 +20,8 @@ fn the_pinned_omp_is_found_first_else_the_first_one_warns() {
     let _ = std::fs::remove_dir_all(&root);
     let on_path = fake(&root.join("bin"), "18.7.0");
     let home = root.join("home");
-    let local = fake(&home.join(".local/bin"), "18.6.1");
-    let env_omp = fake(&root.join("env"), "18.6.1");
+    let local = fake(&home.join(".local/bin"), "18.8.6");
+    let env_omp = fake(&root.join("env"), "18.8.6");
     let set = |path: &Path, home: &Path, env: Option<&Path>| unsafe {
         // SAFETY: the only test in this binary; nothing else reads the env.
         std::env::set_var("PATH", path);
@@ -49,7 +49,7 @@ fn the_pinned_omp_is_found_first_else_the_first_one_warns() {
     );
     let warning = choice.warning.expect("an off-pin CEDIAN_OMP_BINARY warns");
     assert!(
-        warning.contains("18.9.0") && warning.contains("18.6.1"),
+        warning.contains("18.9.0") && warning.contains("18.8.6"),
         "{warning}"
     );
 
@@ -70,7 +70,7 @@ fn the_pinned_omp_is_found_first_else_the_first_one_warns() {
     assert_eq!(choice.binary, on_path, "none pinned: the first found runs");
     let warning = choice.warning.expect("a warning when no omp is the pin");
     assert!(
-        warning.contains("18.7.0") && warning.contains("18.6.1"),
+        warning.contains("18.7.0") && warning.contains("18.8.6"),
         "{warning}"
     );
 

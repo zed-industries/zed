@@ -19,14 +19,14 @@ use crate::{
     EventRouter, OmpError, SessionBinding, Sessions, SpawnPolicy, SpawnProfile, resolve_on_path,
 };
 use omp_rpc::wire::{
-    CancelSubagentCommand, FollowUpCommand, QueuedMessageQueue, RemoveQueuedMessageCommand,
-    SetSubagentSubscriptionCommand, SteerSubagentCommand, SubagentSubscriptionLevel,
+    CancelSubagentCommand, FollowUpCommand, SetSubagentSubscriptionCommand, SteerSubagentCommand,
+    SubagentSubscriptionLevel,
 };
 use omp_rpc::{
-    AbortCommand, Client, ClientOptions, Event, ExtensionUiResponse, GetStateCommand, HostTool,
-    HostUri, ImageContent, NewSessionCommand, OpenSessionCommand, OpenSessionResult, PromptCommand,
-    PromptTurn, RpcInbound, RpcNotification, SessionState, SetAskDialogCommand, SetModelCommand,
-    SteerCommand,
+    AbortAndRestoreQueueCommand, AbortCommand, Client, ClientOptions, Event, ExtensionUiResponse,
+    GetStateCommand, HostTool, HostUri, ImageContent, NewSessionCommand, OpenSessionCommand,
+    OpenSessionResult, PromptCommand, PromptTurn, RpcInbound, RpcNotification, SessionState,
+    SetAskDialogCommand, SetModelCommand, SteerCommand,
 };
 use std::{
     path::PathBuf,
@@ -455,19 +455,12 @@ impl RuntimeControl {
             .map_err(OmpError::from)
     }
 
-    /// Take one queued message back out of OMP's queue by its chip text;
-    /// `false` when OMP no longer had it queued.
-    pub fn remove_queued(&self, message: &str, steering: bool) -> Result<bool, OmpError> {
+    /// Withdraw OMP's queued user input and abort the run in one command
+    /// (ADR-0059 decision 2), so a queued steer cannot start a fresh run after
+    /// Stop. The queue comes back oldest first, steering then follow-ups.
+    pub fn abort_and_restore_queue(&self) -> Result<omp_rpc::AbortAndRestoreQueueResult, OmpError> {
         self.client
-            .call(&RemoveQueuedMessageCommand {
-                message: message.to_string(),
-                queue: if steering {
-                    QueuedMessageQueue::Steering
-                } else {
-                    QueuedMessageQueue::FollowUp
-                },
-            })
-            .map(|result| result.removed)
+            .call(&AbortAndRestoreQueueCommand {})
             .map_err(OmpError::from)
     }
 

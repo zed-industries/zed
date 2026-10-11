@@ -1,14 +1,14 @@
 {
   "repo": "https://github.com/can1357/oh-my-pi",
-  "commit": "fc6c0c90dab012a0b7edea731af92f5bbd09cff0",
-  "commitDate": "2026-10-06T02:38:52Z",
-  "subject": "Merge pull request #14547 from H4vC/chore/bazel-lock-refresh",
+  "commit": "f068751e2f1dbdbc195977776d47a26db8697495",
+  "commitDate": "2026-10-08T18:52:25Z",
+  "subject": "chore: bump version to 18.8.6",
   "sourceTreeHash": "TODO: fill on build-omp run (normalized `git archive` sha256 of the pinned commit)",
   "builder": "TODO: fill on build-omp run (machine/user that produced the bundled binary)",
   "spikeVerified": {
-    "ompVersion": "18.6.1",
-    "date": "2026-10-06",
-    "result": "SPIKE-RESULT: PASS (14/14), see spike/CAPABILITY_TABLE.md"
+    "ompVersion": "18.8.6",
+    "date": "2026-10-11",
+    "result": "ADR-0059: the vendored wire is tag v18.8.6's (67 RPC commands; get_logout_accounts and logout are the only additions). The live smoke on 18.8.6 (resume, the benchmark model, bash and eval approvals, Stop with a queued message, an edit's before-text) runs before the benchmark and replaces this line with its result."
   },
   "vendored": {
     "path": "vendor/omp-rpc",
