@@ -661,3 +661,224 @@ opacity. Hiding/unhiding an ancestor also warrants a separate stale-range
 repro (`div.rs:2535` skips painting hidden children). This was inspected,
 not built or fixed on main; hidden/unhidden behavior is not claimed proved
 by the opacity source check.
+
+## Integrated v6
+
+### Outcome and provenance
+
+All requested correctness/build/feature gates pass. Combined tree instruction
+reductions are 3.1–9.9%; fresh warm text improves about 2.2%, while retained
+warm text is effectively unchanged in wall time. First-population instructions
+increase 1.5–1.6%, despite lower wall medians in this pass. Population-only
+requested live heap falls **11,439,680 B in both modes**, not the approximately
+15.8 MB isolated decoration-reservation saving. These are integrated results,
+not a claim that the individual screened effects add independently.
+
+Candidate `5390deb22a3993a153c0605d12f6c592d070658d` on
+`gpui-retained-v6`, rebuilt baseline `6fd2941b56` (`gpui-retained-overhead`):
+
+- `bf89c19c4a`: remove the per-line capacity-32 decoration-run reservation.
+- `e448103a11`: stable counting sort for quads, shadows and underlines;
+  sprite sorting unchanged.
+- `dd79424fb0`, `ed2af24e32`: exact pre-conversion layout-input comparison
+  with keys stored separately from retained epoch records.
+- `5390deb22a`: expanded BoundsTree oracle coverage, test-only.
+
+Measured in the attached clone at
+`/home/anth/.local/share/delta-trunk/worktrees/4ftr2c2qymm6/zed`,
+on Linux / Intel Core i5-14600K. Private target
+`target/integrated-v6/private` was reflink-seeded from the protocol's shared
+target under a shared lock, then all tracked workspace Rust/manifests were
+touched before building. Candidate and base were built sequentially from their
+own sources in this clone with the same private target; their executables were
+copied out as `target/integrated-v6/v6` and `base` before changing revisions.
+The clone was returned to `gpui-retained-v6`.
+
+Build command:
+
+```sh
+cargo bench --locked -p gpui_platform --no-default-features \
+  --features bench-support,x11 --bench randomized_element_tree \
+  --profile release-fast --no-run
+```
+
+All builds/tests/checks used `CARGO_BUILD_JOBS=6`, the private
+`CARGO_TARGET_DIR`, `flock -s /tmp/gpui-experiments.lock`, and
+`timeout 900s`. Instruction runs held the shared lock on CPU8 (no other
+benchmark/build process was observed at selection); CPU17 was not used.
+Wall runs held one exclusive lock for the whole CPU0 ABAB pass.
+Every benchmark invocation used `timeout 300s`; terminal `timeout_ms=0`.
+Measured invocations explicitly used
+`--bench FILTER --sample-size 10 --warm-up-time 1 --measurement-time 1 --noplot`;
+no `--quick`. Every instruction filter/binary/mode was smoked with `--test`.
+All requested rows completed; monospace and CachedTree were not dropped.
+Instruction/wall log completion timestamps span 6.0 minutes (excluding gates,
+builds and the first invocation's duration), comfortably inside the timebox.
+The benchmark source is identical between base and v6.
+
+OFF means `GPUI_LAYOUT_CACHE=1`, `GPUI_VIEW_SPLICE` unset.
+ON means `GPUI_LAYOUT_CACHE=1 GPUI_VIEW_SPLICE=all`.
+Tree runs use `SEED=3 ITERATIONS=1`. Legacy retained-dispatch/view-retention,
+differential verification, fixed phase traces and render phase timers were unset.
+Noto is the installed `Noto Sans Mono` fixture; monospace is the fallback-font
+fixture. The Linux headless path measures CPU window/render work, not native
+GPU presentation or pixel correctness.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| `cargo test --locked -p gpui --lib`, cache=0, splice unset | 477 passed, 0 failed, 2 ignored |
+| Same, cache=0, splice=1 | 477 passed, 0 failed, 2 ignored |
+| Same, cache=0, splice=all | 477 passed, 0 failed, 2 ignored |
+| Same, cache=1, splice unset | 477 passed, 0 failed, 2 ignored |
+| Same, cache=1, splice=1 | 477 passed, 0 failed, 2 ignored |
+| Same, cache=1, splice=all | 477 passed, 0 failed, 2 ignored |
+| Both 12-seed differential sweeps in every mode | Passed: `implicit_views_match_forced_reconstruction`, `cached_views_match_forced_reconstruction` |
+| `./script/clippy -p gpui` | Passed |
+| `cargo fmt --check` | Passed |
+| `git diff --check 6fd2941b56` | Passed |
+| `cargo check -p gpui -p ui -p workspace -p editor` | Passed |
+| `cargo tree --locked -p gpui_platform --no-default-features --features bench-support,x11 -e normal,build,dev,features` | Passed; no `feature "test-support"` |
+
+The two ignored tests are the existing manually run frame/hash timing tests.
+No production changes, README marker, push, PR or subagents.
+
+### Instructions
+
+Foreground retired instructions, millions, from Criterion's measurement-phase
+point estimates. One statistical invocation per binary/mode/group; identical
+sample settings, not identical actual iteration counts. Δ is v6/base minus one.
+
+| Workload | OFF base | OFF v6 | Δ | ON base | ON v6 | Δ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Full refresh / any | 4.2258 | 4.0324 | -4.58% | 4.4266 | 4.2385 | -4.25% |
+| Full refresh / wide | 2.9801 | 2.8623 | -3.95% | 3.0818 | 2.9646 | -3.80% |
+| Full refresh / tall | 1.7382 | 1.6370 | -5.82% | 1.7726 | 1.7175 | -3.11% |
+| Full refresh / mixed | 10.8690 | 10.3280 | -4.98% | 11.2760 | 10.7340 | -4.81% |
+| Full refresh / dense | 6.1484 | 5.7623 | -6.28% | 7.0285 | 6.6503 | -5.38% |
+| Leaf style / any | 4.3091 | 4.1183 | -4.43% | 3.7028 | 3.5380 | -4.45% |
+| Leaf style / wide | 3.0399 | 2.9218 | -3.88% | 2.7151 | 2.6183 | -3.57% |
+| Leaf style / tall | 1.7684 | 1.6573 | -6.28% | 1.3927 | 1.2991 | -6.72% |
+| Leaf style / mixed | 11.4560 | 10.9160 | -4.71% | 6.7844 | 6.5171 | -3.94% |
+| Leaf style / dense | 6.3489 | 5.9521 | -6.25% | 2.1217 | 1.9122 | -9.87% |
+| CachedTree mixed leaf | 6.6593 | 6.4194 | -3.60% | 4.3922 | 4.2814 | -2.52% |
+| Warm Noto / 96 | 116.5200 | 113.9200 | -2.23% | 15.7650 | 15.6920 | -0.46% |
+| Warm monospace / 96 | 120.4500 | 117.8900 | -2.13% | 19.9560 | 19.8890 | -0.34% |
+| Text first frame / 96 | 223.4500 | 227.1300 | +1.65% | 236.7300 | 240.2400 | +1.48% |
+
+No tall row was 2× off; no alternate-CPU repeat was necessary.
+
+### First-frame heap
+
+Same process-wide requested-live-allocation metric as the earlier report,
+read immediately after the explicit population draw, before validation logging.
+Population-only delta is populated minus empty window. Decimal MB, not MiB.
+
+| Metric | OFF base | OFF v6 | ON base | ON v6 |
+| --- | ---: | ---: | ---: | ---: |
+| Before window, B | 6,784,234 | 6,784,234 | 6,784,234 | 6,784,234 |
+| Empty window, B | 8,327,138 | 8,328,330 | 8,332,582 | 8,333,774 |
+| Populated, B | 64,133,414 | 52,694,926 | 65,887,598 | 54,449,110 |
+| Population-only delta, B | 55,806,276 | 44,366,596 | 57,555,016 | 46,115,336 |
+| Population-only delta, MB | 55.806 | 44.367 | 57.555 | 46.115 |
+| v6 minus base, B | — | -11,439,680 | — | -11,439,680 |
+| v6 minus base, % | — | -20.50% | — | -19.88% |
+
+ON still holds 1,748,740 B more than OFF, now 3.94% of OFF.
+The net saving is smaller than the isolated approximately 15.8 MB prediction.
+The combined branch also allocates the parallel layout-input-key vector; this
+run does not isolate that vector's exact contribution. Do not substitute the
+counterfactual 15.8 MB for the measured 11.44 MB. These are not RSS, peak heap,
+exclusive window ownership or GPU memory; lazy replay snapshots have not yet
+been created at first population.
+
+### Exclusive wall pass
+
+Measurement-phase **per-iteration sample averages**, milliseconds:
+divide each of Criterion's ten `sample.json` times by its iteration count,
+then take the median and linearly interpolated p95 of those ten values.
+These p95s are percentiles of sample averages, **not individual frame tails**.
+Each cell contains run 1 / run 2 in ABAB order (base, v6, base, v6),
+with each version's six filters run together. Δ compares the mean of the two
+sample medians. Fixture setup is excluded, but timed harness work is included.
+
+| Workload | Mode | Base median | v6 median | Δ | Base p95 | v6 p95 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Warm Noto / 96 | OFF | 8.032 / 8.030 | 7.854 / 7.933 | -1.71% | 8.237 / 8.490 | 7.913 / 8.108 |
+| Warm Noto / 96 | ON | 1.457 / 1.465 | 1.471 / 1.449 | -0.04% | 1.701 / 1.620 | 1.625 / 1.687 |
+| Text first frame / 96 | OFF | 16.582 / 16.590 | 15.732 / 16.301 | -3.43% | 16.855 / 16.797 | 15.912 / 17.093 |
+| Text first frame / 96 | ON | 17.916 / 17.558 | 17.177 / 17.216 | -3.05% | 18.722 / 17.773 | 17.521 / 17.383 |
+| Dense full refresh | OFF | 0.556 / 0.557 | 0.529 / 0.529 | -5.03% | 0.562 / 0.569 | 0.539 / 0.536 |
+| Dense full refresh | ON | 0.639 / 0.638 | 0.615 / 0.611 | -4.01% | 0.648 / 0.688 | 0.621 / 0.619 |
+| Mixed full refresh | OFF | 0.911 / 0.919 | 0.886 / 0.884 | -3.26% | 1.065 / 1.066 | 0.994 / 0.982 |
+| Mixed full refresh | ON | 0.966 / 0.949 | 0.924 / 0.922 | -3.58% | 1.088 / 1.049 | 1.022 / 1.047 |
+| Dense leaf style | OFF | 0.579 / 0.577 | 0.548 / 0.550 | -5.02% | 0.590 / 0.589 | 0.563 / 0.564 |
+| Dense leaf style | ON | 0.231 / 0.230 | 0.225 / 0.226 | -2.44% | 0.342 / 0.330 | 0.318 / 0.311 |
+| Mixed leaf style | OFF | 0.984 / 0.971 | 0.945 / 0.943 | -3.43% | 1.084 / 1.072 | 1.095 / 1.089 |
+| Mixed leaf style | ON | 0.613 / 0.609 | 0.589 / 0.596 | -3.05% | 0.631 / 0.629 | 0.615 / 0.627 |
+
+**Warm-up/calibration-inclusive draw stats**, milliseconds, from BenchReport.
+These individual observed draw percentiles are a different population from
+the measurement-phase sample averages above.
+
+| Workload | Mode | Base draw p50 | v6 draw p50 | Base draw p95 | v6 draw p95 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Warm Noto / 96 | OFF | 7.365 / 7.418 | 7.225 / 7.258 | 8.024 / 8.012 | 7.893 / 7.885 |
+| Warm Noto / 96 | ON | 1.228 / 1.231 | 1.230 / 1.225 | 1.414 / 1.423 | 1.440 / 1.427 |
+| Text first frame / 96 | OFF | 15.630 / 15.761 | 15.229 / 15.303 | 16.540 / 16.703 | 16.450 / 16.761 |
+| Text first frame / 96 | ON | 17.072 / 16.654 | 16.695 / 16.359 | 17.891 / 17.465 | 17.465 / 17.072 |
+| Dense full refresh | OFF | 0.483 / 0.483 | 0.455 / 0.456 | 0.523 / 0.523 | 0.498 / 0.497 |
+| Dense full refresh | ON | 0.561 / 0.560 | 0.535 / 0.534 | 0.605 / 0.606 | 0.579 / 0.580 |
+| Mixed full refresh | OFF | 0.810 / 0.810 | 0.782 / 0.781 | 0.861 / 0.862 | 0.838 / 0.831 |
+| Mixed full refresh | ON | 0.848 / 0.849 | 0.821 / 0.821 | 0.902 / 0.901 | 0.867 / 0.871 |
+| Dense leaf style | OFF | 0.485 / 0.484 | 0.458 / 0.459 | 0.525 / 0.524 | 0.499 / 0.501 |
+| Dense leaf style | ON | 0.139 / 0.137 | 0.122 / 0.121 | 0.202 / 0.202 | 0.184 / 0.185 |
+| Mixed leaf style | OFF | 0.786 / 0.786 | 0.761 / 0.761 | 0.855 / 0.844 | 0.819 / 0.818 |
+| Mixed leaf style | ON | 0.306 / 0.304 | 0.286 / 0.289 | 0.878 / 0.876 | 0.848 / 0.853 |
+
+### Historical gpui-fast comparison
+
+The gpui-fast columns are supplied **earlier-session** matched-fixture results
+from `docs/benchmark-retained-overhead-comparison.md` on
+`gpui-fast-bench-adapter`; gpui-fast was not rerun. Instruction comparison is
+v6 OFF versus gpui-fast fresh, v6 ON versus gpui-fast retained. Wall numbers
+are context, not a same-session controlled comparison: v6 below uses the mean
+of measurement-phase sample medians, whereas the supplied earlier wall numbers
+must retain their original interpretation.
+
+| Workload | v6 OFF / ON M instructions | gpui-fast fresh / retained M instructions | v6 vs gpui-fast fresh / retained | v6 OFF / ON sample median ms | Earlier gpui-fast fresh / retained ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Dense full refresh | 5.762 / 6.650 | 4.83 / 7.92 | +19.3% / -16.0% | 0.529 / 0.613 | 0.383 / 0.703 |
+| Mixed full refresh | 10.328 / 10.734 | 9.67 / 11.07 | +6.8% / -3.0% | 0.885 / 0.923 | 0.740 / 0.912 |
+| Dense leaf style | 5.952 / 1.912 | 5.06 / 1.73 | +17.6% / +10.5% | 0.549 / 0.225 | 0.390 / 0.143 |
+| Mixed leaf style | 10.916 / 6.517 | 10.17 / 3.82 | +7.3% / +70.6% | 0.944 / 0.592 | 0.760 / 0.248 |
+| CachedTree mixed leaf | 6.419 / 4.281 | 5.99 / 3.95 | +7.2% / +8.4% | not run exclusively | 0.440 / 0.253 |
+| Warm Noto / 96 | 113.920 / 15.692 | 97.8 / 15.9 | +16.5% / -1.3% | 7.894 / 1.460 | 6.2–7.66 / 1.54 |
+| Text first frame / 96 | 227.130 / 240.240 | 241.5 / 241.7 | -6.0% / -0.6% | 16.017 / 17.197 | 17.07 / approximately 17.3 |
+| Population-only heap, MB | 44.367 / 46.115 | 42.14 / 42.76 | +5.3% / +7.8% | — | — |
+
+### Caveats and next step
+
+- The first-frame instruction regression is real in this measurement, and the
+  net heap saving is below the isolated prediction. Lower first-frame wall
+  medians are evidence from one short pass, not proof of a universal win;
+  OFF's second v6 p95 is higher than both base p95s.
+- Retained warm Noto sample medians average within 0.1% of base. Its draw p95
+  increases slightly; no material warm-text speedup is claimed.
+- Mutation workloads can be bimodal. Equal Criterion settings still produce
+  different iteration counts and mutation mixes. Mixed leaf's low retained
+  draw median does not erase its approximately 0.85 ms draw tail. In OFF,
+  mixed leaf sample-average p95 rises slightly despite lower sample medians.
+- Shared-lock instruction-run wall/cycle/cache secondaries are retained in raw
+  logs but are not controlled wall evidence. The exclusive CPU0 pass is the
+  latency comparison. Only SEED=3 was measured; tests supply the 12-seed
+  correctness sweeps, not performance coverage across seeds.
+- No real-Zed comparison, full Zed build, GPU pixel oracle, native Metal
+  measurement or external profiling was run. The requested four-package
+  check is not a full application build.
+- Raw gate/build/smoke/instruction/wall logs, copied Criterion samples, run
+  scripts and `summary.json` are local under ignored `target/integrated-v6/`.
+  Only this results document is committed. Proceed to the real-Zed comparison
+  with refresh overhead, mixed-leaf fallback cost and first-frame behavior
+  still visible, rather than treating these headless results as app latency.
