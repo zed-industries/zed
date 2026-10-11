@@ -106,3 +106,29 @@ fn smoke_against_real_omp() {
 
     rt.shutdown().expect("shutdown");
 }
+
+/// The pin's `read` over a host URI comes back verbatim, with no `1:` line
+/// numbering (the 18.7.0 regression in ROADMAP's Follow-ups, due at the
+/// ADR-0059 pin bump). One model call, no host tool.
+/// `cargo test -p cedian_omp -- --ignored read_`
+#[test]
+#[ignore]
+fn read_of_a_host_uri_is_verbatim() {
+    let mut rt = OmpRuntime::spawn(dev_config("host-uri")).expect("spawn");
+    assert_eq!(rt.state(), RuntimeState::Ready);
+    rt.set_host_uris(vec![
+        HostUri::new("smoke", |url, _ctx| Ok(format!("URI-ECHO:{url}").into()))
+            .expect("uri scheme"),
+    ])
+    .expect("register host uri");
+    let turn = rt
+        .prompt("Read the file at smoke://notes/7 with the read tool and reply with only its exact content.", vec![])
+        .expect("read the host uri");
+    let text = last_text(&turn).unwrap_or_default();
+    assert!(
+        !text.contains("1:"),
+        "the read of a host URI was numbered: {text:?}"
+    );
+    assert!(text.contains("URI-ECHO:smoke://notes/7"), "{text:?}");
+    rt.shutdown().expect("shutdown");
+}

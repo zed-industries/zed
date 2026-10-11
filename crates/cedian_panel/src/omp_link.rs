@@ -2172,19 +2172,10 @@ mod tests {
         })
     }
 
-    /// Real OMP keeps the app's session in its own store, where the CLI
-    /// finds it (ADR-0040 decision 5), and adopts it on restart. OMP writes a
-    /// session only once it has a message, so this sends one short prompt
-    /// (one model call). The session folder it made is removed after.
-    /// `cargo test -p cedian_panel -- --ignored live_`
-    #[test]
-    #[ignore]
-    fn live_restart_adopts_the_same_omp_session() {
-        let root = std::env::temp_dir().join(format!("cedian-u3-live-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("ws")).unwrap();
-        let root = root.canonicalize().unwrap();
-        let spec = || LaunchSpec {
+    /// The spec the live tests spawn the real pinned OMP with: the person's
+    /// own OMP store, so a restart can adopt the session the first run made.
+    fn live_spec(root: &Path) -> LaunchSpec {
+        LaunchSpec {
             binary: Some(cedian_shell::launch::omp_binary().unwrap().binary),
             workdir: root.join("ws"),
             state_dir: root.join("state"),
@@ -2207,7 +2198,22 @@ mod tests {
             review: Arc::default(),
             settings: cedian_shell::Settings::default(),
             unsaved: Unsaved::default(),
-        };
+        }
+    }
+
+    /// Real OMP keeps the app's session in its own store, where the CLI
+    /// finds it (ADR-0040 decision 5), and adopts it on restart. OMP writes a
+    /// session only once it has a message, so this sends one short prompt
+    /// (one model call). The session folder it made is removed after.
+    /// `cargo test -p cedian_panel -- --ignored live_`
+    #[test]
+    #[ignore]
+    fn live_restart_adopts_the_same_omp_session() {
+        let root = std::env::temp_dir().join(format!("cedian-u3-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("ws")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let spec = || live_spec(&root);
         let (tx, mut rx) = futures::channel::mpsc::unbounded();
         let link = OmpLink::start(spec(), tx, None);
         let (first, resumed, file) = ready(&mut rx);
@@ -2238,6 +2244,74 @@ mod tests {
         let (again, resumed, _) = ready(&mut rx);
         assert_eq!((again.as_str(), resumed), (first.as_str(), true));
         let _ = std::fs::remove_dir_all(file.parent().unwrap());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Real OMP raises its own approval for `eval`, the other exec-tier tool
+    /// (ADR-0059 decision 3's smoke: `live_approval` records the same gate for
+    /// `bash`), and cedian's answer carries it. One model call.
+    /// `cargo test -p cedian_panel -- --ignored live_eval`
+    #[test]
+    #[ignore]
+    fn live_eval_approval_is_offered_and_answered() {
+        let root = std::env::temp_dir().join(format!("cedian-eval-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("ws")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let spec = || live_spec(&root);
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        let link = OmpLink::start(spec(), tx, None);
+        let (_, resumed, file) = ready(&mut rx);
+        assert!(!resumed);
+        link.send(Prompt {
+            text: "Run `1 + 1` with your eval tool, then reply with exactly: done".to_string(),
+            images: Vec::new(),
+        })
+        .unwrap();
+        let mut asked = None;
+        futures::executor::block_on(async {
+            while let Some(event) = rx.next().await {
+                match event {
+                    LinkEvent::Event(RouterEvent::UiRequest(ExtensionUiRequest::Select(
+                        select,
+                    ))) => {
+                        assert!(
+                            select.title.starts_with("Allow tool: eval"),
+                            "{}",
+                            select.title
+                        );
+                        let approve = select
+                            .options
+                            .iter()
+                            .find(|option| option.to_ascii_lowercase().starts_with("approve"))
+                            .unwrap_or_else(|| panic!("no Approve in {:?}", select.options))
+                            .clone();
+                        asked = Some((select.id, approve));
+                        break;
+                    }
+                    LinkEvent::Event(RouterEvent::Settled) => {
+                        panic!("the turn settled without asking to run eval")
+                    }
+                    LinkEvent::Failed(e) => panic!("{e}"),
+                    _ => {}
+                }
+            }
+        });
+        let (id, approve) = asked.expect("OMP asked to approve its eval tool");
+        link.answer(&id, UserAnswer::Choice(approve))
+            .expect("answer the eval approval");
+        futures::executor::block_on(async {
+            while let Some(event) = rx.next().await {
+                match event {
+                    LinkEvent::Event(RouterEvent::Settled) => break,
+                    LinkEvent::Failed(e) => panic!("{e}"),
+                    _ => {}
+                }
+            }
+        });
+        if let Some(file) = file {
+            let _ = std::fs::remove_dir_all(Path::new(&file).parent().unwrap());
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 }
