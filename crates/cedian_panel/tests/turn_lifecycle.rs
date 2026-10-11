@@ -43,9 +43,11 @@
 //! Their queue order is checked against OMP's own frames: in every fixture,
 //! and in `turn_lifecycle_live.jsonl` once recorded
 //! (`CEDIAN_U12_RECORD=turn_lifecycle CEDIAN_RECORD_OMP=<pinned omp>`, one
-//! model turn: a long reply, a refused and a taken steer, a follow-up, then
-//! Stop, against the pinned OMP). The record lane does not replace the four
-//! fixtures: their restarts, hangs and refusals are no model's to make.
+//! model turn: a long reply, a taken steer, a follow-up, then Stop, against
+//! the pinned OMP). The record lane does not replace the four fixtures:
+//! their restarts, hangs and refusals are no model's to make, and the
+//! refusal is unreachable under cedian's own spawn (`--no-extensions`, so
+//! OMP registers no slash command).
 //!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
@@ -401,11 +403,11 @@ async fn record_scenario(cx: &mut TestAppContext, root: &Path) {
     wait(cx, &window, "the long reply to stream", |p| {
         p.turn() == &Turn::Streaming
     });
-    set_prompt(cx, &window, "/plan");
-    click(&mut vcx, "cedian-steer");
-    wait(cx, &window, "the refused steer", |p| {
-        p.notice().is_some_and(|n| n.contains("cannot be queued"))
-    });
+    // No refused steer here: cedian spawns OMP with `--no-extensions`
+    // (`crates/cedian_omp/src/spawn_profile.rs`), so OMP registers no slash
+    // command and queues `/plan` as ordinary text. The refusal the hand-cut
+    // fixtures script comes from OMP's own validation, which this spawn has
+    // no extension command to reach.
     set_prompt(cx, &window, "faster");
     click(&mut vcx, "cedian-steer");
     wait(cx, &window, "the steer chip", |p| {

@@ -188,12 +188,6 @@ fn scenario(record: bool) {
             "Use your edit tool on 'notes.txt': replace bytes 6..10 with 'BETA'. Do not use any other tool. Then reply with only: edited-ok",
         ],
     );
-    if record {
-        cedian_fake_omp::recording::write_fixture(
-            &sessions.join(cedian_fake_omp::RECORDED_FILE),
-            Path::new(FIXTURE),
-        );
-    }
     assert!(out.contains("edited-ok"), "assistant text rendered:\n{out}");
     assert!(out.contains("[✓]"), "a done tool card rendered:\n{out}");
     // ADR-0037: one spawn row and one turn row whose parts add up.
@@ -223,6 +217,15 @@ fn scenario(record: bool) {
         std::fs::read_to_string(&notes).unwrap(),
         "alpha\nBETA\ngamma\n"
     );
+    // Written last: a recording that did not show the edit must not replace
+    // the fixture. The model is free to read the file and answer without
+    // calling the tool, and one such run overwrote a good fixture.
+    if record {
+        cedian_fake_omp::recording::write_fixture(
+            &sessions.join(cedian_fake_omp::RECORDED_FILE),
+            Path::new(FIXTURE),
+        );
+    }
 }
 
 /// S3 exit, CLI side: a blocker on the agent's hunk shows in `review`;
