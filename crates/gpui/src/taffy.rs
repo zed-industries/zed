@@ -72,6 +72,7 @@ struct NodeEpochs {
     last_computed: u64,
     last_retained: u64,
     owner: (usize, usize),
+    layout_inputs: Option<LayoutInputKey>,
 }
 
 fn node_index(id: NodeId) -> usize {
@@ -651,7 +652,7 @@ impl TaffyLayoutEngine {
         }
     }
 
-    fn claim_node(&mut self, style: taffy::Style, children: &[LayoutId]) -> (LayoutId, bool) {
+    fn claim_node(&mut self, style: RequestedStyle, children: &[LayoutId]) -> (LayoutId, bool) {
         let scope = self.cache.as_mut().map(|cache| {
             let index = cache
                 .request_scope
@@ -667,10 +668,23 @@ impl TaffyLayoutEngine {
             (index, ordinal, scope.nodes[ordinal])
         });
         let existing = scope.and_then(|(_, _, id)| id);
+        let layout_inputs = match &style {
+            RequestedStyle::Inputs(inputs) => Some(inputs.clone()),
+            RequestedStyle::Converted(_) => None,
+        };
         let id = if let Some(id) = existing {
-            if self.taffy.style(id.0).expect(EXPECT_MESSAGE) != &style {
-                self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
-                self.layout_changes += 1;
+            let inputs_match = layout_inputs.as_ref().is_some_and(|inputs| {
+                self.cache.as_ref().expect(EXPECT_MESSAGE).nodes[node_index(id.0)]
+                    .layout_inputs
+                    .as_ref()
+                    == Some(inputs)
+            });
+            if !inputs_match {
+                let style = style.convert();
+                if self.taffy.style(id.0).expect(EXPECT_MESSAGE) != &style {
+                    self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+                    self.layout_changes += 1;
+                }
             }
             if !self
                 .taffy
@@ -685,7 +699,7 @@ impl TaffyLayoutEngine {
             id
         } else {
             self.layout_changes += 1;
-            let id = self.taffy.new_leaf(style).expect(EXPECT_MESSAGE);
+            let id = self.taffy.new_leaf(style.convert()).expect(EXPECT_MESSAGE);
             if !children.is_empty() {
                 // Unlike new_with_children, set_children detaches previous parents.
                 self.taffy
@@ -707,13 +721,14 @@ impl TaffyLayoutEngine {
             }
             cache.nodes[slot].last_requested = cache.epoch;
             cache.nodes[slot].last_retained = 0;
+            cache.nodes[slot].layout_inputs = layout_inputs;
         }
         (id, existing.is_some())
     }
 
     fn request_node(
         &mut self,
-        style: taffy::Style,
+        style: RequestedStyle,
         children: &[LayoutId],
         context: Option<NodeContext>,
     ) -> LayoutId {
@@ -736,11 +751,14 @@ impl TaffyLayoutEngine {
         scale_factor: f32,
         children: &[LayoutId],
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
-
         if self.cache.is_some() {
-            return self.request_node(taffy_style, children, None);
+            return self.request_node(
+                RequestedStyle::Inputs(LayoutInputKey::new(&style, rem_size, scale_factor)),
+                children,
+                None,
+            );
         }
+        let taffy_style = style.to_taffy(rem_size, scale_factor);
         if children.is_empty() {
             self.taffy
                 .new_leaf(taffy_style)
@@ -785,7 +803,6 @@ impl TaffyLayoutEngine {
         ) -> Size<Pixels>
         + 'static,
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
         let measure = Box::new(measure) as Box<MeasureFn>;
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
@@ -799,8 +816,13 @@ impl TaffyLayoutEngine {
             NodeContext::Custom(measure)
         };
         if self.cache.is_some() {
-            return self.request_node(taffy_style, &[], Some(context));
+            return self.request_node(
+                RequestedStyle::Inputs(LayoutInputKey::new(&style, rem_size, scale_factor)),
+                &[],
+                Some(context),
+            );
         }
+        let taffy_style = style.to_taffy(rem_size, scale_factor);
         self.taffy
             .new_leaf_with_context(taffy_style, context)
             .expect(EXPECT_MESSAGE)
@@ -813,7 +835,7 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let style = text_layout_style();
         if self.cache.is_some() {
-            let (id, reused) = self.claim_node(style, &[]);
+            let (id, reused) = self.claim_node(RequestedStyle::Converted(style), &[]);
             if reused
                 && let Some(NodeContext::Text(previous)) = self.taffy.get_node_context_mut(id.0)
             {
@@ -874,6 +896,9 @@ impl TaffyLayoutEngine {
         if self.taffy.style(id.0).expect(EXPECT_MESSAGE) != &style {
             self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
             self.layout_changes += 1;
+            if let Some(cache) = self.cache.as_mut() {
+                cache.nodes[node_index(id.0)].layout_inputs = None;
+            }
         }
     }
 
@@ -1284,8 +1309,89 @@ trait ToTaffy<Output> {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> Output;
 }
 
+enum RequestedStyle {
+    Inputs(LayoutInputKey),
+    Converted(taffy::Style),
+}
+
+impl RequestedStyle {
+    fn convert(self) -> taffy::Style {
+        match self {
+            Self::Inputs(inputs) => inputs.convert(),
+            Self::Converted(style) => style,
+        }
+    }
+}
+
+// Conversion is defined on the key, not Style, so it cannot consume a field
+// without including it in the exact comparison.
+macro_rules! layout_input_key {
+    ($($field:ident: $field_type:ty),* $(,)?) => {
+        #[derive(Clone, Debug, PartialEq)]
+        struct LayoutInputKey {
+            rem_size: Pixels,
+            scale_factor: f32,
+            $($field: $field_type,)*
+        }
+
+        impl LayoutInputKey {
+            fn new(style: &Style, rem_size: Pixels, scale_factor: f32) -> Self {
+                Self {
+                    rem_size,
+                    scale_factor,
+                    $($field: Clone::clone(&style.$field),)*
+                }
+            }
+
+            #[cfg(test)]
+            fn style(&self) -> Style {
+                Style {
+                    $($field: Clone::clone(&self.$field),)*
+                    ..Style::default()
+                }
+            }
+        }
+    };
+}
+
+layout_input_key! {
+    display: crate::Display,
+    overflow: Point<crate::Overflow>,
+    scrollbar_width: AbsoluteLength,
+    position: crate::Position,
+    inset: Edges<Length>,
+    size: Size<Length>,
+    min_size: Size<Length>,
+    max_size: Size<Length>,
+    aspect_ratio: Option<f32>,
+    margin: Edges<Length>,
+    padding: Edges<DefiniteLength>,
+    border_widths: Edges<AbsoluteLength>,
+    align_items: Option<crate::AlignItems>,
+    align_self: Option<crate::AlignSelf>,
+    align_content: Option<crate::AlignContent>,
+    justify_content: Option<crate::JustifyContent>,
+    gap: Size<DefiniteLength>,
+    flex_direction: crate::FlexDirection,
+    flex_wrap: crate::FlexWrap,
+    flex_basis: Length,
+    flex_grow: f32,
+    flex_shrink: f32,
+    grid_rows: Option<GridTemplate>,
+    grid_cols: Option<GridTemplate>,
+    grid_location: Option<crate::GridLocation>,
+}
+
 impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Style {
+        LayoutInputKey::new(self, rem_size, scale_factor).convert()
+    }
+}
+
+impl LayoutInputKey {
+    fn convert(&self) -> taffy::style::Style {
+        let rem_size = self.rem_size;
+        let scale_factor = self.scale_factor;
         use taffy::style_helpers::{fr, length, minmax, repeat};
 
         fn to_grid_line(
@@ -1593,6 +1699,234 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn equal_layout_inputs_have_equal_conversions() {
+        use crate::{
+            AlignContent, AlignItems, Display, FlexDirection, FlexWrap, GridLocation,
+            GridPlacement, GridTemplateMinSize, Overflow, Position, Rems,
+        };
+        use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+
+        fn choose<T: Copy>(random: &mut StdRng, choices: &[T]) -> T {
+            choices[random.random_range(0..choices.len())]
+        }
+        fn absolute(random: &mut StdRng) -> AbsoluteLength {
+            let value = random.random_range(-32.0..128.0);
+            choose(random, &[Pixels(value).into(), Rems(value).into()])
+        }
+        fn definite(random: &mut StdRng) -> DefiniteLength {
+            let length = absolute(random);
+            let fraction = random.random_range(-1.0..2.0);
+            choose(random, &[length.into(), DefiniteLength::Fraction(fraction)])
+        }
+        fn length(random: &mut StdRng) -> Length {
+            let length = definite(random);
+            choose(random, &[length.into(), Length::Auto])
+        }
+        fn edges<T: Clone + Debug + Default + PartialEq>(
+            random: &mut StdRng,
+            generate: fn(&mut StdRng) -> T,
+        ) -> Edges<T> {
+            Edges {
+                top: generate(random),
+                right: generate(random),
+                bottom: generate(random),
+                left: generate(random),
+            }
+        }
+        fn dimensions<T: Clone + Debug + Default + PartialEq>(
+            random: &mut StdRng,
+            generate: fn(&mut StdRng) -> T,
+        ) -> Size<T> {
+            size(generate(random), generate(random))
+        }
+        fn alignment(random: &mut StdRng) -> Option<AlignItems> {
+            choose(
+                random,
+                &[
+                    None,
+                    Some(AlignItems::Start),
+                    Some(AlignItems::End),
+                    Some(AlignItems::FlexStart),
+                    Some(AlignItems::FlexEnd),
+                    Some(AlignItems::Center),
+                    Some(AlignItems::Baseline),
+                    Some(AlignItems::Stretch),
+                ],
+            )
+        }
+        fn content(random: &mut StdRng) -> Option<AlignContent> {
+            choose(
+                random,
+                &[
+                    None,
+                    Some(AlignContent::Start),
+                    Some(AlignContent::End),
+                    Some(AlignContent::FlexStart),
+                    Some(AlignContent::FlexEnd),
+                    Some(AlignContent::Center),
+                    Some(AlignContent::Stretch),
+                    Some(AlignContent::SpaceBetween),
+                    Some(AlignContent::SpaceEvenly),
+                    Some(AlignContent::SpaceAround),
+                ],
+            )
+        }
+        fn template(random: &mut StdRng) -> Option<GridTemplate> {
+            let template = GridTemplate {
+                repeat: random.random_range(1..32),
+                min_size: choose(
+                    random,
+                    &[
+                        GridTemplateMinSize::Zero,
+                        GridTemplateMinSize::MinContent,
+                        GridTemplateMinSize::MaxContent,
+                    ],
+                ),
+            };
+            choose(random, &[None, Some(template)])
+        }
+        fn placement(random: &mut StdRng) -> GridPlacement {
+            let line = random.random_range(-32..32);
+            let span = random.random_range(1..32);
+            choose(
+                random,
+                &[
+                    GridPlacement::Auto,
+                    GridPlacement::Line(line),
+                    GridPlacement::Span(span),
+                ],
+            )
+        }
+        let mut random = StdRng::seed_from_u64(0x1a90_17);
+        for iteration in 0..10_000 {
+            let location = GridLocation {
+                row: placement(&mut random)..placement(&mut random),
+                column: placement(&mut random)..placement(&mut random),
+            };
+            // Exhaustive initialization also forces newly added key fields to
+            // get a generator rather than silently staying at their defaults.
+            let inputs = LayoutInputKey {
+                rem_size: Pixels(random.random_range(8.0..32.0)),
+                scale_factor: random.random_range(0.5..4.0),
+                display: choose(
+                    &mut random,
+                    &[Display::None, Display::Block, Display::Flex, Display::Grid],
+                ),
+                overflow: Point {
+                    x: choose(
+                        &mut random,
+                        &[
+                            Overflow::Visible,
+                            Overflow::Clip,
+                            Overflow::Hidden,
+                            Overflow::Scroll,
+                        ],
+                    ),
+                    y: choose(
+                        &mut random,
+                        &[
+                            Overflow::Visible,
+                            Overflow::Clip,
+                            Overflow::Hidden,
+                            Overflow::Scroll,
+                        ],
+                    ),
+                },
+                scrollbar_width: absolute(&mut random),
+                position: choose(&mut random, &[Position::Relative, Position::Absolute]),
+                inset: edges(&mut random, length),
+                size: dimensions(&mut random, length),
+                min_size: dimensions(&mut random, length),
+                max_size: dimensions(&mut random, length),
+                aspect_ratio: if random.random_bool(0.5) {
+                    Some(random.random_range(0.1..10.0))
+                } else {
+                    None
+                },
+                margin: edges(&mut random, length),
+                padding: edges(&mut random, definite),
+                border_widths: edges(&mut random, absolute),
+                align_items: alignment(&mut random),
+                align_self: alignment(&mut random),
+                align_content: content(&mut random),
+                justify_content: content(&mut random),
+                gap: dimensions(&mut random, definite),
+                flex_direction: choose(
+                    &mut random,
+                    &[
+                        FlexDirection::Row,
+                        FlexDirection::RowReverse,
+                        FlexDirection::Column,
+                        FlexDirection::ColumnReverse,
+                    ],
+                ),
+                flex_wrap: choose(
+                    &mut random,
+                    &[FlexWrap::NoWrap, FlexWrap::Wrap, FlexWrap::WrapReverse],
+                ),
+                flex_basis: length(&mut random),
+                flex_grow: random.random_range(0.0..10.0),
+                flex_shrink: random.random_range(0.0..10.0),
+                grid_rows: template(&mut random),
+                grid_cols: template(&mut random),
+                grid_location: if random.random_bool(0.5) {
+                    Some(location)
+                } else {
+                    None
+                },
+            };
+            let first = inputs.style();
+            let mut second = first.clone();
+            second.opacity = Some(random.random_range(0.0..1.0));
+            second.visibility = crate::Visibility::Hidden;
+            second.border_color = Some(crate::red());
+            second.corner_radii.top_left = absolute(&mut random);
+            second.text.font_size = Some(absolute(&mut random));
+            let first_key = LayoutInputKey::new(&first, inputs.rem_size, inputs.scale_factor);
+            let second_key = LayoutInputKey::new(&second, inputs.rem_size, inputs.scale_factor);
+            assert_eq!(first_key, second_key, "iteration {iteration}");
+            assert_eq!(
+                first.to_taffy(inputs.rem_size, inputs.scale_factor),
+                second.to_taffy(inputs.rem_size, inputs.scale_factor),
+                "iteration {iteration}",
+            );
+        }
+    }
+
+    #[test]
+    fn layout_inputs_track_rem_scale_and_mutations() {
+        let mut engine = TaffyLayoutEngine::new();
+        engine.enable_cache();
+        let mut style = Style::default();
+        style.size.width = crate::Rems(2.0).into();
+        style.border_widths = Edges::all(Pixels(0.6).into());
+        let mut previous = None;
+        for (rem_size, scale_factor, width) in [
+            (16.0, 1.0, 2.0),
+            (16.0, 1.0, 2.0),
+            (20.0, 1.0, 2.0),
+            (20.0, 2.0, 2.0),
+            (20.0, 2.0, 3.0),
+        ] {
+            style.size.width = crate::Rems(width).into();
+            engine.set_request_scope(&crate::element::InternedHandle::for_test(1, 0));
+            let id = engine.request_layout(style.clone(), Pixels(rem_size), scale_factor, &[]);
+            if let Some(previous) = previous {
+                assert_eq!(id, previous);
+            }
+            assert_eq!(
+                engine.taffy.style(id.0).expect(EXPECT_MESSAGE),
+                &style.to_taffy(Pixels(rem_size), scale_factor),
+            );
+            // clear retains only nodes marked reachable by a compute.
+            engine.cache.as_mut().unwrap().nodes[node_index(id.0)].last_reachable =
+                engine.cache.as_ref().unwrap().epoch;
+            previous = Some(id);
+            engine.clear();
+        }
+    }
 
     fn old_layout_bounds(
         engine: &TaffyLayoutEngine,
