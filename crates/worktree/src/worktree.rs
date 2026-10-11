@@ -3600,19 +3600,7 @@ impl BackgroundScannerState {
 
         let (repository_dir_abs_path, common_dir_abs_path) =
             discover_git_paths(&dot_git_abs_path, fs).await;
-        watcher
-            .add(&common_dir_abs_path)
-            .context("failed to add common directory to watcher")
-            .log_err();
-        watcher
-            .add(&repository_dir_abs_path)
-            .context("failed to add repository directory to watcher")
-            .log_err();
-
-        watch_git_dir_subdirectories(&common_dir_abs_path, fs, watcher).await;
-        if repository_dir_abs_path != common_dir_abs_path {
-            watch_git_dir_subdirectories(&repository_dir_abs_path, fs, watcher).await;
-        }
+        watch_git_directories(&repository_dir_abs_path, &common_dir_abs_path, fs, watcher).await;
 
         let work_directory_id = work_dir_entry.id;
 
@@ -3649,6 +3637,35 @@ impl BackgroundScannerState {
 
         log::trace!("inserting new local git repository");
         Ok(local_repository)
+    }
+}
+
+/// Watches a repository's git directories: the repository directory, the common
+/// directory (they differ for linked worktrees), and the ref directories inside them.
+///
+/// Called both when a repository is first discovered and whenever its git state is
+/// reloaded. The latter re-asserts the watches after the git directory has been
+/// deleted and re-created in place (`rm -rf .git && git init`): `.git` is excluded
+/// from the worktree snapshot, so nothing else unwatches it on deletion, and the
+/// watcher only re-issues an OS watch when asked to add the path again.
+async fn watch_git_directories(
+    repository_dir_abs_path: &Path,
+    common_dir_abs_path: &Path,
+    fs: &dyn Fs,
+    watcher: &dyn Watcher,
+) {
+    watcher
+        .add(common_dir_abs_path)
+        .context("failed to add common directory to watcher")
+        .log_err();
+    watcher
+        .add(repository_dir_abs_path)
+        .context("failed to add repository directory to watcher")
+        .log_err();
+
+    watch_git_dir_subdirectories(common_dir_abs_path, fs, watcher).await;
+    if repository_dir_abs_path != common_dir_abs_path {
+        watch_git_dir_subdirectories(repository_dir_abs_path, fs, watcher).await;
     }
 }
 
@@ -6174,13 +6191,32 @@ impl BackgroundScanner {
                     )
                     .await;
             } else {
+                let mut git_directories_to_watch = Vec::new();
                 for work_directory_id in existing_work_directory_ids {
                     state
                         .snapshot
                         .git_repositories
                         .update(&work_directory_id, |entry| {
                             entry.git_dir_scan_id = scan_id;
+                            git_directories_to_watch.push((
+                                entry.repository_dir_abs_path.clone(),
+                                entry.common_dir_abs_path.clone(),
+                            ));
                         });
+                }
+                // The git directory may have been deleted and re-created since it
+                // was first watched, in which case its OS watch died with it. Adding
+                // the paths again is a no-op while they are still watched.
+                for (repository_dir_abs_path, common_dir_abs_path) in git_directories_to_watch {
+                    if self.fs.is_dir(&repository_dir_abs_path).await {
+                        watch_git_directories(
+                            &repository_dir_abs_path,
+                            &common_dir_abs_path,
+                            self.fs.as_ref(),
+                            self.watcher.as_ref(),
+                        )
+                        .await;
+                    }
                 }
             }
         }
@@ -6216,6 +6252,7 @@ impl BackgroundScanner {
             }
         }
 
+        let mut removed_git_directories = Vec::new();
         snapshot
             .git_repositories
             .retain(|work_directory_id, entry| {
@@ -6225,9 +6262,25 @@ impl BackgroundScanner {
                     snapshot
                         .repo_exclude_by_work_dir_abs_path
                         .remove(&entry.work_directory_abs_path);
+                    removed_git_directories.push(entry.repository_dir_abs_path.clone());
+                    removed_git_directories.push(entry.common_dir_abs_path.clone());
                 }
                 preserve
             });
+
+        // `.git` is excluded from the snapshot, so removing its entries never
+        // unwatches it; drop the watches here so that a re-created git directory
+        // is watched afresh. A common directory shared with a surviving linked
+        // worktree must stay watched.
+        for removed_git_directory in removed_git_directories {
+            let still_in_use = snapshot.git_repositories.values().any(|entry| {
+                entry.repository_dir_abs_path == removed_git_directory
+                    || entry.common_dir_abs_path == removed_git_directory
+            });
+            if !still_in_use {
+                self.watcher.remove(&removed_git_directory).log_err();
+            }
+        }
 
         affected_repo_roots
     }

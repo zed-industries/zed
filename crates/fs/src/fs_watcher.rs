@@ -144,9 +144,13 @@ impl FsWatcher {
     fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
         let case_insensitive = !self.fs.is_path_case_sensitive(&path);
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
-        if self.registrations.lock().contains_key(&key) {
+        let existing_registration = self.registrations.lock().get(&key).cloned();
+        if let Some(registration) = existing_registration {
             log::trace!("path to watch is already watched: {path:?}");
-            return Ok(());
+            return registration
+                .os_watcher
+                .rewatch_if_lost(registration.id)
+                .map_err(|error| error.context(format!("re-watching {path:?}")));
         }
         match register_existing_path(
             &self.native_watcher,
@@ -801,6 +805,12 @@ struct WatcherRegistrationState {
 struct PathRegistrationState {
     watcher_ids: Vec<WatcherRegistrationId>,
     has_os_watcher: bool,
+    /// The backend reported that the watched directory itself was removed. A
+    /// non-recursive OS watch dies with its directory (inotify drops the watch
+    /// descriptor), while the registrations above it stay alive, so the next
+    /// `add` for this path must issue a fresh OS watch instead of being
+    /// deduplicated against the dead one.
+    os_watch_lost: bool,
 }
 
 /// The registered watch paths for one backend, keyed by [`WatchKey`] so that
@@ -826,6 +836,43 @@ impl WatchPaths {
 
     fn remove(&mut self, key: &WatchKey) {
         self.0.remove(key);
+    }
+
+    fn os_watch_lost(&self, key: &WatchKey) -> bool {
+        self.0.get(key).is_some_and(|state| state.os_watch_lost)
+    }
+
+    /// Records that the directory registered at `path` was removed or renamed
+    /// away, so the OS watches of it and of every registered directory below it
+    /// no longer belong to these paths. Descendants are included because a
+    /// directory watch follows its inode: after `mv .git .git.bak` the watches
+    /// on `.git/refs/**` keep reporting on the moved tree and nothing else
+    /// mentions them, while a queue overflow can swallow their own removal
+    /// events. Returns whether any registration that owned an OS watch was
+    /// marked.
+    fn mark_os_watch_lost(&mut self, path: &SanitizedPath) -> bool {
+        let folded_path = WatchKey::folded(path);
+        let mut marked = false;
+        for (key, state) in self.0.iter_mut() {
+            if !state.has_os_watcher {
+                continue;
+            }
+            let covered = match (key, &folded_path) {
+                (WatchKey::Exact(registered), _) => registered.starts_with(path.as_path()),
+                (WatchKey::Folded(registered), WatchKey::Folded(folded)) => {
+                    registered.as_ref() == folded.as_ref()
+                        || registered
+                            .strip_prefix(folded.as_ref())
+                            .is_some_and(|rest| rest.starts_with(std::path::MAIN_SEPARATOR))
+                }
+                (WatchKey::Folded(_), WatchKey::Exact(_)) => false,
+            };
+            if covered {
+                state.os_watch_lost = true;
+                marked = true;
+            }
+        }
+        marked
     }
 
     /// True if a recursive registration on a strict ancestor already covers
@@ -878,10 +925,12 @@ impl WatcherState {
             return None;
         }
 
-        let was_actually_watched = path_state.has_os_watcher;
+        // A lost OS watch has already been dropped by the backend along with
+        // the directory, so there is nothing left to unwatch.
+        let needs_unwatch = path_state.has_os_watcher && !path_state.os_watch_lost;
         self.paths.remove(&registration_state.key);
 
-        was_actually_watched.then_some(registration_state.path)
+        needs_unwatch.then_some(registration_state.path)
     }
 }
 
@@ -997,8 +1046,9 @@ impl OsWatcher {
             .paths
             .covered_by_recursive_ancestor(&path, self.recursive);
         let path_already_registered = state.paths.contains(&key);
+        let os_watch_lost = state.paths.os_watch_lost(&key);
 
-        if !path_already_covered && !path_already_registered {
+        if !path_already_covered && (!path_already_registered || os_watch_lost) {
             if self.kind == OsWatcherKind::Native && state.is_native_watch_limit_cooldown_active() {
                 self.diagnostics.record(|| {
                     WatchDiagnosticEvent::new(
@@ -1039,13 +1089,60 @@ impl OsWatcher {
         state
             .paths
             .entry(key)
-            .and_modify(|registration| registration.watcher_ids.push(id))
+            .and_modify(|registration| {
+                registration.watcher_ids.push(id);
+                if os_watch_lost {
+                    registration.os_watch_lost = false;
+                }
+            })
             .or_insert_with(|| PathRegistrationState {
                 watcher_ids: vec![id],
                 has_os_watcher: !path_already_covered,
+                os_watch_lost: false,
             });
 
         Ok(Some(id))
+    }
+
+    /// Re-issues the OS watch behind an existing registration if the backend
+    /// reported that its directory was removed since, which happens when a
+    /// directory is deleted and re-created under the same path (for example
+    /// `rm -rf .git && git init`). A no-op for registrations whose watch is
+    /// still alive.
+    pub(crate) fn rewatch_if_lost(&self, id: WatcherRegistrationId) -> anyhow::Result<()> {
+        let state = self.state.lock();
+        let Some((key, path)) = state
+            .watchers
+            .get(&id)
+            .map(|registration| (registration.key.clone(), registration.path.clone()))
+        else {
+            return Ok(());
+        };
+        if !state.paths.os_watch_lost(&key) {
+            return Ok(());
+        }
+        if self.kind == OsWatcherKind::Native && state.is_native_watch_limit_cooldown_active() {
+            return Ok(());
+        }
+        drop(state);
+
+        log::debug!("re-establishing lost OS watch for {:?}", path.as_path());
+        match self.watch(path.as_path()) {
+            Ok(()) => {}
+            Err(error)
+                if self.kind == OsWatcherKind::Native && is_max_files_watch_error(&error) =>
+            {
+                self.start_native_watch_limit_cooldown(path.as_path());
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        }
+
+        let mut state = self.state.lock();
+        if let Some(path_state) = state.paths.get_mut(&key) {
+            path_state.os_watch_lost = false;
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -1222,6 +1319,29 @@ fn dispatch(
     };
 
     log::trace!("handle {kind:?} watcher event: {event:?}");
+
+    // A non-recursive OS watch (inotify) is bound to the directory's inode: the
+    // kernel drops it when the directory is deleted, and it silently follows
+    // the inode when the directory is renamed away. The backend reports both as
+    // an event on the watched path itself (a removal, or a rename "from").
+    // Remember it so a later `add` for the same path re-issues the watch
+    // instead of reusing the dead registration.
+    let watch_lost = match &event.kind {
+        EventKind::Remove(_) => true,
+        EventKind::Modify(notify::event::ModifyKind::Name(rename_mode)) => {
+            matches!(rename_mode, notify::event::RenameMode::From)
+        }
+        _ => false,
+    };
+    if !kind.is_recursive() && watch_lost {
+        let mut state = state.lock();
+        for path in &event.paths {
+            let sanitized = SanitizedPath::new(path);
+            if state.paths.mark_os_watch_lost(sanitized) {
+                log::debug!("OS watch lost for removed or renamed directory {path:?}");
+            }
+        }
+    }
 
     let callbacks = {
         let state = state.lock();
@@ -1531,6 +1651,222 @@ mod tests {
             paths: vec![PathBuf::from(path)],
             ..notify::Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
         }
+    }
+
+    fn remove_event(path: &str) -> notify::Event {
+        notify::Event {
+            paths: vec![PathBuf::from(path)],
+            ..notify::Event::new(EventKind::Remove(notify::event::RemoveKind::Folder))
+        }
+    }
+
+    #[test]
+    fn native_watch_is_reissued_after_its_directory_was_removed() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+        let dot_git = Arc::<Path>::from(Path::new("/repo/.git"));
+
+        let first_registration = watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+        assert_eq!(backend.lock().watch_calls, &[dot_git.to_path_buf()]);
+
+        // `rm -rf .git`: the kernel drops the watch and reports the removal of
+        // the watched directory itself.
+        watcher.dispatch(Ok(remove_event("/repo/.git")));
+        backend.lock().watched_paths.clear();
+
+        // `git init`: the same path is added again and must get a fresh OS watch
+        // rather than being deduplicated against the dead one.
+        let second_registration = watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[dot_git.to_path_buf(), dot_git.to_path_buf()]
+        );
+
+        // Both registrations share the live watch, which is released once.
+        watcher.remove(first_registration);
+        assert!(backend.lock().unwatch_calls.is_empty());
+        watcher.remove(second_registration);
+        assert_eq!(backend.lock().unwatch_calls, &[dot_git.to_path_buf()]);
+    }
+
+    fn rename_from_event(path: &str) -> notify::Event {
+        notify::Event {
+            paths: vec![PathBuf::from(path)],
+            ..notify::Event::new(EventKind::Modify(notify::event::ModifyKind::Name(
+                notify::event::RenameMode::From,
+            )))
+        }
+    }
+
+    #[test]
+    fn renaming_a_directory_away_marks_it_and_its_descendants_lost() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+        let dot_git = Arc::<Path>::from(Path::new("/repo/.git"));
+        let refs_heads = Arc::<Path>::from(Path::new("/repo/.git/refs/heads"));
+        let sibling = Arc::<Path>::from(Path::new("/repo/.gitlab"));
+
+        for path in [&dot_git, &refs_heads, &sibling] {
+            watcher
+                .add(path.clone(), false, |_| {})
+                .expect("add watch")
+                .expect("watch registered");
+        }
+        assert_eq!(backend.lock().watch_calls.len(), 3);
+
+        // `mv .git .git.bak`: inotify reports only a rename of `.git` itself;
+        // the watches on `.git/refs/**` silently follow the moved inodes.
+        watcher.dispatch(Ok(rename_from_event("/repo/.git")));
+
+        for path in [&dot_git, &refs_heads] {
+            watcher
+                .add(path.clone(), false, |_| {})
+                .expect("add watch")
+                .expect("watch registered");
+        }
+        // `.gitlab` merely shares a prefix string and is untouched.
+        watcher
+            .add(sibling.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[
+                dot_git.to_path_buf(),
+                refs_heads.to_path_buf(),
+                sibling.to_path_buf(),
+                dot_git.to_path_buf(),
+                refs_heads.to_path_buf(),
+            ]
+        );
+    }
+
+    #[test]
+    fn removing_a_child_does_not_reissue_the_parent_watch() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+        let dot_git = Arc::<Path>::from(Path::new("/repo/.git"));
+
+        watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+        watcher.dispatch(Ok(remove_event("/repo/.git/index")));
+        watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+
+        assert_eq!(backend.lock().watch_calls, &[dot_git.to_path_buf()]);
+    }
+
+    #[test]
+    fn lost_watch_is_not_unwatched_when_its_last_registration_is_removed() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+        let dot_git = Arc::<Path>::from(Path::new("/repo/.git"));
+
+        let registration = watcher
+            .add(dot_git, false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+        watcher.dispatch(Ok(remove_event("/repo/.git")));
+        watcher.remove(registration);
+
+        assert!(backend.lock().unwatch_calls.is_empty());
+        assert!(watcher.state.lock().paths.0.is_empty());
+    }
+
+    #[test]
+    fn rewatch_if_lost_reissues_the_watch_for_an_existing_registration() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+        let dot_git = Arc::<Path>::from(Path::new("/repo/.git"));
+
+        let registration = watcher
+            .add(dot_git, false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+
+        watcher
+            .rewatch_if_lost(registration)
+            .expect("live watch is left alone");
+        assert_eq!(backend.lock().watch_calls.len(), 1);
+
+        watcher.dispatch(Ok(remove_event("/repo/.git")));
+        watcher
+            .rewatch_if_lost(registration)
+            .expect("lost watch is re-issued");
+        assert_eq!(backend.lock().watch_calls.len(), 2);
+
+        // Once re-issued the registration is live again.
+        watcher
+            .rewatch_if_lost(registration)
+            .expect("live watch is left alone");
+        assert_eq!(backend.lock().watch_calls.len(), 2);
+    }
+
+    #[test]
+    fn recursive_watchers_ignore_removal_of_a_watched_root() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
+        let dot_git = Arc::<Path>::from(Path::new("/repo/.git"));
+
+        watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+        watcher.dispatch(Ok(remove_event("/repo/.git")));
+        watcher
+            .add(dot_git.clone(), false, |_| {})
+            .expect("add watch")
+            .expect("watch registered");
+
+        assert_eq!(backend.lock().watch_calls, &[dot_git.to_path_buf()]);
+    }
+
+    #[gpui::test]
+    async fn fs_watcher_rewatches_a_path_whose_directory_was_recreated(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let dot_git = temp_dir.path().join(".git");
+        std::fs::create_dir(&dot_git).expect("create .git");
+
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let native_watcher = Arc::new(test_os_watcher(
+            OsWatcherKind::Native,
+            Some(backend.clone()),
+        ));
+        let (tx, _rx) = async_channel::unbounded();
+        let watcher = FsWatcher::new(
+            native_watcher.clone(),
+            Arc::new(test_os_watcher(OsWatcherKind::Poll, None)),
+            crate::RealFs::new(None, cx.executor()),
+            cx.executor(),
+            tx,
+            Default::default(),
+        );
+
+        watcher.add(&dot_git).expect("add .git");
+        assert_eq!(backend.lock().watch_calls, std::slice::from_ref(&dot_git));
+
+        // The directory is deleted and re-created under the same path while the
+        // `FsWatcher` registration survives, so the second `add` is answered
+        // from the registration map and must still re-issue the OS watch.
+        std::fs::remove_dir(&dot_git).expect("remove .git");
+        native_watcher.dispatch(Ok(remove_event(dot_git.to_str().unwrap())));
+        std::fs::create_dir(&dot_git).expect("recreate .git");
+
+        watcher.add(&dot_git).expect("re-add .git");
+        assert_eq!(backend.lock().watch_calls, &[dot_git.clone(), dot_git]);
     }
 
     fn recording_watcher() -> (OsWatcher, Arc<Mutex<Vec<String>>>) {

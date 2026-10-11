@@ -4050,6 +4050,93 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 }
 
+/// `rm -rf .git && git init` while the project is open: the repository must be
+/// dropped and then rediscovered, and the re-created git directory must get a
+/// fresh OS watch, or no later commit or index write would ever be noticed.
+#[gpui::test]
+async fn test_git_dir_is_rewatched_after_being_recreated(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "a.txt": "A"
+        }),
+    )
+    .await;
+    let worktree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let dot_git = PathBuf::from(path!("/root/.git"));
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree.as_local().unwrap().repositories()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+    assert!(fs.registered_watch_paths().contains(&dot_git));
+
+    fs.remove_dir(
+        &dot_git,
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree.as_local().unwrap().repositories()
+    });
+    assert!(
+        repos.is_empty(),
+        "repository should be dropped with its .git"
+    );
+    assert!(!fs.registered_watch_paths().contains(&dot_git));
+
+    fs.create_dir(&dot_git).await.unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree.as_local().unwrap().repositories()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+    assert!(
+        fs.registered_watch_paths().contains(&dot_git),
+        "re-created .git must be watched again"
+    );
+}
+
 #[gpui::test]
 async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
@@ -5752,6 +5839,176 @@ async fn test_ref_updates_in_dot_git_subdirectories_are_detected(cx: &mut TestAp
         &mut events,
         cx,
         "updating a ref in a directory created after the initial scan",
+    )
+    .await;
+}
+
+/// `rm -rf .git && git init` on a real filesystem, with real inotify.
+///
+/// On Linux the native watcher is non-recursive, so `.git` and its ref directories are
+/// each watched individually. Deleting `.git` makes the kernel drop those watches, but
+/// `.git` is excluded from the worktree snapshot, so nothing unregistered the paths on
+/// Zed's side. When the directory was re-created, re-adding it was deduplicated as
+/// "already watched" and no git state change inside the new `.git` was ever observed.
+#[cfg(target_os = "linux")]
+#[gpui::test]
+async fn test_recreated_git_dir_changes_are_observed_on_real_fs(cx: &mut TestAppContext) {
+    check_recreated_git_dir_changes_are_observed(cx, |dot_git_path| {
+        std::fs::remove_dir_all(dot_git_path).unwrap();
+        None
+    })
+    .await;
+}
+
+/// `mv .git ../backup && git init`: unlike a deletion, a rename produces no removal
+/// event for the watched directories. The watch on `.git` reports only a rename of
+/// itself, and the watches on `.git/refs/**` silently follow the moved inodes, so they
+/// too must be treated as lost and re-issued for the re-created repository.
+#[cfg(target_os = "linux")]
+#[gpui::test]
+async fn test_renamed_away_git_dir_changes_are_observed_on_real_fs(cx: &mut TestAppContext) {
+    check_recreated_git_dir_changes_are_observed(cx, |dot_git_path| {
+        // The backup lives outside the worktree so the moved tree is neither scanned
+        // nor mistaken for a repository; it must outlive the test so the moved
+        // directories are never deleted, which would produce the removal events a
+        // plain rename lacks.
+        let backup = TempTree::new(json!({}));
+        std::fs::rename(dot_git_path, backup.path().join(".git")).unwrap();
+        Some(backup)
+    })
+    .await;
+}
+
+#[cfg(target_os = "linux")]
+async fn check_recreated_git_dir_changes_are_observed(
+    cx: &mut TestAppContext,
+    take_away_dot_git: impl FnOnce(&Path) -> Option<TempTree>,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    async fn run_git(working_directory: &Path, arguments: &[&str]) {
+        let output = util::command::new_command("git")
+            .current_dir(working_directory)
+            .env("GIT_AUTHOR_NAME", "Zed Test")
+            .env("GIT_AUTHOR_EMAIL", "zed-test@example.com")
+            .env("GIT_COMMITTER_NAME", "Zed Test")
+            .env("GIT_COMMITTER_EMAIL", "zed-test@example.com")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .arg("-c")
+            .arg("commit.gpgsign=false")
+            .args(arguments)
+            .output()
+            .await
+            .unwrap_or_else(|error| panic!("failed to spawn git {arguments:?}: {error}"));
+        assert!(
+            output.status.success(),
+            "git {arguments:?} failed with {}:\nstdout: {}\nstderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    async fn wait_for_repositories(
+        tree: &Entity<Worktree>,
+        cx: &mut TestAppContext,
+        expected: &[Arc<Path>],
+        description: &str,
+    ) {
+        let timeout = std::time::Duration::from_secs(10);
+        let poll_interval = std::time::Duration::from_millis(50);
+        let mut elapsed = std::time::Duration::ZERO;
+        loop {
+            let repositories =
+                tree.read_with(cx, |tree, _| tree.as_local().unwrap().repositories());
+            if repositories == expected {
+                return;
+            }
+            assert!(
+                elapsed < timeout,
+                "timed out waiting for repositories {expected:?} after {description}; \
+                 current repositories: {repositories:?}"
+            );
+            cx.executor().run_until_parked();
+            cx.background_executor.timer(poll_interval).await;
+            elapsed += poll_interval;
+        }
+    }
+
+    let dir = TempTree::new(json!({
+        "a.txt": "a-contents",
+    }));
+    let root_path = dir.path().canonicalize().unwrap();
+    let dot_git_path = root_path.join(".git");
+    let expected_repositories: Vec<Arc<Path>> = vec![root_path.as_path().into()];
+
+    run_git(&root_path, &["init", "--quiet", "--initial-branch=main"]).await;
+    run_git(&root_path, &["add", "a.txt"]).await;
+    run_git(&root_path, &["commit", "--quiet", "-m", "initial"]).await;
+
+    let tree = Worktree::local(
+        root_path.as_path(),
+        true,
+        RealFs::new(None, cx.executor()),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+    wait_for_repositories(&tree, cx, &expected_repositories, "the initial scan").await;
+
+    let mut events = cx.events(&tree);
+
+    let _moved_dot_git = take_away_dot_git(&dot_git_path);
+    wait_for_repositories(&tree, cx, &[], "taking away .git").await;
+
+    run_git(&root_path, &["init", "--quiet", "--initial-branch=main"]).await;
+    run_git(&root_path, &["add", "a.txt"]).await;
+    run_git(&root_path, &["commit", "--quiet", "-m", "initial again"]).await;
+    wait_for_repositories(&tree, cx, &expected_repositories, "re-creating .git").await;
+
+    // Let events from re-creating the repository settle, so that a stale event can't be
+    // mistaken for an observation of the changes made below.
+    tree.flush_fs_events(cx).await;
+    cx.background_executor
+        .timer(std::time::Duration::from_secs(1))
+        .await;
+    cx.executor().run_until_parked();
+    drain_git_repo_updates(&mut events);
+
+    // Each of these only touches files inside the re-created `.git`, never the work tree.
+    run_git(
+        &root_path,
+        &["commit", "--quiet", "--allow-empty", "-m", "empty"],
+    )
+    .await;
+    expect_git_repo_update(
+        &mut events,
+        cx,
+        "an empty commit in the re-created repository (.git/HEAD, .git/refs/heads/main)",
+    )
+    .await;
+    tree.flush_fs_events(cx).await;
+    cx.background_executor
+        .timer(std::time::Duration::from_millis(500))
+        .await;
+    drain_git_repo_updates(&mut events);
+
+    // `git branch` only writes `.git/refs/heads/another` (plus its reflog), nothing
+    // directly inside `.git`, so observing it proves the `refs/heads` watch itself was
+    // re-established and not just the one on `.git`.
+    run_git(&root_path, &["branch", "another"]).await;
+    expect_git_repo_update(
+        &mut events,
+        cx,
+        "creating a branch in the re-created repository (only .git/refs/heads/another)",
     )
     .await;
 }

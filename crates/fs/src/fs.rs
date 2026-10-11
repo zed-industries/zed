@@ -2749,6 +2749,12 @@ impl FakeFs {
             .collect()
     }
 
+    /// The paths the fake native watch backend currently has a live watch on,
+    /// standing in for the kernel's inotify watch descriptors.
+    pub fn registered_watch_paths(&self) -> Vec<PathBuf> {
+        self.state.lock().watches.registered_paths.clone()
+    }
+
     /// How many `metadata` calls have been issued.
     pub fn metadata_call_count(&self) -> usize {
         self.state.lock().metadata_call_count
@@ -2818,7 +2824,19 @@ impl FakeFs {
             }
         };
 
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        // Like inotify, a native watch dies with its directory: the kernel drops
+        // the watch descriptor and reports the removal of the watched directory
+        // itself (`IN_DELETE_SELF`) in addition to the parent's `IN_DELETE`.
+        let mut events = Vec::new();
+        state.watches.registered_paths.retain(|registered_path| {
+            let removed = registered_path.starts_with(&path);
+            if removed && *registered_path != path {
+                events.push((registered_path.clone(), Some(PathEventKind::Removed)));
+            }
+            !removed
+        });
+        events.push((path, Some(PathEventKind::Removed)));
+        state.emit_event(events);
         Ok(removed)
     }
 
