@@ -307,7 +307,7 @@ run() {
   [ "${BENCH_GO:-}" = 1 ] || { echo "run needs the owner's go: BENCH_GO=1 (ADR-0037)" >&2; exit 2; }
   task "$id"
   preflight 5
-  reserved=$(admit "$id-$MANDATE" 1 1)
+  reserved=$(admit "$id-$MANDATE" 1 1) || exit $?
   tap=$PASS_DIR/taps/$MANDATE/$id
   rm -rf "$tap"
   omp=$(wrapper "$MANDATE" "$tap")
@@ -386,22 +386,31 @@ lane() {
 LANES="cli shell s2 s3review s3same workflow review inline_edit turn_lifecycle channel worktree p8 p8deny s2profile"
 
 record() {
-  local name=$1 out printed used reserved tap omp
+  local name=$1 out printed used reserved tap omp lane_status
   [ "${BENCH_GO:-}" = 1 ] || { echo "record needs the owner's go: BENCH_GO=1 (ADR-0058 decision 5)" >&2; exit 2; }
   lane "$name"
   preflight 9
-  reserved=$(admit "record-$name" "$LANE_TURNS" "$LANE_REVIEWER")
+  reserved=$(admit "record-$name" "$LANE_TURNS" "$LANE_REVIEWER") || exit $?
   tap=$PASS_DIR/taps/record/$name
   rm -rf "$tap"
   omp=$(wrapper on "$tap")
   out=$WORK/logs/record-$name.log
   # shellcheck disable=SC2086
   (cd "$ROOT" && env $LANE_ENV CEDIAN_RECORD_OMP="$omp" CEDIAN_RECORD_MODEL="$BENCH_MODEL" \
-     CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -j4 $LANE_TEST) 2>&1 | tee "$out" || true
+     CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -j4 $LANE_TEST) 2>&1 |
+    tee "$out"
+  # The lane's own tests decide the step: a recording whose test fails is
+  # booked (its turns are spent) and then fails the pass, so a fixture that
+  # does not replay is never reported as recorded.
+  lane_status=("${PIPESTATUS[@]}")
   printed=$(sed -n 's/.*model turns: \([0-9][0-9]*\).*/\1/p' "$out" | awk '{ n += $1 } END { print n + 0 }')
   used=$(tapped "$tap" "$reserved")
   [ "$printed" -le "$used" ] || used=$printed
   book "record-$name" "$reserved" "$used"
+  [ "${lane_status[0]}" = 0 ] || {
+    echo "record-$name: the lane's tests failed; its fixture is not a recording to keep (see $out)" >&2
+    exit 1
+  }
 }
 
 plan() {
