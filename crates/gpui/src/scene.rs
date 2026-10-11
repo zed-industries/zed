@@ -89,6 +89,8 @@ pub struct Scene {
     pub surfaces: Vec<PaintSurface>,
     sprite_sort_keys: Vec<u128>,
     sprite_sort_counts: Vec<usize>,
+    primitive_sort_indices: Vec<usize>,
+    primitive_sort_counts: Vec<usize>,
     path_indices: Vec<usize>,
     surface_indices: Vec<usize>,
     replay_arrays: ReplayArrays,
@@ -549,14 +551,41 @@ impl Scene {
             ));
             report!(surfaces, |primitive| primitive.order);
         }
-        sort_if_needed(&mut self.shadows, |shadow| shadow.order);
-        sort_if_needed(&mut self.quads, |quad| quad.order);
+        let primitive_count = self
+            .shadows
+            .len()
+            .max(self.quads.len())
+            .max(self.underlines.len());
+        if self.primitive_sort_indices.capacity() > primitive_count.saturating_mul(2) {
+            self.primitive_sort_indices.shrink_to(primitive_count);
+        }
+        if self.primitive_sort_counts.capacity() > primitive_count.saturating_mul(8).min(131_072) {
+            self.primitive_sort_counts
+                .shrink_to(primitive_count.saturating_mul(4).min(65_536));
+        }
+        sort_primitives(
+            &mut self.shadows,
+            &mut self.primitive_sort_indices,
+            &mut self.primitive_sort_counts,
+            |shadow| shadow.order,
+        );
+        sort_primitives(
+            &mut self.quads,
+            &mut self.primitive_sort_indices,
+            &mut self.primitive_sort_counts,
+            |quad| quad.order,
+        );
         sort_if_needed(&mut self.paths, |path| path.order);
         self.path_indices.resize(self.paths.len(), 0);
         for (index, path) in self.paths.iter().enumerate() {
             self.path_indices[path.id.0] = index;
         }
-        sort_if_needed(&mut self.underlines, |underline| underline.order);
+        sort_primitives(
+            &mut self.underlines,
+            &mut self.primitive_sort_indices,
+            &mut self.primitive_sort_counts,
+            |underline| underline.order,
+        );
         let sprite_count = self
             .monochrome_sprites
             .len()
@@ -636,6 +665,68 @@ fn sort_if_needed<T, K: Ord>(primitives: &mut [T], key: impl Fn(&T) -> K) {
     if !primitives.is_sorted_by_key(&key) {
         primitives.sort_by_key(key);
     }
+}
+
+fn sort_primitives<T: Copy>(
+    primitives: &mut [T],
+    indices: &mut Vec<usize>,
+    counts: &mut Vec<usize>,
+    key: impl Fn(&T) -> DrawOrder,
+) {
+    if primitives.is_sorted_by_key(&key) {
+        return;
+    }
+    if primitives.len() < 32 {
+        primitives.sort_by_key(key);
+        return;
+    }
+    let mut minimum = u32::MAX;
+    let mut maximum = 0;
+    for primitive in primitives.iter() {
+        let order = key(primitive);
+        minimum = minimum.min(order);
+        maximum = maximum.max(order);
+    }
+    let buckets = u64::from(maximum) - u64::from(minimum) + 1;
+    if buckets > primitives.len().saturating_mul(4).min(65_536) as u64 {
+        primitives.sort_by_key(key);
+        return;
+    }
+    counts.resize(buckets as usize, 0);
+    for primitive in primitives.iter() {
+        counts[(key(primitive) - minimum) as usize] += 1;
+    }
+    let mut offset = 0;
+    for count in counts.iter_mut() {
+        let length = *count;
+        *count = offset;
+        offset += length;
+    }
+    indices.resize(primitives.len(), 0);
+    for (index, primitive) in primitives.iter().enumerate() {
+        let destination = &mut counts[(key(primitive) - minimum) as usize];
+        indices[*destination] = index;
+        *destination += 1;
+    }
+    counts.clear();
+    for start in 0..indices.len() {
+        if indices[start] == start {
+            continue;
+        }
+        let primitive = primitives[start];
+        let mut destination = start;
+        loop {
+            let source = indices[destination];
+            indices[destination] = destination;
+            if source == start {
+                primitives[destination] = primitive;
+                break;
+            }
+            primitives[destination] = primitives[source];
+            destination = source;
+        }
+    }
+    indices.clear();
 }
 
 fn sort_sprites<T: Copy>(
@@ -722,6 +813,43 @@ fn sort_sprites<T: Copy>(
 #[cfg(test)]
 mod sort_tests {
     use super::*;
+
+    #[test]
+    fn ordinary_counting_sort_matches_stable_oracle() {
+        let mut indices = Vec::new();
+        let mut counts = Vec::new();
+        for length in [0, 1, 2, 31, 32, 33, 132, 256, 16_385] {
+            let bound: u32 = (length * 4).min(65_536);
+            for maximum in [0, 1, bound.saturating_sub(1), bound, u32::MAX] {
+                let original: Vec<_> = (0..length)
+                    .map(|index| {
+                        let order = if index % 3 == 0 { maximum } else { 0 };
+                        (order, index)
+                    })
+                    .collect();
+                let mut expected = original.clone();
+                expected.sort_by_key(|value| value.0);
+                let mut actual = original;
+                sort_primitives(&mut actual, &mut indices, &mut counts, |value| value.0);
+                assert_eq!(actual, expected);
+                sort_primitives(&mut actual, &mut indices, &mut counts, |value| value.0);
+                assert_eq!(actual, expected);
+                assert!(indices.is_empty());
+                assert!(counts.is_empty());
+                assert!(counts.capacity() <= 65_536);
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_sort_releases_oversized_scratch() {
+        let mut scene = Scene::default();
+        scene.primitive_sort_indices.reserve(8192);
+        scene.primitive_sort_counts.reserve(8192);
+        scene.finish();
+        assert_eq!(scene.primitive_sort_indices.capacity(), 0);
+        assert_eq!(scene.primitive_sort_counts.capacity(), 0);
+    }
 
     #[test]
     fn already_sorted_preserves_stable_order() {
@@ -812,7 +940,7 @@ mod sort_tests {
 
         for seed in 0..16 {
             let mut random = StdRng::seed_from_u64(seed);
-            for count in [0, 1, 255, 256, 257, 2048] {
+            for count in [0, 1, 31, 32, 33, 132, 255, 256, 257, 2048] {
                 let mut scene = Scene::default();
                 for index in 0..count {
                     let bounds = Bounds {
@@ -930,6 +1058,31 @@ mod sort_tests {
                 }
 
                 let mut expected = Scene::default();
+                macro_rules! boundary_orders {
+                    ($field:ident) => {
+                        if seed % 4 != 0 {
+                            for (index, primitive) in scene.$field.iter_mut().enumerate() {
+                                primitive.order = if index % 2 == 0 {
+                                    match seed % 4 {
+                                        1 => u32::MAX,
+                                        2 => count as u32 * 4 - 1,
+                                        _ => count as u32 * 4,
+                                    }
+                                } else {
+                                    0
+                                };
+                            }
+                        }
+                    };
+                }
+                boundary_orders!(shadows);
+                boundary_orders!(quads);
+                boundary_orders!(paths);
+                boundary_orders!(underlines);
+                boundary_orders!(monochrome_sprites);
+                boundary_orders!(subpixel_sprites);
+                boundary_orders!(polychrome_sprites);
+                boundary_orders!(surfaces);
                 macro_rules! stable_sort {
                     ($field:ident, $key:expr) => {
                         expected.$field = scene.$field.clone();
