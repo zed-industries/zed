@@ -2174,7 +2174,10 @@ mod tests {
 
     /// The spec the live tests spawn the real pinned OMP with: the person's
     /// own OMP store, so a restart can adopt the session the first run made.
+    /// The audit log lives in `state_dir`, so it must exist before the link
+    /// starts (the link refuses the turn otherwise).
     fn live_spec(root: &Path) -> LaunchSpec {
+        std::fs::create_dir_all(root.join("state")).unwrap();
         LaunchSpec {
             binary: Some(cedian_shell::launch::omp_binary().unwrap().binary),
             workdir: root.join("ws"),
