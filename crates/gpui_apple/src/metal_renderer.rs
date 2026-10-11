@@ -8,7 +8,8 @@ use gpui::{
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;
-use objc2::runtime::AnyObject;
+use objc2::rc::Retained;
+use objc2::runtime::{AnyObject, ProtocolObject};
 
 use foreign_types::{ForeignType, ForeignTypeRef};
 use metal::{
@@ -113,6 +114,11 @@ pub struct MetalRenderer {
     is_apple_gpu: bool,
     is_unified_memory: bool,
     presents_with_transaction: bool,
+    /// A drawable a `CAMetalDisplayLink` handed out for the frame being drawn.
+    frame_drawable: Option<metal::MetalDrawable>,
+    /// Whether a `CAMetalDisplayLink` drives the layer, which makes
+    /// `nextDrawable` raise `CAMetalLayerInvalidOperation`.
+    display_link_attached: bool,
     /// For headless rendering, tracks whether output should be opaque
     opaque: bool,
     command_queue: CommandQueue,
@@ -387,6 +393,8 @@ impl MetalRenderer {
             device,
             layer,
             presents_with_transaction: false,
+            frame_drawable: None,
+            display_link_attached: false,
             is_apple_gpu,
             is_unified_memory,
             opaque,
@@ -424,6 +432,29 @@ impl MetalRenderer {
 
     pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
         &self.sprite_atlas
+    }
+
+    /// Draw the next frame into `drawable` instead of asking the layer for one.
+    ///
+    /// A `CAMetalDisplayLink` hands out each frame's drawable early enough for
+    /// the frame to reach the display on time; `nextDrawable` would instead
+    /// wait for the compositor to release one. Pass `None` once the frame is
+    /// done, so a drawable the frame did not use goes back to the layer.
+    pub fn set_frame_drawable(
+        &mut self,
+        drawable: Option<Retained<ProtocolObject<dyn objc2_quartz_core::CAMetalDrawable>>>,
+    ) {
+        // metal-rs and objc2 bind the same Objective-C object; the renderer
+        // takes over the retain the caller hands in.
+        self.frame_drawable = drawable.map(|drawable| unsafe {
+            metal::MetalDrawable::from_ptr(Retained::into_raw(drawable).cast())
+        });
+    }
+
+    /// Record whether a `CAMetalDisplayLink` drives the layer. While one
+    /// does, frames are drawn only into the drawables it hands out.
+    pub fn set_display_link_attached(&mut self, attached: bool) {
+        self.display_link_attached = attached;
     }
 
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
@@ -499,20 +530,29 @@ impl MetalRenderer {
                 return;
             }
         };
-        let viewport_size = layer.drawable_size();
-        let viewport_size: Size<DevicePixels> = size(
-            (viewport_size.width.ceil() as i32).into(),
-            (viewport_size.height.ceil() as i32).into(),
-        );
-        let drawable = if let Some(drawable) = layer.next_drawable() {
+        let drawable = if let Some(drawable) = self.frame_drawable.take() {
             drawable
+        } else if self.display_link_attached {
+            // The exception `nextDrawable` would raise here cannot unwind
+            // through the Rust frames above, so it would abort the process.
+            log::error!("skipped a frame drawn outside its display link's update");
+            return;
+        } else if let Some(drawable) = layer.next_drawable() {
+            drawable.to_owned()
         } else {
             log::error!(
                 "failed to retrieve next drawable, drawable size: {:?}",
-                viewport_size
+                layer.drawable_size()
             );
             return;
         };
+        // A display link's drawable was sized when the link handed it out,
+        // which can be before a resize the layer has since taken.
+        let texture = drawable.texture();
+        let viewport_size: Size<DevicePixels> = size(
+            (texture.width() as i32).into(),
+            (texture.height() as i32).into(),
+        );
 
         let command_buffer = match self.render_frame(scene, drawable.texture(), viewport_size) {
             Ok(command_buffer) => command_buffer,
@@ -527,7 +567,7 @@ impl MetalRenderer {
             command_buffer.wait_until_scheduled();
             drawable.present();
         } else {
-            command_buffer.present_drawable(drawable);
+            command_buffer.present_drawable(&drawable);
             command_buffer.commit();
         }
     }
