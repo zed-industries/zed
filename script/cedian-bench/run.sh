@@ -21,7 +21,7 @@
 # A pass is named by BENCH_PASS (required for run, record, turns, compare). Its
 # turn ledger and results live in $BENCH_RESULTS/<pass>/ (default
 # ~/.cache/cedian-bench), never in a temp dir a reboot clears. The cap is
-# MAX_TURNS (default 45, at most 45): a step starts only if its worst case fits
+# MAX_TURNS (default 46, at most 46): a step starts only if its worst case fits
 # (estimate + 1, + 1 if its turn may spawn a reviewer), under flock; after it,
 # the turns booked are the `agent_start`s every OMP process it started printed
 # (script/cedian-bench/cap.py), and the pass stops once the cap is reached.
@@ -49,8 +49,8 @@ PIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["spikeVeri
 OMP=${CEDIAN_OMP_BINARY:-$HOME/.local/bin/omp}
 # The S2 baseline's model (ADR-0058 decision 1): a run on another is refused.
 BENCH_MODEL=${BENCH_MODEL:-opencode-go/muse-spark-1.3-contributor}
-MAX_TURNS=${MAX_TURNS:-45}
-[ "$MAX_TURNS" -le 45 ] 2>/dev/null || { echo "refused: MAX_TURNS=$MAX_TURNS; the cap is at most 45" >&2; exit 2; }
+MAX_TURNS=${MAX_TURNS:-46}
+[ "$MAX_TURNS" -le 46 ] 2>/dev/null || { echo "refused: MAX_TURNS=$MAX_TURNS; the cap is at most 46" >&2; exit 2; }
 RESULTS_ROOT=${BENCH_RESULTS:-$HOME/.cache/cedian-bench}
 PASS=${BENCH_PASS:-}
 PASS_DIR=$RESULTS_ROOT/$PASS
@@ -379,8 +379,9 @@ lane() {
   esac
 }
 # Frame rewrites first (edit_frames.py, the U8-U10 cuts), then the tool-list-only
-# edits; s2profile last. The lanes plus both arms are 38 turns, so the 45-turn
-# cap (ADR-0059 decision 4) leaves 7 for the live smoke.
+# edits; s2profile last. The lanes plus both arms are 38 turns; the live pass
+# (ADR-0060) caps at 46, and the smoke plus the two re-recorded lanes have
+# used 10, so the last lane is the first cut if a step has to fail.
 LANES="cli shell s2 s3review s3same workflow review inline_edit turn_lifecycle channel worktree p8 p8deny s2profile"
 
 record() {

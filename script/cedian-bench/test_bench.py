@@ -53,9 +53,9 @@ class Bench(unittest.TestCase):
         e.update(env)
         return subprocess.run([RUN, *args], capture_output=True, text=True, env=e)
 
-    def test_the_cap_cannot_exceed_45(self):
-        self.assertEqual(self.cap("admit", self.ledger, 46, "s", 1, 0).returncode, 2)
-        r = self.bench("turns", "all", MAX_TURNS="46")
+    def test_the_cap_cannot_exceed_46(self):
+        self.assertEqual(self.cap("admit", self.ledger, 47, "s", 1, 0).returncode, 2)
+        r = self.bench("turns", "all", MAX_TURNS="47")
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
 
     def test_the_model_check_needs_the_pass_model_in_omps_catalog(self):

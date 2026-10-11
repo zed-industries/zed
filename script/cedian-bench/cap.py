@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The live pass's turn cap and what OMP reported (ADR-0059 decision 4).
+"""The live pass's turn cap and what OMP reported (ADR-0060: 46).
 
   cap.py admit <ledger> <max> <step> <estimate> <reviewer 0|1>
       reserve the step's worst case (estimate + 1, + 1 more when its turn may
@@ -20,7 +20,7 @@ import json
 import os
 import sys
 
-CEILING = 45
+CEILING = 46
 MARGIN = 1
 TEMP = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/")
 
