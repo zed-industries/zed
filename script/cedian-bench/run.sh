@@ -208,16 +208,14 @@ pin_check() {
   }
 }
 
-# The model OMP would use, read from the person's config; never written. It
-# must also be in OMP's own catalog (ADR-0059 decision 3: the smoke checks the
-# pass's model before a turn), or every step would fail after its turns.
+# What the pass runs on: $BENCH_MODEL, the model S2's baseline ran (ADR-0058
+# decision 1). `wrapper` pins it into every spawn (ADR-0061), so the person's
+# own `modelRoles.default` is theirs and may be another model; this check
+# reads it only to say so, and requires the pinned model to be in OMP's own
+# catalog (ADR-0059 decision 3), or every step would fail after its turns.
 model_check() {
   local model listed verdict
   model=$("$OMP" config get modelRoles --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"].get("default",""))')
-  [ "$model" = "$BENCH_MODEL" ] || {
-    echo "refused: OMP's default model is '$model', the S2 baseline ran $BENCH_MODEL (ADR-0058 decision 1)" >&2
-    exit 2
-  }
   listed=$("$OMP" models ls --json 2>/dev/null) || listed=""
   verdict=$(printf '%s' "$listed" | python3 -c '
 import json, sys
@@ -237,12 +235,15 @@ print("listed" if any(m.get("selector") == sys.argv[1] for m in models) else "mi
     echo "refused: could not read OMP's model catalog, so $BENCH_MODEL is unverified" >&2
     exit 2 ;;
   esac
+  echo "the pass pins $BENCH_MODEL; the person's default is '${model:-none}'" >&2
 }
 
 # What cedian spawns, written beside the tap dir `$2`: the pin, its rpc stdout
-# teed into one file per process under `$2`, with `--append-system-prompt ""`
-# added wherever `--mode` is when the mandate is off (as the reviewer's spawn
-# profile does). Prints the wrapper's path.
+# teed into one file per process under `$2`, `--model $BENCH_MODEL` added
+# wherever `--mode` is (ADR-0061: the pass pins the model S2's baseline ran,
+# so the person's own `modelRoles.default` decides their other work, not this
+# pass), and `--append-system-prompt ""` when the mandate is off (as the
+# reviewer's spawn profile does). Prints the wrapper's path.
 wrapper() {
   local mandate=$1 tap=$2 w=$2.omp off
   case $mandate in
@@ -256,8 +257,8 @@ rpc=0
 for a in "\$@"; do case \$a in --mode|--mode=*) rpc=1 ;; esac; done
 [ \$rpc = 1 ] || exec $(printf %q "$OMP") "\$@"
 exec > >(tee $(printf %q "$tap")/omp.\$\$.jsonl)
-[ $off = 1 ] && exec $(printf %q "$OMP") "\$@" --append-system-prompt ""
-exec $(printf %q "$OMP") "\$@"
+[ $off = 1 ] && exec $(printf %q "$OMP") "\$@" --model $(printf %q "$BENCH_MODEL") --append-system-prompt ""
+exec $(printf %q "$OMP") "\$@" --model $(printf %q "$BENCH_MODEL")
 WRAP
   chmod 755 "$w"
   echo "$w"
@@ -488,7 +489,7 @@ run)
   (cd "$ROOT" && cargo build -q --release -p cedian_cli)
   [ -x "$CARGO_TARGET_DIR/release/cedian" ] || { echo "no cedian binary at $CARGO_TARGET_DIR/release" >&2; exit 2; } ;;
 record) ids=$([ "$target" = all ] && echo "$LANES" || echo "$target"); pin_check; model_check ;;
-model) pin_check; model_check; echo "OMP $PIN carries the pass's model, $BENCH_MODEL"; exit 0 ;;
+model) pin_check; model_check; echo "the pass runs OMP $PIN on $BENCH_MODEL"; exit 0 ;;
 plan|turns) "$mode"; exit 0 ;;
 wrapper) wrapper "$target" "${BENCH_TAP:?BENCH_TAP: the dir the wrapper taps into}"; exit 0 ;;
 compare) compare "$target"; exit 0 ;;

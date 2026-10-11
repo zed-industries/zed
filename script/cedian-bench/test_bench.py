@@ -65,9 +65,35 @@ class Bench(unittest.TestCase):
         r = self.bench("model", "all", BENCH_FAKE_CATALOG="opencode-go/other")
         self.assertEqual(r.returncode, 2, r.stdout)
         self.assertIn(MODEL, r.stderr)
-        r = self.bench("model", "all", BENCH_FAKE_MODEL="opencode-go/other")
-        self.assertEqual(r.returncode, 2, r.stdout)
-        self.assertIn("S2 baseline", r.stderr)
+        # The person's own default is theirs (ADR-0061): it does not decide
+        # the pass, and the check says what the pass pins instead.
+        r = self.bench(
+            "model", "all", BENCH_FAKE_MODEL="commandcode/deepseek/deepseek-v4.1-flash"
+        )
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("commandcode/deepseek/deepseek-v4.1-flash", r.stderr)
+        self.assertIn(f"the pass pins {MODEL}", r.stderr)
+
+    def test_the_wrapper_pins_the_pass_model_for_both_mandates(self):
+        both = (
+            ("on", ["--model", MODEL]),
+            ("off", ["--model", MODEL, "--append-system-prompt", ""]),
+        )
+        for mandate, tail in both:
+            tap = os.path.join(self.dir, f"tap-{mandate}")
+            wrapper = self.bench("wrapper", mandate, BENCH_TAP=tap).stdout.strip()
+            out = subprocess.run(
+                [wrapper, "--mode", "rpc"], capture_output=True, text=True, check=True
+            ).stdout
+            argv = json.loads(out.splitlines()[0])["argv"]
+            self.assertEqual(argv[-len(tail) :], tail, argv)
+        # A non-rpc call (the `--version` pin check) gets no flags.
+        tap = os.path.join(self.dir, "tap-version")
+        wrapper = self.bench("wrapper", "on", BENCH_TAP=tap).stdout.strip()
+        out = subprocess.run(
+            [wrapper, "--version"], capture_output=True, text=True, check=True
+        ).stdout
+        self.assertEqual(out.strip(), f"omp/{PIN}")
 
     def test_the_ledger_is_keyed_by_pass_outside_tmp(self):
         r = self.bench("turns", "all", BENCH_RESULTS="", HOME=self.dir)
