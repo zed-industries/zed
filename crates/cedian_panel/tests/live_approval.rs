@@ -31,7 +31,7 @@ use omp_rpc::ExtensionUiRequest;
 use project::Project;
 use serde_json::Value;
 use settings::SettingsStore;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const FIXTURE: &str = concat!(
@@ -50,6 +50,15 @@ fn main() {
         _ => {}
     }
     let record = std::env::var_os("CEDIAN_U4_RECORD").is_some();
+    // U12e (ADR-0058 decision 3): `CEDIAN_U12_APP_TURNS` runs the app live
+    // without writing a fixture, sends that many warm turns after the approval
+    // one, and copies the instruments' rows into `CEDIAN_U12_APP_OUT` (this
+    // run's temp root is removed at the end).
+    let warm: usize = std::env::var("CEDIAN_U12_APP_TURNS")
+        .ok()
+        .and_then(|turns| turns.parse().ok())
+        .unwrap_or(0);
+    let live = record || warm > 0;
     let root = std::env::temp_dir().join(format!("cedian-u4-live-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("ws")).unwrap();
@@ -59,10 +68,15 @@ fn main() {
     unsafe {
         std::env::set_var("CEDIAN_CONFIG", root.join("cedian.toml"));
         std::env::set_var("CEDIAN_STATE_DIR", root.join("state"));
-        if !record {
+        if !live {
             std::env::set_var("HOME", root.join("home"));
         }
-        std::env::set_var("CEDIAN_OMP_BINARY", std::env::current_exe().unwrap());
+        // U12e spawns the pinned OMP itself (see `scenario`): the record proxy
+        // would leave the session file held by its own child, which the panel's
+        // one-driver check reads as another driver (ADR-0046).
+        if warm == 0 {
+            std::env::set_var("CEDIAN_OMP_BINARY", std::env::current_exe().unwrap());
+        }
         std::env::set_var("CEDIAN_TIMING", root.join("timing.jsonl"));
         std::env::set_var("CEDIAN_FRAMES", root.join("frames.jsonl"));
     }
@@ -72,7 +86,7 @@ fn main() {
         Box::new(move |dispatcher| {
             let exec = std::sync::Arc::new(dispatcher.clone());
             let mut cx = TestAppContext::build(dispatcher.clone(), Some("live_approval"));
-            gpui::ForegroundExecutor::new(exec).block_test(scenario(&mut cx, &root, record));
+            gpui::ForegroundExecutor::new(exec).block_test(scenario(&mut cx, &root, record, warm));
             cx.run_until_parked();
             cx.update(|cx| cx.quit());
             cx.run_until_parked();
@@ -83,7 +97,8 @@ fn main() {
     println!("ok");
 }
 
-async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool) {
+async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool, warm: usize) {
+    let live = record || warm > 0;
     cx.executor().allow_parking();
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -94,11 +109,16 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool) {
     let ws = root.join("ws");
     let state = cedian_shell::state::dir(&ws).unwrap();
     let sessions = state.join("omp");
-    if record {
+    if live && record {
         cedian_fake_omp::recording::arm_app(&sessions, root);
-    } else {
+    } else if !live {
         cedian_fake_omp::install_replay(&sessions, Path::new(FIXTURE)).unwrap();
     }
+    // U12e (live, no recording) spawns the caller's `CEDIAN_OMP_BINARY`: the
+    // harness's wrapper around the pinned OMP, which adds the pass's model to
+    // an rpc spawn and changes nothing else. The panel must spawn OMP itself,
+    // not through the record proxy, whose own child holds the session file and
+    // reads to the panel as another driver (ADR-0046).
 
     let project = Project::test(fs::RealFs::new(None, cx.executor()), [ws.as_path()], cx).await;
     let window = cx.add_window(|window, cx| CedianPanel::new(project.clone(), window, cx));
@@ -179,13 +199,28 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool) {
         ),
         (Some("allow"), Some("user"), Some("bash")),
     );
-    assert!(matches!(
-        window.update(cx, |p, _, _| p.connection().clone()).unwrap(),
-        Connection::Ready { .. }
-    ));
+    let connection = window.update(cx, |p, _, _| p.connection().clone()).unwrap();
+    assert!(
+        matches!(connection, Connection::Ready { .. }),
+        "the link after the approval turn: {connection:?}"
+    );
+    // The warm turns: the same session, one prompt each, so the rows describe
+    // a session the person has been using rather than its first turn.
+    for turn in 1..=warm {
+        let prompt = format!("Reply with exactly: warm-{turn}");
+        window
+            .update(cx, |panel, window, cx| {
+                panel.set_prompt(&prompt, window, cx);
+                panel.submit(window, cx);
+            })
+            .unwrap();
+        wait(cx, &window, "the warm turn to settle", |p| {
+            p.turn() == &Turn::Idle && p.dialog_ids().is_empty()
+        });
+    }
 
     wait(cx, &window, "the turn's timing row", |_| {
-        rows(&root.join("timing.jsonl")).len() == 2
+        rows(&root.join("timing.jsonl")).len() == 2 + warm
     });
     let timing = rows(&root.join("timing.jsonl"));
     assert_eq!(timing[0]["event"], "spawn", "{timing:?}");
@@ -199,7 +234,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool) {
     );
     assert!(part("omp_ms") > 0, "OMP's time is measured: {turn}");
     let frames = rows(&root.join("frames.jsonl"));
-    assert_eq!(frames.len(), 1, "one row for OMP's one run: {frames:?}");
+    assert!(!frames.is_empty(), "a frames row for the run: {frames:?}");
     let ms = |k: &str| {
         frames[0][k]
             .as_f64()
@@ -213,6 +248,45 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, record: bool) {
             && ms("draw_max_ms") > 0.0,
         "{frames:?}"
     );
+    // U12e: hand the rows of this run (the approval turn and the warm ones) to
+    // whoever asked for them, and leave the person's OMP store as it was: the
+    // run spawned the pinned OMP itself, so its session went to OMP's own store
+    // rather than a wrapper's `--session-dir`.
+    if let Some(out) = std::env::var_os("CEDIAN_U12_APP_OUT") {
+        let out = PathBuf::from(out);
+        std::fs::create_dir_all(&out).unwrap();
+        for name in ["timing.jsonl", "frames.jsonl"] {
+            std::fs::copy(root.join(name), out.join(format!("app-{name}"))).unwrap();
+        }
+        let session = window
+            .update(cx, |p, _, _| match p.connection() {
+                Connection::Ready { session_id, .. } => Some(session_id.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let binary =
+            PathBuf::from(std::env::var("CEDIAN_OMP_BINARY").unwrap_or_else(|_| "omp".to_string()));
+        if let (Some(id), Ok(agent)) = (session, cedian_omp::OmpConfig::new(binary).dir(root)) {
+            let sessions = agent.join("sessions");
+            for slug in std::fs::read_dir(&sessions).into_iter().flatten().flatten() {
+                for entry in std::fs::read_dir(slug.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                {
+                    if !entry.file_name().to_string_lossy().contains(&id) {
+                        continue;
+                    }
+                    let path = entry.path();
+                    let _ = if path.is_dir() {
+                        std::fs::remove_dir_all(&path)
+                    } else {
+                        std::fs::remove_file(&path)
+                    };
+                }
+            }
+        }
+    }
 }
 
 fn rows(path: &Path) -> Vec<Value> {
