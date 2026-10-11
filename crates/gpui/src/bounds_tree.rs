@@ -691,6 +691,77 @@ mod tests {
     }
 
     #[test]
+    fn total_order_edges_and_replayed_orders_match_oracle() {
+        let values = [
+            f32::from_bits(0xffc0_0001),
+            f32::NEG_INFINITY,
+            -f32::MAX,
+            -64.0,
+            -0.0,
+            0.0,
+            f32::from_bits(1),
+            64.0,
+            f32::MAX,
+            f32::INFINITY,
+            f32::from_bits(0x7fc0_0001),
+        ];
+        for seed in 0..12 {
+            let mut random = rand::rngs::StdRng::seed_from_u64(seed);
+            let bounds: Vec<_> = (0..256)
+                .map(|index| {
+                    let bounds = if index % 2 == 0 {
+                        rectangle(
+                            random.random_range(-2048.0..2048.0),
+                            random.random_range(-2048.0..2048.0),
+                            random.random_range(1.0..2048.0),
+                            random.random_range(1.0..2048.0),
+                        )
+                    } else {
+                        rectangle(
+                            values[random.random_range(0..values.len())],
+                            values[random.random_range(0..values.len())],
+                            values[random.random_range(0..values.len())],
+                            values[random.random_range(0..values.len())],
+                        )
+                    };
+                    bounds.map(crate::ScaledPixels::from)
+                })
+                .collect();
+            assert_orders(
+                &mut BoundsTree::default(),
+                &bounds,
+                &format!("total order seed={seed}"),
+            );
+            let mut tree = BoundsTree::default();
+            let mut reference = Vec::new();
+            for bounds in &bounds {
+                let order = random.random_range(1..128);
+                tree.register(*bounds, order);
+                reference.push((*bounds, order));
+                let expected = reference
+                    .iter()
+                    .filter_map(|(previous, order)| bounds.intersects(previous).then_some(*order))
+                    .max()
+                    .unwrap_or(0);
+                assert_eq!(tree.find_max_ordering(bounds), expected, "seed={seed}");
+            }
+            for query in &bounds {
+                let expected = reference
+                    .iter()
+                    .filter_map(|(bounds, order)| query.intersects(bounds).then_some(*order))
+                    .max()
+                    .unwrap_or(0);
+                assert_eq!(tree.find_max_ordering(query), expected, "seed={seed}");
+            }
+        }
+        let mut tree = BoundsTree::default();
+        tree.register(rectangle(4096.0, 4096.0, 64.0, 64.0), 100);
+        tree.register(rectangle(0.0, 0.0, 512.0, 512.0), 100);
+        tree.register(rectangle(0.0, 0.0, 32.0, 32.0), 3);
+        assert_eq!(tree.find_max_ordering(&rectangle(1.0, 1.0, 8.0, 8.0)), 100);
+    }
+
+    #[test]
     fn replay_matches_fresh_orders_across_changed_prefixes() {
         for seed in 0..32 {
             let mut random = rand::rngs::StdRng::seed_from_u64(seed);
