@@ -1470,9 +1470,21 @@ impl OutlinePanel {
         let mut change_focus = prefer_focus_change;
         let mut scroll_to_buffer = None;
         let scroll_target = match entry {
-            PanelEntry::FoldedDirs(..) | PanelEntry::Fs(FsEntry::Directory(..)) => {
+            PanelEntry::FoldedDirs(FoldedDirsEntry {
+                first_buffer_id, ..
+            })
+            | PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
+                first_buffer_id, ..
+            })) => {
+                change_selection = false;
                 change_focus = false;
-                None
+                scroll_to_buffer = Some(*first_buffer_id);
+                multi_buffer_snapshot
+                    .excerpts_for_buffer(*first_buffer_id)
+                    .next()
+                    .and_then(|excerpt_range| {
+                        multi_buffer_snapshot.anchor_in_excerpt(excerpt_range.context.start)
+                    })
             }
             PanelEntry::Fs(FsEntry::ExternalFile(file)) => {
                 change_selection = false;
@@ -1918,7 +1930,7 @@ impl OutlinePanel {
             if buffers_to_unfold.is_empty() {
                 self.update_cached_entries(None, window, cx);
             } else {
-                self.toggle_buffers_fold(buffers_to_unfold, false, window, cx)
+                self.toggle_buffers_fold(buffers_to_unfold, false, true, window, cx)
                     .detach();
             }
         } else {
@@ -2011,7 +2023,7 @@ impl OutlinePanel {
             if buffers_to_fold.is_empty() {
                 self.update_cached_entries(None, window, cx);
             } else {
-                self.toggle_buffers_fold(buffers_to_fold, true, window, cx)
+                self.toggle_buffers_fold(buffers_to_fold, true, true, window, cx)
                     .detach();
             }
         } else {
@@ -2099,7 +2111,7 @@ impl OutlinePanel {
         if buffers_to_unfold.is_empty() {
             self.update_cached_entries(None, window, cx);
         } else {
-            self.toggle_buffers_fold(buffers_to_unfold, false, window, cx)
+            self.toggle_buffers_fold(buffers_to_unfold, false, true, window, cx)
                 .detach();
         }
     }
@@ -2158,7 +2170,7 @@ impl OutlinePanel {
         if buffers_to_fold.is_empty() {
             self.update_cached_entries(None, window, cx);
         } else {
-            self.toggle_buffers_fold(buffers_to_fold, true, window, cx)
+            self.toggle_buffers_fold(buffers_to_fold, true, true, window, cx)
                 .detach();
         }
     }
@@ -2245,7 +2257,7 @@ impl OutlinePanel {
         if buffers_to_toggle.is_empty() {
             self.update_cached_entries(None, window, cx);
         } else {
-            self.toggle_buffers_fold(buffers_to_toggle, fold, window, cx)
+            self.toggle_buffers_fold(buffers_to_toggle, fold, false, window, cx)
                 .detach();
         }
     }
@@ -2254,6 +2266,7 @@ impl OutlinePanel {
         &self,
         buffers: HashSet<BufferId>,
         fold: bool,
+        scroll_to_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<()> {
@@ -2275,7 +2288,9 @@ impl OutlinePanel {
                             }
                         }
                     });
-                    if let Some(selection) = outline_panel.selected_entry().cloned() {
+                    if scroll_to_selection
+                        && let Some(selection) = outline_panel.selected_entry().cloned()
+                    {
                         outline_panel.scroll_editor_to_entry(&selection, false, false, window, cx);
                     }
                 })
@@ -2479,12 +2494,15 @@ impl OutlinePanel {
             .contains(&CollapsedEntry::Excerpt(excerpt.clone()));
         let color = entry_label_color(is_active);
         let icon = if has_outlines {
-            FileIcons::get_chevron_icon(is_expanded, cx)
-                .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
+            self.chevron_toggle(
+                PanelEntry::Outline(OutlineEntry::Excerpt(excerpt.clone())),
+                is_expanded,
+                color,
+                cx,
+            )
         } else {
-            None
-        }
-        .unwrap_or_else(empty_icon);
+            empty_icon()
+        };
 
         let label = self.excerpt_label(&excerpt, cx)?;
         let label_element = Label::new(label)
@@ -2555,13 +2573,12 @@ impl OutlinePanel {
             .contains(&CollapsedEntry::Outline(outline.range.clone()));
 
         let icon = if has_children {
-            FileIcons::get_chevron_icon(is_expanded, cx)
-                .map(|icon_path| {
-                    Icon::from_path(icon_path)
-                        .color(entry_label_color(is_active))
-                        .into_any_element()
-                })
-                .unwrap_or_else(empty_icon)
+            self.chevron_toggle(
+                PanelEntry::Outline(OutlineEntry::Outline(outline.clone())),
+                is_expanded,
+                entry_label_color(is_active),
+                cx,
+            )
         } else {
             empty_icon()
         };
@@ -2617,9 +2634,14 @@ impl OutlinePanel {
                     )
                     .color(color)
                     .into_any_element(),
-                    reserve_chevron_slot(
-                        settings.folder_indicator,
-                        icon.unwrap_or_else(empty_icon),
+                    self.file_expand_collapse_icon(
+                        rendered_entry,
+                        !self
+                            .collapsed_entries
+                            .contains(&CollapsedEntry::File(*worktree_id, *buffer_id)),
+                        icon,
+                        color,
+                        cx,
                     ),
                 )
             }
@@ -2635,8 +2657,8 @@ impl OutlinePanel {
                     directory.entry.is_ignored,
                     is_active,
                 );
-                let icon = folder_indicator_element(
-                    settings.folder_indicator,
+                let icon = self.folder_expand_collapse_icon(
+                    PanelEntry::Fs(rendered_entry.clone()),
                     is_expanded,
                     directory.entry.path.as_std_path(),
                     color,
@@ -2656,7 +2678,7 @@ impl OutlinePanel {
                     )
                     .color(color)
                     .into_any_element(),
-                    icon.unwrap_or_else(empty_icon),
+                    icon,
                 )
             }
             FsEntry::ExternalFile(external_file) => {
@@ -2688,9 +2710,14 @@ impl OutlinePanel {
                     )
                     .color(color)
                     .into_any_element(),
-                    reserve_chevron_slot(
-                        settings.folder_indicator,
-                        icon.unwrap_or_else(empty_icon),
+                    self.file_expand_collapse_icon(
+                        rendered_entry,
+                        !self
+                            .collapsed_entries
+                            .contains(&CollapsedEntry::ExternalFile(external_file.buffer_id)),
+                        icon,
+                        color,
+                        cx,
                     ),
                 )
             }
@@ -2716,7 +2743,6 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<OutlinePanel>,
     ) -> Stateful<Div> {
-        let settings = OutlinePanelSettings::get_global(cx);
         let is_active = match self.selected_entry() {
             Some(PanelEntry::FoldedDirs(selected_dirs)) => selected_dirs == folded_dir,
             _ => false,
@@ -2737,8 +2763,8 @@ impl OutlinePanel {
                 .map(|entry| entry.git_summary)
                 .unwrap_or_default();
             let color = entry_git_aware_label_color(git_status, is_ignored, is_active);
-            let icon = folder_indicator_element(
-                settings.folder_indicator,
+            let icon = self.folder_expand_collapse_icon(
+                PanelEntry::FoldedDirs(folded_dir.clone()),
                 is_expanded,
                 Path::new(&name),
                 color,
@@ -2766,7 +2792,7 @@ impl OutlinePanel {
                 )
                 .color(color)
                 .into_any_element(),
-                icon.unwrap_or_else(empty_icon),
+                icon,
             )
         };
 
@@ -2875,6 +2901,121 @@ impl OutlinePanel {
         ))
     }
 
+    fn chevron_toggle(
+        &self,
+        entry: PanelEntry,
+        is_expanded: bool,
+        color: Color,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let chevron = FileIcons::get_chevron_icon(is_expanded, cx)
+            .map(|path| Icon::from_path(path).color(color).into_any_element())
+            .unwrap_or_else(empty_icon);
+        self.expand_collapse_icon(entry, is_expanded, chevron, cx)
+    }
+
+    fn expand_collapse_icon(
+        &self,
+        entry: PanelEntry,
+        is_expanded: bool,
+        icon: AnyElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        h_flex()
+            .id("expand-collapse")
+            .role(gpui::Role::Button)
+            .aria_label(if is_expanded { "Collapse" } else { "Expand" })
+            .aria_expanded(is_expanded)
+            .flex_none()
+            .cursor_pointer()
+            .rounded_sm()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .tooltip(Tooltip::text(if is_expanded {
+                "Collapse"
+            } else {
+                "Expand"
+            }))
+            .on_click(
+                cx.listener(move |panel, event: &gpui::ClickEvent, window, cx| {
+                    if event.is_right_click() || event.first_focus() {
+                        return;
+                    }
+                    cx.stop_propagation();
+                    panel.toggle_expanded(&entry, window, cx);
+                }),
+            )
+            .child(icon)
+            .into_any_element()
+    }
+
+    fn folder_expand_collapse_icon(
+        &self,
+        entry: PanelEntry,
+        is_expanded: bool,
+        path: &Path,
+        color: Color,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let settings = OutlinePanelSettings::get_global(cx);
+        let indicator = settings.folder_indicator;
+        let file_icons = settings.file_icons;
+        let indicators = FileIcons::get_folder_indicators(indicator, is_expanded, path, cx);
+        let chevron = indicators.chevron.map(|path| {
+            self.expand_collapse_icon(
+                entry,
+                is_expanded,
+                Icon::from_path(path).color(color).into_any_element(),
+                cx,
+            )
+        });
+        let icon = indicators
+            .icon
+            .map(|path| Icon::from_path(path).color(color).into_any_element());
+        let (leading, trailing) = if file_icons || indicator == FolderIndicator::Both {
+            (
+                chevron.unwrap_or_else(empty_icon),
+                Some(icon.unwrap_or_else(empty_icon)),
+            )
+        } else {
+            (chevron.or(icon).unwrap_or_else(empty_icon), None)
+        };
+        h_flex()
+            .flex_none()
+            .gap_0p5()
+            .child(leading)
+            .children(trailing)
+            .into_any_element()
+    }
+
+    fn file_expand_collapse_icon(
+        &self,
+        entry: &FsEntry,
+        is_expanded: bool,
+        icon: Option<AnyElement>,
+        color: Color,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if !self.multi_buffer_active(cx) {
+            return icon.unwrap_or_else(empty_icon);
+        }
+        let settings = OutlinePanelSettings::get_global(cx);
+        let icon = icon.or_else(|| {
+            (settings.file_icons || settings.folder_indicator == FolderIndicator::Both)
+                .then(empty_icon)
+        });
+        let expand_collapse_icon = if self.hide_symbols_active(cx) {
+            empty_icon()
+        } else {
+            self.chevron_toggle(PanelEntry::Fs(entry.clone()), is_expanded, color, cx)
+        };
+        h_flex()
+            .flex_none()
+            .gap_0p5()
+            .child(expand_collapse_icon)
+            .children(icon)
+            .into_any_element()
+    }
+
     fn entry_element(
         &self,
         rendered_entry: PanelEntry,
@@ -2902,8 +3043,7 @@ impl OutlinePanel {
                     }
 
                     let change_focus = event.click_count() > 1;
-                    outline_panel.toggle_expanded(&clicked_entry, window, cx);
-
+                    outline_panel.select_entry(clicked_entry.clone(), true, window, cx);
                     outline_panel.scroll_editor_to_entry(
                         &clicked_entry,
                         true,
@@ -5830,48 +5970,6 @@ fn empty_icon() -> AnyElement {
         .into_any_element()
 }
 
-fn folder_indicator_element(
-    indicator: FolderIndicator,
-    expanded: bool,
-    path: &Path,
-    color: Color,
-    cx: &App,
-) -> Option<AnyElement> {
-    let indicators = FileIcons::get_folder_indicators(indicator, expanded, path, cx);
-    let render_indicator = |icon_path| Icon::from_path(icon_path).color(color);
-
-    match (indicators.chevron, indicators.icon) {
-        (Some(chevron), Some(icon)) => Some(
-            h_flex()
-                .flex_none()
-                .gap_0p5()
-                .child(render_indicator(chevron))
-                .child(render_indicator(icon))
-                .into_any_element(),
-        ),
-        (Some(only), None) | (None, Some(only)) => Some(render_indicator(only).into_any_element()),
-        (None, None) => None,
-    }
-}
-
-/// Adds a blank as wide as a chevron in front of `icon` in `both` mode. Leaves `icon`
-/// alone in the other modes.
-///
-/// Directories show a chevron and an icon in `both` mode. Without the blank, a file's
-/// icon would line up under the folder chevrons instead of the folder icons.
-fn reserve_chevron_slot(indicator: FolderIndicator, icon: AnyElement) -> AnyElement {
-    if indicator.shows_chevron() && indicator.shows_icon() {
-        h_flex()
-            .flex_none()
-            .gap_0p5()
-            .child(empty_icon())
-            .child(icon)
-            .into_any_element()
-    } else {
-        icon
-    }
-}
-
 #[derive(Debug, Default)]
 struct GenerationState {
     entries: Vec<CachedEntry>,
@@ -5893,7 +5991,7 @@ mod tests {
     use db::indoc;
     use editor::{HiddenUnstagedDiffHunkRenderer, PathKey};
     use futures::{FutureExt as _, StreamExt as _, future::poll_fn, task::Poll};
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle};
+    use gpui::{MouseUpEvent, TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle};
     use language::{self, FakeLspAdapter, markdown_lang, rust_lang};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
@@ -10634,6 +10732,376 @@ outline: fn main"
     }
 
     #[gpui::test]
+    async fn test_rendered_outline_click_navigation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({"main.rs": "\nmod parent {\n    fn leaf() {}\n}\n"}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/test"))], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (workspace, panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/test/main.rs")),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("open singleton editor");
+        wait_for_outline_tasks(&panel, cx).await;
+        let (editor, parent, leaf) = panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.cached_entries.len(), 2);
+            (
+                panel.active_editor().expect("active editor"),
+                panel.cached_entries[0].entry.clone(),
+                panel.cached_entries[1].entry.clone(),
+            )
+        });
+        let PanelEntry::Outline(OutlineEntry::Outline(outline)) = &parent else {
+            panic!("parent symbol");
+        };
+        let buffer_id = outline.range.start.buffer_id;
+        let collapsed = CollapsedEntry::Outline(outline.range.clone());
+        for (entry, click_arrow, count, caret, is_collapsed) in [
+            (&parent, false, 1, language::Point::new(1, 0), false),
+            (&leaf, true, 1, language::Point::new(2, 4), false),
+            (&parent, true, 1, language::Point::new(2, 4), true),
+            (&parent, false, 1, language::Point::new(1, 0), true),
+            (&parent, false, 2, language::Point::new(1, 0), true),
+            (&parent, true, 1, language::Point::new(1, 0), false),
+            (&leaf, false, 2, language::Point::new(2, 4), false),
+        ] {
+            click_outline_row(&panel, entry, click_arrow, count, cx);
+            wait_for_outline_tasks(&panel, cx).await;
+            assert_eq!(click_test_selection(&editor, cx), (buffer_id, caret..caret));
+            panel.read_with(cx, |panel, _| {
+                assert_eq!(panel.selected_entry(), Some(entry));
+                assert_eq!(
+                    panel.collapsed_entries,
+                    if is_collapsed {
+                        HashSet::from_iter([collapsed.clone()])
+                    } else {
+                        HashSet::default()
+                    }
+                );
+            });
+            cx.update(|window, cx| {
+                let focus = if count == 2 {
+                    editor.focus_handle(cx)
+                } else {
+                    panel.focus_handle(cx)
+                };
+                assert_eq!(window.focused(cx), Some(focus));
+            });
+        }
+
+        let buffer = open_buffer(&project, path!("/test/main.rs"), cx).await;
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text("plain text", cx);
+        });
+        wait_for_outline_tasks(&panel, cx).await;
+        let entry = panel.update(cx, |panel, _| {
+            assert_eq!(panel.cached_entries.len(), 1);
+            panel.selected_entry = SelectedEntry::None;
+            panel.cached_entries[0].entry.clone()
+        });
+        assert!(matches!(entry, PanelEntry::Fs(FsEntry::File(_))));
+        click_outline_row(&panel, &entry, true, 1, cx);
+        wait_for_outline_tasks(&panel, cx).await;
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.selected_entry(), Some(&entry));
+            assert_eq!(panel.collapsed_entries, HashSet::default());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rendered_multibuffer_click_navigation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "dir": {"sub": {"a.rs": "fn alpha() {}\n", "c.rs": "fn charlie() {}\n"}},
+                "other": {"b.rs": "fn bravo() {}\n"}
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/test"))], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (workspace, panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        let first = open_buffer(&project, path!("/test/dir/sub/a.rs"), cx).await;
+        let middle = open_buffer(&project, path!("/test/other/b.rs"), cx).await;
+        let last = open_buffer(&project, path!("/test/dir/sub/c.rs"), cx).await;
+        let editor = add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[
+                (&first, Vec::new()),
+                (&middle, Vec::new()),
+                (&last, Vec::new()),
+            ],
+            cx,
+        );
+        set_buffer_order(&editor, &[&last, &middle, &first], cx);
+        let [first_id, middle_id, last_id] = [&first, &middle, &last]
+            .map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id()));
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let buffer = middle.read(cx);
+            let start = snapshot
+                .anchor_in_excerpt(buffer.anchor_before(3))
+                .expect("selection start");
+            let end = snapshot
+                .anchor_in_excerpt(buffer.anchor_before(7))
+                .expect("selection end");
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([start..end])
+            });
+        });
+        let worktree_id = first.read_with(cx, |buffer, cx| {
+            File::from_dyn(buffer.file())
+                .expect("file")
+                .worktree
+                .read(cx)
+                .id()
+        });
+        let expected_selection = (
+            middle_id,
+            language::Point::new(0, 3)..language::Point::new(0, 7),
+        );
+        for hidden in [false, true] {
+            for compact in [false, true] {
+                update_outline_panel_settings(cx, |settings| {
+                    settings.multi_buffer_hide_symbols = Some(hidden);
+                    settings.auto_fold_dirs = Some(compact);
+                });
+                wait_for_outline_tasks(&panel, cx).await;
+                let rows = panel.read_with(cx, |panel, _| {
+                    panel
+                        .cached_entries
+                        .iter()
+                        .map(|entry| &entry.entry)
+                        .filter(|entry| match entry {
+                            PanelEntry::Fs(FsEntry::File(file)) => file.buffer_id != middle_id,
+                            PanelEntry::Fs(FsEntry::Directory(directory)) => {
+                                !compact && directory.entry.path.as_ref() == rel_path("dir/sub")
+                            }
+                            PanelEntry::FoldedDirs(directories) => {
+                                compact
+                                    && directories
+                                        .entries
+                                        .iter()
+                                        .map(|entry| entry.path.as_ref())
+                                        .collect::<Vec<_>>()
+                                        == vec![rel_path("dir"), rel_path("dir/sub")]
+                            }
+                            PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
+                                excerpt.context.start.buffer_id != middle_id
+                            }
+                            _ => false,
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>()
+                });
+                assert_eq!(rows.len(), if hidden { 4 } else { 6 });
+                for (iteration, folded) in [false, true, false].into_iter().enumerate() {
+                    if iteration > 0 {
+                        for file in rows
+                            .iter()
+                            .filter(|entry| matches!(entry, PanelEntry::Fs(FsEntry::File(_))))
+                        {
+                            let scroll = editor.update_in(cx, |editor, window, cx| {
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                let anchor = snapshot
+                                    .anchor_in_excerpt(middle.read(cx).anchor_before(0))
+                                    .expect("middle buffer scroll target");
+                                editor.set_scroll_anchor(
+                                    ScrollAnchor {
+                                        anchor,
+                                        offset: point(0., -2.),
+                                    },
+                                    window,
+                                    cx,
+                                );
+                                editor.scroll_manager.shared_scroll_anchor(cx).scroll_anchor
+                            });
+                            assert_eq!(scroll.anchor.buffer_id(), Some(middle_id));
+                            if hidden && let PanelEntry::Fs(FsEntry::File(file)) = file {
+                                editor.update(cx, |editor, cx| {
+                                    if folded {
+                                        editor.fold_buffer(file.buffer_id, cx);
+                                    } else {
+                                        editor.unfold_buffer(file.buffer_id, cx);
+                                    }
+                                });
+                            } else {
+                                click_outline_row(&panel, file, true, 1, cx);
+                            }
+                            wait_for_outline_tasks(&panel, cx).await;
+                            editor.read_with(cx, |editor, cx| {
+                                assert_eq!(
+                                    editor.scroll_manager.shared_scroll_anchor(cx).scroll_anchor,
+                                    scroll
+                                );
+                            });
+                            assert_eq!(click_test_selection(&editor, cx), expected_selection);
+                        }
+                    }
+                    let collapsed = if folded {
+                        [last_id, first_id]
+                            .map(|id| CollapsedEntry::File(worktree_id, id))
+                            .into_iter()
+                            .collect::<HashSet<_>>()
+                    } else {
+                        HashSet::default()
+                    };
+                    for (section, buffer_id) in rows
+                        .chunks(if hidden { 2 } else { 3 })
+                        .zip([last_id, first_id])
+                    {
+                        for entry in section {
+                            let is_file = matches!(entry, PanelEntry::Fs(FsEntry::File(_)));
+                            let is_excerpt =
+                                matches!(entry, PanelEntry::Outline(OutlineEntry::Excerpt(_)));
+                            if folded && is_excerpt {
+                                continue;
+                            }
+                            for (click_arrow, count) in [(false, 1), (false, 2)]
+                                .into_iter()
+                                .chain((hidden && is_file).then_some((true, 1)))
+                            {
+                                click_outline_row(&panel, entry, click_arrow, count, cx);
+                                assert_eq!(click_test_selection(&editor, cx), expected_selection);
+                                panel.read_with(cx, |panel, _| {
+                                    assert_eq!(panel.selected_entry(), Some(entry));
+                                    assert_eq!(panel.collapsed_entries, collapsed);
+                                });
+                                cx.update(|window, cx| {
+                                    let editor = editor.read(cx);
+                                    let scroll = editor
+                                        .scroll_manager
+                                        .shared_scroll_anchor(cx)
+                                        .scroll_anchor;
+                                    assert_eq!(
+                                        (scroll.anchor.buffer_id(), scroll.offset),
+                                        (
+                                            Some(buffer_id),
+                                            point(0., if folded || is_excerpt { 0. } else { -2. })
+                                        )
+                                    );
+                                    assert_eq!(editor.is_buffer_folded(buffer_id, cx), folded);
+                                    let focus = if is_file && count == 2 {
+                                        editor.focus_handle(cx)
+                                    } else {
+                                        panel.focus_handle(cx)
+                                    };
+                                    assert_eq!(window.focused(cx), Some(focus));
+                                });
+                            }
+                        }
+                    }
+                }
+
+                for (indicator, file_icons, icon_offset) in [
+                    (FolderIndicator::Icon, false, 15.),
+                    (FolderIndicator::Icon, true, 33.),
+                    (FolderIndicator::Both, false, 33.),
+                    (FolderIndicator::Both, true, 33.),
+                ] {
+                    update_outline_panel_settings(cx, |settings| {
+                        settings.folder_indicator = Some(indicator);
+                        settings.file_icons = Some(file_icons);
+                    });
+                    wait_for_outline_tasks(&panel, cx).await;
+                    click_outline_row(&panel, &rows[0], false, 1, cx);
+                    let directory = &rows[rows.len() / 2];
+                    let bounds = render_outline_row(&panel, directory, cx);
+                    cx.simulate_click(
+                        point(bounds.left() + px(icon_offset), bounds.center().y),
+                        gpui::Modifiers::default(),
+                    );
+                    wait_for_outline_tasks(&panel, cx).await;
+                    assert_eq!(click_test_selection(&editor, cx), expected_selection);
+                    panel.read_with(cx, |panel, _| {
+                        assert_eq!(panel.selected_entry(), Some(directory));
+                        assert_eq!(panel.collapsed_entries, HashSet::default());
+                    });
+                    cx.update(|window, cx| {
+                        let scroll = editor
+                            .read(cx)
+                            .scroll_manager
+                            .shared_scroll_anchor(cx)
+                            .scroll_anchor;
+                        assert_eq!(
+                            (scroll.anchor.buffer_id(), scroll.offset),
+                            (Some(first_id), point(0., -2.))
+                        );
+                        assert_eq!(window.focused(cx), Some(panel.focus_handle(cx)));
+                    });
+                    if indicator == FolderIndicator::Icon {
+                        continue;
+                    }
+
+                    click_outline_row(&panel, &rows[0], true, 1, cx);
+                    wait_for_outline_tasks(&panel, cx).await;
+                    let collapsed = HashSet::from_iter([
+                        CollapsedEntry::Dir(
+                            worktree_id,
+                            Arc::from(rel_path(if compact { "dir" } else { "dir/sub" })),
+                        ),
+                        CollapsedEntry::File(worktree_id, last_id),
+                        CollapsedEntry::File(worktree_id, first_id),
+                    ]);
+                    let second_directory = panel.read_with(cx, |panel, _| {
+                        assert_eq!(panel.collapsed_entries, collapsed);
+                        panel
+                            .cached_entries
+                            .iter()
+                            .find(|entry| entry.entry == rows[rows.len() / 2])
+                            .expect("second collapsed directory occurrence")
+                            .entry
+                            .clone()
+                    });
+                    for count in [1, 2] {
+                        click_outline_row(&panel, &second_directory, false, count, cx);
+                        wait_for_outline_tasks(&panel, cx).await;
+                        assert_eq!(click_test_selection(&editor, cx), expected_selection);
+                        panel.read_with(cx, |panel, _| {
+                            assert_eq!(panel.selected_entry(), Some(&second_directory));
+                            assert_eq!(panel.collapsed_entries, collapsed);
+                        });
+                        cx.update(|window, cx| {
+                            let scroll = editor
+                                .read(cx)
+                                .scroll_manager
+                                .shared_scroll_anchor(cx)
+                                .scroll_anchor;
+                            assert_eq!(
+                                (scroll.anchor.buffer_id(), scroll.offset),
+                                (Some(first_id), point(0., 0.))
+                            );
+                            assert_eq!(window.focused(cx), Some(panel.focus_handle(cx)));
+                        });
+                    }
+                    click_outline_row(&panel, &second_directory, true, 1, cx);
+                    wait_for_outline_tasks(&panel, cx).await;
+                    panel.read_with(cx, |panel, _| {
+                        assert_eq!(panel.collapsed_entries, HashSet::default());
+                    });
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
     async fn test_outline_click_toggle_behavior(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -12716,5 +13184,101 @@ test/
                  fetched after the symbols are shown again"
             );
         });
+    }
+
+    struct ClickTestRow(Entity<OutlinePanel>, PanelEntry);
+
+    impl Render for ClickTestRow {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.update(cx, |panel, cx| {
+                let editor_focus = panel
+                    .active_editor()
+                    .expect("active editor")
+                    .focus_handle(cx);
+                let row = match &self.1 {
+                    PanelEntry::Fs(entry) => panel.render_entry(entry, 0, None, window, cx),
+                    PanelEntry::FoldedDirs(entry) => {
+                        panel.render_folded_dirs(entry, 0, None, window, cx)
+                    }
+                    PanelEntry::Outline(OutlineEntry::Outline(entry)) => {
+                        panel.render_outline(entry, 0, None, window, cx)
+                    }
+                    PanelEntry::Outline(OutlineEntry::Excerpt(entry)) => panel
+                        .render_excerpt(entry, 0, window, cx)
+                        .expect("excerpt row"),
+                    PanelEntry::Search(_) => panic!("unexpected search row"),
+                }
+                .w(px(400.))
+                .track_focus(&panel.focus_handle)
+                .debug_selector(|| "click-test-row".to_owned());
+                div()
+                    .child(row)
+                    .child(div().id("editor-focus").track_focus(&editor_focus))
+            })
+        }
+    }
+
+    fn render_outline_row(
+        panel: &Entity<OutlinePanel>,
+        entry: &PanelEntry,
+        cx: &mut VisualTestContext,
+    ) -> Bounds<Pixels> {
+        cx.update(|window, cx| {
+            window.replace_root(cx, |_, _| ClickTestRow(panel.clone(), entry.clone()));
+            panel.focus_handle(cx).focus(window, cx);
+        });
+        cx.run_until_parked();
+        cx.debug_bounds("click-test-row").expect("rendered row")
+    }
+
+    fn click_outline_row(
+        panel: &Entity<OutlinePanel>,
+        entry: &PanelEntry,
+        click_arrow: bool,
+        click_count: usize,
+        cx: &mut VisualTestContext,
+    ) {
+        let bounds = render_outline_row(panel, entry, cx);
+        let position = point(
+            if click_arrow {
+                bounds.left() + px(15.)
+            } else {
+                bounds.center().x
+            },
+            bounds.center().y,
+        );
+        cx.simulate_event(MouseDownEvent {
+            position,
+            button: MouseButton::Left,
+            click_count,
+            ..MouseDownEvent::default()
+        });
+        cx.simulate_event(MouseUpEvent {
+            position,
+            button: MouseButton::Left,
+            click_count,
+            ..MouseUpEvent::default()
+        });
+    }
+
+    fn click_test_selection(
+        editor: &Entity<Editor>,
+        cx: &mut VisualTestContext,
+    ) -> (BufferId, Range<language::Point>) {
+        editor.read_with(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let [selection] = editor.selections.disjoint_anchors() else {
+                panic!("one selection");
+            };
+            let (start, buffer) = snapshot
+                .anchor_to_buffer_anchor(selection.start)
+                .expect("selection start");
+            let (end, _) = snapshot
+                .anchor_to_buffer_anchor(selection.end)
+                .expect("selection end");
+            assert_eq!(start.buffer_id, end.buffer_id);
+            assert_eq!(selection.head(), selection.end);
+            (start.buffer_id, (start..end).to_point(buffer))
+        })
     }
 }

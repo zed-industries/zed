@@ -9,7 +9,6 @@ use futures::{
     channel::mpsc,
     future::{LocalBoxFuture, Shared},
     join,
-    stream::BoxStream,
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use language::{
@@ -17,9 +16,10 @@ use language::{
 };
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelTextStream, LanguageModelToolChoice,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason, TokenUsage,
+    LanguageModelCompletionStream, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelTextStream,
+    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
+    TokenUsage,
 };
 use language_models::provider::anthropic::telemetry::{
     AnthropicCompletionType, AnthropicEventData, AnthropicEventReporter, AnthropicEventType,
@@ -174,7 +174,7 @@ impl BufferCodegen {
 
     pub fn start(
         &mut self,
-        primary_model: Arc<dyn LanguageModel>,
+        primary_model: LanguageModel,
         user_prompt: String,
         context_task: Shared<Task<Option<LoadedContext>>>,
         cx: &mut Context<Self>,
@@ -401,7 +401,7 @@ impl CodegenAlternative {
         &self.last_equal_ranges
     }
 
-    pub fn use_streaming_tools(model: &dyn LanguageModel, cx: &App) -> bool {
+    pub fn use_streaming_tools(model: &LanguageModel, cx: &App) -> bool {
         model.supports_streaming_tools()
             && AgentSettings::get_global(cx).inline_assistant_use_streaming_tools
     }
@@ -410,7 +410,7 @@ impl CodegenAlternative {
         &mut self,
         user_prompt: String,
         context_task: Shared<Task<Option<LoadedContext>>>,
-        model: Arc<dyn LanguageModel>,
+        model: LanguageModel,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         // Clear the model explanation since the user has started a new generation.
@@ -425,11 +425,12 @@ impl CodegenAlternative {
 
         self.edit_position = Some(self.range.start.bias_right(&self.snapshot));
 
-        if Self::use_streaming_tools(model.as_ref(), cx) {
+        let provider = LanguageModelRegistry::read_global(cx).provider_for_model(&model)?;
+        if Self::use_streaming_tools(&model, cx) {
             let request = self.build_request(&model, user_prompt, context_task, cx)?;
             let completion_events = cx.spawn({
                 let model = model.clone();
-                async move |_, cx| model.stream_completion(request.await, cx).await
+                async move |_, cx| provider.stream_completion(&model, request.await, cx).await
             });
             self.generation = self.handle_completion(model, completion_events, cx);
         } else {
@@ -441,7 +442,9 @@ impl CodegenAlternative {
                     cx.spawn({
                         let model = model.clone();
                         async move |_, cx| {
-                            Ok(model.stream_completion_text(request.await, cx).await?)
+                            Ok(provider
+                                .stream_completion_text(&model, request.await, cx)
+                                .await?)
                         }
                     })
                     .boxed_local()
@@ -455,7 +458,7 @@ impl CodegenAlternative {
 
     fn build_request_tools(
         &self,
-        model: &Arc<dyn LanguageModel>,
+        model: &LanguageModel,
         user_prompt: String,
         context_task: Shared<Task<Option<LoadedContext>>>,
         cx: &mut App,
@@ -500,7 +503,8 @@ impl CodegenAlternative {
         let session_id = self.session_id.to_string();
 
         let tool_choice = model
-            .supports_tool_choice(LanguageModelToolChoice::Any)
+            .tool_choice_support
+            .supports(LanguageModelToolChoice::Any)
             .then_some(LanguageModelToolChoice::Any);
 
         Ok(cx.spawn(async move |_cx| {
@@ -565,12 +569,12 @@ impl CodegenAlternative {
 
     fn build_request(
         &self,
-        model: &Arc<dyn LanguageModel>,
+        model: &LanguageModel,
         user_prompt: String,
         context_task: Shared<Task<Option<LoadedContext>>>,
         cx: &mut App,
     ) -> Result<Task<LanguageModelRequest>> {
-        if Self::use_streaming_tools(model.as_ref(), cx) {
+        if Self::use_streaming_tools(model, cx) {
             return self.build_request_tools(model, user_prompt, context_task, cx);
         }
 
@@ -649,7 +653,7 @@ impl CodegenAlternative {
 
     pub fn handle_stream(
         &mut self,
-        model: Arc<dyn LanguageModel>,
+        model: LanguageModel,
         strip_invalid_spans: bool,
         stream: impl 'static + Future<Output = Result<LanguageModelTextStream>>,
         cx: &mut Context<Self>,
@@ -1135,15 +1139,9 @@ impl CodegenAlternative {
 
     fn handle_completion(
         &mut self,
-        model: Arc<dyn LanguageModel>,
+        model: LanguageModel,
         completion_stream: Task<
-            Result<
-                BoxStream<
-                    'static,
-                    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-                >,
-                LanguageModelCompletionError,
-            >,
+            Result<LanguageModelCompletionStream, LanguageModelCompletionError>,
         >,
         cx: &mut Context<Self>,
     ) -> Task<()> {
@@ -1646,7 +1644,7 @@ mod tests {
     use gpui::TestAppContext;
     use indoc::indoc;
     use language::{Buffer, Point};
-    use language_model::fake_provider::FakeLanguageModel;
+    use language_model::fake_provider::FakeLanguageModelProvider;
     use language_model::{
         LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelRegistry,
         LanguageModelToolUse, StopReason, TokenUsage,
@@ -2507,7 +2505,9 @@ mod tests {
                 .start(
                     "Rewrite the selection".into(),
                     Task::ready(None).shared(),
-                    Arc::new(FakeLanguageModel::default()),
+                    LanguageModelRegistry::read_global(cx)
+                        .default_model()
+                        .unwrap(),
                     cx,
                 )
                 .unwrap();
@@ -2593,7 +2593,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> mpsc::UnboundedSender<String> {
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = FakeLanguageModelProvider::default().model("fake");
         codegen.update(cx, |codegen, cx| {
             codegen.generation = codegen.handle_stream(
                 model,
@@ -2615,7 +2615,7 @@ mod tests {
     ) -> mpsc::UnboundedSender<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         let (events_tx, events_rx) = mpsc::unbounded();
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = FakeLanguageModelProvider::default().model("fake");
         codegen.update(cx, |codegen, cx| {
             codegen.generation =
                 codegen.handle_completion(model, Task::ready(Ok(events_rx.boxed())), cx);
@@ -2628,13 +2628,11 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> mpsc::UnboundedSender<LanguageModelCompletionEvent> {
         let (events_tx, events_rx) = mpsc::unbounded();
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = FakeLanguageModelProvider::default().model("fake");
         codegen.update(cx, |codegen, cx| {
-            let completion_stream = Task::ready(Ok(events_rx.map(Ok).boxed()
-                as BoxStream<
-                    'static,
-                    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-                >));
+            let completion_stream = Task::ready(Ok(
+                events_rx.map(Ok).boxed() as LanguageModelCompletionStream
+            ));
             codegen.generation = codegen.handle_completion(model, completion_stream, cx);
         });
         events_tx

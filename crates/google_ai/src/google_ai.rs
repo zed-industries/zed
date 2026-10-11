@@ -4,12 +4,14 @@ use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode, http::HeaderMap,
 };
-pub use language_model_core::ModelMode as GoogleModelMode;
+pub use language_model_core::{GOOGLE_AI_API_URL as API_URL, ModelMode as GoogleModelMode};
+use language_model_core::{
+    GOOGLE_PROVIDER_NAME, LanguageModelCompletionError, ProviderErrorCategory,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod completion;
-
-pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
 pub async fn stream_generate_content(
     client: &dyn HttpClient,
@@ -17,7 +19,7 @@ pub async fn stream_generate_content(
     api_key: &str,
     mut request: GenerateContentRequest,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
+) -> Result<BoxStream<'static, Result<GenerateContentResponse>>, LanguageModelCompletionError> {
     let api_key = api_key.trim();
     validate_generate_content_request(&request)?;
 
@@ -32,8 +34,25 @@ pub async fn stream_generate_content(
         .uri(uri)
         .header("Content-Type", "application/json")
         .extra_headers(extra_headers)
-        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
-    let mut response = client.send(request).await?;
+        .body(AsyncBody::from(serde_json::to_string(&request).map_err(
+            |error| LanguageModelCompletionError::SerializeRequest {
+                provider: GOOGLE_PROVIDER_NAME,
+                error,
+            },
+        )?))
+        .map_err(|error| LanguageModelCompletionError::BuildRequestBody {
+            provider: GOOGLE_PROVIDER_NAME,
+            error,
+        })?;
+    let mut response =
+        client
+            .send(request)
+            .await
+            .map_err(|error| LanguageModelCompletionError::HttpSend {
+                provider: GOOGLE_PROVIDER_NAME,
+                host: api_url.to_string(),
+                error,
+            })?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         Ok(reader
@@ -66,13 +85,122 @@ pub async fn stream_generate_content(
             })
             .boxed())
     } else {
-        let mut text = String::new();
-        response.body_mut().read_to_string(&mut text).await?;
-        Err(anyhow!(
-            "error during streamGenerateContent, status code: {:?}, body: {}",
-            response.status(),
-            text
-        ))
+        let status = response.status();
+        let headers = response.headers().clone();
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| LanguageModelCompletionError::ApiReadResponseError {
+                provider: GOOGLE_PROVIDER_NAME,
+                error,
+            })?;
+        Err(completion_error_from_response(status, &headers, body))
+    }
+}
+
+fn completion_error_from_response(
+    status: StatusCode,
+    headers: &HeaderMap,
+    body: String,
+) -> LanguageModelCompletionError {
+    let retry_after = headers
+        .get(http_client::http::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok()?.parse::<u64>().ok())
+        .map(std::time::Duration::from_secs);
+    let parsed_error = serde_json::from_str::<GoogleErrorEnvelope>(&body)
+        .ok()
+        .map(|envelope| envelope.error);
+    let message = parsed_error
+        .as_ref()
+        .map(|error| error.message.clone())
+        .unwrap_or(body);
+    let code = parsed_error.and_then(|error| error.status);
+    let category = ProviderErrorCategory::from_http_status(status, &message);
+
+    LanguageModelCompletionError::from_provider_response(
+        GOOGLE_PROVIDER_NAME,
+        Some(status),
+        code,
+        message,
+        retry_after,
+        category,
+    )
+}
+
+#[derive(Deserialize)]
+struct GoogleErrorEnvelope {
+    error: GoogleError,
+}
+
+#[derive(Deserialize)]
+struct GoogleError {
+    message: String,
+    status: Option<String>,
+}
+
+#[cfg(test)]
+mod provider_error_tests {
+    use super::*;
+
+    #[test]
+    fn google_rejections_preserve_wire_details_and_semantic_category() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http_client::http::header::RETRY_AFTER,
+            http_client::http::HeaderValue::from_static("7"),
+        );
+        let error = completion_error_from_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &headers,
+            r#"{"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}"#
+                .to_string(),
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: Some(StatusCode::SERVICE_UNAVAILABLE),
+                code: Some(code),
+                message,
+                retry_after: Some(retry_after),
+                category: ProviderErrorCategory::Overloaded,
+            } if provider == GOOGLE_PROVIDER_NAME
+                && code == "UNAVAILABLE"
+                && message == "The model is overloaded. Please try again later."
+                && retry_after == std::time::Duration::from_secs(7)
+        ));
+    }
+
+    #[test]
+    fn google_rejections_use_shared_http_classification() {
+        for (status, expected_category) in [
+            (
+                StatusCode::UNAUTHORIZED,
+                ProviderErrorCategory::Authentication,
+            ),
+            (
+                StatusCode::PAYMENT_REQUIRED,
+                ProviderErrorCategory::PaymentRequired,
+            ),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                ProviderErrorCategory::RateLimit,
+            ),
+        ] {
+            let error = completion_error_from_response(
+                status,
+                &HeaderMap::new(),
+                r#"{"error":{"code":0,"message":"rejected","status":"REJECTED"}}"#.to_string(),
+            );
+            assert!(matches!(
+                error,
+                LanguageModelCompletionError::ProviderRejection { category, .. }
+                    if category == expected_category
+            ));
+        }
     }
 }
 

@@ -22,7 +22,10 @@ pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 
 pub fn supports_fast_mode(model_id: &str) -> bool {
-    matches!(model_id, "claude-opus-5" | "claude-opus-4-8")
+    matches!(
+        model_id,
+        "claude-opus-5-5" | "claude-opus-5" | "claude-opus-4-8"
+    )
 }
 
 /// Model IDs where adaptive thinking runs by default when a request omits the
@@ -45,11 +48,14 @@ pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
 pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
 
 pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
-    matches!(model_id, "claude-fable-5-1")
+    matches!(model_id, "claude-opus-5-5" | "claude-fable-5-1")
 }
 
 pub fn supports_forced_tool_use(model_id: &str) -> bool {
-    !matches!(model_id, "claude-fable-5-1" | "claude-mythos-5-1")
+    !matches!(
+        model_id,
+        "claude-opus-5-5" | "claude-fable-5-1" | "claude-mythos-5-1"
+    )
 }
 
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
@@ -192,7 +198,8 @@ impl Model {
         // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
         let supports_compaction = matches!(
             entry.id.as_str(),
-            "claude-fable-5-1"
+            "claude-opus-5-5"
+                | "claude-fable-5-1"
                 | "claude-fable-5"
                 | "claude-mythos-5-1"
                 | "claude-mythos-5"
@@ -1834,7 +1841,7 @@ mod tests {
 
     #[test]
     fn from_listed_enables_fast_mode_and_compaction_for_supported_opus_models() {
-        for model_id in ["claude-opus-5", "claude-opus-4-8"] {
+        for model_id in ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"] {
             let model = Model::from_listed(listed_entry(model_id, ModelCapabilities::default()));
 
             assert!(model.supports_speed);

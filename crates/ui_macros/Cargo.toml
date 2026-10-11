@@ -15,7 +15,7 @@ test = false
 
 [dependencies]
 quote.workspace = true
-syn.workspace = true
+syn = { workspace = true, features = ["derive", "parsing", "printing"] }
 
 [dev-dependencies]
 component.workspace = true

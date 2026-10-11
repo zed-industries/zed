@@ -10,6 +10,7 @@ use gpui::{
     AnyWindowHandle, Empty, Entity, InputEvent as _, KeyDownEvent, Keystroke, Size, TestAppContext,
     VisualTestContext,
 };
+use itertools::iproduct;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, LanguageServerId,
     PointUtf16, Unclipped,
@@ -4131,6 +4132,112 @@ async fn test_collapse_selected_entry_scrolls_into_view(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_collapse_opened_file_scrolls_to_parent(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "src": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+                "g.rs": "",
+                "h.rs": "",
+            },
+            "tests": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+                "g.rs": "",
+                "h.rs": "",
+            }
+        }),
+        size(px(800.), px(160.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/tests", cx);
+    select_path(&panel, "root/src/h.rs", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.run_until_parked();
+
+    let workspace = panel.read_with(cx, |panel, _| {
+        panel.workspace.upgrade().expect("workspace is open")
+    });
+    ensure_single_file_is_opened(&workspace, "src/h.rs", cx);
+    let parent_id = find_project_entry(&panel, "root/src", cx).expect("src exists");
+    let opened_entry = panel.read_with(cx, |panel, _| panel.selection.expect("file is selected"));
+    let mut expected_expanded_dir_ids = ["root", "root/src", "root/tests"]
+        .map(|path| find_project_entry(&panel, path, cx).expect("directory exists"));
+    expected_expanded_dir_ids.sort_unstable();
+    for expand_children in [false, true] {
+        if expand_children {
+            toggle_expand_dir(&panel, "root/src", cx);
+            select_path(&panel, "root/src/h.rs", cx);
+            panel.update_in(cx, |panel, window, cx| {
+                panel.expand_selected_entry_and_children(
+                    &ExpandSelectedEntryAndChildren,
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+        }
+        panel.update_in(cx, |panel, window, cx| {
+            panel.scroll_cursor_center(&ScrollCursorCenter, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(
+                panel.state.expanded_dir_ids[&opened_entry.worktree_id], expected_expanded_dir_ids,
+                "expand_children={expand_children}"
+            );
+            assert!(
+                entry_row_bounds(panel, parent_id).bottom() < panel.scroll_handle.viewport().top()
+            );
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+            &[
+                "v root",
+                "    > src  <== selected",
+                "    v tests",
+                "          a.rs",
+                "          b.rs",
+                "          c.rs",
+                "          d.rs",
+                "          e.rs",
+                "          f.rs",
+                "          g.rs",
+                "          h.rs",
+            ],
+            "expand_children={expand_children}"
+        );
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.marked_entries, [opened_entry]);
+            let parent_bounds = entry_row_bounds(panel, parent_id);
+            let viewport = panel.scroll_handle.viewport();
+            let sticky_height = parent_bounds.size.height * panel.sticky_items_count;
+            assert!(parent_bounds.top() >= viewport.top() + sticky_height);
+            assert!(parent_bounds.bottom() <= viewport.bottom());
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_collapse_selected_entry_does_not_scroll_visible_parent(cx: &mut TestAppContext) {
     init_test(cx);
     let (panel, mut cx) = open_panel_with_tree(
@@ -5249,7 +5356,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             "v project_root",
             "    v dir_1",
             "        v nested_dir",
-            "              file_a.py",
+            "              file_a.py  <== marked",
             "      file_1.py  <== selected  <== marked",
         ]
     );
@@ -5364,6 +5471,77 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             "v project_root",
             "    v dir_1",
             "        v nested_dir  <== selected",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_shift_arrow_marks_starting_entry(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {},
+            "b": {},
+            "c.txt": "",
+            "d.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/b", cx);
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        shift: true,
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&SelectNext, window, cx);
+            panel.select_next(&SelectNext, window, cx);
+        })
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a",
+            "    > b  <== marked",
+            "      c.txt  <== marked",
+            "      d.txt  <== selected  <== marked",
+        ]
+    );
+
+    cx.simulate_modifiers_change(Default::default());
+    cx.update(|window, cx| panel.update(cx, |panel, cx| panel.cancel(&menu::Cancel, window, cx)));
+    select_path(&panel, "root/c.txt", cx);
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        shift: true,
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.select_previous(&SelectPrevious, window, cx);
+            panel.select_previous(&SelectPrevious, window, cx);
+        })
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a  <== selected  <== marked",
+            "    > b  <== marked",
+            "      c.txt  <== marked",
+            "      d.txt",
         ]
     );
 }
@@ -5615,6 +5793,172 @@ async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppCo
         ],
         "Should move 'b/c' and 'f/g' to target, leaving 'a' and 'e'"
     );
+}
+
+#[gpui::test]
+async fn test_range_selection_drag_moves_entire_folded_directories(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    // Cmd/ctrl-clicking the source keeps the folded rows marked with their inner
+    // directory, which the range selection must still widen to the whole row.
+    for (range_selection, source_click_modifiers, copy, (source_path, target_path)) in iproduct!(
+        [RangeSelection::ShiftClick, RangeSelection::ShiftArrows],
+        [Modifiers::none(), Modifiers::secondary_key()],
+        [false, true],
+        [
+            ("project/root/a", "project/root/other"),
+            ("project/root/other", "project/root/a"),
+        ]
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "root": {
+                    "a": { "sample.txt": "sample" },
+                    "c": { "d": { "sample2.txt": "sample2" } },
+                    "e": { "f": {} },
+                    "other": {}
+                }
+            }),
+        )
+        .await;
+        let original_paths = fs.paths(false);
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (window, panel) = create_drag_test_panel(&project, cx);
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        toggle_expand_dir(&panel, "project/root", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project",
+                "    v root  <== selected",
+                "        > a",
+                "        > c/d",
+                "        > e/f",
+                "        > other",
+            ]
+        );
+
+        select_folded_path_with_mark(&panel, "project/root/c/d", "project/root/c/d", cx);
+        select_folded_path_with_mark(&panel, "project/root/e/f", "project/root/e/f", cx);
+        click_project_entry(&panel, source_path, source_click_modifiers, cx);
+        extend_range_selection_to(&panel, range_selection, target_path, cx);
+
+        cx.simulate_modifiers_change(Modifiers {
+            alt: copy && cfg!(target_os = "macos"),
+            control: copy && cfg!(not(target_os = "macos")),
+            ..Modifiers::none()
+        });
+        drag_selection_to(&panel, "project", false, cx);
+
+        let mut expected_paths = [
+            path!("/"),
+            path!("/project"),
+            path!("/project/a"),
+            path!("/project/a/sample.txt"),
+            path!("/project/c"),
+            path!("/project/c/d"),
+            path!("/project/c/d/sample2.txt"),
+            path!("/project/e"),
+            path!("/project/e/f"),
+            path!("/project/other"),
+            path!("/project/root"),
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<BTreeSet<_>>();
+        if copy {
+            expected_paths.extend(original_paths);
+        }
+        assert_eq!(
+            fs.paths(false).into_iter().collect::<BTreeSet<_>>(),
+            expected_paths,
+            "dragging the range {source_path} to {target_path} with {range_selection:?}, source click {source_click_modifiers:?} and copy={copy} should include the entire folded directories"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_range_selection_folded_endpoints(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    // (leaf, segment clicked before selecting, outermost directory)
+    let folded_rows = [
+        ("root/a/b/c", "root/a/b", "root/a"),
+        ("root/d/e/f", "root/d/e/f", "root/d"),
+        ("root/g/h/i", "root/g/h", "root/g"),
+    ];
+
+    for (range_selection, (source_path, target_path)) in iproduct!(
+        [RangeSelection::ShiftClick, RangeSelection::ShiftArrows],
+        [("root/a/b/c", "root/g/h/i"), ("root/g/h/i", "root/a/b/c")]
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "a": { "b": { "c": {} } },
+                "d": { "e": { "f": {} } },
+                "g": { "h": { "i": {} } }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (window, panel) = create_drag_test_panel(&project, cx);
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        for (leaf_path, clicked_path, _) in folded_rows {
+            select_folded_path_with_mark(&panel, leaf_path, clicked_path, cx);
+        }
+        click_project_entry(&panel, source_path, Modifiers::none(), cx);
+        extend_range_selection_to(&panel, range_selection, target_path, cx);
+
+        for (leaf_path, clicked_path, outermost_path) in folded_rows {
+            // A click points at an exact segment, so shift-click keeps both endpoints'
+            // segments. Shift-arrows only keep the segment of the row they started from.
+            let keeps_clicked_segment = leaf_path == source_path
+                || (leaf_path == target_path
+                    && matches!(range_selection, RangeSelection::ShiftClick));
+            let expected_path = if keeps_clicked_segment {
+                clicked_path
+            } else {
+                outermost_path
+            };
+            let leaf_entry =
+                find_project_entry(&panel, leaf_path, cx).expect("folded directory should exist");
+            let expected_entry = find_project_entry(&panel, expected_path, cx)
+                .expect("expected directory should exist");
+            panel.read_with(cx, |panel, _| {
+                assert_eq!(
+                    panel.resolve_entry(leaf_entry),
+                    expected_entry,
+                    "range {source_path} to {target_path} with {range_selection:?} should select {expected_path}"
+                );
+            });
+        }
+    }
 }
 
 #[gpui::test]
@@ -10710,6 +11054,110 @@ pub(crate) fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Vis
     cx.run_until_parked();
 }
 
+#[derive(Debug, Clone, Copy)]
+enum RangeSelection {
+    ShiftClick,
+    ShiftArrows,
+}
+
+fn extend_range_selection_to(
+    panel: &Entity<ProjectPanel>,
+    range_selection: RangeSelection,
+    target_path: &str,
+    cx: &mut VisualTestContext,
+) {
+    match range_selection {
+        RangeSelection::ShiftClick => click_project_entry(
+            panel,
+            target_path,
+            Modifiers {
+                shift: true,
+                ..Modifiers::none()
+            },
+            cx,
+        ),
+        RangeSelection::ShiftArrows => shift_select_with_keyboard_to(panel, target_path, cx),
+    }
+}
+
+fn shift_select_with_keyboard_to(
+    panel: &Entity<ProjectPanel>,
+    target_path: &str,
+    cx: &mut VisualTestContext,
+) {
+    let target_entry_id =
+        find_project_entry(panel, target_path, cx).expect("target entry should exist");
+    cx.simulate_modifiers_change(Modifiers {
+        shift: true,
+        ..Modifiers::none()
+    });
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            let selection = panel
+                .selection
+                .expect("a selection is required before extending it");
+            let (_, _, target_index) = panel
+                .index_for_selection(SelectedEntry {
+                    worktree_id: selection.worktree_id,
+                    entry_id: target_entry_id,
+                })
+                .expect("target entry should be visible");
+            while let Some(selection) = panel.selection
+                && selection.entry_id != target_entry_id
+            {
+                let (_, _, index) = panel
+                    .index_for_selection(selection)
+                    .expect("selected entry should be visible");
+                if index < target_index {
+                    panel.select_next(&SelectNext, window, cx);
+                } else {
+                    panel.select_previous(&SelectPrevious, window, cx);
+                }
+            }
+        })
+    });
+    cx.simulate_modifiers_change(Modifiers::none());
+}
+
+fn click_project_entry(
+    panel: &Entity<ProjectPanel>,
+    path: &str,
+    modifiers: Modifiers,
+    cx: &mut VisualTestContext,
+) {
+    let entry_id = find_project_entry(panel, path, cx).expect("clicked entry should exist");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let position = panel.read_with(cx, |panel, cx| {
+        let worktree_id = panel
+            .project
+            .read(cx)
+            .worktree_id_for_entry(entry_id, cx)
+            .expect("clicked entry should belong to a worktree");
+        let (_, _, index) = panel
+            .index_for_entry(entry_id, worktree_id)
+            .expect("clicked entry should be visible");
+        let item_count = panel
+            .state
+            .visible_entries
+            .iter()
+            .map(|worktree| worktree.entries.len())
+            .sum::<usize>();
+        let scroll = panel.scroll_handle.0.borrow();
+        let bounds = scroll.base_handle.bounds();
+        let item_height = scroll
+            .last_item_size
+            .expect("project entries should be rendered")
+            .contents
+            .height
+            / item_count as f32;
+        bounds.origin
+            + scroll.base_handle.offset()
+            + point(bounds.size.width / 2., item_height * (index as f32 + 0.5))
+    });
+    cx.simulate_click(position, modifiers);
+    cx.run_until_parked();
+}
+
 pub(crate) fn select_path_with_mark(
     panel: &Entity<ProjectPanel>,
     path: &str,
@@ -12636,6 +13084,81 @@ async fn test_file_drag_state_clears_on_render_after_drag_stops(cx: &mut TestApp
         assert_drag_state_cleared(panel.read(cx));
     })
     .expect("window is open");
+}
+
+#[gpui::test]
+async fn test_drop_external_files_on_folded_directory_components(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a": { "b": { "c": {} } } }))
+        .await;
+
+    let temp_dir = tempfile::tempdir().expect("temporary directory is created");
+    let deepest_drop_path = temp_dir.path().join("deepest.txt");
+    let middle_drop_path = temp_dir.path().join("middle.txt");
+    let topmost_drop_path = temp_dir.path().join("topmost.txt");
+    for path in [&deepest_drop_path, &middle_drop_path, &topmost_drop_path] {
+        std::fs::write(path, "").expect("external file is written");
+    }
+    fs.insert_tree_from_real_fs(temp_dir.path(), temp_dir.path())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (window, panel) = create_drag_test_panel(&project, cx);
+    let cx = &mut VisualTestContext::from_window(window, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > a/b/c"]
+    );
+
+    for (selector, drop_path) in [
+        ("project_panel_path_component_c", &deepest_drop_path),
+        ("project_panel_path_component_b", &middle_drop_path),
+        ("project_panel_path_component_a", &topmost_drop_path),
+    ] {
+        let position = cx
+            .debug_bounds(selector)
+            .expect("folded path component is rendered")
+            .center();
+        cx.simulate_event(FileDropEvent::Entered {
+            position,
+            paths: ExternalPaths([drop_path.clone()].into_iter().collect()),
+        });
+        cx.simulate_event(FileDropEvent::Submit { position });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        panel.read_with(cx, |panel, _| assert_drag_state_cleared(panel));
+    }
+
+    assert!(
+        find_project_entry(&panel, "root/a/b/c/deepest.txt", cx).is_some(),
+        "dropping on `c` should create the file in root/a/b/c"
+    );
+    assert!(
+        find_project_entry(&panel, "root/a/b/middle.txt", cx).is_some(),
+        "dropping on `b` should create the file in root/a/b"
+    );
+    assert!(
+        find_project_entry(&panel, "root/a/topmost.txt", cx).is_some(),
+        "dropping on `a` should create the file in root/a"
+    );
+    assert!(
+        find_project_entry(&panel, "root/a/b/c/topmost.txt", cx).is_none(),
+        "dropping on `a` should not fall through to the deepest directory"
+    );
 }
 
 fn create_drag_test_panel(
