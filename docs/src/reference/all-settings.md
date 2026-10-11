@@ -5509,6 +5509,16 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `open_menus_on_hover`: Whether to open title-bar menus on hover. Once a menu is open, hovering always switches between menus.
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
 
+## Title Bar to Status Bar
+
+- Description: Whether to hide the title bar and show its contents in the status bar instead
+- Setting: `title_bar_to_status_bar`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Window Title Format
 
 - Description: Template for the window title. Use `${separator}` to insert a

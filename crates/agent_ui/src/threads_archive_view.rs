@@ -857,7 +857,7 @@ impl ThreadsArchiveView {
         .detach_and_log_err(cx);
     }
 
-    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
         let sidebar_on_left = matches!(
             AgentSettings::get_global(cx).sidebar_side(),
@@ -869,7 +869,12 @@ impl ThreadsArchiveView {
         let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let right_window_controls =
             !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_right;
-        let header_height = platform_title_bar_height(window);
+        let in_status_bar = workspace::WorkspaceSettings::get_global(cx).title_bar_to_status_bar;
+        let header_height = if in_status_bar {
+            Tab::container_height(cx)
+        } else {
+            platform_title_bar_height(window)
+        };
         let show_focus_keybinding =
             self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
 
@@ -882,6 +887,7 @@ impl ThreadsArchiveView {
                     right_window_controls,
                     false,
                 ),
+                Decorations::Server if in_status_bar => header,
                 Decorations::Server => header.mt_px().pb_px(),
             })
             .when(left_window_controls, |this| {
@@ -895,6 +901,16 @@ impl ThreadsArchiveView {
                 } else {
                     this
                 }
+            })
+            .when(traffic_lights && in_status_bar, |this| {
+                this.child(
+                    workspace::move_window_on_drag(div().id("traffic-light-area"), window, cx)
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .h_full()
+                        .w(px(ui::utils::TRAFFIC_LIGHT_PADDING)),
+                )
             })
             .when(!right_window_controls, |this| this.pr_1p5())
             .gap_1()

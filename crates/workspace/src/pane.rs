@@ -9,9 +9,10 @@ use crate::{
         PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
         TabContentParams, TabTooltipContent, WeakItemHandle,
     },
-    move_item,
+    move_item, move_window_on_drag,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
+    traffic_lights_overlay_workspace,
     workspace_settings::{AutosaveSetting, FocusFollowsMouse, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
@@ -3575,7 +3576,20 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Pane>,
     ) -> TabBar {
+        let traffic_light_spacer = traffic_lights_overlay_workspace(window, cx)
+            && self.workspace.upgrade().is_some_and(|workspace| {
+                let workspace = workspace.read(cx);
+                workspace.center.first_pane() == cx.entity()
+                    && workspace.left_dock.read(cx).visible_panel().is_none()
+            });
         tab_bar
+            .when(traffic_light_spacer, |tab_bar| {
+                tab_bar.start_child(
+                    move_window_on_drag(div().id("traffic-light-spacer"), window, cx)
+                        .h_full()
+                        .w(px(ui::utils::TRAFFIC_LIGHT_PADDING)),
+                )
+            })
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
@@ -3631,7 +3645,7 @@ impl Pane {
                             .border_color(cx.theme().colors().border)
                     })
             }))
-            .child(self.render_unpinned_tabs_container(unpinned_tabs, tab_count, cx));
+            .child(self.render_unpinned_tabs_container(unpinned_tabs, tab_count, window, cx));
         tab_bar.into_any_element()
     }
 
@@ -3660,7 +3674,7 @@ impl Pane {
                     .overflow_x_scroll()
                     .w_full()
                     .children(pinned_tabs)
-                    .child(self.render_pinned_tab_bar_drop_target(cx)),
+                    .child(self.render_pinned_tab_bar_drop_target(window, cx)),
             );
         v_flex()
             .w_full()
@@ -3670,6 +3684,7 @@ impl Pane {
                 TabBar::new("unpinned_tab_bar").child(self.render_unpinned_tabs_container(
                     unpinned_tabs,
                     tab_count,
+                    window,
                     cx,
                 )),
             )
@@ -3680,6 +3695,7 @@ impl Pane {
         &mut self,
         unpinned_tabs: Vec<AnyElement>,
         tab_count: usize,
+        window: &mut Window,
         cx: &mut Context<Pane>,
     ) -> impl IntoElement {
         h_flex()
@@ -3691,16 +3707,21 @@ impl Pane {
                 this.suppress_scroll = true;
             }))
             .children(unpinned_tabs)
-            .child(self.render_tab_bar_drop_target(tab_count, cx))
+            .child(self.render_tab_bar_drop_target(tab_count, window, cx))
     }
 
     fn render_tab_bar_drop_target(
         &self,
         tab_count: usize,
+        window: &mut Window,
         cx: &mut Context<Pane>,
     ) -> impl IntoElement {
         div()
             .id("tab_bar_drop_target")
+            .when(
+                WorkspaceSettings::get_global(cx).title_bar_to_status_bar,
+                |this| move_window_on_drag(this, window, cx),
+            )
             .min_w_6()
             .h(Tab::container_height(cx))
             .flex_grow_1()
@@ -3741,9 +3762,17 @@ impl Pane {
             }))
     }
 
-    fn render_pinned_tab_bar_drop_target(&self, cx: &mut Context<Pane>) -> impl IntoElement {
+    fn render_pinned_tab_bar_drop_target(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> impl IntoElement {
         div()
             .id("pinned_tabs_border")
+            .when(
+                WorkspaceSettings::get_global(cx).title_bar_to_status_bar,
+                |this| move_window_on_drag(this, window, cx),
+            )
             .debug_selector(|| "pinned_tabs_border".into())
             .min_w_6()
             .h(Tab::container_height(cx))

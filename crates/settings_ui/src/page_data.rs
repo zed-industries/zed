@@ -4380,9 +4380,25 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn title_bar_section() -> [SettingsPageItem; 12] {
+    fn title_bar_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Title Bar"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Title Bar to Status Bar",
+                description: "Hide the title bar and show its contents in the status bar instead.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("title_bar_to_status_bar"),
+                    pick: |settings_content| {
+                        settings_content.workspace.title_bar_to_status_bar.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.title_bar_to_status_bar = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Branch Status Icon",
                 description: "Show git status indicators on the branch icon in the titlebar.",

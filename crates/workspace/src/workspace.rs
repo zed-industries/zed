@@ -325,6 +325,51 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
         .and_then(parse_pixel_position_env_var)
 });
 
+/// Without the title bar the traffic lights sit closer to the window corner.
+pub fn traffic_light_position(cx: &App) -> Point<Pixels> {
+    let inset = if WorkspaceSettings::get_global(cx).title_bar_to_status_bar {
+        px(6.)
+    } else {
+        px(9.)
+    };
+    point(inset, inset)
+}
+
+/// Without the title bar the traffic lights overlay the workspace's top-left corner,
+/// unless the sidebar beside them holds them in its header.
+pub fn traffic_lights_overlay_workspace(window: &Window, cx: &App) -> bool {
+    let sidebar = window
+        .root::<MultiWorkspace>()
+        .flatten()
+        .map(|multi_workspace| multi_workspace.read(cx).sidebar_render_state(cx))
+        .unwrap_or_default();
+    cfg!(target_os = "macos")
+        && !window.is_fullscreen()
+        && !window.is_simple_fullscreen()
+        && WorkspaceSettings::get_global(cx).title_bar_to_status_bar
+        && !(sidebar.open && sidebar.side == SidebarSide::Left)
+}
+
+/// Lets a drag that starts on `element` move the window, as the title bar does.
+#[track_caller]
+pub fn move_window_on_drag(
+    element: Stateful<Div>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let drag_started = window.use_state(cx, |_, _| false);
+    element
+        .on_mouse_down(MouseButton::Left, {
+            let drag_started = drag_started.clone();
+            move |_, _, cx| drag_started.update(cx, |started, _| *started = true)
+        })
+        .on_mouse_move(move |event, window, cx| {
+            if drag_started.update(cx, |started, _| std::mem::take(started)) && event.dragging() {
+                window.start_window_move();
+            }
+        })
+}
+
 pub trait TerminalProvider {
     fn spawn(
         &self,
@@ -1611,6 +1656,7 @@ pub struct Workspace {
     /// the window, used to skip title recomputation when unrelated settings
     /// change.
     last_window_title_settings: Option<(String, String)>,
+    title_bar_to_status_bar: bool,
     dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(GlobalAnyActiveCall, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -2022,6 +2068,14 @@ impl Workspace {
                 if last_title_settings != Some(title_settings) {
                     this.update_window_title(window, cx);
                 }
+
+                let title_bar_to_status_bar =
+                    WorkspaceSettings::get_global(cx).title_bar_to_status_bar;
+                if this.title_bar_to_status_bar != title_bar_to_status_bar {
+                    this.title_bar_to_status_bar = title_bar_to_status_bar;
+                    window.set_traffic_light_position(traffic_light_position(cx));
+                    cx.notify();
+                }
             }),
             cx.subscribe_in(
                 &project.read(cx).git_store().clone(),
@@ -2118,6 +2172,7 @@ impl Workspace {
             window_edited: false,
             last_window_title: None,
             last_window_title_settings: None,
+            title_bar_to_status_bar: WorkspaceSettings::get_global(cx).title_bar_to_status_bar,
             dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
@@ -3325,6 +3380,9 @@ impl Workspace {
     }
 
     pub fn set_titlebar_item(&mut self, item: AnyView, _: &mut Window, cx: &mut Context<Self>) {
+        self.status_bar.update(cx, |status_bar, cx| {
+            status_bar.set_titlebar_item(item.clone(), cx)
+        });
         self.titlebar_item = Some(item);
         cx.notify();
     }
@@ -8760,7 +8818,7 @@ impl Workspace {
         };
 
         let mut parts = Vec::new();
-        if self.titlebar_item.is_some() {
+        if self.titlebar_item.is_some() && !self.title_bar_to_status_bar {
             // The title bar is an ARIA toolbar, so region navigation lands on
             // its first control rather than the toolbar container.
             parts.push(FocusablePart::toolbar(self.titlebar_focus_handle.clone()));
@@ -9569,6 +9627,10 @@ impl Render for Workspace {
             && self.active_item(cx).is_some();
         let pad_zoomed_pane =
             self.centered_layout && self.zoomed.is_some() && self.zoomed_position.is_none();
+        let titlebar_item = self
+            .titlebar_item
+            .clone()
+            .filter(|_| !self.title_bar_to_status_bar);
         let render_padding = |size| {
             (size > 0.0).then(|| {
                 div()
@@ -9632,7 +9694,7 @@ impl Render for Workspace {
             // a tab group: region navigation lands on the first control (per
             // the ARIA toolbar pattern), Tab steps through them, and arrow keys
             // move between them once focus is inside.
-            .when_some(self.titlebar_item.clone(), |this, item| {
+            .when_some(titlebar_item, |this, item| {
                 this.child(
                     div()
                         .id("titlebar-region")
@@ -9684,7 +9746,7 @@ impl Render for Workspace {
                             .flex()
                             .flex_col()
                             .overflow_hidden()
-                            .border_t_1()
+                            .when(!self.title_bar_to_status_bar, |this| this.border_t_1())
                             .border_b_1()
                             .border_color(colors.border)
                             .child({
@@ -13014,6 +13076,66 @@ mod tests {
             cx.window_title().as_deref(),
             Some(format!("Zed — root1, root2 — one — {expected_file_path}").as_str())
         );
+    }
+
+    fn set_title_bar_to_status_bar(enabled: bool, cx: &mut VisualTestContext) {
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.title_bar_to_status_bar = Some(enabled);
+                })
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_title_bar_to_status_bar(cx: &mut TestAppContext) {
+        struct TestTitleBar;
+        impl Render for TestTitleBar {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_4().debug_selector(|| "test_title_bar".into())
+            }
+        }
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_titlebar_item(cx.new(|_| TestTitleBar).into(), window, cx);
+        });
+
+        let title_bar_top = |enabled, cx: &mut VisualTestContext| {
+            set_title_bar_to_status_bar(enabled, cx);
+            cx.debug_bounds("test_title_bar")
+                .expect("title bar contents should be rendered")
+                .top()
+        };
+        let in_title_bar = title_bar_top(false, cx);
+        assert!(title_bar_top(true, cx) > in_title_bar + px(100.));
+        assert_eq!(title_bar_top(false, cx), in_title_bar);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_title_bar_to_status_bar_reserves_traffic_lights(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        add_an_item_to_active_pane(cx, &workspace, 1);
+
+        let first_tab_left = |enabled, cx: &mut VisualTestContext| {
+            set_title_bar_to_status_bar(enabled, cx);
+            cx.debug_bounds("TAB-0")
+                .expect("the tab should be rendered")
+                .left()
+        };
+        let without_spacer = first_tab_left(false, cx);
+        assert!(first_tab_left(true, cx) >= without_spacer + px(ui::utils::TRAFFIC_LIGHT_PADDING));
     }
 
     #[gpui::test]

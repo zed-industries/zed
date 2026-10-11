@@ -169,6 +169,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// Whether to hide the title bar and show its contents in the status bar instead.
+    ///
+    /// Default: false
+    pub title_bar_to_status_bar: Option<bool>,
     /// Whether the focused panel follows the mouse location
     /// Default: false
     pub focus_follows_mouse: Option<FocusFollowsMouse>,

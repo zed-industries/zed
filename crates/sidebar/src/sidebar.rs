@@ -7369,7 +7369,7 @@ impl Sidebar {
     fn render_sidebar_header(
         &self,
         no_open_projects: bool,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
@@ -7380,7 +7380,12 @@ impl Sidebar {
         let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let right_window_controls =
             !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_right;
-        let header_height = platform_title_bar_height(window);
+        let in_status_bar = workspace::WorkspaceSettings::get_global(cx).title_bar_to_status_bar;
+        let header_height = if in_status_bar {
+            Tab::container_height(cx)
+        } else {
+            platform_title_bar_height(window)
+        };
 
         h_flex()
             .h(header_height)
@@ -7392,6 +7397,7 @@ impl Sidebar {
                     right_window_controls,
                     no_open_projects,
                 ),
+                Decorations::Server if in_status_bar => header,
                 Decorations::Server => header.mt_px().pb_px(),
             })
             .when(left_window_controls, |this| {
@@ -7405,6 +7411,16 @@ impl Sidebar {
                 } else {
                     this
                 }
+            })
+            .when(traffic_lights && in_status_bar, |this| {
+                this.child(
+                    workspace::move_window_on_drag(div().id("traffic-light-area"), window, cx)
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .h_full()
+                        .w(px(ui::utils::TRAFFIC_LIGHT_PADDING)),
+                )
             })
             .when(!right_window_controls, |this| this.pr_1p5())
             .gap_1()

@@ -140,6 +140,8 @@ To disable this behavior use:
 ### Titlebar
 
 ```json [settings]
+  // Hide the title bar and show its contents in the status bar instead
+  "title_bar_to_status_bar": false,
   // Control which items are shown/hidden in the title bar
   "title_bar": {
     "show_branch_status_icon": false, // Show git status on branch icon

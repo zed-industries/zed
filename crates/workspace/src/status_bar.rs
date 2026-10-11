@@ -1,12 +1,12 @@
 use crate::{
-    ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar,
+    ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar, WorkspaceSettings,
     sidebar_side_context_menu,
 };
 use gpui::{
     Anchor, AnyView, App, Context, Decorations, Entity, FocusHandle, Focusable, IntoElement,
     ParentElement, Render, Role, SharedString, Styled, Subscription, WeakEntity, Window,
 };
-use settings::{SettingsContent, update_settings_file};
+use settings::{Settings as _, SettingsContent, update_settings_file};
 use std::{any::TypeId, sync::Arc};
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
 use ui::{ContextMenu, Divider, IconPosition, Indicator, Tooltip, prelude::*, right_click_menu};
@@ -100,6 +100,7 @@ impl SidebarStatus {
 pub struct StatusBar {
     left_items: Vec<Box<dyn StatusItemViewHandle>>,
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
+    titlebar_item: Option<AnyView>,
     active_pane: Entity<Pane>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     focus_handle: FocusHandle,
@@ -182,6 +183,12 @@ impl Render for StatusBar {
                     .border_color(cx.theme().colors().status_bar_background),
             })
             .child(self.render_left_tools(&sidebar, cx))
+            .children(
+                self.titlebar_item
+                    .clone()
+                    .filter(|_| WorkspaceSettings::get_global(cx).title_bar_to_status_bar)
+                    .map(|item| div().flex_1().min_w_0().overflow_x_hidden().child(item)),
+            )
             .child(self.render_right_tools(&sidebar, cx))
     }
 }
@@ -333,6 +340,7 @@ impl StatusBar {
         let mut this = Self {
             left_items: Default::default(),
             right_items: Default::default(),
+            titlebar_item: None,
             active_pane: active_pane.clone(),
             multi_workspace,
             focus_handle: cx.focus_handle(),
@@ -342,6 +350,11 @@ impl StatusBar {
         };
         this.update_active_pane_item(window, cx);
         this
+    }
+
+    pub fn set_titlebar_item(&mut self, item: AnyView, cx: &mut Context<Self>) {
+        self.titlebar_item = Some(item);
+        cx.notify();
     }
 
     pub fn set_multi_workspace(
