@@ -6,8 +6,10 @@ cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_PROFILE_DEV_DEBUG=${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}
 # A full disk mid-build fails with no useful message; free build output first.
-# One check run needs about 9 GB.
-script/cedian-prune 10
+# One check run needs about 9 GB, and linking the test binaries added on top of
+# what was there when the run started, so keep 20 GB free (12 GB was not enough:
+# the run of 2026-10-11 died in `ld` with 12 GB free and no `incremental` pruned).
+script/cedian-prune 20
 
 crates=(omp-rpc)
 for dir in crates/cedian_*; do
