@@ -45,6 +45,8 @@ struct LayoutCache {
     request_scope: Option<usize>,
     epoch: u64,
     nodes: Vec<NodeEpochs>,
+    // Retained epoch walks must not pull the large input keys into cache.
+    layout_inputs: Vec<Option<LayoutInputKey>>,
     computed_roots: Vec<LayoutId>,
     font_generation: Option<usize>,
 }
@@ -59,6 +61,7 @@ impl Default for LayoutCache {
             request_scope: None,
             epoch: 1,
             nodes: Vec::new(),
+            layout_inputs: Vec::new(),
             computed_roots: Vec::new(),
             font_generation: None,
         }
@@ -72,7 +75,6 @@ struct NodeEpochs {
     last_computed: u64,
     last_retained: u64,
     owner: (usize, usize),
-    layout_inputs: Option<LayoutInputKey>,
 }
 
 fn node_index(id: NodeId) -> usize {
@@ -674,9 +676,7 @@ impl TaffyLayoutEngine {
         };
         let id = if let Some(id) = existing {
             let inputs_match = layout_inputs.as_ref().is_some_and(|inputs| {
-                self.cache.as_ref().expect(EXPECT_MESSAGE).nodes[node_index(id.0)]
-                    .layout_inputs
-                    .as_ref()
+                self.cache.as_ref().expect(EXPECT_MESSAGE).layout_inputs[node_index(id.0)].as_ref()
                     == Some(inputs)
             });
             if !inputs_match {
@@ -714,6 +714,7 @@ impl TaffyLayoutEngine {
             let slot = node_index(id.0);
             if slot >= cache.nodes.len() {
                 cache.nodes.resize_with(slot + 1, NodeEpochs::default);
+                cache.layout_inputs.resize_with(slot + 1, || None);
             }
             if existing.is_none() {
                 cache.nodes[slot] = NodeEpochs::default();
@@ -721,7 +722,7 @@ impl TaffyLayoutEngine {
             }
             cache.nodes[slot].last_requested = cache.epoch;
             cache.nodes[slot].last_retained = 0;
-            cache.nodes[slot].layout_inputs = layout_inputs;
+            cache.layout_inputs[slot] = layout_inputs;
         }
         (id, existing.is_some())
     }
@@ -897,7 +898,7 @@ impl TaffyLayoutEngine {
             self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
             self.layout_changes += 1;
             if let Some(cache) = self.cache.as_mut() {
-                cache.nodes[node_index(id.0)].layout_inputs = None;
+                cache.layout_inputs[node_index(id.0)] = None;
             }
         }
     }
@@ -1699,6 +1700,48 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_input_storage_keeps_epoch_records_small() {
+        assert_eq!(
+            std::mem::size_of::<NodeEpochs>(),
+            4 * std::mem::size_of::<u64>() + 2 * std::mem::size_of::<usize>(),
+        );
+        eprintln!(
+            "NodeEpochs={} LayoutInputKey={} Option<LayoutInputKey>={} LayoutCache={} TaffyLayoutEngine={} RequestedStyle={}",
+            std::mem::size_of::<NodeEpochs>(),
+            std::mem::size_of::<LayoutInputKey>(),
+            std::mem::size_of::<Option<LayoutInputKey>>(),
+            std::mem::size_of::<LayoutCache>(),
+            std::mem::size_of::<TaffyLayoutEngine>(),
+            std::mem::size_of::<RequestedStyle>(),
+        );
+    }
+
+    #[gpui::test]
+    fn retained_epoch_walks_preserve_layout_input_storage(cx: &mut crate::TestAppContext) {
+        cx.add_empty_window().update(|window, cx| {
+            let mut engine = TaffyLayoutEngine::new();
+            engine.enable_cache();
+            engine.set_request_scope(&crate::element::InternedHandle::for_test(1, 0));
+            let root = engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[]);
+            engine.compute_layout(root, AvailableSpace::min_size(), window, cx);
+            engine.clear();
+            let cache = engine.cache.as_ref().unwrap();
+            let inputs = cache.layout_inputs.clone();
+            let capacity = cache.layout_inputs.capacity();
+            assert_eq!(cache.layout_inputs.len(), cache.nodes.len());
+            for _ in 0..4 {
+                engine.retain_subtree(root);
+                engine.compute_layout(root, AvailableSpace::min_size(), window, cx);
+                engine.clear();
+                let cache = engine.cache.as_ref().unwrap();
+                assert_eq!(cache.layout_inputs, inputs);
+                assert_eq!(cache.layout_inputs.capacity(), capacity);
+                assert_eq!(cache.layout_inputs.len(), cache.nodes.len());
+            }
+        });
+    }
 
     #[test]
     fn equal_layout_inputs_have_equal_conversions() {
