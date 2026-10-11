@@ -937,6 +937,17 @@ fn main() {
                     }
                 }
             }),
+            Some(request)
+                if request.kind.is_none()
+                    && request.remote_connection.is_none()
+                    && request.diff_paths.is_empty()
+                    && !request.open_paths.is_empty() =>
+            {
+                let app_state = app_state.clone();
+                cx.spawn(async move |cx| {
+                    restore_session_and_handle_open_request(request, app_state, cx).await
+                })
+            }
             Some(request) => {
                 handle_open_request(request, app_state.clone(), cx);
                 Task::ready(())
@@ -1366,6 +1377,24 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         })
         .detach();
     }
+}
+
+/// Restores the last session before handling a request to open local paths, so that
+/// launching Zed with a file (e.g. from the OS file manager) adds it to the restored
+/// workspace instead of replacing the previous session.
+pub(crate) async fn restore_session_and_handle_open_request(
+    request: OpenRequest,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) {
+    if restorable_workspace_locations(cx, &app_state)
+        .await
+        .is_some()
+        && let Err(e) = restore_or_create_workspace(app_state.clone(), cx).await
+    {
+        log::error!("Failed to restore session before opening paths: {e:#}");
+    }
+    cx.update(|cx| handle_open_request(request, app_state, cx));
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
