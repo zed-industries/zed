@@ -18,6 +18,13 @@ VERSION=${CEDIAN_VERSION:-0.1.0}
 IDENTITY=${CODESIGN_IDENTITY:-}
 BUNDLE_ID=${CEDIAN_BUNDLE_ID:-dev.cedian.Cedian}
 
+# Two packages ship a binary named `cedian` (the app in `zed`, the headless CLI
+# in `cedian_cli`), so they share one output path and the last build wins. The
+# bundle builds the app itself unless `CEDIAN_NO_BUILD=1`.
+if [ "${CEDIAN_NO_BUILD:-0}" != 1 ]; then
+  cargo build -j4 --release -p zed --bin cedian --features gpui_platform/runtime_shaders
+fi
+
 [ -x "$BIN" ] || {
   echo "cedian-bundle: $BIN is not built; build it with:" >&2
   echo "  cargo build -j4 --release -p zed --bin cedian --features gpui_platform/runtime_shaders" >&2

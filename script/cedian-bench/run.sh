@@ -316,6 +316,14 @@ tapped() {
 run() {
   local id=$1 dir cfg start end out verdict omp results reserved tap used observed
   [ "${BENCH_GO:-}" = 1 ] || { echo "run needs the owner's go: BENCH_GO=1 (ADR-0037)" >&2; exit 2; }
+  # Two packages ship a binary named `cedian` (the app in `zed`, the headless
+  # CLI in `cedian_cli`) and they share one output path, so building the app
+  # after the CLI leaves the app where a run expects the CLI. `prompt` is the
+  # CLI's subcommand; the app would take it as a path to open.
+  "$CARGO_TARGET_DIR/release/cedian" --help 2>&1 | grep -q "prompt" || {
+    echo "refused: $CARGO_TARGET_DIR/release/cedian is not the cedian CLI (the app's bin has the same name); build it with: cargo build -q --release -p cedian_cli" >&2
+    exit 2
+  }
   task "$id"
   preflight 5
   reserved=$(admit "$id-$MANDATE" 1 1) || stop_pass $?
