@@ -15,13 +15,19 @@ CAP = [sys.executable, os.path.join(BENCH, "cap.py")]
 RUN = os.path.join(BENCH, "run.sh")
 PIN = json.load(open(os.path.join(ROOT, "vendor/omp-revision.json")))["spikeVerified"]["ompVersion"]
 
+MODEL = "opencode-go/muse-spark-1.3-contributor"
+
+# `config` and `models` answer the harness's pre-turn checks; BENCH_FAKE_MODEL
+# and BENCH_FAKE_CATALOG let a test make either one disagree.
 FAKE_OMP = """#!/bin/sh
-if [ "$1" = --version ]; then echo omp/%s; exit 0; fi
+if [ "$1" = --version ]; then echo omp/%(pin)s; exit 0; fi
+if [ "$1" = config ]; then echo "{\\"value\\":{\\"default\\":\\"${BENCH_FAKE_MODEL:-%(model)s}\\"}}"; exit 0; fi
+if [ "$1" = models ]; then echo "{\\"models\\":[{\\"provider\\":\\"opencode-go\\",\\"id\\":\\"muse-spark-1.3-contributor\\",\\"selector\\":\\"${BENCH_FAKE_CATALOG:-%(model)s}\\"}]}"; exit 0; fi
 python3 -c 'import json,sys; print(json.dumps({"type": "args", "argv": sys.argv[1:]}))' "$@"
 echo '{"type":"response","command":"get_state","data":{"model":{"provider":"p","id":"m"}}}'
 echo '{"type":"agent_start"}'
 echo '{"type":"agent_start"}'
-""" % PIN
+""" % {"pin": PIN, "model": MODEL}
 
 
 class Bench(unittest.TestCase):
@@ -51,6 +57,17 @@ class Bench(unittest.TestCase):
         self.assertEqual(self.cap("admit", self.ledger, 46, "s", 1, 0).returncode, 2)
         r = self.bench("turns", "all", MAX_TURNS="46")
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+
+    def test_the_model_check_needs_the_pass_model_in_omps_catalog(self):
+        r = self.bench("model", "all")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(MODEL, r.stdout)
+        r = self.bench("model", "all", BENCH_FAKE_CATALOG="opencode-go/other")
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn(MODEL, r.stderr)
+        r = self.bench("model", "all", BENCH_FAKE_MODEL="opencode-go/other")
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("S2 baseline", r.stderr)
 
     def test_the_ledger_is_keyed_by_pass_outside_tmp(self):
         r = self.bench("turns", "all", BENCH_RESULTS="", HOME=self.dir)

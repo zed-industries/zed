@@ -11,6 +11,8 @@
 #                                        then remove the worktree. One model turn per task.
 #   BENCH_GO=1 script/cedian-bench/run.sh record <lane|all>
 #                                        re-record one hand-cut fixture (ADR-0058 decision 5).
+#   script/cedian-bench/run.sh model all  the pin, and the pass's model in OMP's
+#                                        own catalog. No model, no turn.
 #   script/cedian-bench/run.sh plan all  the live pass in order, with its model turns.
 #   script/cedian-bench/run.sh turns all the turns this pass has used.
 #   script/cedian-bench/run.sh compare <on|off>  results against the S2 baseline.
@@ -206,14 +208,35 @@ pin_check() {
   }
 }
 
-# The model OMP would use, read from the person's config; never written.
+# The model OMP would use, read from the person's config; never written. It
+# must also be in OMP's own catalog (ADR-0059 decision 3: the smoke checks the
+# pass's model before a turn), or every step would fail after its turns.
 model_check() {
-  local model
+  local model listed verdict
   model=$("$OMP" config get modelRoles --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"].get("default",""))')
   [ "$model" = "$BENCH_MODEL" ] || {
     echo "refused: OMP's default model is '$model', the S2 baseline ran $BENCH_MODEL (ADR-0058 decision 1)" >&2
     exit 2
   }
+  listed=$("$OMP" models ls --json 2>/dev/null) || listed=""
+  verdict=$(printf '%s' "$listed" | python3 -c '
+import json, sys
+try:
+    models = json.load(sys.stdin)["models"]
+except Exception:
+    print("unreadable")
+    raise SystemExit(0)
+print("listed" if any(m.get("selector") == sys.argv[1] for m in models) else "missing")
+' "$BENCH_MODEL")
+  case $verdict in
+  listed) ;;
+  missing)
+    echo "refused: OMP's catalog has no $BENCH_MODEL; a step would spend its turns finding out" >&2
+    exit 2 ;;
+  *)
+    echo "refused: could not read OMP's model catalog, so $BENCH_MODEL is unverified" >&2
+    exit 2 ;;
+  esac
 }
 
 # What cedian spawns, written beside the tap dir `$2`: the pin, its rpc stdout
@@ -382,6 +405,7 @@ record() {
 plan() {
   local total=0 l m id
   echo "# the live pass, in order (MAX_TURNS=$MAX_TURNS); a step starts only if its estimate + 1 (+ 1 with a reviewer) fits, and books what its OMP processes ran"
+  echo "# first, no turns: BENCH_PASS=u12 script/cedian-bench/run.sh model all   # the pin, and the pass's model in OMP's catalog"
   for l in $LANES; do
     lane "$l"; total=$((total + LANE_TURNS))
     echo "BENCH_GO=1 BENCH_PASS=u12 script/cedian-bench/run.sh record $l   # $LANE_TURNS turn(s), total $total"
@@ -462,7 +486,8 @@ run)
   pin_check; model_check
   (cd "$ROOT" && cargo build -q --release -p cedian_cli)
   [ -x "$CARGO_TARGET_DIR/release/cedian" ] || { echo "no cedian binary at $CARGO_TARGET_DIR/release" >&2; exit 2; } ;;
-record) ids=$([ "$target" = all ] && echo "$LANES" || echo "$target"); pin_check ;;
+record) ids=$([ "$target" = all ] && echo "$LANES" || echo "$target"); pin_check; model_check ;;
+model) pin_check; model_check; echo "OMP $PIN carries the pass's model, $BENCH_MODEL"; exit 0 ;;
 plan|turns) "$mode"; exit 0 ;;
 wrapper) wrapper "$target" "${BENCH_TAP:?BENCH_TAP: the dir the wrapper taps into}"; exit 0 ;;
 compare) compare "$target"; exit 0 ;;
