@@ -3912,7 +3912,7 @@ impl AgentCodeSpanResolver {
         worktree_abs_path: &Path,
         path_style: PathStyle,
     ) -> Vec<Arc<RelPath>> {
-        let relative_path: Option<Arc<RelPath>> = if path_style.has_root(path) {
+        let relative_path: Option<Arc<RelPath>> = if path_style.is_absolute(path) {
             path_style
                 .strip_prefix(path, worktree_abs_path)
                 .map(std::borrow::Cow::into_owned)

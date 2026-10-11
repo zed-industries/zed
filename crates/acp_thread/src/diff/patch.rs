@@ -96,7 +96,7 @@ fn patch_path(path: Option<&str>, prefix: &str) -> Result<Option<String>> {
     let path = path.strip_prefix(prefix).unwrap_or(path);
     ensure!(
         PathStyle::Windows.has_root(Path::new(path)),
-        "patch path must be absolute: {path}"
+        "patch path must have root: {path}"
     );
     ensure!(!path.contains('\0'), "patch path contains NUL");
     Ok(Some(path.to_owned()))

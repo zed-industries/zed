@@ -1742,7 +1742,7 @@ impl ToolCall {
             .update(cx, |project, cx| {
                 if let Some(path) = project.project_path_for_absolute_path(&location.path, cx) {
                     Some(project.open_buffer(path, cx))
-                } else if project.path_style(cx).has_root(location.path.as_ref()) {
+                } else if project.path_style(cx).is_absolute(&location.path) {
                     Some(project.open_local_buffer(&location.path, cx))
                 } else {
                     None

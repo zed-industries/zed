@@ -518,7 +518,7 @@ fn validate_trust_scope(
         ),
         _ => PathBuf::from(trimmed),
     };
-    if !path_style.has_root(&expanded) {
+    if !path_style.is_absolute(&expanded) {
         return Err("Enter an absolute folder path".into());
     }
     if !project.starts_with(&expanded) {

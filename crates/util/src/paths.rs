@@ -1401,7 +1401,7 @@ impl UrlExt for url::Url {
 
             let path = String::from_utf8(bytes).map_err(|_| ())?;
             debug_assert!(
-                PathStyle::Unix.has_root(Path::new(&path)),
+                PathStyle::Unix.is_absolute(Path::new(&path)),
                 "to_file_path() failed to produce an absolute Path"
             );
 
@@ -1472,7 +1472,7 @@ impl UrlExt for url::Url {
                 );
             }
             debug_assert!(
-                PathStyle::Windows.has_root(Path::new(&string)),
+                PathStyle::Windows.is_absolute(Path::new(&string)),
                 "to_file_path() failed to produce an absolute Path"
             );
             let path = PathBuf::from(string);
