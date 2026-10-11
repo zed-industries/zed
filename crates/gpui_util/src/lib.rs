@@ -154,6 +154,12 @@ pub fn get_windows_system_shell() -> String {
     get_powershell().unwrap_or_else(|| (*CMD).clone())
 }
 
+#[inline]
+pub const fn is_utf8_char_boundary(u8: u8) -> bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    (u8 as i8) >= -0x40
+}
+
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
     *value += T::from(1);

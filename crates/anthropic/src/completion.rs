@@ -290,6 +290,12 @@ pub fn into_anthropic(
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
+    let requires_adaptive_thinking = model == "claude-opus-5-5";
+    let mode = if requires_adaptive_thinking {
+        AnthropicModelMode::AdaptiveThinking
+    } else {
+        mode
+    };
     let max_output_tokens = request
         .max_output_tokens
         .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
@@ -429,6 +435,14 @@ pub fn into_anthropic(
         None
     };
 
+    // Opus 5.5 always uses adaptive thinking, which does not accept sampling controls.
+    // <https://platform.claude.com/docs/en/models/opus-5-5/overview>
+    let temperature = if requires_adaptive_thinking {
+        None
+    } else {
+        request.temperature.or(Some(default_temperature))
+    };
+
     Ok(crate::Request {
         model,
         messages: new_messages,
@@ -473,7 +487,7 @@ pub fn into_anthropic(
         },
         stop_sequences: Vec::new(),
         speed: request.speed.map(Into::into),
-        temperature: request.temperature.or(Some(default_temperature)),
+        temperature,
         top_k: None,
         top_p: None,
         context_management: request.compact_at_tokens.map(|value| ContextManagement {
@@ -1120,6 +1134,7 @@ mod tests {
         // its requests opt into dropping invalidated blocks instead. Models
         // without the prefix-binding check must not receive the beta field.
         for (model, expects_block_binding) in [
+            ("claude-opus-5-5", true),
             ("claude-fable-5-1", true),
             ("claude-fable-5", false),
             ("claude-mythos-5-1", false),
@@ -1189,10 +1204,11 @@ mod tests {
         // (model, expects_explicit_opt_out): Claude Opus 5 thinks by default
         // when the `thinking` field is omitted, so suppressing thinking
         // requires sending `{"type": "disabled"}`. Earlier Opus models treat
-        // omission as "off", and Fable rejects `disabled` outright, so both
-        // must keep omitting the field.
+        // omission as "off", while Opus 5.5 and Fable reject `disabled`
+        // outright, so those models must keep omitting the field.
         for (model, expects_explicit_opt_out) in [
             ("claude-opus-5", true),
+            ("claude-opus-5-5", false),
             ("claude-opus-4-8", false),
             ("claude-fable-5", false),
         ] {
@@ -1244,6 +1260,12 @@ mod tests {
                 assert!(
                     anthropic_request.thinking.is_none(),
                     "{model} should omit the thinking field entirely"
+                );
+            }
+            if model == "claude-opus-5-5" {
+                assert!(
+                    anthropic_request.temperature.is_none(),
+                    "{model} must omit temperature because adaptive thinking is always on"
                 );
             }
         }

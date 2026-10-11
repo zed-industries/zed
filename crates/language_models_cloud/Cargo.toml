@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
+cloud_api_client.workspace = true
 cloud_llm_client.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }

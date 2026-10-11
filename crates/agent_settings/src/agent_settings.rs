@@ -213,6 +213,7 @@ pub struct AgentSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub flexible: bool,
+    pub max_idle_retained_threads: usize,
     pub threads_sidebar: ThreadsSidebarSettings,
     pub default_width: Pixels,
     pub default_height: Pixels,
@@ -263,7 +264,7 @@ impl AgentSettings {
         self.enabled && !DisableAiSettings::get_global(cx).disable_ai
     }
 
-    pub fn temperature_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<f32> {
+    pub fn temperature_for_model(model: &LanguageModel, cx: &App) -> Option<f32> {
         let settings = Self::get_global(cx);
         for setting in settings.model_parameters.iter().rev() {
             if let Some(provider) = &setting.provider
@@ -301,7 +302,7 @@ impl AgentSettings {
 }
 
 pub fn language_model_to_selection(
-    model: &Arc<dyn LanguageModel>,
+    model: &LanguageModel,
     override_selection: Option<&LanguageModelSelection>,
 ) -> LanguageModelSelection {
     let provider = model.provider_id().0.to_string().into();
@@ -773,6 +774,7 @@ impl Settings for AgentSettings {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
+            max_idle_retained_threads: agent.max_idle_retained_threads.unwrap(),
             threads_sidebar: ThreadsSidebarSettings {
                 auto_open: threads_sidebar.auto_open.unwrap(),
                 position: threads_sidebar.position.unwrap(),
@@ -1312,6 +1314,40 @@ mod tests {
                 assert_eq!(settings.threads_sidebar.default_width, expected_width);
                 assert_eq!(settings.threads_sidebar.auto_open, expected_auto_open);
             }
+        }
+    }
+
+    #[gpui::test]
+    fn test_max_idle_retained_threads_defaults_to_five_and_follows_user_settings(
+        cx: &mut gpui::App,
+    ) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        assert_eq!(
+            AgentSettings::get_global(cx).max_idle_retained_threads,
+            5,
+            "default.json supplies the retained thread limit"
+        );
+
+        for (content, expected) in [
+            (r#"{ "agent": { "max_idle_retained_threads": 0 } }"#, 0),
+            (r#"{ "agent": { "max_idle_retained_threads": 12 } }"#, 12),
+            (r#"{ "agent": { "max_idle_retained_threads": null } }"#, 5),
+            (r#"{ "agent": {} }"#, 5),
+        ] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(content, cx)
+                    .expect("user settings should load");
+            });
+            assert_eq!(
+                AgentSettings::get_global(cx).max_idle_retained_threads,
+                expected,
+                "{content}"
+            );
         }
     }
 
