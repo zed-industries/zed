@@ -279,12 +279,23 @@ need_pass() {
   [ -n "$PASS" ] || { echo "BENCH_PASS names this pass (its ledger and results)" >&2; exit 2; }
 }
 
-# Reserve `what`'s worst case, or stop the pass before it (exit 0, a partial
-# exit, ADR-0058 decision 5). Prints the reservation.
+# A step that cannot be admitted ends the pass: 3 is the cap (a partial exit,
+# ADR-0058 decision 5), anything else is a refusal (a broken ledger, a cap
+# mismatch) and stops with its own code. `admit` returns 3 rather than exiting,
+# because inside `reserved=$(admit …)` an `exit` only leaves the subshell and
+# the step then runs unbooked.
+stop_pass() { [ "$1" = 3 ] && exit 0; exit "$1"; }
+
+# Reserve `what`'s worst case, or stop the pass before it. Prints the
+# reservation.
 admit() {
   local r=0 out
   out=$($CAP admit "$LEDGER" "$MAX_TURNS" "$1" "$2" "$3") || r=$?
-  case $r in 0) echo "$out" ;; 3) echo "$out" >&2; exit 0 ;; *) exit "$r" ;; esac
+  case $r in
+  0) echo "$out" ;;
+  3) echo "$out" >&2; return 3 ;;
+  *) return "$r" ;;
+  esac
 }
 
 # Book what `step` used; stop the pass when the cap is reached.
@@ -307,7 +318,7 @@ run() {
   [ "${BENCH_GO:-}" = 1 ] || { echo "run needs the owner's go: BENCH_GO=1 (ADR-0037)" >&2; exit 2; }
   task "$id"
   preflight 5
-  reserved=$(admit "$id-$MANDATE" 1 1) || exit $?
+  reserved=$(admit "$id-$MANDATE" 1 1) || stop_pass $?
   tap=$PASS_DIR/taps/$MANDATE/$id
   rm -rf "$tap"
   omp=$(wrapper "$MANDATE" "$tap")
@@ -390,7 +401,7 @@ record() {
   [ "${BENCH_GO:-}" = 1 ] || { echo "record needs the owner's go: BENCH_GO=1 (ADR-0058 decision 5)" >&2; exit 2; }
   lane "$name"
   preflight 9
-  reserved=$(admit "record-$name" "$LANE_TURNS" "$LANE_REVIEWER") || exit $?
+  reserved=$(admit "record-$name" "$LANE_TURNS" "$LANE_REVIEWER") || stop_pass $?
   tap=$PASS_DIR/taps/record/$name
   rm -rf "$tap"
   omp=$(wrapper on "$tap")

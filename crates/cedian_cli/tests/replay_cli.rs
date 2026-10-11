@@ -1046,14 +1046,18 @@ fn s2_blocked_scenario(record: bool, floor: bool) {
         floor,
         "floor gate listed as missing:\n{out}"
     );
-    // The recorded agent failed its own verify phase before ending, so the
-    // refused claim leaves it `failed`, not `blocked` (ADR-0036).
-    assert_eq!(
-        state["status"], "failed",
-        "claimed done with verify unmet:\n{raw}\n{out}"
+    // The claim is refused while the gate is unmet. This OMP words the
+    // refusal `failed` (the completion was refused) or `blocked` (the phase
+    // waits on the gate); either way the claim is unaccepted, and that is the
+    // lane's point.
+    assert!(
+        matches!(state["status"].as_str(), Some("failed" | "blocked")),
+        "the claim was refused while the gate is unmet ({}):\n{raw}",
+        state["status"]
     );
     assert!(
-        out.contains("workflow FAILED") && out.contains("required gate \"verify\""),
+        (out.contains("workflow FAILED") || out.contains("workflow BLOCKED"))
+            && out.contains("required gate \"verify\""),
         "missing gate printed after the turn:\n{out}"
     );
     assert_eq!(

@@ -95,6 +95,16 @@ class Bench(unittest.TestCase):
         ).stdout
         self.assertEqual(out.strip(), f"omp/{PIN}")
 
+    def test_a_spent_ledger_stops_a_lane_before_it_runs(self):
+        # A pass at its cap stops instead of running the step unbooked: the
+        # reservation is captured, so an `exit` inside it would only leave the
+        # subshell (`stop_pass` returns 3 and the caller ends the pass).
+        self.cap("admit", self.ledger, 46, "seed", 45, 0)  # reserves all 46
+        r = self.bench("record", "cli", BENCH_GO="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("turn cap", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
     def test_the_ledger_is_keyed_by_pass_outside_tmp(self):
         r = self.bench("turns", "all", BENCH_RESULTS="", HOME=self.dir)
         self.assertIn(os.path.join(self.dir, ".cache/cedian-bench/pass/turns.log"), r.stdout, r.stderr)
