@@ -16,11 +16,20 @@
 #   script/cedian-bench/run.sh compare <on|off>  results against the S2 baseline.
 #   script/cedian-bench/run.sh snapshot <before|after>  the person's ~/.omp around the pass.
 #
-# The pass stops before a step that would take it past MAX_TURNS (default 40)
-# model turns; the ledger is $BENCH_WORK/turns.log (delete it to start a new pass).
-# MANDATE=off runs OMP with `--append-system-prompt ""`, as the reviewer is run,
+# A pass is named by BENCH_PASS (required for run, record, turns, compare). Its
+# turn ledger and results live in $BENCH_RESULTS/<pass>/ (default
+# ~/.cache/cedian-bench), never in a temp dir a reboot clears. The cap is
+# MAX_TURNS (default 45, at most 45): a step starts only if its worst case fits
+# (estimate + 1, + 1 if its turn may spawn a reviewer), under flock; after it,
+# the turns booked are the `agent_start`s every OMP process it started printed
+# (script/cedian-bench/cap.py), and the pass stops once the cap is reached.
+# Every OMP cedian starts goes through a wrapper that taps its rpc stdout;
+# MANDATE=off also adds `--append-system-prompt ""`, as the reviewer is run,
 # so ~/.omp/agent/APPEND_SYSTEM.md does not reach it.
-# Work dir: $BENCH_WORK (default /tmp/cedian-bench). Results: $BENCH_WORK/results/<mandate>/<id>.json.
+# A run or fixture whose OMP reported a model other than BENCH_MODEL is not
+# scored, compared or written.
+# Work dir (worktrees, build): $BENCH_WORK (default /tmp/cedian-bench).
+# Results: $BENCH_RESULTS/<pass>/results/<mandate>/<id>.json.
 set -euo pipefail
 
 ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
@@ -38,8 +47,13 @@ PIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["spikeVeri
 OMP=${CEDIAN_OMP_BINARY:-$HOME/.local/bin/omp}
 # The S2 baseline's model (ADR-0058 decision 1): a run on another is refused.
 BENCH_MODEL=${BENCH_MODEL:-opencode-go/muse-spark-1.3-contributor}
-MAX_TURNS=${MAX_TURNS:-40}
-LEDGER=$WORK/turns.log
+MAX_TURNS=${MAX_TURNS:-45}
+[ "$MAX_TURNS" -le 45 ] 2>/dev/null || { echo "refused: MAX_TURNS=$MAX_TURNS; the cap is at most 45" >&2; exit 2; }
+RESULTS_ROOT=${BENCH_RESULTS:-$HOME/.cache/cedian-bench}
+PASS=${BENCH_PASS:-}
+PASS_DIR=$RESULTS_ROOT/$PASS
+LEDGER=$PASS_DIR/turns.log
+CAP="python3 $BENCH/cap.py"
 S2_RESULTS=${S2_RESULTS:-$TASKS/docs/benchmarks/2026-10-07}
 ALL="b1 b2 b3 b4 b5 b6 b7 b8 b9 b10"
 # B8 is open work: it starts where the harness was written.
@@ -202,19 +216,28 @@ model_check() {
   }
 }
 
-# What cedian spawns: the pin itself, or a wrapper that empties the appended
-# system prompt for rpc runs, as the reviewer's spawn profile does.
-omp_for_mandate() {
-  case ${MANDATE:-} in
-  on) echo "$OMP" ;;
-  off)
-    local w=$WORK/omp-mandate-off
-    printf '#!/bin/sh\ncase "$1" in --mode) exec "%s" "$@" --append-system-prompt "" ;; esac\nexec "%s" "$@"\n' \
-      "$OMP" "$OMP" > "$w"
-    chmod 755 "$w"
-    echo "$w" ;;
+# What cedian spawns, written beside the tap dir `$2`: the pin, its rpc stdout
+# teed into one file per process under `$2`, with `--append-system-prompt ""`
+# added wherever `--mode` is when the mandate is off (as the reviewer's spawn
+# profile does). Prints the wrapper's path.
+wrapper() {
+  local mandate=$1 tap=$2 w=$2.omp off
+  case $mandate in
+  on) off=0 ;; off) off=1 ;;
   *) echo "MANDATE must be on or off (ADR-0058 decision 2)" >&2; exit 2 ;;
   esac
+  mkdir -p "$tap"
+  cat > "$w" <<WRAP
+#!/bin/bash
+rpc=0
+for a in "\$@"; do case \$a in --mode|--mode=*) rpc=1 ;; esac; done
+[ \$rpc = 1 ] || exec $(printf %q "$OMP") "\$@"
+exec > >(tee $(printf %q "$tap")/omp.\$\$.jsonl)
+[ $off = 1 ] && exec $(printf %q "$OMP") "\$@" --append-system-prompt ""
+exec $(printf %q "$OMP") "\$@"
+WRAP
+  chmod 755 "$w"
+  echo "$w"
 }
 
 # Free disk before a step: refuse under 10 GB. `need` is what the step adds.
@@ -228,28 +251,43 @@ preflight() {
   echo "disk: ${free} GB free; this step needs about ${need} GB" >&2
 }
 
-turns_used() { if [ -f "$LEDGER" ]; then awk '{ n += $2 } END { print n + 0 }' "$LEDGER"; else echo 0; fi; }
-
-# Exit 0 without starting `what` when its `n` turns would pass the cap.
-admit() {
-  local what=$1 n=$2 used
-  used=$(turns_used)
-  if [ $((used + n)) -gt "$MAX_TURNS" ]; then
-    echo "turn cap: $used of $MAX_TURNS used; $what needs $n; stopping before it (partial exit, ADR-0058 decision 5)"
-    exit 0
-  fi
+need_pass() {
+  [ -n "$PASS" ] || { echo "BENCH_PASS names this pass (its ledger and results)" >&2; exit 2; }
 }
 
-spend() { printf '%s %s\n' "$1" "$2" >> "$LEDGER"; }
+# Reserve `what`'s worst case, or stop the pass before it (exit 0, a partial
+# exit, ADR-0058 decision 5). Prints the reservation.
+admit() {
+  local r=0 out
+  out=$($CAP admit "$LEDGER" "$MAX_TURNS" "$1" "$2" "$3") || r=$?
+  case $r in 0) echo "$out" ;; 3) echo "$out" >&2; exit 0 ;; *) exit "$r" ;; esac
+}
+
+# Book what `step` used; stop the pass when the cap is reached.
+book() {
+  local r=0
+  $CAP book "$LEDGER" "$@" || r=$?
+  case $r in 0) ;; 3) exit 0 ;; *) exit "$r" ;; esac
+}
+
+# Turns the step's OMP processes started, or its reservation when the tap
+# saw none (nothing proves the step used none).
+tapped() {
+  local n
+  n=$($CAP count "$1")
+  if [ "$n" -gt 0 ]; then echo "$n"; else echo "$2"; fi
+}
 
 run() {
-  local id=$1 dir cfg start end out verdict omp results
+  local id=$1 dir cfg start end out verdict omp results reserved tap used observed
   [ "${BENCH_GO:-}" = 1 ] || { echo "run needs the owner's go: BENCH_GO=1 (ADR-0037)" >&2; exit 2; }
   task "$id"
-  admit "$id (mandate ${MANDATE})" 1
   preflight 5
-  omp=$(omp_for_mandate)
-  results=$WORK/results/$MANDATE
+  reserved=$(admit "$id-$MANDATE" 1 1)
+  tap=$PASS_DIR/taps/$MANDATE/$id
+  rm -rf "$tap"
+  omp=$(wrapper "$MANDATE" "$tap")
+  results=$PASS_DIR/results/$MANDATE
   mkdir -p "$results"
   dir=$(worktree "$id-run" "$BASE")
   [ "$id" = b6 ] && git show "$REF:crates/cedian_cli/tests/fixtures/p5_worktree.jsonl" \
@@ -259,7 +297,6 @@ run() {
   # The agent must run cargo: the run uses the owner's OMP config (ADR-0035).
   printf 'schema = 1\n[projects."%s"]\npolicy = "omp"\n' "$dir" > "$cfg"
   : > "$results/$id.timing.jsonl"
-  spend "$id-$MANDATE" 1
   start=$(python3 -c 'import time; print(int(time.time()*1000))')
   out=$(CEDIAN_OMP_BINARY=$omp CEDIAN_CONFIG=$cfg CEDIAN_WORKDIR=$dir \
         CEDIAN_SESSION_DIR=$WORK/sessions/$MANDATE/$id CEDIAN_STATE_DIR=$WORK/state/$MANDATE/$id \
@@ -267,11 +304,18 @@ run() {
         "$CARGO_TARGET_DIR/release/cedian" prompt "$PROMPT" 2>&1) || true
   end=$(python3 -c 'import time; print(int(time.time()*1000))')
   printf '%s\n' "$out" > "$WORK/logs/$id-$MANDATE-run.out"
-  verdict=$(cd "$dir" && verdict "$id" 2>"$WORK/logs/$id-$MANDATE-predicate.log")
+  used=$(tapped "$tap" "$reserved")
+  observed=$($CAP models "$tap")
+  if [ "$observed" = "$BENCH_MODEL" ]; then
+    verdict=$(cd "$dir" && verdict "$id" 2>"$WORK/logs/$id-$MANDATE-predicate.log")
+  else
+    echo "$id: OMP ran '$observed', not $BENCH_MODEL: not scored" >&2
+    verdict=refused_model
+  fi
   (cd "$dir" && git diff > "$WORK/logs/$id-$MANDATE.patch") || true
-  python3 - "$id" "$verdict" "$((end - start))" "$WORK" "$results" "$MANDATE" "$OMP" "$BENCH_MODEL" <<'PY'
+  python3 - "$id" "$verdict" "$((end - start))" "$WORK" "$results" "$MANDATE" "$OMP" "$BENCH_MODEL" "$observed" "$used" <<'PY'
 import json, re, subprocess, sys
-id, verdict, wall, work, results, mandate, omp_bin, model = sys.argv[1:9]
+id, verdict, wall, work, results, mandate, omp_bin, model, observed, used = sys.argv[1:11]
 wall = int(wall)
 out = open(f"{work}/logs/{id}-{mandate}-run.out").read()
 timing = [json.loads(l) for l in open(f"{results}/{id}.timing.jsonl") if l.strip()]
@@ -282,11 +326,13 @@ json.dump({
     "time_to_usable_result_ms": wall if verdict == "pass" else None,
     "claimed_done": claimed, "false_done": claimed and verdict == "fail",
     "omp_version": omp, "omp_binary": omp_bin, "model": model, "mandate": mandate,
+    "observed_models": observed.split(), "model_turns": int(used),
     "timing": timing,
 }, open(f"{results}/{id}.json", "w"), indent=2)
 print(f"{id} (mandate {mandate}): predicate {verdict}, wall {wall} ms, claimed_done {claimed}")
 PY
   drop "$dir"
+  book "$id-$MANDATE" "$reserved" "$used"
 }
 
 # Record lanes: the env that arms one, the test that records it, and its
@@ -302,56 +348,64 @@ lane() {
   inline_edit) LANE_TURNS=2 ;;
   *) echo "unknown lane $1" >&2; exit 2 ;;
   esac
+  # A turn of these lanes may spawn a reviewer: one more model run.
+  case $1 in shell|s3review|s3same|review) LANE_REVIEWER=1 ;; *) LANE_REVIEWER=0 ;; esac
   case $1 in
   workflow|review|turn_lifecycle|inline_edit)
     LANE_ENV="CEDIAN_U12_RECORD=$1" LANE_TEST="-p cedian_panel --test $1" ;;
   esac
 }
 # Frame rewrites first (edit_frames.py, the U8-U10 cuts), then the tool-list-only
-# edits; s2profile last, the first cut when the cap is near (37 LLM calls).
+# edits; s2profile last. The lanes plus both arms are 38 turns, so the 45-turn
+# cap (ADR-0059 decision 4) leaves 7 for the live smoke.
 LANES="cli shell s2 s3review s3same workflow review inline_edit turn_lifecycle channel worktree p8 p8deny s2profile"
 
 record() {
-  local name=$1 out used
+  local name=$1 out printed used reserved tap omp
   [ "${BENCH_GO:-}" = 1 ] || { echo "record needs the owner's go: BENCH_GO=1 (ADR-0058 decision 5)" >&2; exit 2; }
   lane "$name"
-  admit "lane $name" "$LANE_TURNS"
   preflight 9
+  reserved=$(admit "record-$name" "$LANE_TURNS" "$LANE_REVIEWER")
+  tap=$PASS_DIR/taps/record/$name
+  rm -rf "$tap"
+  omp=$(wrapper on "$tap")
   out=$WORK/logs/record-$name.log
   # shellcheck disable=SC2086
-  (cd "$ROOT" && env $LANE_ENV CEDIAN_RECORD_OMP="$OMP" CARGO_PROFILE_DEV_DEBUG=line-tables-only \
-     cargo test -j4 $LANE_TEST) 2>&1 | tee "$out" || true
-  used=$(sed -n 's/.*model turns: \([0-9][0-9]*\).*/\1/p' "$out" | awk '{ n += $1 } END { print n + 0 }')
-  # A lane that died before it printed may still have spent its turns.
-  [ "$used" -gt 0 ] || used=$LANE_TURNS
-  spend "record-$name" "$used"
-  echo "lane $name: $used model turn(s); pass total $(turns_used) of $MAX_TURNS"
+  (cd "$ROOT" && env $LANE_ENV CEDIAN_RECORD_OMP="$omp" CEDIAN_RECORD_MODEL="$BENCH_MODEL" \
+     CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -j4 $LANE_TEST) 2>&1 | tee "$out" || true
+  printed=$(sed -n 's/.*model turns: \([0-9][0-9]*\).*/\1/p' "$out" | awk '{ n += $1 } END { print n + 0 }')
+  used=$(tapped "$tap" "$reserved")
+  [ "$printed" -le "$used" ] || used=$printed
+  book "record-$name" "$reserved" "$used"
 }
 
 plan() {
   local total=0 l m id
-  echo "# the live pass, in order (MAX_TURNS=$MAX_TURNS); each step stops the pass at the cap"
+  echo "# the live pass, in order (MAX_TURNS=$MAX_TURNS); a step starts only if its estimate + 1 (+ 1 with a reviewer) fits, and books what its OMP processes ran"
   for l in $LANES; do
     lane "$l"; total=$((total + LANE_TURNS))
-    echo "BENCH_GO=1 script/cedian-bench/run.sh record $l   # $LANE_TURNS turn(s), total $total"
+    echo "BENCH_GO=1 BENCH_PASS=u12 script/cedian-bench/run.sh record $l   # $LANE_TURNS turn(s), total $total"
   done
   for m in off on; do
     for id in $ALL; do
       total=$((total + 1))
-      echo "BENCH_GO=1 MANDATE=$m script/cedian-bench/run.sh run $id   # 1 turn, total $total"
+      echo "BENCH_GO=1 BENCH_PASS=u12 MANDATE=$m script/cedian-bench/run.sh run $id   # 1 turn, total $total"
     done
   done
   [ "$total" -le "$MAX_TURNS" ] || echo "# over the cap by $((total - MAX_TURNS)): the pass stops before the last $((total - MAX_TURNS)) step(s)"
 }
 
-turns() { echo "$(turns_used) of $MAX_TURNS model turns used"; [ -f "$LEDGER" ] && cat "$LEDGER"; true; }
+turns() {
+  echo "ledger: $LEDGER"
+  if [ -f "$LEDGER" ]; then echo "$($CAP used "$LEDGER") of $MAX_TURNS model turns used"; cat "$LEDGER"; else echo "0 of $MAX_TURNS model turns used"; fi
+}
 
 # This pass's results beside S2's, task by task (ADR-0037: a task more than
 # 25% slower on the same model is a regression; overhead = total - omp).
 compare() {
-  python3 - "$WORK/results/$1" "$S2_RESULTS" <<'PY'
+  python3 - "$PASS_DIR/results/$1" "$S2_RESULTS" "$BENCH_MODEL" <<'PY'
 import json, os, statistics, sys
-new_dir, s2_dir = sys.argv[1:3]
+new_dir, s2_dir, model = sys.argv[1:4]
 def load(d, id):
     p = f"{d}/{id}.json"
     return json.load(open(p)) if os.path.exists(p) else None
@@ -361,10 +415,12 @@ for id in [f"b{i}" for i in range(1, 11)]:
     s2, new = load(s2_dir, id), load(new_dir, id)
     if not new:
         print(f"{id:5} not run"); continue
+    if new.get("observed_models") != [model]:
+        print(f"{id:5} refused: OMP ran {new.get('observed_models')}, not {model}"); continue
     o = [t["total_ms"] - t["omp_ms"] for t in new["timing"] if t.get("event") == "turn"]
     over += o
     both = s2 and s2["predicate"] == "pass" and new["predicate"] == "pass"
-    ratio = new["wall_ms"] / s2["wall_ms"] if both else None
+    ratio = new["wall_ms"] / s2["wall_ms"] if both and s2["wall_ms"] else None
     print(f"{id:5} {s2['predicate'] if s2 else '-':8} {s2['wall_ms'] / 1000 if s2 else 0:9.0f}  "
           f"{new['predicate']:7} {new['wall_ms'] / 1000:6.0f}  {f'{ratio:.2f}' if ratio else '-':5}  "
           f"{str(bool(ratio and ratio > 1.25)):10}  {str(new['false_done']):10}  {o}")
@@ -396,20 +452,22 @@ snapshot() {
 }
 
 mode=${1:-}; target=${2:-}
-[ -n "$mode" ] && [ -n "$target" ] || { sed -n '2,24p' "$0"; exit 2; }
-mkdir -p "$WORK/logs" "$WORK/results" "$WORK/trees"
+[ -n "$mode" ] && [ -n "$target" ] || { sed -n '2,34p' "$0"; exit 2; }
+case $mode in run|record|turns|compare|wrapper) need_pass ;; esac
+mkdir -p "$WORK/logs" "$WORK/trees"
 case $mode in
 check) ids=$([ "$target" = all ] && echo "$ALL" || echo "$target"); preflight 4 ;;
 run)
   ids=$([ "$target" = all ] && echo "$ALL" || echo "$target")
-  pin_check; omp_for_mandate >/dev/null; model_check
+  pin_check; model_check
   (cd "$ROOT" && cargo build -q --release -p cedian_cli)
   [ -x "$CARGO_TARGET_DIR/release/cedian" ] || { echo "no cedian binary at $CARGO_TARGET_DIR/release" >&2; exit 2; } ;;
 record) ids=$([ "$target" = all ] && echo "$LANES" || echo "$target"); pin_check ;;
 plan|turns) "$mode"; exit 0 ;;
+wrapper) wrapper "$target" "${BENCH_TAP:?BENCH_TAP: the dir the wrapper taps into}"; exit 0 ;;
 compare) compare "$target"; exit 0 ;;
 snapshot) snapshot "$target"; exit 0 ;;
-*) sed -n '2,24p' "$0"; exit 2 ;;
+*) sed -n '2,34p' "$0"; exit 2 ;;
 esac
 status=0
 for id in $ids; do "$mode" "$id" || status=1; done

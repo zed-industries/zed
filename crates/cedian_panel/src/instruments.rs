@@ -115,7 +115,10 @@ impl Instruments {
 /// p99 and max in milliseconds.
 pub fn frames_row(start: &FrameDurationSnapshot, end: &FrameDurationSnapshot) -> serde_json::Value {
     let mut draws = end.draw_duration_histogram.clone();
-    if draws.subtract(&start.draw_duration_histogram).is_err() {
+    // Should not happen (GPUI's histogram never resets), but if it does the
+    // row is every draw since the window opened, and says so.
+    let window_total = draws.subtract(&start.draw_duration_histogram).is_err();
+    if window_total {
         draws = end.draw_duration_histogram.clone();
     }
     let ms = |ns: u64| (ns as f64 / 1e4).round() / 100.0;
@@ -126,5 +129,38 @@ pub fn frames_row(start: &FrameDurationSnapshot, end: &FrameDurationSnapshot) ->
         "draw_p95_ms": ms(draws.value_at_quantile(0.95)),
         "draw_p99_ms": ms(draws.value_at_quantile(0.99)),
         "draw_max_ms": ms(draws.max()),
+        "window_total": window_total,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hdrhistogram::Histogram;
+
+    fn snapshot(draws_ms: &[u64]) -> FrameDurationSnapshot {
+        let mut draws = Histogram::<u64>::new(3).unwrap();
+        for ms in draws_ms {
+            draws.record(ms * 1_000_000).unwrap();
+        }
+        FrameDurationSnapshot {
+            dirty_to_present_histogram: Histogram::new(3).unwrap(),
+            draw_duration_histogram: draws,
+            present_interval_histogram: Histogram::new(3).unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_row_is_the_draws_between_its_snapshots() {
+        let row = frames_row(&snapshot(&[100]), &snapshot(&[100, 4, 8]));
+        assert_eq!(row["frames"], 2, "{row}");
+        assert_eq!(row["window_total"], false, "{row}");
+    }
+
+    #[test]
+    fn a_row_that_falls_back_to_the_whole_window_says_so() {
+        let row = frames_row(&snapshot(&[100, 7]), &snapshot(&[4]));
+        assert_eq!(row["window_total"], true, "{row}");
+        assert_eq!(row["frames"], 1, "{row}");
+    }
 }

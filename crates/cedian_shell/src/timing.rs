@@ -17,7 +17,8 @@ pub enum Row {
     Spawn(Duration),
     /// One turn, from four moments in order: the person sent it, OMP got
     /// the prompt, OMP's `prompt_result` came back, cedian's own work on
-    /// the turn ended. A later moment that reads earlier counts as equal.
+    /// the turn ended. A later moment that reads earlier counts as equal;
+    /// an end before the return is flagged `settled_before_return_ms`.
     Turn {
         started: Instant,
         sent: Instant,
@@ -42,10 +43,17 @@ impl Row {
                 let sent = at(sent);
                 let returned = at(returned).max(sent);
                 let total = at(ended).max(returned);
-                json!({
+                let mut row = json!({
                     "event": "turn", "context_ms": sent, "omp_ms": returned - sent,
                     "post_ms": total - returned, "total_ms": total,
-                })
+                });
+                // cedian settled before OMP's prompt call returned: post_ms
+                // reads 0, and the row says by how much the order was off.
+                let early = returned.saturating_sub(at(ended));
+                if early > 0 {
+                    row["settled_before_return_ms"] = early.into();
+                }
+                row
             }
         }
     }
@@ -99,6 +107,7 @@ mod tests {
             (1, 4, 2, 7),
             "{row}"
         );
+        assert!(row.get("settled_before_return_ms").is_none(), "{row}");
     }
 
     #[test]
@@ -114,6 +123,7 @@ mod tests {
         .to_json();
         assert_eq!(row["post_ms"], 0, "{row}");
         assert_eq!(row["total_ms"], 9, "{row}");
+        assert_eq!(row["settled_before_return_ms"], 1, "{row}");
     }
 
     #[test]

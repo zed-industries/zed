@@ -2838,6 +2838,7 @@ dependencies = [
  "cedian_agent_ui",
  "cedian_omp",
  "omp-rpc",
+ "regex",
  "serde_json",
 ]
 
@@ -2875,6 +2876,7 @@ dependencies = [
  "fs",
  "futures 0.3.34",
  "gpui",
+ "hdrhistogram",
  "language",
  "libc",
  "log",

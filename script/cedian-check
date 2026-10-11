@@ -21,6 +21,8 @@ files=()
 while IFS= read -r f; do files+=("$f"); done < <(find crates/cedian_* -name '*.rs' -not -path '*/target/*')
 rustfmt --edition 2024 --check "${files[@]}"
 script/check-licenses
+# The benchmark harness: turn cap, OMP wrapper, model check (fake OMP only).
+python3 script/cedian-bench/test_bench.py
 if [ "${1:-}" = check ]; then
   cargo check -j4 --all-targets "${pkgs[@]}"
   exit 0

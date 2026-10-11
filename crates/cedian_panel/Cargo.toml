@@ -56,6 +56,7 @@ cedian_panel = { path = ".", features = ["test-support"] }
 cedian_fake_omp = { path = "../cedian_fake_omp" }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+hdrhistogram.workspace = true
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
