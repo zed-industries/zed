@@ -1583,14 +1583,7 @@ impl NativeAgent {
             session
                 .acp_thread
                 .update(cx, |thread, cx| {
-                    thread
-                        .handle_session_update(
-                            acp_v1::SessionUpdate::AvailableCommandsUpdate(
-                                acp_v1::AvailableCommandsUpdate::new(available_commands.clone()),
-                            ),
-                            cx,
-                        )
-                        .log_err();
+                    thread.update_available_commands(available_commands.clone(), cx);
                 })
                 .ok();
         }
@@ -1599,11 +1592,11 @@ impl NativeAgent {
     fn build_available_commands_for_project(
         project_state: Option<&ProjectState>,
         cx: &App,
-    ) -> Vec<acp_v1::AvailableCommand> {
+    ) -> Vec<acp_v2::AvailableCommand> {
         let Some(state) = project_state else {
             return Vec::new();
         };
-        let compact_command = acp_v1::AvailableCommand::new(
+        let compact_command = acp_v2::AvailableCommand::new(
             COMPACT_COMMAND_NAME,
             "Summarize the conversation so far to free up context",
         )
@@ -1633,7 +1626,7 @@ impl NativeAgent {
             };
 
             let mut command =
-                acp_v1::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
+                acp_v2::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
                     .meta(acp_thread::meta_with_command_category(
                         acp_thread::CommandCategory::Mcp,
                     ));
@@ -1642,8 +1635,8 @@ impl NativeAgent {
                 Some([arg]) => {
                     let hint = format!("<{}>", arg.name);
 
-                    command = command.input(acp_v1::AvailableCommandInput::Unstructured(
-                        acp_v1::UnstructuredCommandInput::new(hint),
+                    command = command.input(acp_v2::AvailableCommandInput::Text(
+                        acp_v2::TextCommandInput::new(hint),
                     ));
                 }
                 Some([]) | None => {}
@@ -1965,7 +1958,7 @@ impl NativeAgent {
         prompt_name: String,
         server_id: ContextServerId,
         arguments: HashMap<String, String>,
-        original_content: Vec<acp_v1::ContentBlock>,
+        original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> Task<Result<acp_v1::PromptResponse>> {
         let Some(state) = self.session_project_state(&session_id) else {
@@ -2002,13 +1995,13 @@ impl NativeAgent {
                     original_content.into_iter().skip(1),
                     path_style,
                     cx,
-                );
-            });
+                )
+            })?;
 
             for message in prompt.messages {
                 let context_server::types::PromptMessage { role, content } = message;
                 let block = mcp_message_content_to_acp_content_block(content);
-                let display_block = acp_thread::content::from_v1(block.clone())?;
+                let display_block = block.clone();
 
                 match role {
                     context_server::types::Role::User => {
@@ -2024,8 +2017,8 @@ impl NativeAgent {
                         });
 
                         thread.update(cx, |thread, cx| {
-                            thread.push_acp_user_block(id, [block], path_style, cx);
-                        });
+                            thread.push_acp_user_block(id, [block], path_style, cx)
+                        })?;
                     }
                     context_server::types::Role::Assistant => {
                         acp_thread.update(cx, |acp_thread, cx| {
@@ -2037,9 +2030,7 @@ impl NativeAgent {
                             );
                         });
 
-                        thread.update(cx, |thread, cx| {
-                            thread.push_acp_agent_block(block, cx);
-                        });
+                        thread.update(cx, |thread, cx| thread.push_acp_agent_block(block, cx))?;
                     }
                 }
 
@@ -2121,7 +2112,7 @@ impl NativeAgent {
         client_user_message_id: ClientUserMessageId,
         session_id: acp_v2::SessionId,
         skill: Skill,
-        original_content: Vec<acp_v1::ContentBlock>,
+        original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> Task<Result<acp_v1::PromptResponse>> {
         let Some(state) = self.session_project_state(&session_id) else {
@@ -2165,10 +2156,10 @@ impl NativeAgent {
                 })?
             };
             let envelope = crate::tools::render_skill_envelope(&skill, &body);
-            let envelope_block = acp_v1::ContentBlock::Text(acp_v1::TextContent::new(envelope));
+            let envelope_block = acp_v2::ContentBlock::Text(acp_v2::TextContent::new(envelope));
 
             let mut user_blocks = original_content;
-            if let Some(acp_v1::ContentBlock::Text(text_content)) = user_blocks.first_mut() {
+            if let Some(acp_v2::ContentBlock::Text(text_content)) = user_blocks.first_mut() {
                 let stripped = strip_slash_command_prefix(&text_content.text);
                 if stripped.trim().is_empty() {
                     user_blocks.remove(0);
@@ -2182,7 +2173,7 @@ impl NativeAgent {
             // user's own typed message is already rendered by the normal
             // prompt flow, so we don't push it to the UI again here.
             let injected_id = acp_thread::ClientUserMessageId::new();
-            let display_block = acp_thread::content::from_v1(envelope_block.clone())?;
+            let display_block = envelope_block.clone();
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.push_user_content_block_with_indent(
                     Some(injected_id),
@@ -2199,8 +2190,8 @@ impl NativeAgent {
             combined.extend(user_blocks);
 
             thread.update(cx, |thread, cx| {
-                thread.push_acp_user_block(client_user_message_id, combined, path_style, cx);
-            });
+                thread.push_acp_user_block(client_user_message_id, combined, path_style, cx)
+            })?;
 
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
 
@@ -2318,8 +2309,8 @@ impl NativeAgentConnection {
                         match event {
                             ThreadEvent::UserMessage(message) => {
                                 let content = message.content.iter().cloned()
-                                    .map(|content| acp_thread::content::from_v1(content.into()))
-                                    .collect::<Result<Vec<_>>>()?;
+                                    .map(acp_v2::ContentBlock::from)
+                                    .collect::<Vec<_>>();
                                 acp_thread.update(cx, |thread, cx| {
                                     for content in content {
                                         thread.push_user_content_block(
@@ -2348,7 +2339,7 @@ impl NativeAgentConnection {
                                 kind,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(
+                                    thread.request_tool_call_update_authorization(
                                         tool_call, options, kind, cx,
                                     )
                                 })??;
@@ -2357,10 +2348,10 @@ impl NativeAgentConnection {
                                         acp_thread::RequestPermissionOutcome::Selected(outcome) => outcome,
                                         acp_thread::RequestPermissionOutcome::InterruptedByFollowUp => {
                                             acp_thread::SelectedPermissionOutcome::new(
-                                                acp_v1::PermissionOptionId::new(
+                                                acp_v2::PermissionOptionId::new(
                                                     FOLLOW_UP_PERMISSION_DENIED_OPTION_ID,
                                                 ),
-                                                acp_v1::PermissionOptionKind::RejectOnce,
+                                                acp_v2::PermissionOptionKind::RejectOnce,
                                             )
                                         }
                                         acp_thread::RequestPermissionOutcome::Cancelled => return,
@@ -2423,11 +2414,6 @@ impl NativeAgentConnection {
                                     }
                                 }
                             }
-                            ThreadEvent::ToolCall(tool_call) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.upsert_tool_call(tool_call, cx)
-                                })??;
-                            }
                             ThreadEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_tool_call(update, cx)
@@ -2466,7 +2452,7 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp_v1::PromptResponse::new(stop_reason));
+                                return legacy_native_completion(stop_reason);
                             }
                         }
                     }
@@ -2481,6 +2467,26 @@ impl NativeAgentConnection {
             anyhow::Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
         })
     }
+}
+
+fn legacy_native_completion(stop_reason: acp_v2::StopReason) -> Result<acp_v1::PromptResponse> {
+    // Native events are version-neutral, but the completion-based connection API
+    // still returns a v1 response. This is not a v2 acceptance receipt.
+    let stop_reason = match stop_reason {
+        acp_v2::StopReason::EndTurn => acp_v1::StopReason::EndTurn,
+        acp_v2::StopReason::MaxTokens => acp_v1::StopReason::MaxTokens,
+        acp_v2::StopReason::MaxTurnRequests => acp_v1::StopReason::MaxTurnRequests,
+        acp_v2::StopReason::Refusal => acp_v1::StopReason::Refusal,
+        acp_v2::StopReason::Cancelled => acp_v1::StopReason::Cancelled,
+        acp_v2::StopReason::Error(reason) => {
+            return Err(match reason.error {
+                Some(error) => anyhow::Error::new(*error),
+                None => anyhow!("Native agent stopped with an error"),
+            });
+        }
+        _ => anyhow::bail!("Native agent returned an unsupported stop reason"),
+    };
+    Ok(acp_v1::PromptResponse::new(stop_reason))
 }
 
 struct Command<'a> {
@@ -2506,8 +2512,8 @@ impl<'a> Command<'a> {
             && self.skill_scope.is_none()
     }
 
-    fn parse(prompt: &'a [acp_v1::ContentBlock]) -> Option<Self> {
-        let acp_v1::ContentBlock::Text(text_content) = prompt.first()? else {
+    fn parse(prompt: &'a [acp_v2::ContentBlock]) -> Option<Self> {
+        let acp_v2::ContentBlock::Text(text_content) = prompt.first()? else {
             return None;
         };
         let text = text_content.text.trim();
@@ -2860,7 +2866,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 
     fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
-        acp_thread::content::validate_prompt_content_for_v1(content)
+        content
+            .iter()
+            .try_for_each(UserMessageContent::validate_content_block)
     }
 
     fn prompt(
@@ -2954,10 +2962,6 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp_v1::PromptResponse>> {
         let session_id = params.session_id.clone();
-        let params = match acp_thread::content::prompt_to_v1(params) {
-            Ok(params) => params,
-            Err(error) => return Task::ready(Err(error)),
-        };
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
 
@@ -2971,6 +2975,12 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
             }
             return Task::ready(Err(anyhow::anyhow!("Session not found")));
         };
+
+        if let Err(error) =
+            acp_thread::AgentConnection::validate_prompt_content(self, &params.prompt)
+        {
+            return Task::ready(Err(error));
+        }
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
             if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
@@ -3093,13 +3103,12 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
         };
 
         let path_style = project_state.project.read(cx).path_style(cx);
-
         self.run_turn(session_id, cx, move |thread, cx| {
-            let content: Vec<UserMessageContent> = params
+            let content = params
                 .prompt
                 .into_iter()
                 .map(|block| UserMessageContent::from_content_block(block, path_style))
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>>>()?;
             log::debug!("Converted prompt to message: {} chars", content.len());
             log::debug!("Client user message id: {:?}", client_user_message_id);
             log::debug!("Message content: {:?}", content);
@@ -3695,7 +3704,7 @@ pub struct AcpTerminalHandle {
 }
 
 impl TerminalHandle for AcpTerminalHandle {
-    fn id(&self, cx: &AsyncApp) -> Result<acp_v1::TerminalId> {
+    fn id(&self, cx: &AsyncApp) -> Result<acp_v2::TerminalId> {
         Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
     }
 
@@ -3977,6 +3986,39 @@ mod internal_tests {
     use settings::{LanguageModelProviderSetting, SettingsStore};
     use util::{path, rel_path::rel_path};
 
+    #[test]
+    fn native_stop_reasons_preserve_legacy_completions() -> Result<()> {
+        for (native, legacy) in [
+            (acp_v2::StopReason::EndTurn, acp_v1::StopReason::EndTurn),
+            (acp_v2::StopReason::MaxTokens, acp_v1::StopReason::MaxTokens),
+            (
+                acp_v2::StopReason::MaxTurnRequests,
+                acp_v1::StopReason::MaxTurnRequests,
+            ),
+            (acp_v2::StopReason::Refusal, acp_v1::StopReason::Refusal),
+            (acp_v2::StopReason::Cancelled, acp_v1::StopReason::Cancelled),
+        ] {
+            assert_eq!(legacy_native_completion(native)?.stop_reason, legacy);
+        }
+        assert!(
+            legacy_native_completion(acp_v2::StopReason::Other(acp_v2::OtherStopReason::new(
+                "_future",
+                Default::default(),
+            )))
+            .is_err(),
+            "an unsupported reason must not masquerade as successful completion"
+        );
+        let error = legacy_native_completion(acp_v2::ErrorStopReason::new().into())
+            .expect_err("an error without details is not successful completion");
+        assert_eq!(error.to_string(), "Native agent stopped with an error");
+        let details = acp_v2::Error::auth_required().data(json!({"hint": "sign in"}));
+        let error =
+            legacy_native_completion(acp_v2::ErrorStopReason::new().error(details.clone()).into())
+                .expect_err("reported error details propagate");
+        assert_eq!(error.downcast_ref::<acp_v2::Error>(), Some(&details));
+        Ok(())
+    }
+
     #[gpui::test]
     fn test_available_native_agent_hides_hidden_providers(cx: &mut TestAppContext) {
         init_test(cx);
@@ -4119,18 +4161,19 @@ mod internal_tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp_v1::PermissionOptionId::new("allow"),
-                acp_v1::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionId::new("allow"),
+                acp_v2::PermissionOptionKind::AllowOnce,
             ))
             .expect("authorization response should send");
 
         let update = receiver.expect_update_fields().await;
         let terminal_id = update
             .content
-            .iter()
+            .value()
+            .into_iter()
             .flatten()
             .find_map(|content| match content {
-                acp_v1::ToolCallContent::Terminal(terminal) => Some(terminal.terminal_id.clone()),
+                acp_v2::ToolCallContent::Terminal(terminal) => Some(terminal.terminal_id.clone()),
                 _ => None,
             })
             .expect("terminal tool should announce its real terminal");
@@ -4231,6 +4274,116 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_native_prompt_rejects_unknown_content_before_dispatch(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let unknown = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+            "_future",
+            std::collections::BTreeMap::from([("payload".into(), json!("private-payload"))]),
+        ));
+
+        for text in ["ordinary prompt", "/compact"] {
+            let content = vec![text.into(), unknown.clone()];
+            assert!(connection.validate_prompt_content(&content).is_err());
+            let error = cx
+                .update(|cx| {
+                    acp_thread::AgentSessionClientUserMessageIds::prompt(
+                        connection.as_ref(),
+                        ClientUserMessageId::new(),
+                        acp_v2::PromptRequest::new(session_id.clone(), content),
+                        cx,
+                    )
+                })
+                .await
+                .expect_err("unsupported content must not reach command dispatch or the model");
+            assert!(error.to_string().contains("Native agent does not support"));
+            assert!(!error.to_string().contains("private-payload"));
+        }
+        thread.update(cx, |thread, cx| {
+            let path_style = project.read(cx).path_style(cx);
+            assert!(
+                thread
+                    .push_acp_user_block(
+                        ClientUserMessageId::new(),
+                        ["valid prefix".into(), unknown.clone()],
+                        path_style,
+                        cx,
+                    )
+                    .is_err()
+            );
+            assert!(thread.push_acp_agent_block(unknown, cx).is_err());
+            assert!(thread.is_empty());
+        });
+        assert!(acp_thread.read_with(cx, |thread, _| thread.entries().is_empty()));
+        assert!(fake.pending_completions().is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_native_skill_prompt_preserves_v2_attachment_source(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        cx.run_until_parked();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        let mut skill = make_global_skill("test-skill", "Test skill");
+        skill.embedded_body = Some("skill instructions");
+        agent.update(cx, |agent, _| {
+            agent
+                .projects
+                .get_mut(&project.entity_id())
+                .expect("project state")
+                .skills = Arc::new(vec![skill]);
+        });
+        let prompt = vec![
+            acp_v2::ContentBlock::Text(
+                acp_v2::TextContent::new("/:test-skill  keep\nformatting").meta(
+                    acp_v2::Meta::from_iter([("source".into(), json!({"raw": true}))]),
+                ),
+            ),
+            acp_v2::ContentBlock::ResourceLink(
+                acp_v2::ResourceLink::new("attachment", "https://example.com/raw%20path")
+                    .icons(vec![acp_v2::Icon::new("https://example.com/icon.svg")]),
+            ),
+            acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
+                acp_v2::EmbeddedResourceResource::TextResourceContents(
+                    acp_v2::TextResourceContents::new("attached text", "custom://raw/source").meta(
+                        acp_v2::Meta::from_iter([("nested".into(), json!([null, true]))]),
+                    ),
+                ),
+            )),
+        ];
+        let send = acp_thread.update(cx, |thread, cx| thread.send(prompt.clone(), cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("skill reaches model");
+        thread.read_with(cx, |thread, _| {
+            let Some(Message::User(message)) = thread.last_message() else {
+                panic!("skill should inject one model-context user message");
+            };
+            assert!(matches!(message.content.first(), Some(UserMessageContent::Text(text)) if text.contains("skill instructions")));
+            assert_eq!(message.content.get(1), Some(&UserMessageContent::Text(" keep\nformatting".into())));
+            assert!(matches!(message.content.get(3), Some(UserMessageContent::Text(text)) if text.contains("attached text")));
+        });
+        acp_thread.read_with(cx, |thread, _| {
+            let Some(acp_thread::AgentThreadEntry::UserMessage(message)) = thread.entries().first()
+            else {
+                panic!("skill prompt should retain its source");
+            };
+            assert_eq!(message.content.source_blocks(), prompt.as_slice());
+        });
+        fake.send_text(&model, &request, "done");
+        fake.end_stream(&model, &request);
+        send.await.expect("skill prompt should complete");
+    }
+
+    #[gpui::test]
     async fn test_compact_command_is_available(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -4255,21 +4408,21 @@ mod internal_tests {
         cx.update(|cx| {
             let commands = acp_thread.read(cx).available_commands();
 
-            let compact = commands.iter().find(|command| command.name == "compact");
-            let compact = compact.expect("compact command should be available");
             assert_eq!(
-                acp_thread::command_category_from_meta(&compact.meta),
-                Some(acp_thread::CommandCategory::Native),
+                commands,
+                &[acp_v2::AvailableCommand::new(
+                    COMPACT_COMMAND_NAME,
+                    "Summarize the conversation so far to free up context",
+                )
+                .meta(acp_thread::meta_with_command_category(
+                    acp_thread::CommandCategory::Native,
+                ))],
             );
         });
     }
 
     #[gpui::test]
     async fn test_compact_prompt_routes_to_manual_compaction(cx: &mut TestAppContext) {
-        use feature_flags::{
-            AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings,
-        };
-
         let fake = init_test(cx);
         let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
@@ -4278,32 +4431,25 @@ mod internal_tests {
         let old_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
-            cx.update_flags(true, Vec::new());
-            FeatureFlagsSettings::override_global(
-                FeatureFlagsSettings {
-                    overrides: HashMap::from_iter([(
-                        AcpBetaFeatureFlag::NAME.into(),
-                        "off".into(),
-                    )]),
-                },
-                cx,
-            );
             let path_style = project.read(cx).path_style(cx);
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
-                thread.push_acp_user_block(
-                    old_message_id,
-                    [acp_v1::ContentBlock::from("old user")],
-                    path_style,
-                    cx,
-                );
-                thread.push_acp_agent_block("old assistant".into(), cx);
+                thread
+                    .push_acp_user_block(
+                        old_message_id,
+                        [acp_v2::ContentBlock::from("old user")],
+                        path_style,
+                        cx,
+                    )
+                    .expect("user content should be supported");
+                thread
+                    .push_acp_agent_block("old assistant".into(), cx)
+                    .expect("agent content should be supported");
             });
         });
 
         let compact_message_id = ClientUserMessageId::new();
         let prompt_task = cx.update(|cx| {
-            assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 compact_message_id,
@@ -4683,13 +4829,17 @@ mod internal_tests {
                 let path_style = project.read(cx).path_style(cx);
                 thread.update(cx, |thread, cx| {
                     thread.set_model(model.clone(), cx);
-                    thread.push_acp_user_block(
-                        ClientUserMessageId::new(),
-                        [acp_v1::ContentBlock::from("old user")],
-                        path_style,
-                        cx,
-                    );
-                    thread.push_acp_agent_block("old assistant".into(), cx);
+                    thread
+                        .push_acp_user_block(
+                            ClientUserMessageId::new(),
+                            [acp_v2::ContentBlock::from("old user")],
+                            path_style,
+                            cx,
+                        )
+                        .expect("user content should be supported");
+                    thread
+                        .push_acp_agent_block("old assistant".into(), cx)
+                        .expect("agent content should be supported");
                 });
             });
 
@@ -4931,12 +5081,14 @@ mod internal_tests {
         cx.update(|cx| {
             let path_style = project.read(cx).path_style(cx);
             thread.update(cx, |thread, cx| {
-                thread.push_acp_user_block(
-                    ClientUserMessageId::new(),
-                    [acp_v1::ContentBlock::from("hello from the user")],
-                    path_style,
-                    cx,
-                );
+                thread
+                    .push_acp_user_block(
+                        ClientUserMessageId::new(),
+                        [acp_v2::ContentBlock::from("hello from the user")],
+                        path_style,
+                        cx,
+                    )
+                    .expect("user content should be supported");
             });
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.set_draft_prompt(
@@ -5011,21 +5163,43 @@ mod internal_tests {
 
     #[test]
     fn test_qualified_compact_commands_are_not_native_compact() {
-        let unqualified_blocks = [acp_v1::ContentBlock::from("/compact")];
+        let unqualified_blocks = [acp_v2::ContentBlock::from("/compact")];
         let unqualified = Command::parse(&unqualified_blocks).unwrap();
         assert!(unqualified.is_unqualified("compact"));
 
-        let mcp_blocks = [acp_v1::ContentBlock::from("/server.compact")];
+        let mcp_blocks = [acp_v2::ContentBlock::from("/server.compact")];
         let mcp_qualified = Command::parse(&mcp_blocks).unwrap();
         assert_eq!(mcp_qualified.prompt_name, "compact");
         assert_eq!(mcp_qualified.explicit_server_id, Some("server"));
         assert!(!mcp_qualified.is_unqualified("compact"));
 
-        let skill_blocks = [acp_v1::ContentBlock::from("/:compact")];
+        let skill_blocks = [acp_v2::ContentBlock::from("/:compact")];
         let skill_qualified = Command::parse(&skill_blocks).unwrap();
         assert_eq!(skill_qualified.prompt_name, "compact");
         assert_eq!(skill_qualified.skill_scope, Some(""));
         assert!(!skill_qualified.is_unqualified("compact"));
+    }
+
+    #[test]
+    fn test_mcp_prompt_content_preserves_annotations() {
+        let content = json!({
+            "type": "resource",
+            "resource": {"uri": "file:///raw%20path.md", "mimeType": "text/markdown"},
+            "annotations": {"audience": ["user", "assistant"], "priority": 0.75}
+        });
+        let block = mcp_message_content_to_acp_content_block(
+            serde_json::from_value(content).expect("MCP resource should deserialize"),
+        );
+        assert_eq!(
+            serde_json::to_value(block).expect("v2 resource link should serialize"),
+            json!({
+                "type": "resource_link",
+                "name": "file:///raw%20path.md",
+                "uri": "file:///raw%20path.md",
+                "mimeType": "text/markdown",
+                "annotations": {"audience": ["user", "assistant"], "priority": 0.75}
+            }),
+        );
     }
 
     fn make_project_skill(name: &str, description: &str, worktree: &str) -> Skill {
@@ -6132,11 +6306,8 @@ mod internal_tests {
         let project_id = project.entity_id();
         let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
 
-        agent.read_with(cx, |agent, cx| {
-            let commands = NativeAgent::build_available_commands_for_project(
-                agent.projects.get(&project_id),
-                cx,
-            );
+        acp_thread.read_with(cx, |thread, _cx| {
+            let commands = thread.available_commands();
             let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
             assert!(
                 !names.contains(&"visible-skill"),
@@ -6253,7 +6424,7 @@ mod internal_tests {
                     .map(|s| s.name.as_str())
                     .collect::<Vec<_>>()
             );
-            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
+            let commands = acp_thread.read(cx).available_commands();
             let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
             assert!(
                 !names.contains(&"my-skill"),
@@ -7320,27 +7491,36 @@ mod internal_tests {
         cx.run_until_parked();
         assert_eq!(thread_entries(&thread_store, cx), vec![]);
 
-        let send = acp_thread.update(cx, |thread, cx| {
-            thread.send(
-                vec![
-                    "What does ".into(),
-                    acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new(
-                        "b.md",
-                        MentionUri::File {
-                            abs_path: path!("/a/b.md").into(),
-                        }
-                        .to_uri()
-                        .to_string(),
-                    )),
-                    " mean?".into(),
-                ],
-                cx,
-            )
-        });
+        let prompt = vec![
+            acp_v2::ContentBlock::Text(acp_v2::TextContent::new("What does ").meta(
+                acp_v2::Meta::from_iter([("source".into(), json!({"nested": [null, "retained"]}))]),
+            )),
+            acp_v2::ContentBlock::ResourceLink(
+                acp_v2::ResourceLink::new(
+                    "b.md",
+                    MentionUri::File {
+                        abs_path: path!("/a/b.md").into(),
+                    }
+                    .to_uri()
+                    .to_string(),
+                )
+                .icons(vec![acp_v2::Icon::new("https://example.com/file.svg")])
+                .annotations(
+                    acp_v2::Annotations::new()
+                        .audience(vec![acp_v2::Role::Other("_future-audience".into())]),
+                ),
+            ),
+            " mean?".into(),
+        ];
+        let send = acp_thread.update(cx, |thread, cx| thread.send(prompt.clone(), cx));
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
         let request = fake.pending_completions_for(&model).pop().unwrap();
+        let request_text = request_texts_after_system(&request.messages).join("\n");
+        assert!(request_text.contains("What does "));
+        assert!(request_text.contains("b.md"));
+        assert!(request_text.contains(" mean?"));
         fake.send_text(&model, &request, "Lorem.");
         fake.send_event(
             &model,
@@ -7362,6 +7542,13 @@ mod internal_tests {
         fake.end_stream(&summary_model, &summary_request);
 
         send.await.unwrap();
+        acp_thread.read_with(cx, |thread, _| {
+            let Some(acp_thread::AgentThreadEntry::UserMessage(message)) = thread.entries().first()
+            else {
+                panic!("native prompt should retain its source");
+            };
+            assert_eq!(message.content.source_blocks(), prompt.as_slice());
+        });
         let uri = MentionUri::File {
             abs_path: path!("/a/b.md").into(),
         }
@@ -8353,32 +8540,58 @@ mod internal_tests {
 
 fn mcp_message_content_to_acp_content_block(
     content: context_server::types::MessageContent,
-) -> acp_v1::ContentBlock {
+) -> acp_v2::ContentBlock {
     match content {
-        context_server::types::MessageContent::Text {
-            text,
-            annotations: _,
-        } => text.into(),
+        context_server::types::MessageContent::Text { text, annotations } => {
+            acp_v2::ContentBlock::Text(
+                acp_v2::TextContent::new(text).annotations(mcp_annotations_to_acp(annotations)),
+            )
+        }
         context_server::types::MessageContent::Image {
             data,
             mime_type,
-            annotations: _,
-        } => acp_v1::ContentBlock::Image(acp_v1::ImageContent::new(data, mime_type)),
+            annotations,
+        } => acp_v2::ContentBlock::Image(
+            acp_v2::ImageContent::new(data, mime_type)
+                .annotations(mcp_annotations_to_acp(annotations)),
+        ),
         context_server::types::MessageContent::Audio {
             data,
             mime_type,
-            annotations: _,
-        } => acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new(data, mime_type)),
+            annotations,
+        } => acp_v2::ContentBlock::Audio(
+            acp_v2::AudioContent::new(data, mime_type)
+                .annotations(mcp_annotations_to_acp(annotations)),
+        ),
         context_server::types::MessageContent::Resource {
             resource,
-            annotations: _,
+            annotations,
         } => {
             let mut link =
-                acp_v1::ResourceLink::new(resource.uri.to_string(), resource.uri.to_string());
+                acp_v2::ResourceLink::new(resource.uri.to_string(), resource.uri.to_string())
+                    .annotations(mcp_annotations_to_acp(annotations));
             if let Some(mime_type) = resource.mime_type {
-                link = link.mime_type(mime_type);
+                link = link.mime_type(acp_v2::MediaType::new(mime_type));
             }
-            acp_v1::ContentBlock::ResourceLink(link)
+            acp_v2::ContentBlock::ResourceLink(link)
         }
     }
+}
+
+fn mcp_annotations_to_acp(
+    annotations: Option<context_server::types::MessageAnnotations>,
+) -> Option<acp_v2::Annotations> {
+    annotations.map(|annotations| {
+        acp_v2::Annotations::new()
+            .audience(annotations.audience.map(|audience| {
+                audience
+                    .into_iter()
+                    .map(|role| match role {
+                        context_server::types::Role::User => acp_v2::Role::User,
+                        context_server::types::Role::Assistant => acp_v2::Role::Assistant,
+                    })
+                    .collect::<Vec<_>>()
+            }))
+            .priority(annotations.priority)
+    })
 }

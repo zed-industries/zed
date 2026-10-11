@@ -2092,15 +2092,28 @@ fn run_agent_thread_view_test(
     let mut tool_locations: Vec<acp::ToolCallLocation> = Vec::new();
 
     while let Ok(event) = event_receiver.try_recv() {
-        if let Ok(agent::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
-            update,
-        ))) = event
+        if let Ok(agent::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update))) =
+            event
         {
-            if let Some(content) = update.fields.content {
-                tool_content.extend(content);
+            if let Some(content) = update.content.take() {
+                for content in content {
+                    let acp_v2::ToolCallContent::Content(content) = content else {
+                        anyhow::bail!(
+                            "ReadFileTool produced non-content output in the image fixture"
+                        );
+                    };
+                    tool_content.push(acp::ToolCallContent::Content(
+                        acp::Content::new(acp_thread::content::to_v1(content.content)?)
+                            .meta(content.meta),
+                    ));
+                }
             }
-            if let Some(locations) = update.fields.locations {
-                tool_locations.extend(locations);
+            if let Some(locations) = update.locations.take() {
+                tool_locations.extend(locations.into_iter().map(|location| {
+                    acp::ToolCallLocation::new(location.path.into_inner())
+                        .line(location.line)
+                        .meta(location.meta)
+                }));
             }
         }
     }

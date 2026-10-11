@@ -23,7 +23,6 @@ use agent_client_protocol::{
 use anyhow::anyhow;
 use async_channel;
 use collections::{HashMap, HashSet};
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::{Future, FutureExt as _, StreamExt as _};
@@ -762,10 +761,7 @@ pub fn v2_terminal_client_builder(
     )
 }
 
-fn client_capabilities_for_agent(
-    agent_id: &AgentId,
-    beta_features_enabled: bool,
-) -> acp::ClientCapabilities {
+fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities {
     let mut meta = acp::Meta::from_iter([
         ("terminal_output".into(), true.into()),
         ("terminal-auth".into(), true.into()),
@@ -775,15 +771,13 @@ fn client_capabilities_for_agent(
         meta.insert(PARAMETERIZED_MODEL_PICKER_META_KEY.into(), true.into());
     }
 
-    let mut session_capabilities = acp::ClientSessionCapabilities::new().config_options(
-        acp::SessionConfigOptionsCapabilities::new()
-            .boolean(acp::BooleanConfigOptionCapabilities::new()),
-    );
-    if beta_features_enabled {
-        session_capabilities = session_capabilities
-            .compaction(acp::CompactionCapabilities::new())
-            .notices(acp::NoticeCapabilities::new());
-    }
+    let session_capabilities = acp::ClientSessionCapabilities::new()
+        .config_options(
+            acp::SessionConfigOptionsCapabilities::new()
+                .boolean(acp::BooleanConfigOptionCapabilities::new()),
+        )
+        .compaction(acp::CompactionCapabilities::new())
+        .notices(acp::NoticeCapabilities::new());
 
     acp::ClientCapabilities::new()
         .fs(acp::FileSystemCapabilities::new()
@@ -923,14 +917,10 @@ impl AcpConnection {
             }
         };
 
-        let beta_features_enabled = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
         let initialize_response = connection
             .send_request(
                 acp::InitializeRequest::new(ProtocolVersion::V1)
-                    .client_capabilities(client_capabilities_for_agent(
-                        &agent_id,
-                        beta_features_enabled,
-                    ))
+                    .client_capabilities(client_capabilities_for_agent(&agent_id))
                     .client_info(
                         acp::Implementation::new("zed", version)
                             .title(release_channel.map(ToOwned::to_owned)),
@@ -2762,8 +2752,63 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use feature_flags::{AcpBetaFeatureFlag, FeatureFlag as _};
     use settings::Settings as _;
+
+    #[test]
+    fn test_v1_permission_conversion_preserves_options_and_arc_ids() {
+        for (legacy_kind, kind) in [
+            (
+                acp::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
+            ),
+            (
+                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::AllowAlways,
+            ),
+            (
+                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
+            ),
+            (
+                acp::PermissionOptionKind::RejectAlways,
+                acp_v2::PermissionOptionKind::RejectAlways,
+            ),
+        ] {
+            let option_id = acp::PermissionOptionId::new("agent-defined-choice");
+            let meta = acp::Meta::from_iter([("custom".into(), serde_json::json!({"keep": true}))]);
+            let option = permission_option_from_v1(
+                acp::PermissionOption::new(option_id.clone(), "Agent's label", legacy_kind)
+                    .meta(meta.clone()),
+            )
+            .expect("known permission option kind");
+            assert!(Arc::ptr_eq(&option.option_id.0, &option_id.0));
+            assert_eq!(option.name, "Agent's label");
+            assert_eq!(option.kind, kind);
+            assert_eq!(option.meta, Some(meta));
+
+            let outcome = permission_outcome_to_v1(acp_thread::RequestPermissionOutcome::Selected(
+                acp_thread::SelectedPermissionOutcome::new(option.option_id, kind),
+            ));
+            let acp::RequestPermissionOutcome::Selected(outcome) = outcome else {
+                panic!("selected permission outcome");
+            };
+            assert!(Arc::ptr_eq(&outcome.option_id.0, &option_id.0));
+            assert_eq!(outcome.option_id, option_id);
+        }
+    }
+
+    #[test]
+    fn test_v1_permission_conversion_preserves_cancellation() {
+        for outcome in [
+            acp_thread::RequestPermissionOutcome::Cancelled,
+            acp_thread::RequestPermissionOutcome::InterruptedByFollowUp,
+        ] {
+            assert_eq!(
+                permission_outcome_to_v1(outcome),
+                acp::RequestPermissionOutcome::Cancelled,
+            );
+        }
+    }
 
     #[derive(Debug, PartialEq)]
     struct V2TerminalReceive {
@@ -2981,7 +3026,7 @@ mod tests {
         fn terminal(&self, id: &str, cx: &gpui::TestAppContext) -> Entity<acp_thread::Terminal> {
             self.thread.read_with(cx, |thread, _| {
                 thread
-                    .terminal(acp::TerminalId::new(id))
+                    .terminal(acp_v2::TerminalId::new(id))
                     .expect("display terminal")
             })
         }
@@ -2993,7 +3038,7 @@ mod tests {
         harness
             .thread
             .update(cx, |thread, cx| {
-                thread.upsert_tool_call_patch(
+                thread.upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("terminal-tool").content(vec![
                         acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("terminal-1")),
                     ]),
@@ -3235,7 +3280,7 @@ mod tests {
         assert_eq!(observe(cx), before);
         assert_eq!(harness.terminal("terminal-1", cx), terminal);
         harness.thread.read_with(cx, |thread, _| {
-            assert!(thread.terminal(acp::TerminalId::new("unseen")).is_err());
+            assert!(thread.terminal(acp_v2::TerminalId::new("unseen")).is_err());
         });
         assert_eq!(
             harness.received.lock().expect("receive mutex").len(),
@@ -3328,21 +3373,16 @@ mod tests {
         assert!(harness.received.lock().expect("receive mutex").is_empty());
     }
 
-    fn init_feature_flags_test(cx: &mut gpui::TestAppContext) {
+    fn init_settings_test(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
-            let mut settings_store = SettingsStore::test(cx);
-            settings_store.register_setting::<feature_flags::FeatureFlagsSettings>();
+            let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            cx.update_flags(false, vec![]);
         });
     }
 
-    #[gpui::test]
-    async fn client_capabilities_include_elicitation_without_acp_beta(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        init_feature_flags_test(cx);
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
+    #[test]
+    fn client_capabilities_include_elicitation() {
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
         let elicitation = capabilities
             .elicitation
             .expect("elicitation should always be advertised");
@@ -3355,10 +3395,7 @@ mod tests {
     async fn request_scoped_elicitation_during_auth_uses_connection_store(
         cx: &mut gpui::TestAppContext,
     ) {
-        init_feature_flags_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
+        init_settings_test(cx);
 
         let fs = fs::FakeFs::new(cx.executor());
         fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
@@ -3464,10 +3501,7 @@ mod tests {
     async fn request_scoped_url_elicitation_completion_before_consent_is_ignored(
         cx: &mut gpui::TestAppContext,
     ) {
-        init_feature_flags_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
+        init_settings_test(cx);
 
         let fs = fs::FakeFs::new(cx.executor());
         fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
@@ -3556,10 +3590,7 @@ mod tests {
 
     #[gpui::test]
     async fn request_scoped_elicitation_ignores_open_sessions(cx: &mut gpui::TestAppContext) {
-        init_feature_flags_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
+        init_settings_test(cx);
 
         let fs = fs::FakeFs::new(cx.executor());
         fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
@@ -3664,7 +3695,7 @@ mod tests {
 
     #[test]
     fn cursor_client_capabilities_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID), false);
+        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID));
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
@@ -3679,7 +3710,7 @@ mod tests {
 
     #[test]
     fn non_cursor_client_capabilities_do_not_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
@@ -3689,7 +3720,7 @@ mod tests {
 
     #[test]
     fn client_capabilities_include_boolean_config_options() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
 
         assert!(
             capabilities
@@ -3701,30 +3732,25 @@ mod tests {
     }
 
     #[test]
-    fn client_capabilities_gate_compaction_and_notices_with_acp_beta() {
-        for (beta_enabled, expected_capability) in
-            [(false, None), (true, Some(serde_json::json!({})))]
-        {
-            let capabilities =
-                client_capabilities_for_agent(&AgentId::new("codex-acp"), beta_enabled);
-            let capabilities =
-                serde_json::to_value(capabilities).expect("client capabilities should serialize");
-            let session = capabilities
-                .get("session")
-                .expect("session capabilities should be advertised");
-            for capability in ["compaction", "notices"] {
-                assert_eq!(
-                    session.get(capability),
-                    expected_capability.as_ref(),
-                    "{capability} with ACP beta enabled: {beta_enabled}"
-                );
-            }
+    fn client_capabilities_include_compaction_and_notices() {
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let capabilities =
+            serde_json::to_value(capabilities).expect("client capabilities should serialize");
+        let session = capabilities
+            .get("session")
+            .expect("session capabilities should be advertised");
+        for capability in ["compaction", "notices"] {
+            assert_eq!(
+                session.get(capability),
+                Some(&serde_json::json!({})),
+                "{capability} should be advertised"
+            );
         }
     }
 
     #[gpui::test]
-    async fn connection_routes_terminal_auth_without_acp_beta(cx: &mut gpui::TestAppContext) {
-        init_feature_flags_test(cx);
+    async fn connection_routes_terminal_auth(cx: &mut gpui::TestAppContext) {
+        init_settings_test(cx);
 
         let fs = fs::FakeFs::new(cx.executor());
         fs.insert_tree("/", serde_json::json!({ "project": {} }))
@@ -3791,21 +3817,8 @@ mod tests {
             .auth_methods = methods;
 
         let terminal_task = cx
-            .update(|cx| {
-                cx.update_flags(true, Vec::new());
-                feature_flags::FeatureFlagsSettings::override_global(
-                    feature_flags::FeatureFlagsSettings {
-                        overrides: HashMap::from_iter([(
-                            AcpBetaFeatureFlag::NAME.into(),
-                            "off".into(),
-                        )]),
-                    },
-                    cx,
-                );
-                assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
-                harness.connection.terminal_auth_task(&method_id, cx)
-            })
-            .expect("first-class terminal auth should be routed without ACP beta");
+            .update(|cx| harness.connection.terminal_auth_task(&method_id, cx))
+            .expect("first-class terminal auth should be routed");
         let terminal_task = terminal_task
             .await
             .expect("first-class routing should resolve the test agent's external command");
@@ -5454,7 +5467,7 @@ exit 7
         let response = client_conn
             .send_request(
                 acp::InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
-                    client_capabilities_for_agent(&AgentId::new("fake-agent"), true),
+                    client_capabilities_for_agent(&AgentId::new("fake-agent")),
                 ),
             )
             .block_task()
@@ -6343,8 +6356,8 @@ exit 7
                 thread.authorize_permission_request(
                     successor_id,
                     acp_thread::SelectedPermissionOutcome::new(
-                        acp::PermissionOptionId::new("allow-successor"),
-                        acp::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionId::new("allow-successor"),
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     ),
                     cx,
                 );
@@ -6576,6 +6589,10 @@ exit 7
             acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
                 acp::TextContent::new(String::from("hi user")),
             ))),
+            acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                "replayed-compaction",
+                acp::CompactionStatus::Completed,
+            )),
         ];
 
         let session_id = acp_v2::SessionId::new("session-replay");
@@ -6611,7 +6628,7 @@ exit 7
 
         assert_eq!(
             entries,
-            vec!["user", "assistant"],
+            vec!["user", "assistant", "compaction"],
             "replayed notifications should be applied to the thread"
         );
     }
@@ -7352,6 +7369,42 @@ fn respond_result<T: JsonRpcResponse>(responder: Responder<T>, result: Result<T,
     }
 }
 
+fn permission_option_from_v1(
+    option: acp::PermissionOption,
+) -> Result<acp_v2::PermissionOption, acp::Error> {
+    let kind = match option.kind {
+        acp::PermissionOptionKind::AllowOnce => acp_v2::PermissionOptionKind::AllowOnce,
+        acp::PermissionOptionKind::AllowAlways => acp_v2::PermissionOptionKind::AllowAlways,
+        acp::PermissionOptionKind::RejectOnce => acp_v2::PermissionOptionKind::RejectOnce,
+        acp::PermissionOptionKind::RejectAlways => acp_v2::PermissionOptionKind::RejectAlways,
+        _ => {
+            return Err(acp::Error::invalid_params().data("unsupported permission option kind"));
+        }
+    };
+    Ok(acp_v2::PermissionOption::new(
+        acp_v2::PermissionOptionId::new(option.option_id.0),
+        option.name,
+        kind,
+    )
+    .meta(option.meta))
+}
+
+fn permission_outcome_to_v1(
+    outcome: acp_thread::RequestPermissionOutcome,
+) -> acp::RequestPermissionOutcome {
+    match outcome {
+        acp_thread::RequestPermissionOutcome::Cancelled
+        | acp_thread::RequestPermissionOutcome::InterruptedByFollowUp => {
+            acp::RequestPermissionOutcome::Cancelled
+        }
+        acp_thread::RequestPermissionOutcome::Selected(outcome) => {
+            acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new(outcome.option_id.0),
+            ))
+        }
+    }
+}
+
 fn handle_request_permission(
     args: acp::RequestPermissionRequest,
     responder: Responder<acp::RequestPermissionResponse>,
@@ -7365,11 +7418,20 @@ fn handle_request_permission(
 
     let cancellation = responder.cancellation();
     cx.spawn(async move |cx| {
+        let options = match args
+            .options
+            .into_iter()
+            .map(permission_option_from_v1)
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(options) => options,
+            Err(error) => return respond_err(responder, error),
+        };
         let (request_id, task) = match thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization_with_id(
                     args.tool_call,
-                    acp_thread::PermissionOptions::Flat(args.options),
+                    acp_thread::PermissionOptions::Flat(options),
                     acp_thread::AuthorizationKind::PermissionGrant,
                     cx,
                 )
@@ -7386,7 +7448,9 @@ fn handle_request_permission(
         match result {
             Ok(outcome) => {
                 responder
-                    .respond(acp::RequestPermissionResponse::new(outcome.into()))
+                    .respond(acp::RequestPermissionResponse::new(
+                        permission_outcome_to_v1(outcome),
+                    ))
                     .log_err();
             }
             Err(e) => {
@@ -7800,7 +7864,7 @@ fn handle_create_terminal(
 
             let terminal_entity = thread.update(cx, |thread, cx| {
                 thread.register_terminal_created(
-                    acp::TerminalId::new(uuid::Uuid::new_v4().to_string()),
+                    acp_v2::TerminalId::new(uuid::Uuid::new_v4().to_string()),
                     format!("{} {}", args.command, args.args.join(" ")),
                     args.cwd.clone(),
                     args.output_byte_limit,
@@ -7816,7 +7880,9 @@ fn handle_create_terminal(
         match result {
             Ok(terminal_id) => {
                 responder
-                    .respond(acp::CreateTerminalResponse::new(terminal_id))
+                    .respond(acp::CreateTerminalResponse::new(acp::TerminalId::new(
+                        terminal_id.0,
+                    )))
                     .log_err();
             }
             Err(e) => respond_err(responder, e),
@@ -7837,7 +7903,9 @@ fn handle_kill_terminal(
     };
 
     match thread
-        .update(cx, |thread, cx| thread.kill_terminal(args.terminal_id, cx))
+        .update(cx, |thread, cx| {
+            thread.kill_terminal(acp_v2::TerminalId::new(args.terminal_id.0), cx)
+        })
         .flatten_acp()
     {
         Ok(()) => {
@@ -7862,7 +7930,7 @@ fn handle_release_terminal(
 
     match thread
         .update(cx, |thread, cx| {
-            thread.release_terminal(args.terminal_id, cx)
+            thread.release_terminal(acp_v2::TerminalId::new(args.terminal_id.0), cx)
         })
         .flatten_acp()
     {
@@ -7889,7 +7957,7 @@ fn handle_terminal_output(
     match thread
         .read_with(cx, |thread, cx| -> anyhow::Result<_> {
             let out = thread
-                .terminal(args.terminal_id)?
+                .terminal(acp_v2::TerminalId::new(args.terminal_id.0))?
                 .read(cx)
                 .current_output(cx);
             Ok(out)
@@ -7920,7 +7988,10 @@ fn handle_wait_for_terminal_exit(
             .run_until_cancelled(async {
                 let exit_status = thread
                     .update(cx, |thread, cx| {
-                        thread.terminal(args.terminal_id)?.read(cx).wait_for_exit()
+                        thread
+                            .terminal(acp_v2::TerminalId::new(args.terminal_id.0))?
+                            .read(cx)
+                            .wait_for_exit()
                     })
                     .flatten_acp()?
                     .await;

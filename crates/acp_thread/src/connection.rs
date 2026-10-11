@@ -614,8 +614,8 @@ impl AgentModelList {
 
 #[derive(Debug, Clone)]
 pub struct PermissionOptionChoice {
-    pub allow: acp_v1::PermissionOption,
-    pub deny: acp_v1::PermissionOption,
+    pub allow: acp_v2::PermissionOption,
+    pub deny: acp_v2::PermissionOption,
     pub sub_patterns: Vec<String>,
 }
 
@@ -639,7 +639,8 @@ impl PermissionOptionChoice {
             None
         };
 
-        crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind).params(params)
+        crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind.clone())
+            .params(params)
     }
 }
 
@@ -656,7 +657,7 @@ pub struct PermissionPattern {
 
 #[derive(Debug, Clone)]
 pub enum PermissionOptions {
-    Flat(Vec<acp_v1::PermissionOption>),
+    Flat(Vec<acp_v2::PermissionOption>),
     Dropdown(Vec<PermissionOptionChoice>),
     DropdownWithPatterns {
         choices: Vec<PermissionOptionChoice>,
@@ -676,8 +677,8 @@ impl PermissionOptions {
 
     pub fn option_for_id(
         &self,
-        id: &acp_v1::PermissionOptionId,
-    ) -> Option<&acp_v1::PermissionOption> {
+        id: &acp_v2::PermissionOptionId,
+    ) -> Option<&acp_v2::PermissionOption> {
         match self {
             Self::Flat(options) => options.iter().find(|option| &option.option_id == id),
             Self::Dropdown(choices) | Self::DropdownWithPatterns { choices, .. } => {
@@ -696,8 +697,8 @@ impl PermissionOptions {
 
     pub fn first_option_of_kind(
         &self,
-        kind: acp_v1::PermissionOptionKind,
-    ) -> Option<&acp_v1::PermissionOption> {
+        kind: acp_v2::PermissionOptionKind,
+    ) -> Option<&acp_v2::PermissionOption> {
         match self {
             PermissionOptions::Flat(options) => options.iter().find(|option| option.kind == kind),
             PermissionOptions::Dropdown(options) => options.iter().find_map(|choice| {
@@ -723,13 +724,13 @@ impl PermissionOptions {
         }
     }
 
-    pub fn allow_once_option_id(&self) -> Option<acp_v1::PermissionOptionId> {
-        self.first_option_of_kind(acp_v1::PermissionOptionKind::AllowOnce)
+    pub fn allow_once_option_id(&self) -> Option<acp_v2::PermissionOptionId> {
+        self.first_option_of_kind(acp_v2::PermissionOptionKind::AllowOnce)
             .map(|option| option.option_id.clone())
     }
 
-    pub fn deny_once_option_id(&self) -> Option<acp_v1::PermissionOptionId> {
-        self.first_option_of_kind(acp_v1::PermissionOptionKind::RejectOnce)
+    pub fn deny_once_option_id(&self) -> Option<acp_v2::PermissionOptionId> {
+        self.first_option_of_kind(acp_v2::PermissionOptionKind::RejectOnce)
             .map(|option| option.option_id.clone())
     }
 
@@ -777,10 +778,11 @@ impl PermissionOptions {
             &always_choice.deny
         };
 
-        let outcome = crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind)
-            .params(Some(crate::SelectedPermissionParams::Terminal {
-                patterns: checked_patterns,
-            }));
+        let outcome =
+            crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind.clone())
+                .params(Some(crate::SelectedPermissionParams::Terminal {
+                    patterns: checked_patterns,
+                }));
         Some(outcome)
     }
 }

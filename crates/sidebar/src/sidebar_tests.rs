@@ -604,7 +604,7 @@ fn request_test_tool_authorization(
 ) {
     let tool_call_id = acp::ToolCallId::new(tool_call_id);
     let label = format!("Tool {tool_call_id}");
-    let option_id = acp_v1::PermissionOptionId::new(option_id);
+    let option_id = acp_v2::PermissionOptionId::new(option_id);
     let _authorization_task = cx.update(|_, cx| {
         thread.update(cx, |thread, cx| {
             thread
@@ -612,10 +612,10 @@ fn request_test_tool_authorization(
                     acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id.0), label)
                         .kind(acp_v1::ToolKind::Edit)
                         .into(),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                         option_id,
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     acp_thread::AuthorizationKind::PermissionGrant,
                     cx,
