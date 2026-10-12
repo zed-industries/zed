@@ -148,21 +148,21 @@ impl Render for SecurityModal {
                                                         match &remote_host.user_name {
                                                             Some(user_name) => format!(
                                                                 "{} ({}@{})",
-                                                                self.shorten_path(abs_path)
+                                                                self.shorten_path(abs_path, path_style)
                                                                     .display(),
                                                                 user_name,
                                                                 remote_host.host_identifier
                                                             ),
                                                             None => format!(
                                                                 "{} ({})",
-                                                                self.shorten_path(abs_path)
+                                                                self.shorten_path(abs_path, path_style)
                                                                     .display(),
                                                                 remote_host.host_identifier
                                                             ),
                                                         }
                                                     }
                                                     None => self
-                                                        .shorten_path(abs_path)
+                                                        .shorten_path(abs_path, path_style)
                                                         .display()
                                                         .to_string(),
                                                 };
@@ -366,7 +366,8 @@ impl SecurityModal {
             }
             1 => Some(Cow::Owned(format!(
                 "Trust all projects in the {:} folder",
-                self.shorten_path(available_parents[0]).display()
+                self.shorten_path(available_parents[0], path_style)
+                    .display()
             ))),
             _ => Some(Cow::Borrowed("Trust all projects in the parent folders")),
         }
@@ -379,10 +380,10 @@ impl SecurityModal {
             .unwrap_or_else(PathStyle::local)
     }
 
-    fn shorten_path<'a>(&self, path: &'a Path) -> Cow<'a, Path> {
+    fn shorten_path<'a>(&self, path: &'a Path, path_style: PathStyle) -> Cow<'a, Path> {
         match &self.home_dir {
-            Some(home_dir) => path
-                .strip_prefix(home_dir)
+            Some(home_dir) => path_style
+                .strip_prefix(path, home_dir)
                 .map(|stripped| Path::new("~").join(stripped))
                 .map(Cow::Owned)
                 .unwrap_or(Cow::Borrowed(path)),
