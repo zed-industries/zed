@@ -680,6 +680,7 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
         | Model::SixAstra
         | Model::SixSol
         | Model::SixLuna
+        | Model::SixPointOneSol
         | Model::O3 => true,
         Model::Four => false,
         Model::Custom {

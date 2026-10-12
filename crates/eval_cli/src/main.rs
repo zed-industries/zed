@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 
 use acp_thread::AgentConnection as _;
 use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::{v1 as acp, v2 as acp_v2};
 use anyhow::{Context, Result};
 use clap::Parser;
 use feature_flags::FeatureFlagAppExt as _;
@@ -815,7 +815,7 @@ async fn run_agent(
         log_acp_thread_event(&acp_thread, event, cx);
     });
 
-    let message = vec![acp::ContentBlock::Text(acp::TextContent::new(
+    let message = vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
         instruction.to_string(),
     ))];
 
@@ -843,13 +843,16 @@ async fn run_agent(
 
     let outcome = select_biased! {
         result = send_future.fuse() => match result {
-            Ok(Some(response)) => {
+            Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => {
                 eprintln!("[eval-cli] stopped: {:?}", response.stop_reason);
                 if response.stop_reason == acp::StopReason::MaxTokens {
                     Err(anyhow::anyhow!("Model hit maximum token limit"))
                 } else {
                     Ok(AgentOutcome::Completed)
                 }
+            }
+            Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
+                Err(anyhow::anyhow!("Native agent returned acceptance instead of turn completion"))
             }
             Ok(None) => {
                 eprintln!("[eval-cli] completed (no response)");
@@ -992,8 +995,8 @@ fn log_acp_thread_event(
                 }
             }
         }
-        acp_thread::AcpThreadEvent::Stopped(reason) => {
-            eprintln!("\n[eval-cli] stopped: {reason:?}");
+        acp_thread::AcpThreadEvent::Stopped { stop_reason, .. } => {
+            eprintln!("\n[eval-cli] stopped: {stop_reason:?}");
         }
         acp_thread::AcpThreadEvent::Error => {
             eprintln!("[eval-cli] error event");

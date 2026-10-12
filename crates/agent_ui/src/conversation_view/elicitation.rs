@@ -1,14 +1,14 @@
 use acp_thread::{Elicitation, ElicitationEntryId, ElicitationStatus};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use collections::{HashMap, HashSet};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::{AnyElement, App, Div, Empty, Entity, Focusable, Hsla, SharedString, Window, div};
+use gpui::{AnyElement, App, Div, Empty, Entity, Focusable, Role, SharedString, Window, div};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
-    Button, Checkbox, Color, Icon, IconName, IconSize, Indicator, Label, LabelSize, ToggleState,
+    Button, Checkbox, ChoiceCard, Color, Icon, IconName, IconSize, Label, LabelSize, ToggleState,
     prelude::*,
 };
 
@@ -722,6 +722,23 @@ mod tests {
                 .to_string(),
             "Email must be an email address"
         );
+
+        let format = acp::StringFormat::Other("future-email".into());
+        assert_eq!(string_format_json_name(&format), None);
+        assert_eq!(string_format_label(&format), None);
+        let schema = acp::StringPropertySchema::new().format(format);
+        validate_string_value("Email".into(), &schema, "not-an-email")
+            .expect("unknown formats should be annotations");
+
+        let schema = schema.pattern("^prod-[0-9]+$");
+        validate_string_value("Email".into(), &schema, "prod-42")
+            .expect("known constraints should still apply alongside unknown formats");
+        assert_eq!(
+            validate_string_value("Email".into(), &schema, "not-an-email")
+                .expect_err("unknown formats should not bypass known constraints")
+                .to_string(),
+            "Email does not match the requested pattern"
+        );
     }
 
     #[test]
@@ -957,31 +974,118 @@ mod tests {
     }
 
     #[gpui::test]
-    fn form_state_preserves_string_whitespace(cx: &mut TestAppContext) {
+    async fn form_state_preserves_string_whitespace(cx: &mut TestAppContext) {
         crate::conversation_view::tests::init_test(cx);
 
-        cx.add_window(|window, cx| {
-            let schema = acp::ElicitationSchema::new().property(
+        let metadata = |level: &str| {
+            serde_json::Map::from_iter([(
+                "fixture".into(),
+                serde_json::json!({"level": level, "nested": [null, {"enabled": true}]}),
+            )])
+        };
+        let mut scopes = acp::MultiSelectPropertySchema::titled(vec![
+            acp::EnumOption::new("repository", "Repository")
+                .description("Read repositories")
+                .meta(metadata("item-choice")),
+        ])
+        .default_value(vec!["repository".into()])
+        .meta(metadata("array-property"));
+        let acp::MultiSelectItems::Titled(items) = &mut scopes.items else {
+            panic!("expected titled items");
+        };
+        items.meta = Some(metadata("items"));
+        let schema = acp::ElicitationSchema::new()
+            .meta(metadata("schema"))
+            .property(
                 "token",
                 acp::StringPropertySchema::new()
                     .title("Token")
-                    .default_value("  secret  "),
+                    .default_value("  secret  ")
+                    .format(acp::StringFormat::Other("future-token".into()))
+                    .meta(metadata("string-property")),
                 true,
-            );
-            let form_state = ElicitationFormState::new(&schema, window, cx);
-            let content = form_state
-                .collect(&schema, cx)
-                .expect("string with whitespace should be submitted");
+            )
+            .property(
+                "environment",
+                acp::StringPropertySchema::new()
+                    .one_of(vec![
+                        acp::EnumOption::new("production", "Production")
+                            .description("Use live resources")
+                            .meta(metadata("choice")),
+                    ])
+                    .meta(metadata("select-property")),
+                true,
+            )
+            .property("scopes", scopes, true);
+        let request = acp::CreateElicitationRequest::new(
+            acp::ElicitationFormMode::new(preview_request_scope(0), schema),
+            "Provide a token and access choices",
+        )
+        .meta(metadata("request"));
+        let expected_content = BTreeMap::from([
+            (
+                "token".into(),
+                acp::ElicitationContentValue::from("  secret  "),
+            ),
+            (
+                "environment".into(),
+                acp::ElicitationContentValue::from("production"),
+            ),
+            (
+                "scopes".into(),
+                acp::ElicitationContentValue::from(vec!["repository".to_string()]),
+            ),
+        ]);
+        let store = cx.update(|cx| cx.new(|_| acp_thread::ElicitationStore::default()));
+        let (elicitation_id, response_task) = store.update(cx, |store, cx| {
+            store
+                .request_elicitation_with_id(request.clone(), cx)
+                .expect("form request should be accepted")
+        });
 
-            assert_eq!(
-                content.get("token"),
-                Some(&acp::ElicitationContentValue::String(
-                    "  secret  ".to_string()
-                ))
-            );
+        cx.add_window(|window, cx| {
+            let schema = store.read_with(cx, |store, _cx| {
+                let (_, elicitation) = store.elicitation(&elicitation_id).expect("stored form");
+                assert_eq!(elicitation.request, request);
+                let acp::ElicitationMode::Form(mode) = &elicitation.request.mode else {
+                    panic!("expected form mode");
+                };
+                mode.requested_schema.clone()
+            });
+            let mut form_state = ElicitationFormState::new(&schema, window, cx);
+            assert!(matches!(
+                form_state.fields.get("token"),
+                Some(ElicitationFieldState::Text(_))
+            ));
+            let submission = form_state
+                .begin_submission(cx)
+                .expect("submission should start");
+            let content = submission
+                .validate(&schema)
+                .expect("unknown format annotations should not reject valid existing fields");
+            assert!(form_state.validation_matches_current_values(&submission, cx));
+            assert_eq!(content, expected_content);
+            store.update(cx, |store, cx| {
+                store.respond_to_elicitation(
+                    &elicitation_id,
+                    acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                        acp::ElicitationAcceptAction::new().content(content),
+                    )),
+                    cx,
+                );
+                let (_, elicitation) = store.elicitation(&elicitation_id).expect("submitted form");
+                assert_eq!(elicitation.request, request);
+                assert!(matches!(elicitation.status, ElicitationStatus::Accepted));
+            });
 
             Editor::single_line(window, cx)
         });
+        assert_eq!(
+            response_task.await,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                acp::ElicitationAcceptAction::new().content(expected_content),
+            ))
+        );
     }
 
     #[gpui::test]
@@ -1538,7 +1642,13 @@ fn validate_string_pattern_and_format(
     schema: &acp::StringPropertySchema,
     value: &str,
 ) -> Result<(), SharedString> {
-    if schema.pattern.is_none() && schema.format.and_then(string_format_json_name).is_none() {
+    if schema.pattern.is_none()
+        && schema
+            .format
+            .as_ref()
+            .and_then(string_format_json_name)
+            .is_none()
+    {
         return Ok(());
     }
     if schema
@@ -1563,7 +1673,7 @@ fn validate_string_pattern_and_format(
             serde_json::Value::String(pattern.clone()),
         );
     }
-    if let Some(format) = schema.format.and_then(string_format_json_name) {
+    if let Some(format) = schema.format.as_ref().and_then(string_format_json_name) {
         validation_schema.insert(
             "format".to_string(),
             serde_json::Value::String(format.into()),
@@ -1601,7 +1711,7 @@ fn validate_string_pattern_and_format(
 
     match (
         schema.pattern.is_some(),
-        schema.format.and_then(string_format_label),
+        schema.format.as_ref().and_then(string_format_label),
     ) {
         (true, Some(_)) => Err(format!("{title} does not match the requested constraints").into()),
         (true, None) => Err(format!("{title} does not match the requested pattern").into()),
@@ -1610,7 +1720,7 @@ fn validate_string_pattern_and_format(
     }
 }
 
-fn string_format_json_name(format: acp::StringFormat) -> Option<&'static str> {
+fn string_format_json_name(format: &acp::StringFormat) -> Option<&'static str> {
     match format {
         acp::StringFormat::Email => Some("email"),
         acp::StringFormat::Uri => Some("uri"),
@@ -1620,7 +1730,7 @@ fn string_format_json_name(format: acp::StringFormat) -> Option<&'static str> {
     }
 }
 
-fn string_format_label(format: acp::StringFormat) -> Option<&'static str> {
+fn string_format_label(format: &acp::StringFormat) -> Option<&'static str> {
     match format {
         acp::StringFormat::Email => Some("an email address"),
         acp::StringFormat::Uri => Some("a URI"),
@@ -1990,6 +2100,7 @@ impl<'a> ElicitationCard<'a> {
                 .into_any_element();
         }
 
+        let group_label = label.clone();
         let label = if error.is_some() {
             Label::new(label).size(LabelSize::Small).color(Color::Error)
         } else {
@@ -2040,10 +2151,10 @@ impl<'a> ElicitationCard<'a> {
                     };
                     self.render_single_select(
                         field_name,
+                        group_label,
                         value.as_ref(),
                         options,
                         error.is_some(),
-                        cx,
                     )
                 }
                 ElicitationFieldState::MultiSelect(selected) => {
@@ -2054,44 +2165,26 @@ impl<'a> ElicitationCard<'a> {
                         _ => Vec::new(),
                     };
                     v_flex()
+                        .id(format!("elicitation-multi-{}-{field_name}", self.entry_ix))
+                        .role(Role::Group)
+                        .aria_label(group_label)
                         .gap_1()
                         .children(options.into_iter().map(|option| {
                             let is_selected = selected.contains(&option.value);
-                            let checkbox_state = if is_selected {
-                                ToggleState::Selected
-                            } else {
-                                ToggleState::Unselected
-                            };
-                            let row_background = Self::option_row_background(is_selected, cx);
-                            let hover_background =
-                                Self::option_row_hover_background(is_selected, cx);
                             let on_multi_select_change =
                                 self.handlers.on_multi_select_change.clone();
                             let elicitation_id = self.elicitation.id.clone();
                             let field_name = field_name.to_string();
-                            let value = option.value.clone();
-                            let checkbox_id = format!(
-                                "elicitation-multi-{}-{field_name}-{}",
+                            let card_id = format!(
+                                "elicitation-multi-option-{}-{field_name}-{}",
                                 self.entry_ix, option.value
                             );
-                            h_flex()
-                                .id(SharedString::from(format!(
-                                    "elicitation-multi-option-{}-{field_name}-{}",
-                                    self.entry_ix, option.value
-                                )))
-                                .tab_index(0)
-                                .w_full()
-                                .min_h(rems_from_px(28_f32))
-                                .items_start()
-                                .gap_1p5()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(field_border_color.opacity(0.5))
-                                .bg(row_background)
-                                .px_2()
-                                .py_1()
-                                .hover(move |this| this.bg(hover_background).cursor_pointer())
-                                .focus_visible(|this| this.border_color(focused_border_color))
+                            let value = option.value;
+                            ChoiceCard::checkbox(card_id, option.label, is_selected)
+                                .when_some(option.description, |this, description| {
+                                    this.description(description)
+                                })
+                                .invalid(error.is_some())
                                 .on_click(move |_, _window, cx| {
                                     on_multi_select_change(
                                         elicitation_id.clone(),
@@ -2101,8 +2194,6 @@ impl<'a> ElicitationCard<'a> {
                                         cx,
                                     );
                                 })
-                                .child(div().child(Checkbox::new(checkbox_id, checkbox_state)))
-                                .child(Self::render_option_content(option))
                         }))
                         .into_any_element()
                 }
@@ -2116,51 +2207,38 @@ impl<'a> ElicitationCard<'a> {
     fn render_single_select(
         &self,
         field_name: &str,
+        group_label: SharedString,
         selected_value: Option<&String>,
         options: Vec<ElicitationOption>,
         has_error: bool,
-        cx: &App,
     ) -> AnyElement {
         let entry_ix = self.entry_ix;
-        let border_color = if has_error {
-            Color::Error.color(cx)
-        } else {
-            cx.theme().colors().border.opacity(0.8)
-        };
         let elicitation_id = self.elicitation.id.clone();
         let field_name = field_name.to_string();
         let on_single_select_change = self.handlers.on_single_select_change.clone();
 
         v_flex()
+            .id(format!("elicitation-select-{entry_ix}-{field_name}"))
+            .role(Role::RadioGroup)
+            .aria_label(group_label)
             .gap_1()
-            .children(options.into_iter().map(move |option| {
-                let option_value = option.value.clone();
-                let option_id =
-                    format!("elicitation-select-option-{entry_ix}-{field_name}-{option_value}");
+            .children(options.into_iter().map(|option| {
+                let card_id = format!(
+                    "elicitation-select-option-{entry_ix}-{field_name}-{}",
+                    option.value
+                );
                 let is_selected =
                     selected_value.is_some_and(|selected_value| selected_value == &option.value);
-                let row_background = Self::option_row_background(is_selected, cx);
-                let hover_background = Self::option_row_hover_background(is_selected, cx);
-                let control_background = Self::option_control_background(cx);
+                let option_value = option.value;
                 let elicitation_id = elicitation_id.clone();
                 let field_name = field_name.clone();
                 let on_single_select_change = on_single_select_change.clone();
 
-                h_flex()
-                    .id(option_id)
-                    .tab_index(0)
-                    .w_full()
-                    .min_h(rems_from_px(28_f32))
-                    .items_start()
-                    .gap_1p5()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(border_color.opacity(0.5))
-                    .bg(row_background)
-                    .px_2()
-                    .py_1()
-                    .hover(move |this| this.bg(hover_background).cursor_pointer())
-                    .focus_visible(|this| this.border_color(cx.theme().colors().border_focused))
+                ChoiceCard::radio(card_id, option.label, is_selected)
+                    .when_some(option.description, |this, description| {
+                        this.description(description)
+                    })
+                    .invalid(has_error)
                     .on_click(move |_, _window, cx| {
                         on_single_select_change(
                             elicitation_id.clone(),
@@ -2169,77 +2247,8 @@ impl<'a> ElicitationCard<'a> {
                             cx,
                         );
                     })
-                    .child(
-                        div()
-                            .size(Checkbox::container_size())
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(Self::render_radio_indicator(
-                                is_selected,
-                                border_color,
-                                control_background,
-                            )),
-                    )
-                    .child(Self::render_option_content(option))
             }))
             .into_any_element()
-    }
-
-    fn render_option_content(option: ElicitationOption) -> Div {
-        v_flex()
-            .min_w_0()
-            .flex_1()
-            .gap_0p5()
-            .child(Label::new(option.label).size(LabelSize::Small))
-            .when_some(option.description, |this, description| {
-                this.child(
-                    Label::new(description)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-            })
-    }
-
-    fn option_row_background(is_selected: bool, cx: &App) -> Hsla {
-        let editor_background = cx.theme().colors().editor_background;
-        if is_selected {
-            editor_background.blend(Color::Accent.color(cx).opacity(0.08))
-        } else {
-            editor_background
-        }
-    }
-
-    fn option_row_hover_background(is_selected: bool, cx: &App) -> Hsla {
-        let editor_background = cx.theme().colors().editor_background;
-        if is_selected {
-            editor_background.blend(Color::Accent.color(cx).opacity(0.1))
-        } else {
-            cx.theme()
-                .colors()
-                .element_background
-                .blend(cx.theme().colors().editor_foreground.opacity(0.025))
-        }
-    }
-
-    fn option_control_background(cx: &App) -> Hsla {
-        cx.theme().colors().editor_background
-    }
-
-    fn render_radio_indicator(is_selected: bool, border_color: Hsla, background: Hsla) -> Div {
-        div()
-            .size_3()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .border_1()
-            .border_color(border_color)
-            .bg(background)
-            .when(is_selected, |this| {
-                this.child(Indicator::dot().color(Color::Accent))
-            })
     }
 
     fn render_url_elicitation(&self, mode: &acp::ElicitationUrlMode) -> AnyElement {

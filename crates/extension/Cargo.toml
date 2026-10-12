@@ -28,7 +28,6 @@ log.workspace = true
 lsp.workspace = true
 parking_lot.workspace = true
 path.workspace = true
-proto.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

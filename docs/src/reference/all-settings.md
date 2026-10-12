@@ -319,6 +319,22 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Suggest Extensions
+
+- Description: Whether to suggest installing extensions based on the files you open.
+- Setting: `suggest_extensions`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+```json [settings]
+{
+  "suggest_extensions": false
+}
+```
+
 ## Auto Update extensions
 
 - Description: Disable auto-updates for specific extensions.
@@ -2492,7 +2508,7 @@ When set to `expanded`, symbolic links are only scanned after you explicitly exp
       "**/Zed/**/*.json",
       "**/.vscode/**/*.json"
     ],
-    "Shell Script": [".env.*"]
+    "Env": [".env.*"]
   }
 }
 ```
@@ -6124,6 +6140,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `tree_view`: Whether to show entries in tree or flat view in the panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+- `commit_editor`: Whether the commit message editor is shown in the git panel by default. Can be `expanded` or `collapsed`
 - `show_count_badge`: Whether to show a badge on the git panel icon with the count of uncommitted changes
 - `diff_stats`: Whether to show the addition/deletion change count next to each file in the git panel
 - `commit_title_max_length`: Maximum length of the commit message title before a warning is shown. Set to `0` to disable

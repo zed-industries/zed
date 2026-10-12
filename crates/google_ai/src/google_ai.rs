@@ -6,14 +6,12 @@ use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
     StatusCode, http::HeaderMap,
 };
-pub use language_model_core::ModelMode as GoogleModelMode;
+pub use language_model_core::{GOOGLE_AI_API_URL as API_URL, ModelMode as GoogleModelMode};
 use language_model_core::{
     GOOGLE_PROVIDER_NAME, LanguageModelCompletionError, ProviderErrorCategory,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod completion;
-
-pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
 pub async fn stream_generate_content(
     client: &dyn HttpClient,

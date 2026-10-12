@@ -3,9 +3,13 @@ pub mod row_chunk;
 
 pub use bracket_ranges::BracketMatch;
 
+pub use crate::{
+    CaptureId, Grammar, HighlightId, HighlightMap, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet, proto,
+};
 use crate::{
-    ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
-    PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
+    DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, PLAIN_TEXT,
+    RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
@@ -19,16 +23,13 @@ use crate::{
     text_diff::text_diff,
     unified_diff_with_offsets,
 };
-pub use crate::{
-    CaptureId, Grammar, HighlightId, HighlightMap, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet, proto,
-};
 
 use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
 use encoding_rs::Encoding;
+use file_content::{ByteContent, decode_byte_header};
 use fs::MTime;
 use futures::channel::oneshot;
 use futures_lite::future::yield_now;
@@ -374,6 +375,12 @@ pub trait File: Send + Sync + Any {
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
     fn full_path(&self, cx: &App) -> PathBuf;
+
+    /// Returns the absolute path to this file in its backing file system.
+    /// For remote files, this is an absolute path on the remote host.
+    fn file_system_abs_path(&self, cx: &App) -> Option<PathBuf> {
+        self.as_local().map(|file| file.abs_path(cx))
+    }
 
     /// Returns the path style of this file.
     fn path_style(&self, cx: &App) -> PathStyle;
@@ -1696,7 +1703,7 @@ impl Buffer {
             let bytes = load_bytes_task.await?;
 
             anyhow::ensure!(
-                analyze_byte_content(&bytes) != ByteContent::Binary,
+                decode_byte_header(&bytes).1 != ByteContent::Binary,
                 "Binary files are not supported"
             );
 
@@ -3096,6 +3103,7 @@ impl Buffer {
             return;
         }
 
+        self.pending_autoindent.take();
         self.reparse(cx, true);
         cx.emit(BufferEvent::Edited { source });
         let is_dirty = self.is_dirty();
@@ -3421,8 +3429,8 @@ impl Buffer {
 
     pub fn undo_operations(&mut self, counts: HashMap<Lamport, u32>, cx: &mut Context<Buffer>) {
         let was_dirty = self.is_dirty();
-        let operation = self.text.undo_operations(counts);
         let old_version = self.version.clone();
+        let operation = self.text.undo_operations(counts);
         self.send_operation(Operation::Buffer(operation), true, cx);
         self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
     }
@@ -4421,7 +4429,12 @@ impl BufferSnapshot {
             let mut range = None;
             loop {
                 let child_range = cursor.node().byte_range();
-                if !child_range.contains(&offset) {
+                let contains_offset = child_range.contains(&offset)
+                // `Range::contains` is end-exclusive, which rejects every node at EOF
+                // (including the root). Accept the end boundary only at the buffer's end,
+                // so mid-buffer behavior is unchanged.
+                    || (child_range.end == offset && offset == text.len());
+                if !contains_offset {
                     break;
                 }
 
@@ -6101,6 +6114,16 @@ impl File for TestFile {
         PathBuf::from(self.root_name.clone()).join(self.path.as_std_path())
     }
 
+    fn file_system_abs_path(&self, _: &App) -> Option<PathBuf> {
+        let abs_path = self.local_root.as_ref()?.join(&self.root_name);
+        // Mirror worktree::Worktree::absolutize: an empty relative path refers to the root itself.
+        Some(if self.path.as_std_path().as_os_str().is_empty() {
+            abs_path
+        } else {
+            abs_path.join(self.path.as_std_path())
+        })
+    }
+
     fn as_local(&self) -> Option<&dyn LocalFile> {
         if self.local_root.is_some() {
             Some(self)
@@ -6312,4 +6335,50 @@ pub(crate) fn trailing_whitespace_ranges(
     }
 
     ranges
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AutoindentMode, Buffer};
+    use crate::rust_lang;
+    use futures::FutureExt as _;
+    use gpui::{AppContext as _, TestAppContext};
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    fn test_undo_during_async_autoindent(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        for undo_operations in [false, true] {
+            let buffer = cx.new(|cx| Buffer::local("fn a() {}", cx).with_language(rust_lang(), cx));
+            cx.run_until_parked();
+            let autoindent_applied = buffer.update(cx, |buffer, cx| {
+                buffer.set_sync_parse_timeout(None);
+                let edit_id = buffer
+                    .edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx)
+                    .unwrap();
+                let autoindent_applied = buffer.wait_for_autoindent_applied().unwrap();
+                buffer.reparse.take();
+                let snapshot = buffer.snapshot();
+                let mut syntax = snapshot.syntax;
+                syntax.reparse(&snapshot.text, None, rust_lang());
+                buffer.did_finish_parsing(syntax, None, false, cx);
+                assert!(buffer.pending_autoindent.is_some());
+
+                if undo_operations {
+                    buffer.undo_operations([(edit_id, 1)].into_iter().collect(), cx);
+                } else {
+                    assert!(buffer.undo(cx).is_some());
+                }
+                assert!(buffer.pending_autoindent.is_none());
+                assert_eq!(buffer.text(), "fn a() {}");
+                autoindent_applied
+            });
+            cx.run_until_parked();
+            assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), "fn a() {}");
+            autoindent_applied.now_or_never().unwrap().unwrap();
+        }
+    }
 }
