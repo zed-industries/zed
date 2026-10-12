@@ -2534,10 +2534,17 @@ impl MarkdownElement {
                     current_offset.y
                 };
 
-                scroll_handle.set_offset(point(
+                let new_offset = point(
                     current_offset.x,
                     new_offset_y.clamp(-scroll_handle.max_offset().y, Pixels::ZERO),
-                ));
+                );
+                if new_offset != current_offset {
+                    scroll_handle.set_offset(new_offset);
+                    // The scroll container has already laid out this frame with the old
+                    // offset, and a refresh requested mid-draw is dropped, so repaint
+                    // once this draw is done.
+                    window.defer(cx, |window, _| window.refresh());
+                }
             }
             AutoscrollBehavior::Propagate => {
                 let text_style = self.style.base_text_style.clone();

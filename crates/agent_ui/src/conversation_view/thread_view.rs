@@ -603,6 +603,9 @@ pub struct ThreadView {
     /// its allow buttons stay disabled. See [`Self::sandbox_confusable_findings`].
     acknowledged_confusable_warnings: HashSet<acp_v2::ToolCallId>,
     pub subagent_scroll_handles: RefCell<HashMap<acp_v2::SessionId, ScrollHandle>>,
+    /// Shared between a replayed terminal card's height-capped output and the
+    /// markdown inside it, so thread search can scroll a match into view.
+    replayed_terminal_scroll_handles: RefCell<HashMap<acp_v2::ToolCallId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
     pub queue_expanded: bool,
@@ -1043,6 +1046,7 @@ impl ThreadView {
             collapsed_sandbox_network_details: HashSet::default(),
             acknowledged_confusable_warnings: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
+            replayed_terminal_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
             queue_expanded: true,
@@ -9381,15 +9385,15 @@ impl ThreadView {
             // closes it is off screen. The live card bounds its terminal the same
             // way.
             .children(tool_output_display.map(|output| {
-                if is_terminal_tool {
-                    div()
+                match self.replayed_terminal_scroll_handle(tool_call) {
+                    Some(scroll_handle) => div()
                         .id(("replayed-terminal-output", entry_ix))
                         .max_h_72()
                         .overflow_y_scroll()
+                        .track_scroll(&scroll_handle)
                         .child(output)
-                        .into_any_element()
-                } else {
-                    output
+                        .into_any_element(),
+                    None => output,
                 }
             }));
 
@@ -11289,6 +11293,19 @@ impl ThreadView {
             .into_any()
     }
 
+    fn replayed_terminal_scroll_handle(&self, tool_call: &ToolCall) -> Option<ScrollHandle> {
+        let is_replayed_terminal = matches!(tool_call.kind(), acp_v2::ToolKind::Execute)
+            && !tool_call.is_subagent()
+            && tool_call.terminals().next().is_none();
+        is_replayed_terminal.then(|| {
+            self.replayed_terminal_scroll_handles
+                .borrow_mut()
+                .entry(tool_call.id.clone())
+                .or_default()
+                .clone()
+        })
+    }
+
     fn render_markdown_output(
         &self,
         markdown: Entity<Markdown>,
@@ -11310,8 +11327,12 @@ impl ThreadView {
                 cx,
             )
             .unwrap_or_else(|| {
-                self.render_markdown(markdown, markdown_style, cx)
-                    .into_any()
+                let markdown = self.render_markdown(markdown, markdown_style, cx);
+                match self.replayed_terminal_scroll_handle(tool_call) {
+                    Some(scroll_handle) => markdown.scroll_handle(scroll_handle),
+                    None => markdown,
+                }
+                .into_any()
             });
 
         v_flex()

@@ -1273,13 +1273,24 @@ pub fn parse_failed_exit_code(output: &str) -> Option<u32> {
         None => return None,
     };
 
-    // Both the command and the captured output can quote the marker, so a match
-    // only counts where the code ends the sentence: end of string, the blank line
-    // before the output, or the space before the Windows interop note.
+    // Both the command and the captured output can quote the marker followed by
+    // arbitrary text, so a match only counts where it is followed by exactly what
+    // `process_content` writes after the real code: nothing, the fenced (possibly
+    // truncated) output, or the Windows interop note. The first such match wins
+    // because the captured output always comes after the real sentinel.
     sentinel.match_indices(MARKER).find_map(|(index, _)| {
         let (code, rest) = sentinel[index + MARKER.len()..].split_once('.')?;
-        let ends_sentence = rest.is_empty() || rest.starts_with('\n') || rest.starts_with(' ');
-        ends_sentence.then(|| code.parse::<u32>().ok())?
+        let starts_output = |rest: &str| {
+            rest.starts_with("```\n") || rest.starts_with("Command output too long. The first ")
+        };
+        let ends_sentinel = rest.is_empty()
+            || rest.strip_prefix("\n\n").is_some_and(starts_output)
+            || rest
+                .strip_prefix(' ')
+                .and_then(|rest| rest.strip_prefix(WSL_INTEROP_BLOCKED_NOTE))
+                .and_then(|rest| rest.strip_prefix("\n\n"))
+                .is_some_and(starts_output);
+        ends_sentinel.then(|| code.parse::<u32>().ok())?
     })
 }
 
@@ -2179,6 +2190,36 @@ mod tests {
             parse_failed_exit_code(&failed("oops", "echo '\" failed with exit code 9.'", 4)),
             Some(4)
         );
+    }
+
+    #[test]
+    fn test_parse_failed_exit_code_ignores_marker_followed_by_space_in_command() {
+        let command = "echo '\" failed with exit code 9. fake'; exit 4";
+        let output = process_content(
+            acp::TerminalOutputResponse::new("oops".to_string(), false)
+                .exit_status(acp::TerminalExitStatus::new().exit_code(4)),
+            command,
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
+
+        assert_eq!(parse_failed_exit_code(&output), Some(4));
+    }
+
+    #[test]
+    fn test_parse_failed_exit_code_ignores_marker_followed_by_newline_in_command() {
+        let command = "cat <<'EOF'\n\" failed with exit code 9.\nEOF\nexit 4";
+        let output = process_content(
+            acp::TerminalOutputResponse::new("oops".to_string(), false)
+                .exit_status(acp::TerminalExitStatus::new().exit_code(4)),
+            command,
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
+
+        assert_eq!(parse_failed_exit_code(&output), Some(4));
     }
 
     #[test]
