@@ -230,7 +230,6 @@ struct Session {
     thread: Entity<Thread>,
     /// The ACP thread that handles protocol communication
     acp_thread: WeakEntity<acp_thread::AcpThread>,
-    subagents: Vec<Entity<acp_thread::AcpThread>>,
     project_id: EntityId,
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
@@ -911,7 +910,6 @@ impl NativeAgent {
             Session {
                 thread: thread_handle,
                 acp_thread: acp_thread.downgrade(),
-                subagents: Vec::new(),
                 project_id,
                 pending_save,
                 last_streaming_save_key: None,
@@ -3324,11 +3322,6 @@ impl NativeThreadEnvironment {
                     .map(|s| s.project_id)
                     .context("parent session not found")?;
                 let acp_thread = agent.register_session(subagent_thread.clone(), project_id, cx);
-                let parent_session = agent
-                    .sessions
-                    .get_mut(&parent_session_id)
-                    .context("parent session not found")?;
-                parent_session.subagents.push(acp_thread.clone());
                 Ok(acp_thread)
             })??;
 
@@ -7813,6 +7806,76 @@ mod internal_tests {
         assert_eq!(session_count, 0);
         assert_eq!(project_count, 0);
         assert!(weak_project.upgrade().is_none());
+    }
+
+    #[gpui::test]
+    async fn test_completed_subagents_release_while_parent_lives(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {
+                    "file.txt": "hello"
+                }
+            }),
+        )
+        .await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: thread.downgrade(),
+            acp_thread: acp_thread.downgrade(),
+        };
+
+        const SUBAGENT_COUNT: usize = 10;
+        let mut subagent_ids = Vec::new();
+        for index in 0..SUBAGENT_COUNT {
+            let handle = cx
+                .update(|cx| {
+                    environment.create_subagent_thread(format!("subagent-{index}"), None, cx)
+                })
+                .unwrap();
+            subagent_ids.push(handle.id());
+            drop(handle);
+        }
+        cx.run_until_parked();
+        release_dropped_entities(cx);
+
+        // The parent stays alive; completed subagents must not be retained.
+        agent.read_with(cx, |agent, _| {
+            assert_eq!(agent.sessions.len(), 1);
+            assert!(agent.sessions.contains_key(&session_id));
+            for id in &subagent_ids {
+                assert!(!agent.sessions.contains_key(id));
+            }
+        });
+
+        drop(environment);
+        drop(thread);
+        drop(acp_thread);
+        drop(project);
+        release_dropped_entities(cx);
+
+        let (session_count, project_count) =
+            agent.read_with(cx, |agent, _| (agent.sessions.len(), agent.projects.len()));
+        assert_eq!(session_count, 0);
+        assert_eq!(project_count, 0);
     }
 
     #[gpui::test]
