@@ -103,17 +103,15 @@ impl PathStyle {
         }
     }
 
-    pub fn is_absolute(&self, path_like: &str) -> bool {
-        path_like.starts_with('/')
-            || *self == PathStyle::Windows
-                && (path_like.starts_with('\\')
-                    || path_like
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_alphabetic())
-                        && path_like[1..]
-                            .strip_prefix(':')
-                            .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
+    pub fn is_absolute(&self, path: &Path) -> bool {
+        match self {
+            PathStyle::Unix => self.has_root(path),
+            PathStyle::Windows => self.has_root(path) && self.components(path).prefix().is_some(),
+        }
+    }
+
+    pub fn has_root(&self, path: &Path) -> bool {
+        self.components(path).has_root()
     }
 
     pub fn is_windows(&self) -> bool {
@@ -125,10 +123,11 @@ impl PathStyle {
     }
 
     pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
-        let right = right.as_ref().to_str()?;
-        if is_absolute(right, self) {
+        let right = right.as_ref();
+        if self.has_root(right) {
             return None;
         }
+        let right = right.to_str()?;
         let left = left.as_ref().to_str()?;
         if left.is_empty() {
             Some(right.into())
@@ -404,19 +403,6 @@ impl PathStyle {
         };
         !path.is_empty() && self.is_sep_byte(path[0])
     }
-}
-
-fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
-    path_like.starts_with('/')
-        || path_style == PathStyle::Windows
-            && (path_like.starts_with('\\')
-                || path_like
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic())
-                    && path_like[1..]
-                        .strip_prefix(':')
-                        .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
 /// Normalizes a path by resolving `.` and `..` components without
