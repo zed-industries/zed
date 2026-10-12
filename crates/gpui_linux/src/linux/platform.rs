@@ -71,6 +71,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
     pub(crate) system_sleep: Option<Box<dyn FnMut()>>,
     pub(crate) system_wake: Option<Box<dyn FnMut()>>,
+    pub(crate) displays_changed: Option<Box<dyn FnMut()>>,
 }
 
 /// A logind `PrepareForSleep` signal, forwarded from the D-Bus listener to
@@ -427,7 +428,8 @@ impl LinuxPlatform {
     fn replace_connection(&self, connection: DisplayConnection) {
         let previous = std::mem::replace(&mut *self.connection.borrow_mut(), connection);
         drop(previous);
-        // The app caches the keyboard layout, which belongs to the connection.
+        // The app caches the keyboard layout and the displays, which belong to
+        // the connection.
         let callback = self
             .common
             .borrow_mut()
@@ -441,6 +443,15 @@ impl LinuxPlatform {
             if common.callbacks.keyboard_layout_change.is_none() {
                 common.callbacks.keyboard_layout_change = Some(callback);
             }
+        }
+        let callback = self.common.borrow_mut().callbacks.displays_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.common
+                .borrow_mut()
+                .callbacks
+                .displays_changed
+                .get_or_insert(callback);
         }
     }
 
@@ -709,6 +720,10 @@ impl Platform for LinuxPlatform {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.connection.borrow().displays()
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.with_common(|common| common.callbacks.displays_changed = Some(callback));
     }
 
     #[cfg(feature = "screen-capture")]

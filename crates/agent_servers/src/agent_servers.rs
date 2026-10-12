@@ -12,7 +12,6 @@ use http_client::read_no_proxy_from_env;
 use project::{AgentId, Project, agent_server_store::AgentServerStore};
 
 use acp_thread::AgentConnection;
-use agent_client_protocol::schema::v1 as acp_schema;
 use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use gpui::{App, AppContext, Entity, Task};
@@ -61,13 +60,13 @@ pub trait AgentServer: Send {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 
-    fn default_mode(&self, _cx: &App) -> Option<acp_schema::SessionModeId> {
+    fn default_mode(&self, _cx: &App) -> Option<acp_v2::SessionConfigValueId> {
         None
     }
 
     fn set_default_mode(
         &self,
-        _mode_id: Option<acp_schema::SessionModeId>,
+        _mode_id: Option<acp_v2::SessionConfigValueId>,
         _fs: Arc<dyn Fs>,
         _cx: &mut App,
     ) {

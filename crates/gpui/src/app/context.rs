@@ -471,6 +471,26 @@ impl<'a, T: 'static> Context<'a, T> {
         subscription
     }
 
+    /// Registers a callback invoked when the window moves to another display
+    /// or its display's refresh interval changes. See
+    /// [`Window::observe_window_display`].
+    pub fn observe_window_display(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let (subscription, activate) = window.display_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                view.update(cx, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Registers a callback to be invoked when the window button layout changes.
     pub fn observe_button_layout_changed(
         &self,

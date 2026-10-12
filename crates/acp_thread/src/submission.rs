@@ -28,6 +28,18 @@ pub enum SubmissionResponse {
     Accepted(acp_v2::PromptResponse),
 }
 
+/// A local receipt withdrawn by cancellation before the message was accepted.
+#[derive(Debug)]
+pub struct SubmissionCancelled;
+
+impl fmt::Display for SubmissionCancelled {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Submission cancelled before acceptance")
+    }
+}
+
+impl std::error::Error for SubmissionCancelled {}
+
 pub struct Submission {
     pub id: SubmissionId,
     pub response: BoxFuture<'static, anyhow::Result<Option<SubmissionResponse>>>,

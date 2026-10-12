@@ -29,6 +29,7 @@ parking_lot = { workspace = true, features = ["nightly"] }
 gpui_wgpu.workspace = true
 http_client.workspace = true
 anyhow.workspace = true
+async-channel.workspace = true
 futures.workspace = true
 log.workspace = true
 uuid.workspace = true

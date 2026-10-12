@@ -1,4 +1,5 @@
-use agent_client_protocol::schema::v1 as acp;
+use acp_thread::ProcessOutput;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -296,8 +297,8 @@ impl AgentTool for TerminalTool {
 
     const NAME: &'static str = "terminal";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Execute
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Execute
     }
 
     fn allow_in_restricted_mode() -> bool {
@@ -338,8 +339,8 @@ impl AgentTool for SandboxedTerminalTool {
 
     const NAME: &'static str = "sandboxed_terminal";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Execute
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Execute
     }
 
     fn allow_in_restricted_mode() -> bool {
@@ -981,17 +982,15 @@ async fn run_terminal_tool(
     });
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
-    let fields = acp::ToolCallUpdateFields::new().content(vec![acp::ToolCallContent::Terminal(
-        acp::Terminal::new(terminal_id),
-    )]);
-    if let Some(reason) = &sandbox_not_applied {
-        event_stream.update_fields_with_meta(
-            fields,
-            Some(acp_thread::meta_with_sandbox_not_applied(reason)),
-        );
-    } else {
-        event_stream.update_fields(fields);
-    }
+    event_stream.update_fields(|update| {
+        let update = update.content(vec![acp_v2::ToolCallContent::Terminal(
+            acp_v2::Terminal::new(terminal_id),
+        )]);
+        match &sandbox_not_applied {
+            Some(reason) => update.meta(acp_thread::meta_with_sandbox_not_applied(reason)),
+            None => update,
+        }
+    });
 
     let timeout = input.timeout_ms.map(Duration::from_millis);
 
@@ -1247,7 +1246,7 @@ fn wsl_interop_blocked(content: &str) -> bool {
 }
 
 fn process_content(
-    output: acp::TerminalOutputResponse,
+    output: ProcessOutput,
     command: &str,
     timed_out: bool,
     user_stopped: bool,
@@ -1395,7 +1394,7 @@ fn resolve_cd_in_worktrees(
 ) -> Option<PathBuf> {
     let cd = path_style.normalize(cd);
     let cd_path = Path::new(&cd);
-    let is_absolute = path_style.is_absolute(&cd);
+    let is_absolute = path_style.is_absolute(cd_path);
 
     worktree_roots.iter().find_map(|(root_name, abs_path)| {
         let prefix = if is_absolute {
@@ -1403,13 +1402,11 @@ fn resolve_cd_in_worktrees(
         } else {
             (*root_name).to_string()
         };
-        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix))?;
+        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix)).ok()?;
         if subpath.is_empty() {
             Some(abs_path.clone())
         } else {
-            path_style
-                .join_path(abs_path, &*subpath.display(path_style))
-                .ok()
+            path_style.join_path(abs_path, subpath).ok()
         }
     })
 }
@@ -1570,7 +1567,7 @@ mod tests {
 
     #[test]
     fn test_process_content_user_stopped() {
-        let output = acp::TerminalOutputResponse::new("partial output".to_string(), false);
+        let output = ProcessOutput::new("partial output".to_string(), false);
 
         let result = process_content(
             output,
@@ -1806,8 +1803,8 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_success_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("one\ntwo\nthree\nfour".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -1825,8 +1822,8 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_failure_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(1));
 
         let result = process_content(
             output,
@@ -1847,7 +1844,7 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_timeout_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false);
 
         let result = process_content(
             output,
@@ -1868,7 +1865,7 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_user_stopped_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false);
 
         let result = process_content(
             output,
@@ -1890,8 +1887,8 @@ mod tests {
 
     #[test]
     fn test_process_content_selected_output_has_no_explanatory_note() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -1911,7 +1908,7 @@ mod tests {
 
     #[test]
     fn test_process_content_user_stopped_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let output = ProcessOutput::new("".to_string(), false);
 
         let result = process_content(
             output,
@@ -1935,7 +1932,7 @@ mod tests {
 
     #[test]
     fn test_process_content_timed_out() {
-        let output = acp::TerminalOutputResponse::new("build output here".to_string(), false);
+        let output = ProcessOutput::new("build output here".to_string(), false);
 
         let result = process_content(
             output,
@@ -1959,7 +1956,7 @@ mod tests {
 
     #[test]
     fn test_process_content_timed_out_with_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let output = ProcessOutput::new("".to_string(), false);
 
         let result = process_content(
             output,
@@ -1983,8 +1980,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_success() {
-        let output = acp::TerminalOutputResponse::new("success output".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("success output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -2008,8 +2005,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_success_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -2028,8 +2025,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_error_exit() {
-        let output = acp::TerminalOutputResponse::new("error output".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+        let output = ProcessOutput::new("error output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(1));
 
         let result = process_content(
             output,
@@ -2053,8 +2050,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_error_exit_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+        let output = ProcessOutput::new("".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(1));
 
         let result = process_content(
             output,
@@ -2073,7 +2070,7 @@ mod tests {
 
     #[test]
     fn test_process_content_unexpected_termination() {
-        let output = acp::TerminalOutputResponse::new("some output".to_string(), false);
+        let output = ProcessOutput::new("some output".to_string(), false);
 
         let result = process_content(
             output,
@@ -2097,7 +2094,7 @@ mod tests {
 
     #[test]
     fn test_process_content_unexpected_termination_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let output = ProcessOutput::new("".to_string(), false);
 
         let result = process_content(
             output,
@@ -2179,7 +2176,7 @@ mod tests {
             !matches!(
                 rx.try_recv(),
                 Ok(Ok(crate::ThreadEvent::ToolCallUpdate(
-                    acp_thread::ToolCallUpdate::UpdateFields(_)
+                    acp_thread::ToolCallUpdate::V2(_)
                 )))
             ),
             "invalid command should not emit a terminal card update"
@@ -2196,11 +2193,17 @@ mod tests {
         fs.insert_tree("/root", serde_json::json!({})).await;
         let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let environment = std::rc::Rc::new(cx.update(|cx| {
-            crate::tests::FakeThreadEnvironment::default().with_terminal(
-                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+        let (environment, process_terminal_id) = cx.update(|cx| {
+            let terminal = crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0);
+            let terminal_id = crate::TerminalHandle::id(&terminal, &cx.to_async())
+                .expect("expected process terminal ID");
+            (
+                std::rc::Rc::new(
+                    crate::tests::FakeThreadEnvironment::default().with_terminal(terminal),
+                ),
+                terminal_id,
             )
-        }));
+        });
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -2227,13 +2230,19 @@ mod tests {
         });
 
         let update = rx.expect_update_fields().await;
+        let terminal_reference = update
+            .content
+            .value()
+            .and_then(|content| {
+                content.iter().find_map(|content| match content {
+                    acp_v2::ToolCallContent::Terminal(terminal) => Some(terminal),
+                    _ => None,
+                })
+            })
+            .expect("expected terminal content update in unconditional allow-all mode");
         assert!(
-            update.content.iter().any(|blocks| {
-                blocks
-                    .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
-            }),
-            "expected terminal content update in unconditional allow-all mode"
+            Arc::ptr_eq(&terminal_reference.terminal_id.0, &process_terminal_id.0),
+            "native terminal references must reuse the process terminal ID"
         );
 
         let result = task
@@ -2360,10 +2369,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "expected terminal content update for matching env-prefixed allow rule"
         );
@@ -2391,9 +2400,8 @@ mod tests {
         fs.insert_tree("/root", serde_json::json!({})).await;
         let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let output =
-            acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour\nfive".to_string(), false)
-                .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("one\ntwo\nthree\nfour\nfive".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
         let environment = std::rc::Rc::new(cx.update(|cx| {
             crate::tests::FakeThreadEnvironment::default().with_terminal(
                 crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
@@ -2428,10 +2436,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "expected terminal content update"
         );
@@ -2451,8 +2459,8 @@ mod tests {
         fs.insert_tree("/root", serde_json::json!({})).await;
         let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let output = acp::TerminalOutputResponse::new("command output".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("command output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
         let environment = std::rc::Rc::new(cx.update(|cx| {
             crate::tests::FakeThreadEnvironment::default().with_terminal(
                 crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
@@ -2842,10 +2850,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "terminal-specific allow-all should bypass substitution rejection"
         );
@@ -2982,10 +2990,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "multi-assignment pattern should match and produce terminal content"
         );
@@ -3060,10 +3068,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "quoted whitespace value should match pattern with quoted form"
         );
@@ -3292,9 +3300,10 @@ mod tests {
         let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(input), event_stream, cx));
 
         let authorization = receiver.expect_authorization().await;
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
-                .expect("legacy allow_fs_write should request sandbox authorization details");
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization.tool_call.meta.clone().take(),
+        )
+        .expect("legacy allow_fs_write should request sandbox authorization details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
         assert!(details.allow_fs_write_all);
@@ -3310,33 +3319,37 @@ mod tests {
                 (
                     option.option_id.0.as_ref(),
                     option.name.as_ref(),
-                    option.kind,
+                    option.kind.clone(),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             options,
             vec![
-                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow",
+                    "Allow once",
+                    acp_v2::PermissionOptionKind::AllowOnce
+                ),
                 (
                     "allow_thread",
                     "Allow for this thread",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
                 (
                     "allow_always",
                     "Allow always",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
-                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+                ("deny", "Deny", acp_v2::PermissionOptionKind::RejectOnce),
             ]
         );
 
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("deny"),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .expect("authorization response should send");
 
@@ -3388,10 +3401,11 @@ mod tests {
         let authorization = receiver.expect_authorization().await;
         // The sandbox approval deliberately leaves the tool-call title untouched
         // so the card keeps showing the command being approved.
-        assert_eq!(authorization.tool_call.fields.title, None);
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
-                .expect("unsandboxed should request sandbox authorization details");
+        assert!(authorization.tool_call.title.is_undefined());
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization.tool_call.meta.clone().take(),
+        )
+        .expect("unsandboxed should request sandbox authorization details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
         assert!(!details.allow_fs_write_all);
@@ -3407,33 +3421,37 @@ mod tests {
                 (
                     option.option_id.0.as_ref(),
                     option.name.as_ref(),
-                    option.kind,
+                    option.kind.clone(),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             options,
             vec![
-                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow",
+                    "Allow once",
+                    acp_v2::PermissionOptionKind::AllowOnce
+                ),
                 (
                     "allow_thread",
                     "Allow for this thread",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
                 (
                     "allow_always",
                     "Allow always",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
-                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+                ("deny", "Deny", acp_v2::PermissionOptionKind::RejectOnce),
             ]
         );
 
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("deny"),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .expect("authorization response should send");
 
@@ -3505,8 +3523,8 @@ mod tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("allow_always"),
-                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionId::new("allow_always"),
+                acp_v2::PermissionOptionKind::AllowAlways,
             ))
             .expect("authorization response should send");
         task.await.expect("granted command should run");
@@ -3543,9 +3561,10 @@ mod tests {
             cx.update(|cx| tool2.run(crate::ToolInput::resolved(resolved2), event_stream2, cx));
 
         let authorization2 = receiver2.expect_authorization().await;
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization2.tool_call.meta)
-                .expect("the identical request should prompt for sandbox authorization again");
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization2.tool_call.meta.clone().take(),
+        )
+        .expect("the identical request should prompt for sandbox authorization again");
         assert!(
             details
                 .write_paths
@@ -3558,8 +3577,8 @@ mod tests {
         authorization2
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("deny"),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .expect("authorization response should send");
         let result = task2

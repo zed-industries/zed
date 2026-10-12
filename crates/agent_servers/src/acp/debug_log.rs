@@ -183,6 +183,9 @@ impl AcpDebugLog {
             .messages
             .iter()
             .rev()
+            // Client writes can race the agent's final stderr; only later
+            // traffic from the agent makes those diagnostics stale.
+            .filter(|message| message.direction != AcpDebugMessageDirection::Outgoing)
             .take_while(|message| matches!(&message.message, AcpDebugMessageContent::Stderr { .. }))
             .filter_map(|message| match &message.message {
                 AcpDebugMessageContent::Stderr { line } if !line.is_empty() => Some(line.as_ref()),
@@ -219,6 +222,42 @@ mod tests {
             debug_log.trailing_stderr().as_deref(),
             Some("recent stderr")
         );
+    }
+
+    #[test]
+    fn trailing_stderr_is_not_hidden_by_client_traffic() {
+        let debug_log = AcpDebugLog::default();
+        debug_log.record_line(AcpDebugMessageDirection::Stderr, "startup error");
+        debug_log.record_line(
+            AcpDebugMessageDirection::Outgoing,
+            r#"{"jsonrpc":"2.0","id":"startup","method":"initialize","params":{}}"#,
+        );
+        debug_log.record_line(AcpDebugMessageDirection::Stderr, "error detail");
+        debug_log.record_line(
+            AcpDebugMessageDirection::Outgoing,
+            r#"{"jsonrpc":"2.0","method":"$/cancel_request","params":{"requestId":"startup"}}"#,
+        );
+        assert_eq!(
+            debug_log.trailing_stderr().as_deref(),
+            Some("startup error\nerror detail")
+        );
+
+        debug_log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"jsonrpc":"2.0","id":"startup","result":{}}"#,
+        );
+        debug_log.record_line(
+            AcpDebugMessageDirection::Outgoing,
+            r#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session"}}"#,
+        );
+        assert_eq!(debug_log.trailing_stderr(), None);
+
+        debug_log.record_line(AcpDebugMessageDirection::Stderr, "recent error");
+        debug_log.record_line(
+            AcpDebugMessageDirection::Outgoing,
+            r#"{"jsonrpc":"2.0","id":"next","method":"session/new","params":{}}"#,
+        );
+        assert_eq!(debug_log.trailing_stderr().as_deref(), Some("recent error"));
     }
 
     #[test]

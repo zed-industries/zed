@@ -3,7 +3,7 @@ mod thread_switcher;
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent::{ThreadStore, ZED_AGENT_ID};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use agent_settings::{AgentSettings, THREADS_LIST_MAX_WIDTH, THREADS_LIST_MIN_WIDTH};
 use agent_ui::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore, terminal_title_prefix,
@@ -2350,9 +2350,9 @@ impl Sidebar {
 
         let color = cx.theme().colors();
         let sidebar_base_bg = if is_sticky {
-            color.surface_overlay_background()
+            color.panel_background_for_overlay()
         } else {
-            color.surface_background
+            color.panel_background
         };
 
         // The fade gradient renders as a visible patch on transparent windows,
@@ -3292,7 +3292,7 @@ impl Sidebar {
             .unwrap_or(px(0.));
 
         let color = cx.theme().colors();
-        let background = color.surface_overlay_background();
+        let background = color.panel_background_for_overlay();
 
         let element = v_flex()
             .absolute()
@@ -6281,7 +6281,7 @@ impl Sidebar {
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
         let color = cx.theme().colors();
-        let sidebar_bg = color.surface_background;
+        let sidebar_bg = color.panel_background;
         let button_hover_bg = color.element_background;
         let button_active_bg = color.element_active;
 
@@ -6610,7 +6610,7 @@ impl Sidebar {
         let timestamp = format_history_entry_timestamp(terminal.metadata.created_at);
         let is_hovered = self.hovered_thread_index == Some(ix);
         let color = cx.theme().colors();
-        let sidebar_bg = color.surface_background;
+        let sidebar_bg = color.panel_background;
         let button_hover_bg = color.element_background;
         let button_active_bg = color.element_active;
         let metadata = terminal.metadata.clone();
@@ -7952,7 +7952,7 @@ impl Render for Sidebar {
         let sticky_header = self.render_sticky_header(window, cx);
 
         let color = cx.theme().colors();
-        let bg = color.surface_background;
+        let bg = color.background.blend(color.panel_background);
 
         let no_open_projects = !self.contents.has_open_projects;
         let no_search_results = self.contents.entries.is_empty();

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use acp_thread::AgentSessionListRequest;
 use agent::ThreadStore;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use chrono::Utc;
 use collections::{HashMap, HashSet};
 use db::kvp::Dismissable;
@@ -1255,6 +1255,46 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let threads = read_threads_from_channel(dir.path(), ReleaseChannel::Nightly).unwrap();
         assert!(threads.is_empty());
+    }
+
+    #[test]
+    fn test_cross_channel_import_preserves_legacy_session_ids_and_drafts() {
+        let directory = tempfile::tempdir().expect("temporary database directory should exist");
+        let connection = create_channel_db(directory.path(), ReleaseChannel::Nightly);
+        let legacy_session_id =
+            agent_client_protocol::schema::v1::SessionId::new("legacy/session:opaque-☃");
+        let saved_thread_id = ThreadId::new();
+        let draft_thread_id = ThreadId::new();
+        let mut insert = connection
+            .exec_bound::<(ThreadId, Option<std::sync::Arc<str>>)>(
+                "INSERT INTO sidebar_threads \
+                 (thread_id, session_id, title, updated_at, archived) \
+                 VALUES (?1, ?2, 'Legacy thread', '2025-01-15T10:00:00Z', 1)",
+            )
+            .expect("legacy metadata insert should prepare");
+        insert((saved_thread_id, Some(legacy_session_id.0.clone())))
+            .expect("legacy session metadata should insert");
+        insert((draft_thread_id, None)).expect("legacy draft metadata should insert");
+        drop(insert);
+        drop(connection);
+
+        let imported = read_threads_from_channel(directory.path(), ReleaseChannel::Nightly)
+            .expect("legacy channel metadata should load");
+        assert_eq!(imported.len(), 2);
+        let saved = imported
+            .iter()
+            .find(|metadata| metadata.thread_id == saved_thread_id)
+            .expect("legacy session should be imported");
+        assert_eq!(
+            saved.session_id,
+            Some(acp::SessionId::new(legacy_session_id.0))
+        );
+        let draft = imported
+            .iter()
+            .find(|metadata| metadata.thread_id == draft_thread_id)
+            .expect("legacy draft should be imported");
+        assert!(draft.is_draft());
+        assert!(saved.archived && draft.archived);
     }
 
     #[test]

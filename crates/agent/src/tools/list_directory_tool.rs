@@ -3,7 +3,7 @@ use super::tool_permissions::{
     resolve_global_skill_path, resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
 use futures::StreamExt as _;
@@ -912,7 +912,11 @@ mod tests {
         });
 
         let auth = event_rx.expect_authorization().await;
-        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        let title = auth
+            .tool_call
+            .title
+            .value()
+            .expect("expected authorization title");
         assert!(
             title.contains("points outside the project"),
             "Authorization title should mention symlink escape, got: {title}",

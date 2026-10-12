@@ -41,7 +41,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ::ui::IconName;
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
@@ -153,7 +153,7 @@ pub(crate) fn project_path_for_file_link(
         Some(project_path)
     };
     let path = SanitizedPath::new(path).as_path();
-    if path_style.is_absolute(path.to_str()?) {
+    if path_style.is_absolute(path) {
         let project_path = project.project_path_for_absolute_path(path, cx)?;
         let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
         let root = worktree.read(cx).abs_path();
@@ -511,7 +511,7 @@ where
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewNativeAgentThreadFromSummary {
-    from_session_id: acp_v1::SessionId,
+    from_session_id: acp_v2::SessionId,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -594,7 +594,7 @@ impl Agent {
 /// Content to initialize new external agent with.
 pub enum AgentInitialContent {
     ThreadSummary {
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         title: Option<SharedString>,
     },
     ContentBlock {
