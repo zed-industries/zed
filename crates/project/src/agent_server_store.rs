@@ -186,7 +186,6 @@ impl ExternalAgentEntry {
 pub struct AgentServerStore {
     state: AgentServerStoreState,
     pub external_agents: HashMap<AgentId, ExternalAgentEntry>,
-    self_declared_icons: HashMap<AgentId, SharedString>,
 }
 
 pub struct AgentServersUpdated;
@@ -242,29 +241,9 @@ impl AgentServerStore {
     }
 
     pub fn agent_icon(&self, id: &AgentId) -> Option<SharedString> {
-        if let Some(entry) = self.external_agents.get(id) {
-            if let Some(icon) = entry.icon.clone() {
-                return Some(icon);
-            }
-        }
-        self.self_declared_icons.get(id).cloned()
-    }
-
-    pub fn register_self_declared_icon(
-        &mut self,
-        id: AgentId,
-        icon_path: SharedString,
-        cx: &mut Context<Self>,
-    ) {
-        let updated = match self.self_declared_icons.get(&id) {
-            Some(existing) => existing != &icon_path,
-            None => true,
-        };
-        if updated {
-            self.self_declared_icons.insert(id, icon_path);
-            cx.emit(AgentServersUpdated);
-            cx.notify();
-        }
+        self.external_agents
+            .get(id)
+            .and_then(|entry| entry.icon.clone())
     }
 
     pub fn agent_source(&self, name: &AgentId) -> Option<ExternalAgentSource> {
@@ -405,17 +384,6 @@ impl AgentServerStore {
                             None
                         }
                     });
-
-                    if icon_path.is_none() && !self.self_declared_icons.contains_key(&agent_name) {
-                        let cached_icon = crate::agent_icon::external_agents_icons_dir()
-                            .join(crate::agent_icon::sanitize_icon_filename(name));
-                        if cached_icon.is_file() {
-                            self.self_declared_icons.insert(
-                                agent_name.clone(),
-                                SharedString::from(cached_icon.to_string_lossy().into_owned()),
-                            );
-                        }
-                    }
 
                     self.external_agents.insert(
                         agent_name.clone(),
@@ -578,7 +546,6 @@ impl AgentServerStore {
                 _subscriptions: subscriptions,
             },
             external_agents: HashMap::default(),
-            self_declared_icons: HashMap::default(),
         };
         this.agent_servers_settings_changed(cx);
         this
@@ -596,7 +563,6 @@ impl AgentServerStore {
                 worktree_store,
             },
             external_agents: HashMap::default(),
-            self_declared_icons: HashMap::default(),
         }
     }
 
@@ -604,7 +570,6 @@ impl AgentServerStore {
         Self {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
-            self_declared_icons: HashMap::default(),
         }
     }
 
@@ -2480,89 +2445,6 @@ mod tests {
 
             let no_icon = store.agent_icon(&AgentId::new("no-icon-agent"));
             assert_eq!(no_icon, None);
-        });
-    }
-
-    #[gpui::test]
-    fn test_self_declared_icon_precedence(cx: &mut TestAppContext) {
-        init_test_settings(cx);
-        let temp_dir = tempfile::tempdir().unwrap();
-        let configured_svg = temp_dir.path().join("configured.svg");
-        std::fs::write(&configured_svg, b"<svg id='configured'></svg>").unwrap();
-
-        let self_declared_svg = temp_dir.path().join("self-declared.svg");
-        std::fs::write(&self_declared_svg, b"<svg id='self-declared'></svg>").unwrap();
-
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |content| {
-                    let agent_servers = content.agent_servers.get_or_insert_default();
-                    agent_servers.insert(
-                        "agent-with-configured-icon".to_string(),
-                        settings::CustomAgentServerSettings::Custom {
-                            path: PathBuf::from("/bin/echo"),
-                            args: Vec::new(),
-                            env: HashMap::default(),
-                            icon: Some(configured_svg.clone()),
-                            default_mode: None,
-                            default_config_options: HashMap::default(),
-                            favorite_config_option_values: HashMap::default(),
-                        },
-                    );
-                    agent_servers.insert(
-                        "agent-without-icon".to_string(),
-                        settings::CustomAgentServerSettings::Custom {
-                            path: PathBuf::from("/bin/echo"),
-                            args: Vec::new(),
-                            env: HashMap::default(),
-                            icon: None,
-                            default_mode: None,
-                            default_config_options: HashMap::default(),
-                            favorite_config_option_values: HashMap::default(),
-                        },
-                    );
-                });
-            });
-        });
-
-        let store = create_agent_server_store(cx);
-
-        // Before self-declaration:
-        store.read_with(cx, |store, _| {
-            assert_eq!(
-                store.agent_icon(&AgentId::new("agent-with-configured-icon")).as_deref(),
-                Some(configured_svg.to_string_lossy().as_ref())
-            );
-            assert_eq!(store.agent_icon(&AgentId::new("agent-without-icon")), None);
-        });
-
-        // Register self-declared icons for both agents:
-        store.update(cx, |store, cx| {
-            store.register_self_declared_icon(
-                AgentId::new("agent-without-icon"),
-                SharedString::from(self_declared_svg.to_string_lossy().into_owned()),
-                cx,
-            );
-            store.register_self_declared_icon(
-                AgentId::new("agent-with-configured-icon"),
-                SharedString::from(self_declared_svg.to_string_lossy().into_owned()),
-                cx,
-            );
-        });
-
-        // Verify precedence:
-        store.read_with(cx, |store, _| {
-            // Configured icon takes precedence over self-declared:
-            assert_eq!(
-                store.agent_icon(&AgentId::new("agent-with-configured-icon")).as_deref(),
-                Some(configured_svg.to_string_lossy().as_ref())
-            );
-
-            // Agent without configured icon now has the self-declared icon:
-            assert_eq!(
-                store.agent_icon(&AgentId::new("agent-without-icon")).as_deref(),
-                Some(self_declared_svg.to_string_lossy().as_ref())
-            );
         });
     }
 }
