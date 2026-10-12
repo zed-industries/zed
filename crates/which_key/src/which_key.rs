@@ -69,6 +69,9 @@ fn collect_bindings_for_pending_input(
     pending_keystrokes: &[Keystroke],
     mut include_binding: impl FnMut(&gpui::KeyBinding) -> bool,
 ) -> Vec<PendingBinding> {
+    // Which-key uses GPUI's candidate list as is, on purpose, instead of repeating dispatch rules.
+    // The list can include a longer chord that can't be typed because a shorter binding for its
+    // prefix comes later in the keymap. GPUI's shortcut display shows those chords too.
     window
         .possible_bindings_for_input(pending_keystrokes)
         .into_iter()

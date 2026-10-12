@@ -41,7 +41,6 @@ async-lock.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 buffer_diff.workspace = true
-circular-buffer.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true

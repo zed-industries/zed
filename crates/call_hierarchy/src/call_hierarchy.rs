@@ -2354,7 +2354,7 @@ mod tests {
             LanguageConfig {
                 name: LanguageName::new("Rust"),
                 matcher: Arc::new(LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..LanguageMatcher::default()
                 }),
                 ..LanguageConfig::default()
@@ -2368,7 +2368,7 @@ mod tests {
             LanguageConfig {
                 name: LanguageName::new("Rust"),
                 matcher: Arc::new(LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..LanguageMatcher::default()
                 }),
                 ..LanguageConfig::default()
