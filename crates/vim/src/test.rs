@@ -1266,6 +1266,32 @@ async fn test_jk_multi(cx: &mut gpui::TestAppContext) {
     cx.assert_state("jkˇoone jkˇoone jkˇoone", Mode::Normal);
 }
 
+#[gpui::test]
+async fn test_jk_pending_input_at_end_of_read_only_buffer(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "j k",
+            NormalBefore,
+            Some("vim_mode == insert"),
+        )])
+    });
+
+    cx.set_state("helˇloˇ", Mode::Insert);
+    cx.update_editor(|editor, _window, cx| {
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_capability(language::Capability::Read, cx)
+        });
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, _window, cx| assert!(editor.read_only(cx)));
+
+    cx.simulate_keystrokes("j");
+    cx.assert_state("helˇloˇ", Mode::Insert);
+}
+
 #[perf]
 #[gpui::test]
 async fn test_jk_delay(cx: &mut gpui::TestAppContext) {

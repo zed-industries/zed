@@ -9,10 +9,10 @@ use editor::{
     ui_scrollbar_settings_from_raw,
 };
 use gpui::{
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
-    WeakEntity, actions, anchored, deferred, div,
+    Action, AnyElement, App, ClipboardEntry, Corners, DismissEvent, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, Pixels, Point as GpuiPoint, Rems, Render, ScrollWheelEvent, Styled,
+    Subscription, Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
 use persistence::TerminalDb;
@@ -139,6 +139,13 @@ pub struct TerminalView {
     cursor_shape: CursorShape,
     blink_manager: Entity<BlinkManager>,
     mode: TerminalMode,
+    /// Corner radii for the terminal's background, for when it's embedded in a
+    /// container with rounded corners.
+    ///
+    /// GPUI can't clip children to rounded corners, so without this the square
+    /// background paints over the container's corners. Only the background is
+    /// rounded, terminal content isn't clipped.
+    background_corner_radii: Option<Corners<Rems>>,
     read_only: bool,
     // Explicit override for whether workspace-specific context menu actions are shown.
     // When `None`, visibility is derived from `mode` (hidden for embedded terminals).
@@ -292,6 +299,7 @@ impl TerminalView {
             hover: None,
             hover_tooltip_update: Task::ready(()),
             mode: TerminalMode::Standalone,
+            background_corner_radii: None,
             read_only: false,
             show_workspace_actions: None,
             workspace_id,
@@ -319,6 +327,16 @@ impl TerminalView {
         self.mode = TerminalMode::Embedded {
             max_lines_when_unfocused,
         };
+        cx.notify();
+    }
+
+    /// Rounds the background without clipping terminal content to the corners.
+    pub fn set_background_corner_radii(
+        &mut self,
+        corner_radii: Option<Corners<Rems>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_corner_radii = corner_radii;
         cx.notify();
     }
 
@@ -1190,6 +1208,20 @@ fn subscribe_for_terminal_events(
                     cx.emit(SearchEvent::MatchesInvalidated);
                 }
 
+                Event::OutputReplaced => {
+                    terminal_view.hover = None;
+                    terminal_view.hover_tooltip_update = Task::ready(());
+                    terminal_view.scroll_top = Pixels::ZERO;
+                    terminal_view.scroll_handle.future_display_offset.set(None);
+                    terminal_view.scroll_handle.update(terminal.read(cx));
+                    terminal_view.block_below_cursor = None;
+                    window.invalidate_character_coordinates();
+                    cx.emit(SearchEvent::MatchesInvalidated);
+                    cx.emit(SearchEvent::ActiveMatchChanged);
+                    cx.emit(ItemEvent::UpdateTab);
+                    cx.notify();
+                }
+
                 Event::Bell => {
                     terminal_view.has_bell = true;
                     if let TerminalBell::System = TerminalSettings::get_global(cx).bell {
@@ -1467,6 +1499,12 @@ impl Render for TerminalView {
                     .id("terminal-view-container")
                     .size_full()
                     .bg(cx.theme().colors().editor_background)
+                    .when_some(self.background_corner_radii, |this, radii| {
+                        this.rounded_tl(radii.top_left)
+                            .rounded_tr(radii.top_right)
+                            .rounded_bl(radii.bottom_left)
+                            .rounded_br(radii.bottom_right)
+                    })
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -2289,6 +2327,56 @@ mod tests {
 
     // CSI `1;2A` = cursor-up with the xterm Shift modifier (`1 + 1` for Shift).
     const SHIFT_UP_ESCAPE: &[u8] = b"\x1b[1;2A";
+
+    #[gpui::test]
+    async fn replacing_output_resets_view_scrolling_hover_and_search(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, false, true, cx);
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        terminal.update(&mut cx, |terminal, cx| {
+            terminal.write_raw_output(b"\x1b[1 q", cx);
+        });
+        cx.run_until_parked();
+        assert!(terminal_view.read_with(&cx, |view, _| view.blinking_terminal_enabled));
+        cx.update(|_, cx| {
+            terminal_view.update(cx, |view, _| {
+                view.scroll_top = px(25.);
+                view.scroll_handle.future_display_offset.set(Some(3));
+                view.hover = Some(HoverTarget {
+                    tooltip: "stale".into(),
+                    hovered_word: HoveredWord {
+                        word: "stale".into(),
+                        word_match: Range::new(
+                            terminal::Point::new(0, 0),
+                            terminal::Point::new(0, 5),
+                        ),
+                        id: 0,
+                    },
+                });
+            });
+            terminal.update(cx, |terminal, cx| {
+                terminal.write_raw_output(b"old", cx);
+                terminal.matches.push(Range::new(
+                    terminal::Point::new(0, 0),
+                    terminal::Point::new(0, 3),
+                ));
+                terminal
+                    .replace_display_output(b"new", cx)
+                    .expect("replace");
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let view = terminal_view.read(cx);
+            assert_eq!(view.scroll_top, Pixels::ZERO);
+            assert!(view.scroll_handle.future_display_offset.get().is_none());
+            assert!(view.hover.is_none());
+            assert!(view.is_read_only());
+            assert!(!view.blinking_terminal_enabled);
+            assert!(terminal.read(cx).matches.is_empty());
+        });
+    }
 
     #[gpui::test]
     async fn edit_menu_copy_and_paste_are_available_when_terminal_is_focused(

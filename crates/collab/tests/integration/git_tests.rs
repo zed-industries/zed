@@ -21,7 +21,7 @@ use gpui::{
 };
 use project::{
     ProjectPath,
-    git_store::{CommitDataState, MAX_CONCURRENT_BLOB_READS, Repository},
+    git_store::{CommitDataState, MAX_CONCURRENT_OBJECT_READS, Repository},
 };
 use rand::{SeedableRng, rngs::StdRng};
 use serde_json::json;
@@ -465,7 +465,7 @@ async fn test_blob_read_rpcs_are_bounded_on_host(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    const FILE_COUNT: usize = MAX_CONCURRENT_BLOB_READS + 4;
+    const FILE_COUNT: usize = MAX_CONCURRENT_OBJECT_READS + 4;
     let names = (0..FILE_COUNT)
         .map(|index| format!("f{index:02}.txt"))
         .collect::<Vec<_>>();
@@ -521,13 +521,75 @@ async fn test_blob_read_rpcs_are_bounded_on_host(
     }
     executor.run_until_parked();
 
-    assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_BLOB_READS);
+    assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_OBJECT_READS);
 
     gate.open();
     executor.run_until_parked();
     for diff in diffs {
         diff.await.unwrap();
     }
+}
+
+#[gpui::test]
+async fn test_show_rpcs_are_routed_by_revision_kind_on_host(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    use futures::FutureExt as _;
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), json!({ ".git": {} }))
+        .await;
+    let head_sha = "1".repeat(40);
+    client_a
+        .fs()
+        .set_head_for_repo(Path::new(path!("/dir/.git")), &[], head_sha.clone());
+
+    let (project_a, _) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repo_a = project_a.read_with(cx_a, |project, cx| project.active_repository(cx).unwrap());
+    let repo_b = project_b.read_with(cx_b, |project, cx| project.active_repository(cx).unwrap());
+
+    let (release_tx, release_rx) = futures::channel::oneshot::channel::<()>();
+    let held = repo_a.update(cx_a, |repo, _| {
+        repo.send_job("hold", None, move |_, _| async move {
+            release_rx.await.ok();
+        })
+    });
+
+    let mut by_sha = repo_b.update(cx_b, |repo, cx| repo.show_commit(head_sha.clone(), cx));
+    let mut by_ref = repo_b.update(cx_b, |repo, _| repo.show("HEAD".into()));
+    executor.run_until_parked();
+    let details = (&mut by_sha)
+        .now_or_never()
+        .expect("show_commit waited on the host job queue")
+        .unwrap();
+    assert_eq!(details.sha.as_ref(), head_sha);
+    assert!(
+        (&mut by_ref).now_or_never().is_none(),
+        "show by ref skipped the host job queue"
+    );
+
+    release_tx.send(()).ok();
+    held.await.unwrap();
+    executor.run_until_parked();
+    assert_eq!(by_ref.await.unwrap().unwrap().sha.as_ref(), head_sha);
 }
 
 #[gpui::test]

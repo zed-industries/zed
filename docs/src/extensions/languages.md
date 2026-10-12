@@ -499,6 +499,31 @@ impl zed::Extension for MyExtension {
 }
 ```
 
+### Opt-In Language Servers
+
+If your extension ships a language server that users should only run when they opt in (for example, an alternative to the primary language server), list the languages it should not start for by default in `opt_in_languages`. Every language listed there must also be listed in `languages`:
+
+```toml
+[language_servers.my-alternative-server]
+name = "My Alternative LSP"
+languages = ["My Language", "My Other Language"]
+opt_in_languages = ["My Language"]
+```
+
+For the languages listed in `opt_in_languages`, the language server is not covered by the `"..."` wildcard in the [`language_servers`](../configuring-languages.md#choosing-language-servers) setting. Users enable it by naming it explicitly:
+
+```json [settings]
+{
+  "languages": {
+    "My Language": {
+      "language_servers": ["my-alternative-server", "..."]
+    }
+  }
+}
+```
+
+> **Note:** Versions of Zed that do not support `opt_in_languages` ignore it and start the language server for all of its `languages`.
+
 You can customize the handling of the language server using several optional methods in the `Extension` trait. For example, you can control how completions are styled using the `label_for_completion` method. For a complete list of methods, see the [API docs for the Zed extension API](https://docs.rs/zed_extension_api).
 
 ### Syntax Highlighting with Semantic Tokens

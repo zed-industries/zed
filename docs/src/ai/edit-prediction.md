@@ -35,7 +35,7 @@ The Z icon in the status bar also indicates Zeta is active.
 
 ### Pricing and Plans
 
-The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../account/plans-and-pricing.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
+Zeta predictions are included with [Zed Pro](../account/plans-and-pricing.md#pro), the [Pro trial](../account/plans-and-pricing.md#trials), and the [Student](../account/plans-and-pricing.md#student) and [Business](../account/plans-and-pricing.md#business) plans. On the Free plan, you can use [other providers](#other-providers), like GitHub Copilot or a [local model](#local-and-self-hosted-models). See [Zed's pricing page](https://zed.dev/pricing) for details.
 
 ### Switching Modes {#switching-modes}
 
@@ -255,16 +255,15 @@ If your organization uses GitHub Copilot Enterprise, you can configure Zed to us
 
 ```json [settings]
 {
-  "edit_predictions": {
-    "copilot": {
-      "enterprise_uri": "https://your.enterprise.domain"
-    }
+  "copilot": {
+    "enterprise_uri": "https://your.enterprise.domain"
   }
 }
 ```
 
 Replace `"https://your.enterprise.domain"` with the URL provided by your GitHub Enterprise administrator (e.g., `https://foo.ghe.com`).
 
+This setting applies to both Copilot edit predictions and Copilot Chat.
 Once set, Zed routes Copilot requests through your enterprise endpoint.
 When you sign in by clicking the Copilot icon in the status bar, you are redirected to your configured enterprise URL to complete authentication.
 All other Copilot features and usage remain the same.

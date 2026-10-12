@@ -339,7 +339,7 @@ pub fn into_open_ai_response(
                     name: tool.name,
                     description: Some(tool.description),
                     parameters: Some(input_schema),
-                    strict: None,
+                    strict: Some(false),
                 }
             }
             LanguageModelRequestToolInput::Custom { format } => {
@@ -1959,7 +1959,8 @@ mod tests {
                     "type": "function",
                     "name": "get_weather",
                     "description": "Fetches the weather",
-                    "parameters": { "type": "object" }
+                    "parameters": { "type": "object" },
+                    "strict": false
                 }
             ],
             "prompt_cache_key": "thread-123",

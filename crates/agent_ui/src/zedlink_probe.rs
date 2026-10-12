@@ -15,9 +15,9 @@ use std::{
 
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AuthorizationKind, SelectedPermissionOutcome,
-    ThreadStatus, ToolCallStatus,
+    ThreadStatus,
 };
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use agent_settings::{AgentProfile, AgentProfileId};
 use anyhow::{Context as _, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -556,7 +556,7 @@ fn event_kind(event: &AcpThreadEvent) -> &'static str {
         AcpThreadEvent::StatusChanged => "status.changed",
         AcpThreadEvent::ToolAuthorizationRequested(_) => "approval.requested",
         AcpThreadEvent::ToolAuthorizationReceived(_) => "approval.resolved",
-        AcpThreadEvent::Stopped(_) => "turn.stopped",
+        AcpThreadEvent::Stopped { .. } => "turn.stopped",
         AcpThreadEvent::Error => "turn.error",
         _ => "metadata.changed",
     }
@@ -757,7 +757,8 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
                     .find_map(|(entry_index, entry)| {
                         let message = entry.user_message()?;
                         message
-                            .chunks
+                            .content
+                            .source_blocks()
                             .iter()
                             .any(|chunk| matches!(chunk, acp::ContentBlock::Image(_)))
                             .then_some(message.client_id.as_ref())
@@ -1284,7 +1285,7 @@ fn permission_option_value(
     json!({
         "option_id": option.option_id.0.as_ref(),
         "label": &option.name,
-        "option_kind": permission_option_kind(option.kind),
+        "option_kind": permission_option_kind(option.kind.clone()),
         "choice_index": choice_index,
         "action": action,
     })
@@ -1364,10 +1365,9 @@ fn pending_approvals_for_session(
             let AgentThreadEntry::ToolCall(tool_call) = entry else {
                 return None;
             };
-            let ToolCallStatus::WaitingForConfirmation { options, kind, .. } = &tool_call.status
-            else {
-                return None;
-            };
+            let authorization = thread.permission_request_for_tool(&tool_call.id)?;
+            let options = authorization.legacy_options()?;
+            let kind = authorization.legacy_kind()?;
             let raw_input = tool_call
                 .raw_input
                 .as_ref()
@@ -1421,7 +1421,7 @@ fn subagent_snapshots(
                 "session_id": session_id,
                 "tool_call_id": tool_call.id.0.as_ref(),
                 "label": label,
-                "status": tool_call.status.to_string(),
+                "status": tool_call.status().to_string(),
                 "message_start_index": info.message_start_index,
                 "message_end_index": info.message_end_index,
                 "current_turn_id": null,
@@ -1540,13 +1540,13 @@ fn approval_response(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -
         let Some((_, tool_call)) = thread.tool_call(&tool_call_id) else {
             return error(&request.request_id, "APPROVAL_EXPIRED");
         };
-        let ToolCallStatus::WaitingForConfirmation {
-            options,
-            kind: authorization_kind,
-            ..
-        } = &tool_call.status
-        else {
+        let Some(authorization) = thread.permission_request_for_tool(&tool_call_id) else {
             return error(&request.request_id, "APPROVAL_ALREADY_RESOLVED");
+        };
+        let (Some(options), Some(authorization_kind)) =
+            (authorization.legacy_options(), authorization.legacy_kind())
+        else {
+            return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
         };
         let details_available = tool_call.tool_name.is_some()
             && tool_call
@@ -1566,7 +1566,7 @@ fn approval_response(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -
             let Some(option) = options.first_option_of_kind(kind) else {
                 return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
             };
-            SelectedPermissionOutcome::new(option.option_id.clone(), option.kind)
+            SelectedPermissionOutcome::new(option.option_id.clone(), option.kind.clone())
         } else {
             let Some(option_id) = request.params.get("option_id").and_then(Value::as_str) else {
                 return error(&request.request_id, "INVALID_REQUEST");
@@ -1579,7 +1579,7 @@ fn approval_response(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -
                     else {
                         return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
                     };
-                    SelectedPermissionOutcome::new(option.option_id.clone(), option.kind)
+                    SelectedPermissionOutcome::new(option.option_id.clone(), option.kind.clone())
                 }
                 acp_thread::PermissionOptions::Dropdown(choices)
                 | acp_thread::PermissionOptions::DropdownWithPatterns { choices, .. } => {
@@ -1822,7 +1822,8 @@ fn rewind_image_request(request: &ProbeRequest, state: &ProbeState, cx: &mut App
     let first_image_client_id = thread.read(cx).entries().iter().find_map(|entry| {
         let message = entry.user_message()?;
         message
-            .chunks
+            .content
+            .source_blocks()
             .iter()
             .any(|chunk| matches!(chunk, acp::ContentBlock::Image(_)))
             .then_some(message.client_id.clone())
