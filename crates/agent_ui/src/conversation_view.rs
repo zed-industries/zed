@@ -3912,19 +3912,17 @@ impl AgentCodeSpanResolver {
         worktree_abs_path: &Path,
         path_style: PathStyle,
     ) -> Vec<Arc<RelPath>> {
-        let path_text = path.to_string_lossy();
-        let relative_path: Option<Arc<RelPath>> =
-            if util::paths::is_absolute(path_text.as_ref(), path_style) {
-                path_style
-                    .strip_prefix(path, worktree_abs_path)
-                    .map(std::borrow::Cow::into_owned)
-                    .map(Into::into)
-            } else {
-                RelPath::new(path, path_style)
-                    .ok()
-                    .map(std::borrow::Cow::into_owned)
-                    .map(Into::into)
-            };
+        let relative_path: Option<Arc<RelPath>> = if path_style.is_absolute(path) {
+            path_style
+                .strip_prefix(path, worktree_abs_path)
+                .map(std::borrow::Cow::into_owned)
+                .map(Into::into)
+        } else {
+            RelPath::new(path, path_style)
+                .ok()
+                .map(std::borrow::Cow::into_owned)
+                .map(Into::into)
+        };
 
         let Some(relative_path) = relative_path else {
             return Vec::new();
