@@ -794,23 +794,6 @@ fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities 
         .meta(meta)
 }
 
-pub const AGENT_ICON_META_KEY: &str = "dev.zed.agent-icon";
-
-pub fn extract_agent_icon_meta(response: &acp::InitializeResponse) -> Option<serde_json::Value> {
-    response
-        .agent_info
-        .as_ref()
-        .and_then(|info| info.meta.as_ref())
-        .and_then(|meta| meta.get(AGENT_ICON_META_KEY))
-        .or_else(|| {
-            response
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.get(AGENT_ICON_META_KEY))
-        })
-        .cloned()
-}
-
 impl AcpConnection {
     pub fn subscribe_debug_messages(
         &self,
@@ -990,7 +973,6 @@ impl AcpConnection {
             }
         });
 
-        let icon_value = extract_agent_icon_meta(&response);
         let agent_info = response.agent_info;
         let telemetry_id = agent_info
             .as_ref()
@@ -999,44 +981,7 @@ impl AcpConnection {
             // Otherwise, just use the name
             .unwrap_or_else(|| agent_id.0.clone());
         let agent_version = agent_info
-            .as_ref()
-            .and_then(|info| (!info.version.is_empty()).then(|| SharedString::from(info.version.clone())));
-
-        if let Some(icon_value) = icon_value {
-            let agent_id = agent_id.clone();
-            let agent_server_store = agent_server_store.clone();
-            let (fs, http_client) = project.read_with(cx, |project, _cx| {
-                (project.fs().clone(), project.client().http_client())
-            });
-            let executor = cx.background_executor().clone();
-            cx.spawn(async move |cx| {
-                match project::agent_icon::resolve_and_cache_agent_icon(
-                    &agent_id.0,
-                    &icon_value,
-                    fs,
-                    http_client,
-                    &executor,
-                )
-                .await
-                {
-                    Ok(cached_path) => {
-                        let cached_path =
-                            SharedString::from(cached_path.to_string_lossy().into_owned());
-                        agent_server_store
-                            .update(cx, |store, cx| {
-                                store.register_self_declared_icon(agent_id, cached_path, cx);
-                            })
-                            .log_err();
-                    }
-                    Err(error) => {
-                        log::warn!(
-                            "Failed to resolve self-declared icon for agent '{agent_id}': {error:#}"
-                        );
-                    }
-                }
-            })
-            .detach();
-        }
+            .and_then(|info| (!info.version.is_empty()).then(|| SharedString::from(info.version)));
         let agent_supports_delete = response
             .agent_capabilities
             .session_capabilities
@@ -1108,8 +1053,6 @@ impl AcpConnection {
             child: Some(child),
         })
     }
-
-    pub const AGENT_ICON_META_KEY: &str = "dev.zed.agent-icon";
 
     pub fn prompt_capabilities(&self) -> acp_v2::PromptCapabilities {
         acp_thread::prompt_capabilities::from_v1(
@@ -3087,69 +3030,6 @@ mod tests {
                     .expect("display terminal")
             })
         }
-    }
-
-    #[test]
-    fn test_extract_agent_icon_meta_from_agent_info() {
-        let mut info = acp::Implementation::new("test-agent", "1.0.0");
-        info.meta = Some(acp::Meta::from_iter([(
-            AGENT_ICON_META_KEY.to_string(),
-            serde_json::json!({ "url": "https://example.com/icon.svg" }),
-        )]));
-
-        let mut response = acp::InitializeResponse::new(ProtocolVersion::V1);
-        response.agent_info = Some(info);
-
-        let extracted = extract_agent_icon_meta(&response);
-        assert_eq!(
-            extracted,
-            Some(serde_json::json!({ "url": "https://example.com/icon.svg" }))
-        );
-    }
-
-    #[test]
-    fn test_extract_agent_icon_meta_from_root_meta_fallback() {
-        let mut response = acp::InitializeResponse::new(ProtocolVersion::V1);
-        response.agent_info = Some(acp::Implementation::new("test-agent", "1.0.0"));
-        response.meta = Some(acp::Meta::from_iter([(
-            AGENT_ICON_META_KEY.to_string(),
-            serde_json::json!({ "data": "<svg></svg>" }),
-        )]));
-
-        let extracted = extract_agent_icon_meta(&response);
-        assert_eq!(
-            extracted,
-            Some(serde_json::json!({ "data": "<svg></svg>" }))
-        );
-    }
-
-    #[test]
-    fn test_extract_agent_icon_meta_agent_info_precedence() {
-        let mut info = acp::Implementation::new("test-agent", "1.0.0");
-        info.meta = Some(acp::Meta::from_iter([(
-            AGENT_ICON_META_KEY.to_string(),
-            serde_json::json!({ "url": "https://agent-info.com/icon.svg" }),
-        )]));
-
-        let mut response = acp::InitializeResponse::new(ProtocolVersion::V1);
-        response.agent_info = Some(info);
-        response.meta = Some(acp::Meta::from_iter([(
-            AGENT_ICON_META_KEY.to_string(),
-            serde_json::json!({ "url": "https://root-meta.com/icon.svg" }),
-        )]));
-
-        let extracted = extract_agent_icon_meta(&response);
-        assert_eq!(
-            extracted,
-            Some(serde_json::json!({ "url": "https://agent-info.com/icon.svg" }))
-        );
-    }
-
-    #[test]
-    fn test_extract_agent_icon_meta_none_when_absent() {
-        let mut response = acp::InitializeResponse::new(ProtocolVersion::V1);
-        response.agent_info = Some(acp::Implementation::new("test-agent", "1.0.0"));
-        assert_eq!(extract_agent_icon_meta(&response), None);
     }
 
     #[gpui::test]
