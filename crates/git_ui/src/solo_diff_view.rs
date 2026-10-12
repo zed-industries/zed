@@ -22,15 +22,11 @@ use project::{
     git_store::{Repository, RepositoryId},
 };
 use settings::{Settings, SettingsStore, StatusStyle};
-use std::{
-    any::{Any, TypeId},
-    ops::Range,
-    sync::Arc,
-};
+use std::{any::TypeId, ops::Range};
 use ui::{DiffStat, Divider, Tooltip, prelude::*};
 use util::paths::{PathExt as _, PathStyle};
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Item, ItemHandle, ItemNavigation, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
     item::{ItemEvent, SaveOptions},
     notifications::NotifyTaskExt,
@@ -422,8 +418,8 @@ impl Item for SoloDiffView {
         Some("Solo Diff View Opened")
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.deactivated(window, cx);
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.editor.clone())
     }
 
     fn act_as_type<'a>(
@@ -455,32 +451,6 @@ impl Item for SoloDiffView {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.editor.read(cx).active_project_path(cx)
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.rhs_editor().update(cx, |editor, _| {
-                editor.set_nav_history(Some(nav_history));
-            })
-        });
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.editor.update(cx, |editor, cx| {
-            editor
-                .rhs_editor()
-                .update(cx, |editor, cx| editor.navigate(data, window, cx))
-        })
     }
 
     fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {

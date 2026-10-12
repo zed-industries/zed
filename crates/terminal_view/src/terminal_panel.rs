@@ -30,10 +30,10 @@ use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
-    PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
-    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
+    PaneGroup, PaneNavigation, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight,
+    SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
-    item::SerializableItem,
+    item::{ItemNavigation, SerializableItem},
     move_active_item, pane,
 };
 
@@ -1320,12 +1320,11 @@ pub fn new_terminal_pane(
             None,
             workspace::NewTerminal::default().boxed_clone(),
             false,
+            PaneNavigation::Disabled,
             window,
             cx,
         );
         pane.set_zoomed(zoomed, cx);
-        pane.set_can_navigate(false, cx);
-        pane.display_nav_history_buttons(None);
         pane.set_should_display_tab_bar(|_, _| true);
         pane.set_zoom_out_on_close(false);
 
@@ -1462,6 +1461,10 @@ impl EventEmitter<()> for FailedToSpawnTerminal {}
 
 impl workspace::Item for FailedToSpawnTerminal {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         SharedString::new_static("Failed to spawn terminal")

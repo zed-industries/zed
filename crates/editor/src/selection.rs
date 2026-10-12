@@ -1601,15 +1601,12 @@ impl Editor {
         let new_cursor_position = newest_selection.head();
         let selection_start = newest_selection.start;
 
-        if effects.nav_history.is_none() || effects.nav_history == Some(true) {
-            self.push_to_nav_history(
-                *old_cursor_position,
-                Some(new_cursor_position.to_point(buffer)),
-                false,
-                effects.nav_history == Some(true),
-                cx,
-            );
-        }
+        self.push_to_nav_history(
+            *old_cursor_position,
+            Some(new_cursor_position.to_point(buffer)),
+            effects.record_navigation.unwrap_or_default(),
+            cx,
+        );
 
         if local {
             if let Some((anchor, _)) = buffer.anchor_to_buffer_anchor(new_cursor_position) {
@@ -2090,7 +2087,9 @@ impl Editor {
             if let Some(state) = &mut self.deferred_selection_effects_state {
                 state.effects.scroll = effects.scroll.or(state.effects.scroll);
                 state.effects.completions = effects.completions;
-                state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
+                state.effects.record_navigation = effects
+                    .record_navigation
+                    .or(state.effects.record_navigation);
                 state.changed |= changed;
             }
             return result;

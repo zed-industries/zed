@@ -2321,7 +2321,7 @@ mod tests {
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
     use util::{path, paths::PathStyle, rel_path::rel_path};
-    use workspace::{AppState, Item, MultiWorkspace, Workspace};
+    use workspace::{AppState, Item, ItemNavigation, MultiWorkspace, Workspace};
 
     use crate::completion_provider::{AgentContextSelection, AvailableSkill, PromptContextType};
     use crate::{
@@ -2802,8 +2802,8 @@ mod tests {
     impl Item for MessageEditorItem {
         type Event = ();
 
-        fn include_in_nav_history() -> bool {
-            false
+        fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+            ItemNavigation::Excluded
         }
 
         fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {

@@ -1,6 +1,6 @@
 use crate::{
     ActiveDebugLine, Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent,
-    EditorSettings, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
+    EditorSettings, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
     ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
@@ -36,7 +36,7 @@ use rope::TextSummary;
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
-    any::{Any, TypeId},
+    any::TypeId,
     borrow::Cow,
     cmp::{self, Ordering},
     num::NonZeroU32,
@@ -53,7 +53,7 @@ use util::{
 };
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, OpenOptions, OpenVisible, ToolbarItemLocation, ViewId,
+    CollaboratorId, ItemId, ItemNavigation, OpenOptions, OpenVisible, ToolbarItemLocation, ViewId,
     Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
@@ -650,45 +650,8 @@ impl Item for Editor {
         }
     }
 
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if let Some(data) = data.downcast_ref::<NavigationData>() {
-            let newest_selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
-            let buffer = self.buffer.read(cx).read(cx);
-            let offset = if buffer.can_resolve(&data.cursor_anchor) {
-                data.cursor_anchor.to_point(&buffer)
-            } else {
-                buffer.clip_point(data.cursor_position, Bias::Left)
-            };
-
-            let mut scroll_anchor = data.scroll_anchor;
-            if !buffer.can_resolve(&scroll_anchor.anchor) {
-                scroll_anchor.anchor = buffer.anchor_before(
-                    buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
-                );
-            }
-
-            drop(buffer);
-
-            if newest_selection.head() == offset {
-                false
-            } else {
-                self.set_scroll_anchor(scroll_anchor, window, cx);
-                self.change_selections(
-                    SelectionEffects::default().nav_history(false),
-                    window,
-                    cx,
-                    |s| s.select_ranges([offset..offset]),
-                );
-                true
-            }
-        } else {
-            false
-        }
+    fn navigation(&self, this: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::locations(this.clone())
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
@@ -883,22 +846,8 @@ impl Item for Editor {
         Task::ready(Some(cx.new(|cx| self.clone(window, cx))))
     }
 
-    fn set_nav_history(
-        &mut self,
-        history: ItemNavHistory,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) {
-        self.nav_history = Some(history);
-    }
-
     fn on_removed(&self, cx: &mut Context<Self>) {
         self.report_editor_event(ReportEditorEvent::Closed, None, cx);
-    }
-
-    fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        let selection = self.selections.newest_anchor();
-        self.push_to_nav_history(selection.head(), None, true, false, cx);
     }
 
     fn workspace_deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {

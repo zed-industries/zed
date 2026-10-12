@@ -21,7 +21,8 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Item, ItemHandle, ItemNavigation, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
 };
 
 actions!(dev, [OpenAcpLogs]);
@@ -672,6 +673,10 @@ impl EventEmitter<AcpToolsEvent> for AcpTools {}
 
 impl Item for AcpTools {
     type Event = AcpToolsEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> ui::SharedString {
         format!(

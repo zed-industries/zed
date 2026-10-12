@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
-    item::{Item, ProjectItem, test::TestItem},
+    item::{Item, ItemNavigation, ProjectItem, test::TestItem},
     register_project_item,
 };
 
@@ -6879,7 +6879,7 @@ mod multibuffer_wrapper {
         App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, IntoElement,
         ParentElement, Render, SharedString, Subscription, Window, div,
     };
-    use workspace::item::{Item, ItemEvent, TabContentParams};
+    use workspace::item::{Item, ItemEvent, ItemNavigation, TabContentParams};
 
     pub struct TestMultibufferWrapper {
         pub editor: Entity<Editor>,
@@ -6914,6 +6914,10 @@ mod multibuffer_wrapper {
 
     impl Item for TestMultibufferWrapper {
         type Event = EditorEvent;
+
+        fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+            ItemNavigation::Excluded
+        }
 
         fn tab_content_text(&self, _: usize, _: &App) -> SharedString {
             "wrapper".into()
@@ -12662,6 +12666,10 @@ impl ProjectItem for TestProjectItemView {
 
 impl Item for TestProjectItemView {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Excluded
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Test".into()

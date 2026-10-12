@@ -76,8 +76,8 @@ use util::{
     test::{TempTree, TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
 };
 use workspace::{
-    CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    Pane, SplitDirection, ToolbarItemLocation, ViewId, Workspace,
+    CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, OpenOptions, Pane,
+    SplitDirection, ToolbarItemLocation, ViewId, Workspace,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -1207,7 +1207,7 @@ fn test_toggle_breadcrumb_does_not_change_settings(cx: &mut TestAppContext) {
 async fn test_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    use workspace::item::Item;
+    use workspace::NavigableItem;
 
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
@@ -1222,11 +1222,10 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
             let mut editor = build_editor(buffer, window, cx);
             let handle = cx.entity();
-            editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
+            editor.bind_history(pane.read(cx).nav_history_for_item(&handle), cx);
 
-            fn pop_history(editor: &mut Editor, cx: &mut App) -> Option<NavigationEntry> {
-                editor.nav_history.as_mut().unwrap().pop_backward(cx)
-            }
+            let pop_history =
+                |cx: &mut App| pane.update(cx, |pane, cx| pane.nav_history_mut().pop_backward(cx));
 
             // Move the cursor a small distance.
             // Nothing is added to the navigation history.
@@ -1240,7 +1239,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                     DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0)
                 ])
             });
-            assert!(pop_history(&mut editor, cx).is_none());
+            assert!(pop_history(cx).is_none());
 
             // Move the cursor a large distance.
             // The history can jump back to the previous position.
@@ -1249,16 +1248,16 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                     DisplayPoint::new(DisplayRow(13), 0)..DisplayPoint::new(DisplayRow(13), 3)
                 ])
             });
-            let nav_entry = pop_history(&mut editor, cx).unwrap();
-            editor.navigate(nav_entry.data.unwrap(), window, cx);
-            assert_eq!(nav_entry.item.id(), cx.entity_id());
+            let nav_entry = pop_history(cx).unwrap();
+            editor.restore_location(nav_entry.data().unwrap(), window, cx);
+            assert_eq!(nav_entry.item_id(), cx.entity_id());
             assert_eq!(
                 editor
                     .selections
                     .display_ranges(&editor.display_snapshot(cx)),
                 &[DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0)]
             );
-            assert!(pop_history(&mut editor, cx).is_none());
+            assert!(pop_history(cx).is_none());
 
             // Move the cursor a small distance via the mouse.
             // Nothing is added to the navigation history.
@@ -1270,7 +1269,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                     .display_ranges(&editor.display_snapshot(cx)),
                 &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 0)]
             );
-            assert!(pop_history(&mut editor, cx).is_none());
+            assert!(pop_history(cx).is_none());
 
             // Move the cursor a large distance via the mouse.
             // The history can jump back to the previous position.
@@ -1282,16 +1281,16 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                     .display_ranges(&editor.display_snapshot(cx)),
                 &[DisplayPoint::new(DisplayRow(15), 0)..DisplayPoint::new(DisplayRow(15), 0)]
             );
-            let nav_entry = pop_history(&mut editor, cx).unwrap();
-            editor.navigate(nav_entry.data.unwrap(), window, cx);
-            assert_eq!(nav_entry.item.id(), cx.entity_id());
+            let nav_entry = pop_history(cx).unwrap();
+            editor.restore_location(nav_entry.data().unwrap(), window, cx);
+            assert_eq!(nav_entry.item_id(), cx.entity_id());
             assert_eq!(
                 editor
                     .selections
                     .display_ranges(&editor.display_snapshot(cx)),
                 &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 0)]
             );
-            assert!(pop_history(&mut editor, cx).is_none());
+            assert!(pop_history(cx).is_none());
 
             // Set scroll position to check later
             editor.set_scroll_position(gpui::Point::<f64>::new(5.5, 5.5), window, cx);
@@ -1309,8 +1308,8 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 original_scroll_position
             );
 
-            let nav_entry = pop_history(&mut editor, cx).unwrap();
-            editor.navigate(nav_entry.data.unwrap(), window, cx);
+            let nav_entry = pop_history(cx).unwrap();
+            editor.restore_location(nav_entry.data().unwrap(), window, cx);
             assert_eq!(
                 editor
                     .scroll_manager
@@ -1326,7 +1325,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 buffer.snapshot(cx).anchor_after(MultiBufferOffset(3))
             });
             let invalid_point = Point::new(9999, 0);
-            editor.navigate(
+            editor.restore_location(
                 Arc::new(NavigationData {
                     cursor_anchor: invalid_anchor,
                     cursor_position: invalid_point,

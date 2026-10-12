@@ -5,9 +5,9 @@ use crate::{
     focus_follows_mouse::FocusFollowsMouse as _,
     invalid_item_view::InvalidItemView,
     item::{
-        ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
-        PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
-        TabContentParams, TabTooltipContent, WeakItemHandle,
+        ActivateOnClose, ClosePosition, ItemBufferKind, ItemHandle, ItemSettings,
+        NavigationLocation, PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton,
+        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -437,9 +437,7 @@ pub struct Pane {
     /// This is set to true if a user scroll has occurred more recently than a system scroll
     /// We want to suppress certain system scrolls when the user has intentionally scrolled
     suppress_scroll: bool,
-    /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
-    /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
-    display_nav_history_buttons: Option<bool>,
+    navigation: PaneNavigation,
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
     close_pane_if_empty: bool,
@@ -485,15 +483,25 @@ struct NavHistoryState {
     preview_item_id: Option<EntityId>,
 }
 
+/// Whether a pane supports going back and forward between its items.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum PaneNavigation {
+    /// Items are recorded in the navigation history, and the navigation buttons are shown
+    /// according to the tab bar settings.
+    Enabled,
+    /// Nothing is recorded, and neither navigation buttons nor actions are available, e.g. for
+    /// the terminal panel.
+    Disabled,
+}
+
 #[derive(Debug, Default, Copy, Clone)]
-pub enum NavigationMode {
+pub(crate) enum NavigationMode {
     #[default]
     Normal,
     GoingBack,
     GoingForward,
     ClosingItem,
     ReopeningClosedItem,
-    Disabled,
 }
 
 #[derive(Debug, Default, Copy, Clone)]
@@ -503,15 +511,35 @@ pub enum TagNavigationMode {
     Newer,
 }
 
+/// An entry of the navigation history. Only the workspace creates and reads entries, items
+/// provide their locations through [`NavigationLocation`] instead.
 #[derive(Clone)]
 pub struct NavigationEntry {
-    pub item: Arc<dyn WeakItemHandle + Send + Sync>,
-    pub data: Option<Arc<dyn Any + Send + Sync>>,
-    pub timestamp: usize,
-    pub is_preview: bool,
+    pub(crate) item: Arc<dyn WeakItemHandle + Send + Sync>,
+    pub(crate) data: Option<Arc<dyn Any + Send + Sync>>,
+    pub(crate) timestamp: usize,
+    pub(crate) is_preview: bool,
     /// Row position for Neovim-style deduplication. When set, entries with the
     /// same item and row are considered duplicates and deduplicated.
-    pub row: Option<u32>,
+    pub(crate) row: Option<u32>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl NavigationEntry {
+    pub fn item_id(&self) -> EntityId {
+        self.item.id()
+    }
+
+    pub fn data(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.data.clone()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl NavHistory {
+    pub fn pop_backward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
+        self.pop(NavigationMode::GoingBack, cx)
+    }
 }
 
 #[derive(Clone)]
@@ -550,6 +578,7 @@ impl Pane {
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static>>,
         double_click_dispatch_action: Box<dyn Action>,
         use_max_tabs: bool,
+        navigation: PaneNavigation,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -609,9 +638,7 @@ impl Pane {
             render_tab_bar_buttons: Rc::new(default_render_tab_bar_buttons),
             render_tab_bar: Rc::new(Self::render_tab_bar),
             show_tab_bar_buttons: TabBarSettings::get_global(cx).show_tab_bar_buttons,
-            display_nav_history_buttons: Some(
-                TabBarSettings::get_global(cx).show_nav_history_buttons,
-            ),
+            navigation,
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
@@ -790,10 +817,6 @@ impl Pane {
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let tab_bar_settings = TabBarSettings::get_global(cx);
 
-        if let Some(display_nav_history_buttons) = self.display_nav_history_buttons.as_mut() {
-            *display_nav_history_buttons = tab_bar_settings.show_nav_history_buttons;
-        }
-
         self.show_tab_bar_buttons = tab_bar_settings.show_tab_bar_buttons;
 
         if !PreviewTabsSettings::get_global(cx).enabled {
@@ -858,13 +881,6 @@ impl Pane {
         cx.notify();
     }
 
-    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut Context<Self>) {
-        self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.set_can_navigate(can_navigate, cx);
-        });
-        cx.notify();
-    }
-
     pub fn set_render_tab_bar<F>(&mut self, cx: &mut Context<Self>, render: F)
     where
         F: 'static + Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement,
@@ -886,10 +902,20 @@ impl Pane {
         cx.notify();
     }
 
-    pub fn nav_history_for_item<T: Item>(&self, item: &Entity<T>) -> ItemNavHistory {
+    pub fn nav_history_for_item(&self, item: &dyn ItemHandle) -> ItemNavHistory {
         ItemNavHistory {
             history: self.nav_history.clone(),
-            item: Arc::new(item.downgrade()),
+            item: Arc::from(item.downgrade_item()),
+        }
+    }
+
+    /// Records the item's current location, called when it gets deactivated or closed.
+    pub(crate) fn record_navigation(&self, item: &dyn ItemHandle, cx: &mut App) {
+        if self.navigation == PaneNavigation::Disabled {
+            return;
+        }
+        if let Some(location) = item.navigation(cx).capture_location(cx) {
+            self.nav_history_for_item(item).push(location, cx);
         }
     }
 
@@ -909,14 +935,6 @@ impl Pane {
     pub fn set_nav_history(&mut self, history: NavHistory, cx: &Context<Self>) {
         self.nav_history = history;
         self.nav_history().0.lock().pane = cx.entity().downgrade();
-    }
-
-    pub fn disable_history(&mut self) {
-        self.nav_history.disable();
-    }
-
-    pub fn enable_history(&mut self) {
-        self.nav_history.enable();
     }
 
     pub fn can_navigate_backward(&self) -> bool {
@@ -1487,7 +1505,7 @@ impl Pane {
                 || matches!(self.nav_history.mode(), GoingBack | GoingForward))
                 && let Some(prev_item) = self.items.get(prev_active_item_ix)
             {
-                prev_item.deactivated(window, cx);
+                self.record_navigation(prev_item.as_ref(), cx);
             }
             self.update_history(index);
             self.update_toolbar(window, cx);
@@ -2194,7 +2212,7 @@ impl Pane {
 
         cx.emit(Event::RemovedItem { item: item.clone() });
         if self.items.is_empty() {
-            item.deactivated(window, cx);
+            self.record_navigation(item.as_ref(), cx);
             if close_pane_if_empty {
                 self.update_toolbar(window, cx);
                 cx.emit(Event::Remove {
@@ -2209,7 +2227,7 @@ impl Pane {
 
         let mode = self.nav_history.mode();
         self.nav_history.set_mode(NavigationMode::ClosingItem);
-        item.deactivated(window, cx);
+        self.record_navigation(item.as_ref(), cx);
         item.on_removed(cx);
         self.nav_history.set_mode(mode);
         self.unpreview_item_if_preview(item.item_id());
@@ -3577,7 +3595,8 @@ impl Pane {
     ) -> TabBar {
         tab_bar
             .when(
-                self.display_nav_history_buttons.unwrap_or_default(),
+                self.navigation == PaneNavigation::Enabled
+                    && TabBarSettings::get_global(cx).show_nav_history_buttons,
                 |tab_bar| {
                     tab_bar
                         .start_child(navigate_backward)
@@ -4246,10 +4265,6 @@ impl Pane {
             .log_err();
     }
 
-    pub fn display_nav_history_buttons(&mut self, display: Option<bool>) {
-        self.display_nav_history_buttons = display;
-    }
-
     fn pinned_item_ids(&self) -> Vec<EntityId> {
         self.items
             .iter()
@@ -4474,8 +4489,10 @@ impl Render for Pane {
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(Pane::zoom_in))
             .on_action(cx.listener(Pane::zoom_out))
-            .on_action(cx.listener(Self::navigate_backward))
-            .on_action(cx.listener(Self::navigate_forward))
+            .when(self.navigation == PaneNavigation::Enabled, |pane| {
+                pane.on_action(cx.listener(Self::navigate_backward))
+                    .on_action(cx.listener(Self::navigate_forward))
+            })
             .on_action(cx.listener(Self::go_to_older_tag))
             .on_action(cx.listener(Self::go_to_newer_tag))
             .on_action(
@@ -4698,34 +4715,18 @@ impl Render for Pane {
                             }),
                     )
             })
-            .on_mouse_down(
-                MouseButton::Navigate(NavigationDirection::Back),
-                cx.listener(|pane, _, window, cx| {
-                    if let Some(workspace) = pane.workspace.upgrade() {
-                        let pane = cx.entity().downgrade();
-                        window.defer(cx, move |window, cx| {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace.go_back(pane, window, cx).detach_and_log_err(cx)
-                            })
-                        })
-                    }
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Navigate(NavigationDirection::Forward),
-                cx.listener(|pane, _, window, cx| {
-                    if let Some(workspace) = pane.workspace.upgrade() {
-                        let pane = cx.entity().downgrade();
-                        window.defer(cx, move |window, cx| {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace
-                                    .go_forward(pane, window, cx)
-                                    .detach_and_log_err(cx)
-                            })
-                        })
-                    }
-                }),
-            )
+            .when(self.navigation == PaneNavigation::Enabled, |pane| {
+                pane.on_mouse_down(
+                    MouseButton::Navigate(NavigationDirection::Back),
+                    cx.listener(|pane, _, window, cx| pane.navigate_backward(&GoBack, window, cx)),
+                )
+                .on_mouse_down(
+                    MouseButton::Navigate(NavigationDirection::Forward),
+                    cx.listener(|pane, _, window, cx| {
+                        pane.navigate_forward(&GoForward, window, cx)
+                    }),
+                )
+            })
     }
 }
 
@@ -4734,30 +4735,30 @@ impl ItemNavHistory {
         self.history.0.lock().preview_item_id == Some(self.item.id())
     }
 
-    pub fn push<D: 'static + Any + Send + Sync>(
-        &mut self,
-        data: Option<D>,
-        row: Option<u32>,
-        cx: &mut App,
-    ) {
-        if self
-            .item
-            .upgrade()
-            .is_some_and(|item| item.include_in_nav_history())
-        {
-            let is_preview_item = self.is_preview_item();
-            self.history
-                .push(data, self.item.clone(), is_preview_item, row, cx);
+    pub fn push(&mut self, location: NavigationLocation, cx: &mut App) {
+        // A child item can outlive the item it was bound for, e.g. an editor taken out of a
+        // closed wrapper, and must not record entries for the dropped item anymore.
+        if self.item.upgrade().is_none() {
+            return;
         }
+        let is_preview_item = self.is_preview_item();
+        self.history.push(
+            location.data,
+            self.item.clone(),
+            is_preview_item,
+            location.row,
+            cx,
+        );
     }
 
-    pub fn navigation_entry(&self, data: Option<Arc<dyn Any + Send + Sync>>) -> NavigationEntry {
+    /// Creates an entry for the tag stack, see [`Self::push_tag`].
+    pub fn navigation_entry(&self, location: NavigationLocation) -> NavigationEntry {
         NavigationEntry {
             item: self.item.clone(),
-            data,
+            data: location.data,
             timestamp: 0,
             is_preview: self.is_preview_item(),
-            row: None,
+            row: location.row,
         }
     }
 
@@ -4766,18 +4767,10 @@ impl ItemNavHistory {
             self.history.push_tag(origin_entry, target_entry);
         }
     }
-
-    pub fn pop_backward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingBack, cx)
-    }
-
-    pub fn pop_forward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingForward, cx)
-    }
 }
 
 impl NavHistory {
-    pub fn for_each_entry(
+    pub(crate) fn for_each_entry(
         &self,
         cx: &App,
         f: &mut dyn FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
@@ -4801,20 +4794,12 @@ impl NavHistory {
             })
     }
 
-    pub fn set_mode(&mut self, mode: NavigationMode) {
+    pub(crate) fn set_mode(&mut self, mode: NavigationMode) {
         self.0.lock().mode = mode;
     }
 
-    pub fn mode(&self) -> NavigationMode {
+    pub(crate) fn mode(&self) -> NavigationMode {
         self.0.lock().mode
-    }
-
-    pub fn disable(&mut self) {
-        self.0.lock().mode = NavigationMode::Disabled;
-    }
-
-    pub fn enable(&mut self) {
-        self.0.lock().mode = NavigationMode::Normal;
     }
 
     pub fn clear(&mut self, cx: &mut App) {
@@ -4839,10 +4824,10 @@ impl NavHistory {
         state.did_update(cx);
     }
 
-    pub fn pop(&mut self, mode: NavigationMode, cx: &mut App) -> Option<NavigationEntry> {
+    pub(crate) fn pop(&mut self, mode: NavigationMode, cx: &mut App) -> Option<NavigationEntry> {
         let mut state = self.0.lock();
         let entry = match mode {
-            NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
+            NavigationMode::Normal | NavigationMode::ClosingItem => {
                 return None;
             }
             NavigationMode::GoingBack => &mut state.backward_stack,
@@ -4856,9 +4841,9 @@ impl NavHistory {
         entry
     }
 
-    pub fn push<D: 'static + Any + Send + Sync>(
+    fn push(
         &mut self,
-        data: Option<D>,
+        data: Option<Arc<dyn Any + Send + Sync>>,
         item: Arc<dyn WeakItemHandle + Send + Sync>,
         is_preview: bool,
         row: Option<u32>,
@@ -4871,7 +4856,6 @@ impl NavHistory {
             |entry: &NavigationEntry| entry.item.id() == new_item_id && entry.row == row;
 
         match state.mode {
-            NavigationMode::Disabled => {}
             NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
                 state
                     .backward_stack
@@ -4882,7 +4866,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
+                    data,
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                     row,
@@ -4897,7 +4881,7 @@ impl NavHistory {
                 }
                 state.forward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
+                    data,
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                     row,
@@ -4913,7 +4897,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
+                    data,
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                     row,
@@ -4926,7 +4910,7 @@ impl NavHistory {
                 }
                 state.closed_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
+                    data,
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                     row,
@@ -4936,7 +4920,7 @@ impl NavHistory {
         state.did_update(cx);
     }
 
-    pub fn remove_item(&mut self, item_id: EntityId) {
+    pub(crate) fn remove_item(&mut self, item_id: EntityId) {
         let mut state = self.0.lock();
         state.paths_by_item.remove(&item_id);
         state
@@ -4967,11 +4951,14 @@ impl NavHistory {
         }
     }
 
-    pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
+    pub(crate) fn path_for_item(
+        &self,
+        item_id: EntityId,
+    ) -> Option<(ProjectPath, Option<PathBuf>)> {
         self.0.lock().paths_by_item.get(&item_id).cloned()
     }
 
-    pub fn push_tag(&mut self, origin: NavigationEntry, target: NavigationEntry) {
+    pub(crate) fn push_tag(&mut self, origin: NavigationEntry, target: NavigationEntry) {
         let mut state = self.0.lock();
         let truncate_to = state.tag_stack_pos;
         state.tag_stack.truncate(truncate_to);
@@ -4979,7 +4966,7 @@ impl NavHistory {
         state.tag_stack_pos = state.tag_stack.len();
     }
 
-    pub fn pop_tag(&mut self, mode: TagNavigationMode) -> Option<NavigationEntry> {
+    pub(crate) fn pop_tag(&mut self, mode: TagNavigationMode) -> Option<NavigationEntry> {
         let mut state = self.0.lock();
         match mode {
             TagNavigationMode::Older => {
@@ -5087,7 +5074,10 @@ mod tests {
     use super::*;
     use crate::{
         Member,
-        item::test::{TestItem, TestProjectItem},
+        item::{
+            Item, ItemNavigation,
+            test::{TestItem, TestProjectItem},
+        },
     };
     use gpui::{
         AppContext, Axis, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -5137,6 +5127,10 @@ mod tests {
 
     impl Item for CustomDropHandlingItem {
         type Event = ();
+
+        fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+            ItemNavigation::Excluded
+        }
 
         fn tab_content_text(&self, _detail: usize, _cx: &App) -> gpui::SharedString {
             "custom_drop_handling_item".into()
@@ -9371,7 +9365,6 @@ mod tests {
         struct TestItemView {
             focus_handle: FocusHandle,
             project_item: Entity<TestFileItem>,
-            nav_history: Option<ItemNavHistory>,
         }
 
         impl EventEmitter<()> for TestItemView {}
@@ -9411,19 +9404,8 @@ mod tests {
                 ItemBufferKind::Singleton
             }
 
-            fn set_nav_history(
-                &mut self,
-                history: ItemNavHistory,
-                _window: &mut Window,
-                _: &mut Context<Self>,
-            ) {
-                self.nav_history = Some(history);
-            }
-
-            fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-                if let Some(nav_history) = self.nav_history.as_mut() {
-                    nav_history.push::<()>(None, None, cx);
-                }
+            fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+                ItemNavigation::Visits
             }
         }
 
@@ -9443,7 +9425,6 @@ mod tests {
                 Self {
                     focus_handle: cx.focus_handle(),
                     project_item: item,
-                    nav_history: None,
                 }
             }
         }

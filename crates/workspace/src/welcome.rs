@@ -1,7 +1,7 @@
 use crate::{
     NewFile, Open, OpenMode, PathList, RecentWorkspace, SerializedWorkspaceLocation,
     ToggleWorkspaceSidebar, Workspace, WorkspaceSettings,
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, ItemNavigation},
     persistence::WorkspaceDb,
 };
 use agent_settings::AgentSettings;
@@ -521,6 +521,10 @@ impl Focusable for WelcomePage {
 
 impl Item for WelcomePage {
     type Event = ItemEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Welcome".into()

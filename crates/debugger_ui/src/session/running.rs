@@ -58,8 +58,8 @@ use ui::{
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
-    Workspace, item::TabContentParams, move_item, pane::Event,
+    ActivePaneDecorator, DraggedTab, Item, ItemHandle, ItemNavigation, Member, Pane, PaneGroup,
+    PaneNavigation, SplitDirection, Workspace, item::TabContentParams, move_item, pane::Event,
 };
 
 static PROCESS_ID_PLACEHOLDER: LazyLock<String> =
@@ -284,6 +284,10 @@ impl Focusable for SubView {
 impl EventEmitter<()> for SubView {}
 impl Item for SubView {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Excluded
+    }
 
     /// This is used to serialize debugger pane layouts
     /// A SharedString gets converted to a enum and back during serialization/deserialization.
@@ -650,6 +654,7 @@ pub(crate) fn new_debugger_pane(
             Some(can_drop_predicate),
             NoAction.boxed_clone(),
             true,
+            PaneNavigation::Disabled,
             window,
             cx,
         );
@@ -685,7 +690,6 @@ pub(crate) fn new_debugger_pane(
             }
         })));
         pane.set_can_toggle_zoom(false, cx);
-        pane.display_nav_history_buttons(None);
         pane.set_should_display_tab_bar(|_, _| true);
         pane.set_render_tab_bar_buttons(cx, |_, _, _| (None, None));
         pane.set_render_tab_bar(cx, {

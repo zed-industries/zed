@@ -619,7 +619,7 @@ impl Vim {
             };
 
             editor.change_selections(
-                SelectionEffects::default().nav_history(motion.push_to_jump_list()),
+                SelectionEffects::default().record_navigation(motion.record_navigation()),
                 window,
                 cx,
                 |s| {
