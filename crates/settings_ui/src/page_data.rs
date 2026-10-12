@@ -1333,7 +1333,7 @@ fn zedlink_page() -> SettingsPage {
         ]
     }
 
-    fn access_section() -> [SettingsPageItem; 14] {
+    fn access_section() -> [SettingsPageItem; 15] {
         [
             SettingsPageItem::SectionHeader("Remote Permissions"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1509,6 +1509,29 @@ fn zedlink_page() -> SettingsPage {
                             .zedlink
                             .get_or_insert_default()
                             .allow_terminal_input = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Remote Clipboard",
+                description: "Allow explicit text-only reads and writes of the desktop clipboard from paired devices in an exposed session. The clipboard can contain sensitive data. Disabled by default; changes apply immediately.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("zedlink.allow_remote_clipboard"),
+                    pick: |settings_content| {
+                        settings_content
+                            .zedlink
+                            .as_ref()?
+                            .allow_remote_clipboard
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .zedlink
+                            .get_or_insert_default()
+                            .allow_remote_clipboard = value
                     },
                 }),
                 metadata: None,

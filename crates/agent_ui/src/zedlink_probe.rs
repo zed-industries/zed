@@ -27,7 +27,7 @@ use git::{
     repository::{DiffType, RepoPath},
     status::{FileStatus, StageStatus},
 };
-use gpui::{App, AppContext, Entity, Global, Subscription, Task};
+use gpui::{App, AppContext, ClipboardItem, Entity, Global, Subscription, Task};
 use language_model::LanguageModelRegistry;
 use project::{TaskSourceKind, debugger::session::ThreadId};
 use serde::Deserialize;
@@ -93,6 +93,7 @@ struct ProbeState {
     searches: RefCell<HashMap<String, SearchRecord>>,
     change_operations: RefCell<HashMap<String, ChangeOperationRecord>>,
     terminal_operations: RefCell<HashMap<String, String>>,
+    clipboard_operations: RefCell<HashMap<String, String>>,
 }
 
 #[derive(Clone, Copy)]
@@ -105,6 +106,7 @@ struct ProbePermissions {
     agent_settings: bool,
     terminal_read: bool,
     terminal_input: bool,
+    remote_clipboard: bool,
     task_control: bool,
     task_start: bool,
     debugger_read: bool,
@@ -151,6 +153,10 @@ impl ProbePermissions {
             terminal_input: settings
                 .as_ref()
                 .and_then(|settings| settings.allow_terminal_input)
+                .unwrap_or(false),
+            remote_clipboard: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_remote_clipboard)
                 .unwrap_or(false),
             task_control: settings
                 .as_ref()
@@ -238,6 +244,9 @@ impl ProbePermissions {
         if self.terminal_read && self.terminal_input {
             capabilities.push("terminal.input");
         }
+        if self.remote_clipboard {
+            capabilities.extend(["clipboard.read", "clipboard.write"]);
+        }
         if self.task_control {
             capabilities.extend(["task.list", "task.stop"]);
         }
@@ -279,6 +288,7 @@ impl ProbePermissions {
             "thread.settings.update" | "thread.queue.clear" => self.agent_settings,
             "terminal.list" | "terminal.snapshot" => self.terminal_read,
             "terminal.input" => self.terminal_read && self.terminal_input,
+            "clipboard.read" | "clipboard.write" => self.remote_clipboard,
             "task.list" | "task.stop" => self.task_control,
             "task.catalog" | "task.run" => self.task_start,
             "debugger.snapshot" => self.debugger_read,
@@ -435,6 +445,7 @@ pub fn init(cx: &mut App) {
                 searches: RefCell::new(HashMap::new()),
                 change_operations: RefCell::new(HashMap::new()),
                 terminal_operations: RefCell::new(HashMap::new()),
+                clipboard_operations: RefCell::new(HashMap::new()),
             },
         ))
     })();
@@ -956,6 +967,7 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         "terminal.list" => terminal_list(&request, state, cx),
         "terminal.snapshot" => terminal_snapshot(&request, state, cx),
         "terminal.input" => terminal_input(&request, state, cx),
+        "clipboard.read" | "clipboard.write" => remote_clipboard(&request, state, cx),
         "task.list" => task_list(&request, state, cx),
         "task.stop" => task_stop(&request, state, cx),
         "task.catalog" => task_catalog(&request, state, cx),
@@ -3504,6 +3516,54 @@ fn terminal_snapshot(request: &ProbeRequest, state: &ProbeState, cx: &App) -> Va
             "viewport_lines": terminal.viewport_lines(),
             "provisional": true,
         }),
+    )
+}
+
+fn remote_clipboard(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    if let Err(code) = exposed_thread_for_request(request, state, cx) {
+        return error(&request.request_id, code);
+    }
+    if request.method == "clipboard.read" {
+        let text = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default();
+        if text.len() > 65536 {
+            return error(&request.request_id, "CLIPBOARD_TOO_LARGE");
+        }
+        return success(&request.request_id, json!({"text": text}));
+    }
+    let Some(text) = request.params.get("text").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if text.len() > 65536 || text.contains('\0') {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some(prior) = state.clipboard_operations.borrow().get(&request.request_id) {
+        return if prior == &digest {
+            success(
+                &request.request_id,
+                json!({"outcome": "accepted", "duplicate": true}),
+            )
+        } else {
+            error(&request.request_id, "REQUEST_ID_CONFLICT")
+        };
+    }
+    if state.clipboard_operations.borrow().len() >= 256 {
+        return error(&request.request_id, "CLIPBOARD_WRITE_LIMIT");
+    }
+    cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
+    state
+        .clipboard_operations
+        .borrow_mut()
+        .insert(request.request_id.clone(), digest);
+    success(
+        &request.request_id,
+        json!({"outcome": "accepted", "duplicate": false}),
     )
 }
 

@@ -413,6 +413,10 @@ pub struct ZedLinkSettingsContent {
     /// Default: false
     pub allow_terminal_input: Option<bool>,
 
+    /// Allows explicit text-only desktop clipboard transfers from paired devices.
+    /// Default: false
+    pub allow_remote_clipboard: Option<bool>,
+
     /// Allows paired devices to stop task-backed terminals in the configured
     /// project.
     ///
