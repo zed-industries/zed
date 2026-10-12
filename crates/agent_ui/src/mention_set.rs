@@ -10,6 +10,7 @@ use editor::{
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
     scroll::Autoscroll,
 };
+use fs::Fs;
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
     AppContext, ClipboardEntry, Context, Empty, Entity, EntityId, Image, ImageFormat, Img,
@@ -505,8 +506,27 @@ impl MentionSet {
                 tracked_buffers: Vec::new(),
             }));
         }
+        // Project-local skills may live on a remote filesystem (e.g. a dev
+        // container), so read them through the project like other mentions.
+        // Only paths outside the project (global skills) are host-local.
+        if let Some(project) = self.project.upgrade()
+            && let Some(project_path) = project
+                .read(cx)
+                .project_path_for_absolute_path(&skill_file_path, cx)
+        {
+            let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
+            return cx.spawn(async move |_, cx| {
+                let buffer = buffer.await?;
+                let content = buffer.update(cx, |buffer, _cx| buffer.text());
+                Ok(Mention::Text {
+                    content,
+                    tracked_buffers: Vec::new(),
+                })
+            });
+        }
+        let fs = <dyn Fs>::global(cx);
         cx.background_spawn(async move {
-            let content = std::fs::read_to_string(&skill_file_path).map_err(|e| {
+            let content = fs.load(&skill_file_path).await.map_err(|e| {
                 anyhow!(
                     "Failed to read skill file {}: {}",
                     skill_file_path.display(),
@@ -833,6 +853,56 @@ mod tests {
                 assert_eq!(tracked_buffers.len(), 1);
             }
             other => panic!("Expected selection mention to resolve as text, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_mention_reads_through_project_fs(cx: &mut TestAppContext) {
+        // The skill file only exists in FakeFs, so this fails if mention
+        // confirmation reads through the host filesystem instead of the
+        // project's fs (e.g. a dev container workspace).
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "my-skill": {
+                            "SKILL.md": "---\nname: my-skill\ndescription: A test skill\n---\nBody from fake fs.\n"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None));
+
+        let mention_task = mention_set.update(cx, |mention_set, cx| {
+            let http_client = project.read(cx).client().http_client();
+            mention_set.confirm_mention_for_uri(
+                MentionUri::Skill {
+                    name: "my-skill".to_string(),
+                    source: "project".to_string(),
+                    skill_file_path: path!("/project/.agents/skills/my-skill/SKILL.md").into(),
+                },
+                false,
+                http_client,
+                cx,
+            )
+        });
+
+        let mention = mention_task.await.unwrap();
+        match mention {
+            Mention::Text { content, .. } => {
+                assert!(
+                    content.contains("Body from fake fs."),
+                    "Unexpected content: {content}"
+                );
+            }
+            other => panic!("Expected skill mention to resolve as text, got {other:?}"),
         }
     }
 
