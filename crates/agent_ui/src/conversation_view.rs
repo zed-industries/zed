@@ -5031,6 +5031,47 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_hidden_command_marker_keeps_empty_editor_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_local_user_message(acp_thread::ClientUserMessageId::new(), Vec::new(), cx)
+                .expect("retained command marker");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).entries().len(), 1);
+            assert!(!view.can_edit_user_message(0, cx));
+            assert!(matches!(
+                view.message_editor.read(cx).editor().read(cx).mode(),
+                editor::EditorMode::Full { .. }
+            ));
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_local_user_message(
+                    acp_thread::ClientUserMessageId::new(),
+                    vec!["visible prompt".into()],
+                    cx,
+                )
+                .expect("visible prompt");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            assert!(matches!(
+                view.message_editor.read(cx).editor().read(cx).mode(),
+                editor::EditorMode::AutoHeight { .. }
+            ));
+        });
+    }
+
+    #[gpui::test]
     async fn test_reported_stale_stop_and_token_limit_do_not_send_queue(cx: &mut TestAppContext) {
         init_test(cx);
         let connection = StubAgentConnection::new().with_receipt_submissions(true);

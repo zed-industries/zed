@@ -1268,6 +1268,14 @@ impl ThreadView {
         self.parent_session_id.is_some()
     }
 
+    fn has_visible_conversation(&self, cx: &App) -> bool {
+        self.generating_indicator_in_list
+            || self.thread.read(cx).entries().iter().any(|entry| {
+                !matches!(entry, AgentThreadEntry::UserMessage(message)
+                    if message.content.source_blocks().is_empty())
+            })
+    }
+
     pub(super) fn can_edit_user_message(&self, index: usize, cx: &App) -> bool {
         let thread = self.thread.read(cx);
         let Some(message) = thread
@@ -2822,7 +2830,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.list_state.item_count() == 0 {
+        if !self.has_visible_conversation(cx) {
             return;
         }
         self.set_editor_is_expanded(!self.editor_expanded, cx);
@@ -4952,7 +4960,7 @@ impl ThreadView {
         };
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.has_visible_conversation(cx);
         let fills_container = !has_messages || editor_expanded;
         let composer_is_read_only = self.message_editor.read(cx).editor().read(cx).read_only(cx);
         let discard_draft_button = composer_is_read_only.then(|| {
@@ -7910,7 +7918,7 @@ impl ThreadView {
     }
 
     pub(crate) fn sync_editor_mode(&mut self, cx: &mut Context<Self>) {
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.has_visible_conversation(cx);
         let v2_empty_state = !has_messages;
 
         if !has_messages {
@@ -13021,7 +13029,7 @@ impl Render for ThreadView {
         // renders (settings, connection state, feature flags).
         self.sync_local_commands(cx);
 
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.has_visible_conversation(cx);
         let list_state = self.list_state.clone();
 
         let conversation = v_flex()

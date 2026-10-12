@@ -4161,6 +4161,10 @@ impl AcpThread {
         let (sender, receiver) = oneshot::channel();
         let task = cx.spawn(async move |this, cx| {
             let response = complete(this.clone(), cx).await;
+            let response = match response {
+                Err(error) if error.is::<SubmissionCancelled>() => Ok(None),
+                response => response,
+            };
             let update = this.update(cx, |this, cx| {
                 let state = match &response {
                     Ok(Some(SubmissionResponse::Accepted(receipt))) => {
@@ -6748,10 +6752,13 @@ impl AcpThread {
         self.flush_streaming_text(cx);
         if self.uses_reported_activity() {
             self.cancel_generic_permission_requests(cx);
-            let Some(receiver) = self.activity.wait_for_idle() else {
+            let receiver = self.activity.wait_for_idle();
+            if receiver.is_some() || self.has_unsettled_submissions() {
+                self.connection.cancel(self.session_id(), cx);
+            }
+            let Some(receiver) = receiver else {
                 return Task::ready(());
             };
-            self.connection.cancel(self.session_id(), cx);
             return cx.spawn(async move |_, _| {
                 if receiver.await.is_err() {
                     log::debug!("Session released before foreground cancellation completed");
