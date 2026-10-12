@@ -2917,6 +2917,7 @@
     "allow_task_control": false,
     "allow_task_start": false,
     "allow_debugger_read": false,
+    "allow_debugger_start": false,
     "allow_debugger_control": false,
     "connection_id": "",
     "connection_label": "",

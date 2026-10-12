@@ -859,7 +859,7 @@ fn zedlink_page() -> SettingsPage {
         ]
     }
 
-    fn access_section() -> [SettingsPageItem; 13] {
+    fn access_section() -> [SettingsPageItem; 14] {
         [
             SettingsPageItem::SectionHeader("Remote Permissions"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1100,6 +1100,29 @@ fn zedlink_page() -> SettingsPage {
                             .zedlink
                             .get_or_insert_default()
                             .allow_debugger_read = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Start Configured Debuggers",
+                description: "Allow paired devices to start debugger configurations already defined in Zed for this project. Raw adapter configurations are never accepted. Disabled by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("zedlink.allow_debugger_start"),
+                    pick: |settings_content| {
+                        settings_content
+                            .zedlink
+                            .as_ref()?
+                            .allow_debugger_start
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .zedlink
+                            .get_or_insert_default()
+                            .allow_debugger_start = value
                     },
                 }),
                 metadata: None,

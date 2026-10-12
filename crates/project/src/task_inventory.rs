@@ -321,6 +321,15 @@ impl Inventory {
             .collect()
     }
 
+    pub fn configured_debug_scenarios_for_worktree(
+        &self,
+        worktree: WorktreeId,
+    ) -> Vec<(TaskSourceKind, DebugScenario)> {
+        self.worktree_scenarios_from_settings(worktree)
+            .chain(self.global_debug_scenarios_from_settings())
+            .collect()
+    }
+
     pub fn scenario_scheduled(
         &mut self,
         scenario: DebugScenario,

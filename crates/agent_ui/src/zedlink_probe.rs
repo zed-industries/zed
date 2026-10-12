@@ -34,7 +34,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use settings::SettingsStore;
 use sha2::{Digest, Sha256};
-use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
+use task::{
+    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskVariables, VariableName,
+};
 use terminal::TaskStatus;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use util::rel_path::RelPath;
@@ -105,6 +107,7 @@ struct ProbePermissions {
     task_control: bool,
     task_start: bool,
     debugger_read: bool,
+    debugger_start: bool,
     debugger_control: bool,
 }
 
@@ -176,6 +179,9 @@ impl ProbePermissions {
         if self.debugger_read {
             capabilities.push("debugger.snapshot");
         }
+        if self.debugger_start {
+            capabilities.extend(["debugger.catalog", "debugger.launch"]);
+        }
         if self.debugger_control {
             capabilities.push("debugger.control");
         }
@@ -206,6 +212,7 @@ impl ProbePermissions {
             "task.list" | "task.stop" => self.task_control,
             "task.catalog" | "task.run" => self.task_start,
             "debugger.snapshot" => self.debugger_read,
+            "debugger.catalog" | "debugger.launch" => self.debugger_start,
             "debugger.control" => self.debugger_control,
             _ => true,
         }
@@ -317,6 +324,10 @@ pub fn init(cx: &mut App) {
         debugger_read: settings
             .as_ref()
             .and_then(|settings| settings.allow_debugger_read)
+            .unwrap_or(false),
+        debugger_start: settings
+            .as_ref()
+            .and_then(|settings| settings.allow_debugger_start)
             .unwrap_or(false),
         debugger_control: settings
             .as_ref()
@@ -925,6 +936,8 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         "task.catalog" => task_catalog(&request, state, cx),
         "task.run" => task_run(&request, state, cx),
         "debugger.snapshot" => debugger_snapshot(&request, state, cx),
+        "debugger.catalog" => debugger_catalog(&request, state, cx),
+        "debugger.launch" => debugger_launch(&request, state, cx),
         "debugger.control" => debugger_control(&request, state, cx),
         "project.files" => project_files(&request, state, cx),
         "project.file" => project_file(&request, state, cx),
@@ -3604,6 +3617,98 @@ fn task_run(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
     )
 }
 
+fn debugger_catalog(request: &ProbeRequest, state: &ProbeState, cx: &App) -> Value {
+    if !matches_instance(request, state) {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    let scenarios = configured_debug_scenarios(&state.project_root, cx)
+        .into_iter()
+        .map(|(_, source, scenario, _)| {
+            json!({
+                "scenario_id": debug_scenario_id(&source, &scenario),
+                "label": scenario.label,
+                "adapter": scenario.adapter,
+                "source": task_source_label(&source),
+            })
+        })
+        .collect::<Vec<_>>();
+    success(
+        &request.request_id,
+        json!({
+            "instance_id": state.instance_id,
+            "epoch": state.epoch,
+            "scenarios": scenarios,
+            "provisional": true,
+        }),
+    )
+}
+
+fn debugger_launch(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    if !matches_instance(request, state) {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    if !params_contain_only(&request.params, &["instance_id", "epoch", "scenario_id"]) {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let Some(scenario_id) = request.params.get("scenario_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if scenario_id.is_empty() || scenario_id.len() > 128 {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some(existing) = state.terminal_operations.borrow().get(&request.request_id) {
+        return if existing == &digest {
+            success(
+                &request.request_id,
+                json!({"outcome": "requested", "duplicate": true}),
+            )
+        } else {
+            error(&request.request_id, "REQUEST_ID_CONFLICT")
+        };
+    }
+    if state.terminal_operations.borrow().len() >= 256 {
+        return error(&request.request_id, "RATE_LIMITED");
+    }
+    let Some((workspace, source, scenario, context)) =
+        configured_debug_scenarios(&state.project_root, cx)
+            .into_iter()
+            .find(|(_, source, scenario, _)| debug_scenario_id(source, scenario) == scenario_id)
+    else {
+        return error(&request.request_id, "DEBUGGER_UNAVAILABLE");
+    };
+    let worktree_id = match &source {
+        TaskSourceKind::Worktree { id, .. } => Some(*id),
+        _ => None,
+    };
+    let started = cx.with_window(workspace.entity_id(), |window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.start_debug_session(
+                scenario,
+                SharedTaskContext::from(context),
+                None,
+                worktree_id,
+                window,
+                cx,
+            );
+        });
+    });
+    if started.is_none() {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    state
+        .terminal_operations
+        .borrow_mut()
+        .insert(request.request_id.clone(), digest);
+    success(
+        &request.request_id,
+        json!({"outcome": "requested", "duplicate": false}),
+    )
+}
+
 fn debugger_snapshot(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
     if !matches_instance(request, state) {
         return error(&request.request_id, "INSTANCE_UNAVAILABLE");
@@ -3865,6 +3970,63 @@ fn configured_tasks(
     tasks.sort_by(|left, right| left.2.display_label().cmp(right.2.display_label()));
     tasks.dedup_by(|left, right| left.2.id == right.2.id);
     tasks
+}
+
+fn configured_debug_scenarios(
+    project_root: &Path,
+    cx: &App,
+) -> Vec<(
+    Entity<workspace::Workspace>,
+    TaskSourceKind,
+    DebugScenario,
+    TaskContext,
+)> {
+    let mut scenarios = Vec::new();
+    for workspace in loaded_project_workspaces(project_root, cx) {
+        let project = workspace.read(cx).project().clone();
+        let project = project.read(cx);
+        let Some(worktree) = project
+            .visible_worktrees(cx)
+            .find(|worktree| worktree.read(cx).abs_path().as_ref() == project_root)
+        else {
+            continue;
+        };
+        let worktree_id = worktree.read(cx).id();
+        let mut task_variables = TaskVariables::default();
+        task_variables.insert(
+            VariableName::WorktreeRoot,
+            project_root.to_string_lossy().into_owned(),
+        );
+        let context = TaskContext {
+            cwd: Some(project_root.to_path_buf()),
+            task_variables,
+            project_env: project.cli_environment(cx).unwrap_or_default(),
+        };
+        let Some(inventory) = project.task_store().read(cx).task_inventory().cloned() else {
+            continue;
+        };
+        for (source, scenario) in inventory
+            .read(cx)
+            .configured_debug_scenarios_for_worktree(worktree_id)
+        {
+            scenarios.push((workspace.clone(), source, scenario, context.clone()));
+        }
+    }
+    scenarios.sort_by(|left, right| left.2.label.cmp(&right.2.label));
+    scenarios.dedup_by(|left, right| {
+        debug_scenario_id(&left.1, &left.2) == debug_scenario_id(&right.1, &right.2)
+    });
+    scenarios
+}
+
+fn debug_scenario_id(source: &TaskSourceKind, scenario: &DebugScenario) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(task_source_label(source).as_bytes());
+    hasher.update([0]);
+    if let Ok(bytes) = serde_json::to_vec(scenario) {
+        hasher.update(bytes);
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 fn task_source_label(source: &TaskSourceKind) -> &'static str {

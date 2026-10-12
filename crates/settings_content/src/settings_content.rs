@@ -429,6 +429,12 @@ pub struct ZedLinkSettingsContent {
     /// Default: false
     pub allow_debugger_read: Option<bool>,
 
+    /// Allows paired devices to start debugger configurations already defined
+    /// for the configured project. Raw adapter configurations are never accepted.
+    ///
+    /// Default: false
+    pub allow_debugger_start: Option<bool>,
+
     /// Allows paired devices to pause, continue, step, restart, or stop
     /// debugger sessions already running in the configured project.
     ///
