@@ -25,7 +25,7 @@ and folded into a commit; keep only what's still open.
   Turbopack (`next dev`).
 - **Repro steps:**
   1. Set a breakpoint in a React server/client component that destructures a
-     prop, e.g. `{profile?.availability_status ?? ""}` in `HeroSection.tsx`.
+     prop, e.g. `{profile?.status ?? ""}` in `Example.tsx`.
   2. Hit the breakpoint via `next dev` (Turbopack).
   3. Open Variables (Local scope) and/or evaluate the destructured prop name
      in Console.
@@ -39,9 +39,9 @@ and folded into a commit; keep only what's still open.
   absent local), and `data` throws `ReferenceError: data is not defined`.
 - **Root cause (likely):** the debugger is paused inside a **different frame
   than the UI claims** — `fakeJSXCallSite`, a React/Turbopack dev
-  instrumentation wrapper, not the authored `HeroSection` render body — while
-  the UI still labels it "Local: HeroSection" and highlights the authored
-  source line (`HeroSection.tsx:19`) as if the mapping were correct. Matches
+  instrumentation wrapper, not the authored `Example` render body — while
+  the UI still labels it "Local: Example" and highlights the authored
+  source line (`Example.tsx:19`) as if the mapping were correct. Matches
   source-map failures seen in the same session's terminal output:
   ```
   Could not read source map for .../hmr-client.ts: Unexpected end of JSON input
@@ -52,9 +52,9 @@ and folded into a commit; keep only what's still open.
   frame the UI displays disagree. Variables/Console aren't lying about the
   actual frame's scope (`fakeJSXCallSite` genuinely has no `profile`/`data`);
   the bug is Zed reporting the wrong source location for that frame.
-- **Confirmed:** same breakpoint (`HeroSection.tsx:19`), Turbopack disabled
+- **Confirmed:** same breakpoint (`Example.tsx:19`), Turbopack disabled
   (plain `next dev` / Webpack) — evaluating `data` now correctly returns the
-  real value (a 5-item array of project records), where it previously threw
+  real value (a 5-item array of records), where it previously threw
   `ReferenceError: data is not defined` under Turbopack. Same breakpoint,
   only variable changed was the bundler → **root cause confirmed as
   Turbopack-specific broken/unreadable source maps**, not a general
@@ -120,18 +120,17 @@ and folded into a commit; keep only what's still open.
 - **Next.js repro update — likely more severe than originally scoped:**
   during HMR testing (`next dev`, Turbopack), observed two session tabs both
   labeled `start-server.js [7360]` open simultaneously (same PID, same
-  label — see conversation screenshot). Separately, **Continue no longer
-  makes forward progress at all**: clicking Continue re-hits a breakpoint
-  immediately, repeatedly, regardless of which breakpoint is set or which
-  file — described by the user as "landing on the breakpoint... just looping
-  over and over." Working theory: this is the same child-session/focus churn
+  label). Separately, **Continue no longer makes forward progress at all**:
+  clicking Continue re-hits a breakpoint immediately, repeatedly, regardless
+  of which breakpoint is set or which file — it lands on the breakpoint and
+  loops over and over. Working theory: this is the same child-session/focus churn
   as above, but now affecting **Continue routing**, not just which session
   gets UI focus — if a duplicate/child session re-attaches and re-verifies
   breakpoints on every continue (e.g. triggered by Turbopack's HMR/recompile
   cycle spawning a fresh `startDebugging` child), the resulting fresh
   `stopped` event would look indistinguishable from "the same breakpoint
   firing again," while the actual Continue request may be going to a
-  session that isn't the one the user is looking at. Needs a focused repro
+  session that isn't the one shown in the UI. Needs a focused repro
   (isolate: does this happen without any file edits/HMR involved, or only
   after at least one HMR recompile?) before treating as confirmed root
   cause.
@@ -247,9 +246,9 @@ and folded into a commit; keep only what's still open.
 ### 6. Attach process picker lists every OS process, not just debuggable ones
 
 - **Symptom:** opening Attach → "Select the process you want to attach the
-  debugger to" lists the entire Windows process table (`AdBlock360.exe`,
-  `Adobe Crash Processor.exe`, `AggregatorHost.exe`, `ChatGPT Classic.exe`,
-  ...), alphabetically sorted, with the JavaScript adapter selected in the
+  debugger to" lists the entire Windows process table (browser helpers,
+  system services, unrelated desktop apps, ...), alphabetically sorted, with
+  the JavaScript adapter selected in the
   bottom-right dropdown — none of those processes could ever be valid attach
   targets for that adapter.
 - **Adapter/language:** general (Attach flow, not adapter-specific — same for
@@ -290,8 +289,8 @@ and folded into a commit; keep only what's still open.
 ### 7. Inline values (and Console evaluate — see gap #3) show shallow, non-expandable summaries
 
 - **Symptom:** while paused, the always-on inline decoration next to a
-  variable (e.g. `const profile: {Profile: {…}, SkillsProgression: Array(5),
-  HomeHighlights: Array(5)} = await fetchProfileData();`, shown directly on
+  variable (e.g. `const result: {item: {…}, list: Array(5),
+  other: Array(5)} = await fetchData();`, shown directly on
   the code line, no hovering needed) only prints a shallow one-level summary
   — nested objects render as literal `{…}`, arrays as `Array(N)` — with no
   way to expand or click into them. Confirmed: clicking the `{…}`/`Array(5)`
@@ -323,7 +322,7 @@ and folded into a commit; keep only what's still open.
     "type": "pwa-node",
     "request": "attach",
     "processId": 34856,
-    "cwd": "H:\\Persornal\\Mentenaz_Next\\mentenaz-next",
+    "cwd": "C:\\path\\to\\project",
     "console": "externalTerminal",
     "sourceMaps": true,
     "pauseForSourceMap": true,
@@ -381,8 +380,8 @@ and folded into a commit; keep only what's still open.
   **there is no way to specify a port anywhere in Zed's attach data model,
   for any adapter**, so this can't be fixed by editing `javascript.rs`
   alone; it needs a new field threaded through `AttachRequest` →
-  `ZedDebugConfig`/`DebugRequest::Attach` → the Attach modal UI (so the user
-  can paste in the port shown in their own dev server's banner) → each
+  `ZedDebugConfig`/`DebugRequest::Attach` → the Attach modal UI (so the port
+  shown in the dev server's own banner can be entered) → each
   adapter's `config_from_zed_format` (at minimum `javascript.rs`, to emit
   `"port"` in the JSON when set).
 - **Fix applied:** added `port: Option<u16>` to `AttachRequest`
@@ -401,7 +400,7 @@ and folded into a commit; keep only what's still open.
   to the correct inspector port instead of the wrong default (`9229`), and
   the "wrong frame" symptom from earlier testing (evaluate resolving to
   Node's global `profile()` instead of the real local) is also gone:
-  evaluating `profileRaw` now correctly returns real data
+  evaluating a local variable now correctly returns real data
   (`{status: 'fulfilled', value: {…}}`), confirming both the connection
   and the frame/scope resolution are correct via attach.
 - **Follow-up noticed during this test (not a regression, separate minor
@@ -434,8 +433,8 @@ and folded into a commit; keep only what's still open.
 - **Symptom:** when a session fails to start (e.g. gap #8), the only thing
   visible in the log at default verbosity is a generic
   `ERROR debugger shutdown unexpectedly` — no indication of *why*. Diagnosing
-  gap #8 required setting `RUST_LOG=debug` and grepping the real log file
-  (`%LOCALAPPDATA%\ZedDev\logs\ZedDev.log` on Windows) to find the adapter's
+  gap #8 required setting `RUST_LOG=debug` and grepping the app's log file
+  to find the adapter's
   actual stderr output, which contained the real error
   (`Could not connect to debug target at http://localhost:9229: Could not
   find any debuggable target`).
@@ -443,19 +442,19 @@ and folded into a commit; keep only what's still open.
   `log::debug!("stderr: {line}")` — logs every line of the spawned debug
   adapter process's stderr at `debug` level unconditionally, regardless of
   whether the session is failing. At default (non-debug) log verbosity, this
-  is completely invisible, so any adapter-side failure surfaces to the user
+  is completely invisible, so any adapter-side failure surfaces
   as an opaque one-liner with zero actionable detail.
 - **Expected:** at minimum, when a session ends abnormally (the
   `ERROR debugger shutdown unexpectedly` path in
   `crates/debugger_ui/src/debugger_panel.rs`), the adapter's recent stderr
   output (or at least its last few lines) should be surfaced — either bumped
   to `warn`/`error` level in the log, or shown directly in the session's
-  Console tab — instead of requiring the user to already know to enable
-  debug logging and go spelunking in a log file.
+  Console tab — instead of requiring debug logging to be enabled and the
+  log file searched by hand.
 - **Suspected area:** `crates/dap/src/transport.rs` (stderr capture) +
   `crates/debugger_ui/src/debugger_panel.rs` (abnormal-shutdown handling) —
   needs the stderr buffer/tail to be threaded into whatever fires the
-  "shutdown unexpectedly" error, and surfaced to the user, not just to the
+  "shutdown unexpectedly" error, and surfaced in the UI, not just to the
   debug log.
 - **Update — scope much smaller than first thought:** Zed already has a
   dedicated adapter-log viewer for exactly this
@@ -470,8 +469,8 @@ and folded into a commit; keep only what's still open.
   UI path already exists).
 - **Real fix (smaller):** when a session ends abnormally
   (`ERROR debugger shutdown unexpectedly`, `crates/dap/src/transport.rs:208`
-  → surfaced by `crates/debugger_ui/src/debugger_panel.rs`), point the user
-  at `dev: Open Debug Adapter Logs` instead of leaving them to guess — e.g.
+  → surfaced by `crates/debugger_ui/src/debugger_panel.rs`), point
+  at `dev: Open Debug Adapter Logs` instead of leaving it to guesswork — e.g.
   a toast/notification action button, or including the hint in whatever
   message reaches the Console tab.
 - **Fix applied:** `crates/project/src/debugger/session.rs:987-998` (right
@@ -505,7 +504,7 @@ and folded into a commit; keep only what's still open.
   (panel-local toolbar) — add an `IconButton` bound to
   `ToggleIgnoreBreakpoints`; optionally add a default keymap entry.
 - **Confirmed: the underlying suppression actually works.** Initially looked
-  broken (user tested via command palette, breakpoints still appeared to
+  broken (tested via the command palette, breakpoints still appeared to
   trigger) — but that was based on the dots not changing color, not on
   actually continuing past a breakpoint. Traced
   `crates/project/src/debugger/session.rs:344-378`
@@ -538,8 +537,8 @@ and folded into a commit; keep only what's still open.
   its normal color when toggled back off. `render_control_strip` gained a
   `cx: &App` parameter to read the session state; updated its three call
   sites (`debugger_panel.rs`, `session/running.rs`).
-- **Status:** RESOLVED — compiles clean, awaiting user rebuild/visual
-  confirmation.
+- **Status:** RESOLVED — compiles clean, awaiting visual confirmation in a
+  rebuilt app.
 
 ### 12. Chained shell commands (`q1 && q2 && q3`) only ever debug the first one, then the whole session dies
 
@@ -594,8 +593,8 @@ and folded into a commit; keep only what's still open.
   before assuming the whole gap is closed.
 - **Update — gap #12's shell fix confirmed partially working, surfaced a
   new, deeper bug (gap #13):** after the fix, real end-to-end test with
-  `node-terminal` + `"gulp clean && gulp build && gulp dev"` against the
-  Sasol SPFx project: `gulp clean` runs and finishes correctly (confirmed
+  `node-terminal` + `"gulp clean && gulp build && gulp dev"` against a
+  gulp-based project: `gulp clean` runs and finishes correctly (confirmed
   in the debug session's own Terminal tab — real output, not garbled), and
   js-debug's auto-attach *does* fire again for the next process ("Debugger
   attached." appears a second time) — so the shell-wrapping fix and
@@ -614,8 +613,8 @@ and folded into a commit; keep only what's still open.
   a second time in the session's Terminal tab) — but that second session is
   completely inert: the chain never progresses to `gulp build`, Frames is
   empty, and Continue does nothing.
-- **Evidence (via `RUST_LOG=debug` + `%LOCALAPPDATA%\ZedDev\logs\ZedDev.log`,
-  same method as gap #8):**
+- **Evidence (via `RUST_LOG=debug` + the app's log file, same method as
+  gap #8):**
   ```
   INFO  [dap::transport] Debug adapter has connected to TCP server 127.0.0.1:62284
   INFO  [alacritty_terminal::tty::windows::conpty] Using Windows API for pseudoconsole
@@ -711,7 +710,7 @@ and folded into a commit; keep only what's still open.
   from ever reaching the point where a second process (and thus a second
   session) would even be spawned, independent of how that second session's
   binary gets built. **Also confirmed a separate, real bug found during
-  this testing round: the log file (`ZedDev.log`) stopped receiving writes
+  this testing round: the app's log file stopped receiving writes
   entirely (stuck at a fixed `LastWriteTime`) across multiple full
   restarts** — logging pipeline itself may be silently wedging after some
   condition; not investigated further, but worth its own gap if it recurs.
@@ -737,10 +736,10 @@ and folded into a commit; keep only what's still open.
 ### 14. node-terminal auto-attach actively breaks the build: pollutes internal tool subprocesses' stdio (severe)
 
 - **Symptom:** tested a different, simpler scenario than gaps #12/#13 —
-  `.zed/debug.json` pointed at the existing npm script `"serve": "gulp
-  clean && gulp build && fast-serve"` (via `npm run serve` →
-  `gulp serve --nobrowser`, a *single* gulp invocation, not a shell `&&`
-  chain at the debug-config level). gulp's `serve` task runs several
+  `.zed/debug.json` pointed at a gulp-based project's existing npm `serve`
+  script (via `npm run serve` → `gulp serve`, a *single* gulp invocation,
+  not a shell `&&` chain at the debug-config level). gulp's `serve` task
+  runs several
   subtasks internally, including spawning `tsc` (TypeScript compiler) and
   ESLint as their own child processes. Real observed output:
   ```
@@ -754,13 +753,13 @@ and folded into a commit; keep only what's still open.
   its stdout/stderr. gulp's ESLint plugin treats any unexpected stderr
   output from the ESLint subprocess as an error condition — so the
   debugger's own banner text gets misinterpreted as a real ESLint failure,
-  surfacing as a **false error in the user's actual build output**.
+  surfacing as a **false error in the project's actual build output**.
 - **Why this matters more than gaps #2/#12/#13:** those are UX/session-focus
   problems — annoying, but the underlying app still (mostly) runs. This one
   actively **corrupts the build pipeline's own output/error reporting** —
   a debugging feature is now causing false build failures, which is a much
   higher-severity class of problem for any gulp/webpack/similar project
-  with internal tool subprocesses (near-universal for real-world SPFx/
+  with internal tool subprocesses (near-universal for real-world
   frontend build setups, not an edge case).
 - **Expected:** auto-attach should not attach to well-known internal
   build-tool subprocesses (`tsc`, `eslint`, and similar) at all, or at
@@ -823,6 +822,3 @@ and folded into a commit; keep only what's still open.
 - Relevant crates: `crates/dap` (protocol/client), `crates/dap_adapters`
   (per-language adapter configs), `crates/debug_adapter_extension` (extension
   integration), `crates/debugger_tools`, `crates/debugger_ui` (panel/UI).
-- Related but out of scope for this branch: `helm_panel`'s unused
-  `gh_get_repo` / `gh_ensure_user_scope` (see conversation notes) — deliberately
-  left alone until the debugging work here is done.
