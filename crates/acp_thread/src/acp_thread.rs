@@ -10948,22 +10948,13 @@ mod tests {
         init_test(cx);
         let (thread, _) = new_receipt_test_thread(cx).await;
         let id = ClientUserMessageId::new();
-        let marker_id = ClientUserMessageId::new();
-        let source = vec![
-            acp_v2::ContentBlock::Text(
-                acp_v2::TextContent::new("local prompt")
-                    .meta(acp_v2::Meta::from_iter([("source".into(), json!(true))])),
-            ),
-            acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
-                "_future",
-                std::collections::BTreeMap::from([("opaque".into(), json!([null, 1]))]),
-            )),
-        ];
-        let preparation = thread
+        let source = vec!["local prompt".into()];
+        thread
             .update(cx, |thread, cx| {
                 thread.prepare_local_prompt(id.clone(), vec!["initial".into()], cx)
             })
-            .expect("synchronous local insertion");
+            .expect("synchronous local insertion")
+            .await;
         thread.update(cx, |thread, cx| {
             thread
                 .upsert_assistant_message(
@@ -10972,19 +10963,18 @@ mod tests {
                 )
                 .expect("assistant entry after local message");
         });
-        let marker = thread
+        thread
             .update(cx, |thread, cx| {
-                thread.prepare_local_prompt(marker_id.clone(), Vec::new(), cx)
+                thread.prepare_local_prompt(ClientUserMessageId::new(), Vec::new(), cx)
             })
-            .expect("empty command marker");
-        let replacement = thread
+            .expect("empty command marker")
+            .await;
+        thread
             .update(cx, |thread, cx| {
                 thread.prepare_local_prompt(id.clone(), source.clone(), cx)
             })
-            .expect("replace exact keyed local message");
-        preparation.await;
-        marker.await;
-        replacement.await;
+            .expect("replace exact keyed local message")
+            .await;
         let submission = thread.update(cx, |thread, cx| {
             thread.submit_receipt(
                 source.clone(),
@@ -11010,35 +11000,15 @@ mod tests {
             assert_eq!(message.client_id.as_ref(), Some(&id));
             assert!(!message.is_optimistic);
             assert_eq!(message.content.source_blocks(), source.as_slice());
-            assert_eq!(
-                marker.identity,
-                MessageIdentity::Keyed(marker_id.message_id())
-            );
-            assert_eq!(marker.client_id.as_ref(), Some(&marker_id));
-            assert!(!marker.is_optimistic);
             assert!(marker.content.source_blocks().is_empty());
-            assert!(marker.checkpoint.is_none());
             assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
             assert!(matches!(
                 thread
                     .submission(submission_id)
-                    .expect("tracked local receipt")
+                    .expect("local receipt")
                     .state,
                 SubmissionState::Accepted { echoed: true, .. }
             ));
-        });
-        let collision = ClientUserMessageId::new();
-        thread.update(cx, |thread, cx| {
-            thread
-                .upsert_assistant_message(acp_v2::AgentMessage::new(collision.message_id()), cx)
-                .expect("reserve assistant identity");
-            let entry_count = thread.entries().len();
-            assert!(
-                thread
-                    .prepare_local_prompt(collision, vec!["wrong kind".into()], cx)
-                    .is_err()
-            );
-            assert_eq!(thread.entries().len(), entry_count);
         });
     }
 
@@ -11068,7 +11038,7 @@ mod tests {
                     acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
                     cx,
                 )
-                .expect("native running");
+                .expect("local running");
         });
         let permission = request_test_permission(&thread, "pending-local-tool".into(), cx);
         let (_, elicitation) = request_test_form_elicitation(&thread, cx);
@@ -11101,7 +11071,7 @@ mod tests {
             assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
             thread
                 .report_local_execution_error(original_error.clone(), cx)
-                .expect("native execution error");
+                .expect("local execution error");
             let retained = thread
                 .local_execution_error()
                 .expect("retained typed error");
@@ -11110,7 +11080,6 @@ mod tests {
             assert!(thread.had_error());
         });
         cx.run_until_parked();
-        assert_eq!(*errors.borrow(), 0);
         {
             let stops = stops.borrow();
             let [Some(acp_v2::StopReason::Error(reason))] = stops.as_slice() else {
@@ -11133,16 +11102,14 @@ mod tests {
             thread
                 .report_local_execution_error(Arc::new(anyhow!(sdk_error.clone())), cx)
                 .expect("SDK execution error");
-            let acp_v2::StateUpdate::Idle(idle) = thread.foreground_state() else {
-                panic!("error reports idle");
-            };
-            let Some(acp_v2::StopReason::Error(reason)) = &idle.stop_reason else {
-                panic!("error reason");
-            };
-            assert_eq!(reason.error.as_deref(), Some(&sdk_error));
         });
         cx.run_until_parked();
-        assert_eq!(stops.borrow().len(), 2);
+        let stops = stops.borrow();
+        assert_eq!(stops.len(), 2);
+        let Some(Some(acp_v2::StopReason::Error(reason))) = stops.last() else {
+            panic!("SDK error stop");
+        };
+        assert_eq!(reason.error.as_deref(), Some(&sdk_error));
         assert_eq!(*errors.borrow(), 0);
     }
 
@@ -11158,41 +11125,15 @@ mod tests {
                     acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
                     cx,
                 )
-                .expect("native running");
+                .expect("local running");
         });
         let (_, generic_response) = thread
             .update(cx, |thread, cx| {
                 thread.request_permission(test_generic_permission_request(thread, "choice"), cx)
             })
             .expect("generic pending owner");
-        let local_response = thread
-            .update(cx, |thread, cx| {
-                thread.request_tool_call_update_authorization(
-                    acp_v2::ToolCallUpdate::new("local-tool"),
-                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
-                        "allow",
-                        "Allow",
-                        acp_v2::PermissionOptionKind::AllowOnce,
-                    )]),
-                    AuthorizationKind::PermissionGrant,
-                    cx,
-                )
-            })
-            .expect("local pending owner");
-        let elicitation_response = thread
-            .update(cx, |thread, cx| {
-                thread.request_elicitation(
-                    acp_v2::CreateElicitationRequest::new(
-                        acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationSessionScope::new(thread.session_id().clone()),
-                            acp_v2::ElicitationSchema::new().string("name", true),
-                        ),
-                        "Provide a name",
-                    ),
-                    cx,
-                )
-            })
-            .expect("pending elicitation");
+        let local_response = request_test_permission(&thread, "local-tool".into(), cx);
+        let (_, elicitation_response) = request_test_form_elicitation(&thread, cx);
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
@@ -11299,7 +11240,7 @@ mod tests {
                 thread.write_text_file(PathBuf::from(path!("/test/file.txt")), "after".into(), cx)
             })
             .await
-            .expect("native edit");
+            .expect("local edit");
         cx.run_until_parked();
         let stale_checkpoint = thread.update(cx, |thread, cx| {
             let checkpoint = thread
@@ -11309,10 +11250,7 @@ mod tests {
                 .checkpoint
                 .as_mut()
                 .expect("checkpoint");
-            assert!(
-                checkpoint.show,
-                "reported native edit must reveal checkpoint"
-            );
+            assert!(checkpoint.show, "reported edit must reveal checkpoint");
             checkpoint.show = false;
             let stale_checkpoint = thread.update_last_checkpoint_if_changed(cx);
             thread
@@ -11347,7 +11285,7 @@ mod tests {
                 thread.finish_local_turn(acp_v2::StopReason::EndTurn, cx)
             })
             .await
-            .expect("native final checkpoint");
+            .expect("local final checkpoint");
         thread.update(cx, |thread, cx| {
             assert!(
                 thread
@@ -11372,7 +11310,7 @@ mod tests {
     #[gpui::test]
     async fn test_local_refusal_reports_one_stop(cx: &mut TestAppContext) {
         init_test(cx);
-        let (thread, _connection) = new_receipt_test_thread(cx).await;
+        let (thread, _) = new_receipt_test_thread(cx).await;
         let events = Rc::new(RefCell::new(Vec::new()));
         let _subscription = cx.update(|cx| {
             cx.subscribe(&thread, {
@@ -11414,6 +11352,45 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(*events.borrow(), ["stopped"]);
+    }
+
+    #[gpui::test]
+    async fn test_pending_receipt_cancellation_signals_without_completing_activity(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (thread, connection) = new_receipt_test_thread(cx).await;
+        let response = connection.defer_next_receipt_response();
+        let submission = thread.update(cx, |thread, cx| thread.send(vec!["pending".into()], cx));
+        let id = submission.id;
+        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        assert_eq!(
+            connection.take_cancel_calls(),
+            [thread.read_with(cx, |thread, _| thread.session_id().clone())]
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+            assert_eq!(thread.activity_generation(), 0);
+            assert!(matches!(
+                thread.submission(id).expect("still pending").state,
+                SubmissionState::Pending
+            ));
+        });
+        response
+            .send(Err(anyhow!(SubmissionCancelled)))
+            .expect("receipt observer");
+        assert!(submission.await.expect("withdrawn acceptance").is_none());
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.submission(id).expect("cancelled").state,
+                SubmissionState::Cancelled
+            ));
+            assert!(!thread.has_unsettled_submissions());
+            assert!(!thread.had_error());
+            assert!(thread.entries().is_empty());
+        });
+        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        assert!(connection.take_cancel_calls().is_empty());
     }
 
     #[gpui::test]

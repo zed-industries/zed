@@ -5225,7 +5225,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
         thread_view.read_with(cx, |view, _| {
             let Some(ThreadError::NoCredentials { provider }) = &view.thread_error else {
-                panic!("native provider error classification should be retained");
+                panic!("local provider error classification should be retained");
             };
             assert_eq!(provider.to_string(), ZED_CLOUD_PROVIDER_NAME.to_string());
             assert_eq!(view.message_queue.len(), 1);
@@ -5303,6 +5303,69 @@ pub(crate) mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_reported_subagent_failure_is_scoped_to_its_view(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let root_view = active_thread(&conversation_view, cx);
+        let (root, conversation) = root_view.read_with(cx, |view, _| {
+            (view.thread.clone(), view.conversation.clone())
+        });
+        let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
+        let child_session_id = acp_v2::SessionId::new("reported-child");
+        let child_view = conversation_view.update_in(cx, |view, window, cx| {
+            let child = create_test_acp_thread(
+                Some(root_session_id),
+                child_session_id.0.as_ref(),
+                Rc::new(StubAgentConnection::new().with_receipt_submissions(true)),
+                view.project.clone(),
+                cx,
+            );
+            conversation.update(cx, |conversation, cx| {
+                conversation.register_thread(child.clone(), cx);
+            });
+            let child_view =
+                view.new_thread_view(child, conversation.clone(), false, None, window, cx);
+            view.as_connected_mut()
+                .expect("connected")
+                .threads
+                .insert(child_session_id, child_view.clone());
+            child_view
+        });
+        root_view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["root follow-up".into()], vec![], window, cx);
+        });
+        child_view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["child follow-up".into()], vec![], window, cx);
+            view.thread.update(cx, |thread, cx| {
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                        cx,
+                    )
+                    .expect("child running");
+                thread
+                    .report_local_execution_error(Arc::new(anyhow!(MaxOutputTokensError)), cx)
+                    .expect("child failure");
+            });
+        });
+        cx.run_until_parked();
+        child_view.read_with(cx, |view, _| {
+            assert!(matches!(
+                view.thread_error,
+                Some(ThreadError::MaxOutputTokens)
+            ));
+            assert!(view.message_queue.auto_send_candidate(false).is_none());
+        });
+        root_view.read_with(cx, |view, _| {
+            assert!(view.thread_error.is_none());
+            assert!(view.message_queue.auto_send_candidate(false).is_some());
+        });
     }
 
     #[gpui::test]

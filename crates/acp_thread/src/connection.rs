@@ -881,6 +881,7 @@ mod test_support {
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
         set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
+        cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
@@ -911,6 +912,7 @@ mod test_support {
                 receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
                 set_title_calls: Default::default(),
+                cancel_calls: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_receipt_submissions: false,
@@ -960,6 +962,10 @@ mod test_support {
 
         pub fn take_set_title_calls(&self) -> Vec<(acp_v2::SessionId, SharedString)> {
             std::mem::take(&mut *self.set_title_calls.lock())
+        }
+
+        pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
+            std::mem::take(&mut *self.cancel_calls.lock())
         }
 
         pub fn defer_next_truncate(&self) -> oneshot::Sender<()> {
@@ -1256,6 +1262,7 @@ mod test_support {
         }
 
         fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
+            self.cancel_calls.lock().push(session_id.clone());
             if let Some(end_turn_tx) = self
                 .sessions
                 .lock()
