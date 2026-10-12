@@ -4,7 +4,7 @@ Modelines are special comments at the beginning or end of a file that configure 
 
 ## Configuration
 
-Use the [`modeline_lines`](./reference/all-settings.md#modeline-lines) setting to control how many lines Zed searches for modelines:
+Use the `modeline_lines` setting to control how many lines Zed searches for modelines:
 
 ```json [settings]
 {

@@ -3427,7 +3427,7 @@ The following settings can be overridden for each specific language:
 - [`soft_wrap`](#soft-wrap)
 - [`soft_wrap_indent`](#soft-wrap-indent)
 - [`tab_size`](#tab-size)
-- [`use_autoclose`](#use-autoclose)
+- [`use_autoclose`](#auto-close)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
 
 These values take in the same options as the root-level settings with the same name.
