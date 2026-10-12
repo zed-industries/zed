@@ -1394,7 +1394,7 @@ fn resolve_cd_in_worktrees(
 ) -> Option<PathBuf> {
     let cd = path_style.normalize(cd);
     let cd_path = Path::new(&cd);
-    let is_absolute = path_style.is_absolute(&cd);
+    let is_absolute = path_style.is_absolute(cd_path);
 
     worktree_roots.iter().find_map(|(root_name, abs_path)| {
         let prefix = if is_absolute {
@@ -1402,13 +1402,11 @@ fn resolve_cd_in_worktrees(
         } else {
             (*root_name).to_string()
         };
-        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix))?;
+        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix)).ok()?;
         if subpath.is_empty() {
             Some(abs_path.clone())
         } else {
-            path_style
-                .join_path(abs_path, &*subpath.display(path_style))
-                .ok()
+            path_style.join_path(abs_path, subpath).ok()
         }
     })
 }
