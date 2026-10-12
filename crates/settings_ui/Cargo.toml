@@ -63,6 +63,7 @@ serde_json.workspace = true
 serde_yaml_ng.workspace = true
 settings.workspace = true
 shell_command_parser.workspace = true
+smol.workspace = true
 strum.workspace = true
 telemetry.workspace = true
 theme.workspace = true

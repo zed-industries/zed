@@ -5,10 +5,7 @@ use settings::{
     LanguageSettingsContent, SemanticTokens, SettingsContent, SettingsStore,
     ZedLinkConnectionProvider,
 };
-use std::{
-    process::Command,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
 use theme::SystemAppearance;
 use ui::IntoElement;
@@ -27,6 +24,7 @@ const DEFAULT_STRING: String = String::new();
 /// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
 /// to avoid the "NO DEFAULT" case.
 const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
+const TAILSCALE_DNS_ADMIN_URL: &str = "https://login.tailscale.com/admin/dns";
 
 const DEFAULT_AUDIO_OUTPUT: AudioOutputDeviceName = AudioOutputDeviceName(None);
 const DEFAULT_EMPTY_AUDIO_OUTPUT: Option<&AudioOutputDeviceName> = Some(&DEFAULT_AUDIO_OUTPUT);
@@ -94,7 +92,8 @@ fn run_zedlink_manager_action(action: &'static str, window: &mut gpui::Window, c
         .as_ref()
         .and_then(|settings| settings.manager_path.as_deref())
         .map(str::trim)
-        .filter(|path| !path.is_empty());
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned);
     let success_message = match action {
         "check-connection" => "ZedLink connection passed",
         "start-gateway-detached" => "ZedLink gateway start requested",
@@ -103,6 +102,10 @@ fn run_zedlink_manager_action(action: &'static str, window: &mut gpui::Window, c
         "status" => "ZedLink status",
         "diagnose" => "ZedLink diagnostics",
         "pair-primary" => "ZedLink pairing page created",
+        "install-renewal" => "Automatic certificate renewal enabled",
+        "renewal-status" => "Certificate renewal status",
+        "renew-certificates" => "Certificate renewal check completed",
+        "remove-renewal" => "Automatic certificate renewal disabled",
         _ => "ZedLink connection updated",
     };
     let failure_message = match action {
@@ -110,41 +113,46 @@ fn run_zedlink_manager_action(action: &'static str, window: &mut gpui::Window, c
         "status" => "ZedLink status is unavailable",
         "diagnose" => "ZedLink diagnostics found a problem",
         "pair-primary" => "ZedLink could not create a pairing page",
+        "install-renewal" => "Automatic certificate renewal could not be enabled",
+        "renewal-status" => "Certificate renewal status is unavailable",
+        "renew-certificates" => "Certificate renewal failed",
+        "remove-renewal" => "Automatic certificate renewal could not be disabled",
         _ => "ZedLink action failed",
     };
-    let (level, message, detail) = match manager_path {
-        Some(manager_path) => match Command::new("python3")
-            .arg(manager_path)
-            .arg(action)
-            .output()
-        {
-            Ok(output) if output.status.success() => (
-                PromptLevel::Info,
-                success_message,
-                String::from_utf8_lossy(&output.stdout).trim().to_string(),
-            ),
-            Ok(output) => (
-                PromptLevel::Warning,
-                failure_message,
-                String::from_utf8_lossy(&output.stderr).trim().to_string(),
-            ),
-            Err(error) => (
-                PromptLevel::Warning,
-                "ZedLink manager could not start",
-                error.to_string(),
-            ),
-        },
-        None => (
-            PromptLevel::Warning,
-            "ZedLink manager is not configured",
-            "Run ZedLink: Repair setup, then reopen this page.".to_string(),
-        ),
-    };
-    let detail = detail.chars().take(600).collect::<String>();
-    let prompt = window.prompt(level, message, Some(&detail), &["OK"], cx);
-    cx.background_executor()
-        .spawn(async move {
-            prompt.await.ok();
+    window
+        .spawn(cx, async move |cx| {
+            let (level, message, detail) = match manager_path {
+                Some(manager_path) => match smol::process::Command::new("python3")
+                    .arg(manager_path)
+                    .arg(action)
+                    .output()
+                    .await
+                {
+                    Ok(output) if output.status.success() => (
+                        PromptLevel::Info,
+                        success_message,
+                        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                    ),
+                    Ok(output) => (
+                        PromptLevel::Warning,
+                        failure_message,
+                        String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                    ),
+                    Err(error) => (
+                        PromptLevel::Warning,
+                        "ZedLink manager could not start",
+                        error.to_string(),
+                    ),
+                },
+                None => (
+                    PromptLevel::Warning,
+                    "ZedLink manager is not configured",
+                    "Run ZedLink: Repair setup, then reopen this page.".to_string(),
+                ),
+            };
+            let detail = detail.chars().take(600).collect::<String>();
+            cx.prompt(level, message, Some(&detail), &["OK"]).await.ok();
+            anyhow::Ok(())
         })
         .detach();
 }
@@ -162,95 +170,80 @@ fn manage_zedlink_devices(window: &mut gpui::Window, cx: &mut App) {
         run_zedlink_manager_action("devices", window, cx);
         return;
     };
-    let output = Command::new("python3")
-        .arg(&manager_path)
-        .arg("devices-json")
-        .output();
-    let devices = match output {
-        Ok(output) if output.status.success() => {
-            serde_json::from_slice::<serde_json::Value>(&output.stdout)
-                .ok()
-                .and_then(|value| {
-                    value
-                        .get("devices")
-                        .and_then(|devices| devices.as_array())
-                        .cloned()
-                })
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|device| {
-                    Some((
-                        device.get("id")?.as_str()?.to_owned(),
-                        device.get("name")?.as_str()?.to_owned(),
-                    ))
-                })
-                .collect::<Vec<_>>()
-        }
-        Ok(output) => {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            let prompt = window.prompt(
-                PromptLevel::Warning,
-                "Paired devices are unavailable",
-                Some(&detail),
-                &["OK"],
-                cx,
-            );
-            cx.background_executor()
-                .spawn(async move {
-                    prompt.await.ok();
-                })
-                .detach();
-            return;
-        }
-        Err(error) => {
-            let detail = error.to_string();
-            let prompt = window.prompt(
-                PromptLevel::Warning,
-                "ZedLink manager could not start",
-                Some(&detail),
-                &["OK"],
-                cx,
-            );
-            cx.background_executor()
-                .spawn(async move {
-                    prompt.await.ok();
-                })
-                .detach();
-            return;
-        }
-    };
-    if devices.is_empty() {
-        let prompt = window.prompt(
-            PromptLevel::Info,
-            "No paired devices",
-            Some(
-                "Choose Pair New Device on this page to authorize a browser or installed web app.",
-            ),
-            &["OK"],
-            cx,
-        );
-        cx.background_executor()
-            .spawn(async move {
-                prompt.await.ok();
-            })
-            .detach();
-        return;
-    }
-
-    let mut answers = devices
-        .iter()
-        .map(|(_, name)| PromptButton::new(format!("Revoke {name}")))
-        .collect::<Vec<_>>();
-    answers.push(PromptButton::cancel("Cancel"));
-    let prompt = window.prompt(
-        PromptLevel::Info,
-        "Paired ZedLink devices",
-        Some("Select a device to revoke its browser credential. This does not delete Zed conversations."),
-        &answers,
-        cx,
-    );
     window
         .spawn(cx, async move |cx| {
+            let output = smol::process::Command::new("python3")
+                .arg(&manager_path)
+                .arg("devices-json")
+                .output()
+                .await;
+            let devices = match output {
+                Ok(output) if output.status.success() => {
+                    serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("devices")
+                                .and_then(|devices| devices.as_array())
+                                .cloned()
+                        })
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|device| {
+                            Some((
+                                device.get("id")?.as_str()?.to_owned(),
+                                device.get("name")?.as_str()?.to_owned(),
+                            ))
+                        })
+                        .collect::<Vec<_>>()
+                }
+                Ok(output) => {
+                    let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        "Paired devices are unavailable",
+                        Some(&detail),
+                        &["OK"],
+                    )
+                    .await
+                    .ok();
+                    return anyhow::Ok(());
+                }
+                Err(error) => {
+                    let detail = error.to_string();
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        "ZedLink manager could not start",
+                        Some(&detail),
+                        &["OK"],
+                    )
+                    .await
+                    .ok();
+                    return anyhow::Ok(());
+                }
+            };
+            if devices.is_empty() {
+                cx.prompt(
+                    PromptLevel::Info,
+                    "No paired devices",
+                    Some("Choose Pair New Device on this page to authorize a browser or installed web app."),
+                    &["OK"],
+                )
+                .await
+                .ok();
+                return anyhow::Ok(());
+            }
+            let mut answers = devices
+                .iter()
+                .map(|(_, name)| PromptButton::new(format!("Revoke {name}")))
+                .collect::<Vec<_>>();
+            answers.push(PromptButton::cancel("Cancel"));
+            let prompt = cx.prompt(
+                PromptLevel::Info,
+                "Paired ZedLink devices",
+                Some("Select a device to revoke its browser credential. This does not delete Zed conversations."),
+                &answers,
+            );
             let Ok(index) = prompt.await else {
                 return anyhow::Ok(());
             };
@@ -269,11 +262,12 @@ fn manage_zedlink_devices(window: &mut gpui::Window, cx: &mut App) {
             if confirmation.await != Ok(0) {
                 return anyhow::Ok(());
             }
-            let output = Command::new("python3")
+            let output = smol::process::Command::new("python3")
                 .arg(manager_path)
                 .arg("revoke-device")
                 .arg(device_id)
-                .output();
+                .output()
+                .await;
             let (level, message, detail) = match output {
                 Ok(output) if output.status.success() => (
                     PromptLevel::Info,
@@ -605,7 +599,7 @@ fn zedlink_page() -> SettingsPage {
         ]
     }
 
-    fn runtime_section() -> [SettingsPageItem; 3] {
+    fn runtime_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Runtime and Devices"),
             SettingsPageItem::SubPageLink(SubPageLink {
@@ -682,6 +676,57 @@ fn zedlink_page() -> SettingsPage {
                             description: Some("List browsers and installed web apps authorized by this gateway, then optionally revoke one device after confirmation.".into()),
                             button_text: "Manage Devices".into(),
                             on_click: Arc::new(|_, window, cx| manage_zedlink_devices(window, cx)),
+                            files: USER,
+                        }),
+                    ];
+                    this.render_sub_page_items(items.iter().enumerate(), scroll_handle, window, cx)
+                        .into_any_element()
+                },
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Tailscale HTTPS".into(),
+                r#type: Default::default(),
+                json_path: None,
+                description: Some("Check Tailscale readiness, inspect certificate health, and manage automatic renewal without entering certificate paths manually.".into()),
+                search_aliases: &["certificate", "https", "magicdns", "renewal", "tailscale", "tls"],
+                in_json: false,
+                files: USER,
+                render: |this, scroll_handle, window, cx| {
+                    let items = [
+                        SettingsPageItem::SectionHeader("Tailscale and TLS"),
+                        SettingsPageItem::ActionLink(ActionLink {
+                            title: "Open Tailscale DNS and HTTPS Settings".into(),
+                            description: Some("Enable MagicDNS and HTTPS certificates for the tailnet. Tailscale requires an administrator to accept its Certificate Transparency disclosure.".into()),
+                            button_text: "Open Tailscale".into(),
+                            on_click: Arc::new(|_, _, cx| cx.open_url(TAILSCALE_DNS_ADMIN_URL)),
+                            files: USER,
+                        }),
+                        SettingsPageItem::ActionLink(ActionLink {
+                            title: "Certificate and Renewal Status".into(),
+                            description: Some("Show the configured hostname, certificate expiration, 30-day renewal threshold, and system renewal timer state.".into()),
+                            button_text: "Show Status".into(),
+                            on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("renewal-status", window, cx)),
+                            files: USER,
+                        }),
+                        SettingsPageItem::ActionLink(ActionLink {
+                            title: "Enable Automatic Renewal".into(),
+                            description: Some("Install a private user timer that checks twice daily and renews Tailscale certificates only when fewer than 30 days remain.".into()),
+                            button_text: "Enable".into(),
+                            on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("install-renewal", window, cx)),
+                            files: USER,
+                        }),
+                        SettingsPageItem::ActionLink(ActionLink {
+                            title: "Check for Renewal Now".into(),
+                            description: Some("Run the same bounded renewal check immediately. A renewed certificate is validated and reloaded by the running gateway without clearing sessions or pairings.".into()),
+                            button_text: "Check Now".into(),
+                            on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("renew-certificates", window, cx)),
+                            files: USER,
+                        }),
+                        SettingsPageItem::ActionLink(ActionLink {
+                            title: "Disable Automatic Renewal".into(),
+                            description: Some("Stop and remove the ZedLink certificate timer. Existing certificate files and connection profiles remain unchanged.".into()),
+                            button_text: "Disable".into(),
+                            on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("remove-renewal", window, cx)),
                             files: USER,
                         }),
                     ];

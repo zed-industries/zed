@@ -8,7 +8,6 @@ use std::{
         net::{UnixListener, UnixStream},
     },
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
     rc::Rc,
     sync::mpsc,
     time::Duration,
@@ -27,6 +26,7 @@ use git::{
     status::{FileStatus, StageStatus},
 };
 use gpui::{App, AppContext, Entity, Global, Subscription, Task};
+use language_model::LanguageModelRegistry;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use settings::SettingsStore;
@@ -102,6 +102,9 @@ impl ProbePermissions {
             "thread.events",
             "thread.commands",
             "thread.settings",
+            "thread.elicitations",
+            "thread.queue",
+            "thread.edit_review",
             "thread.send",
             "thread.cancel",
             "thread.subagents",
@@ -119,6 +122,7 @@ impl ProbePermissions {
         }
         if self.attachments {
             capabilities.extend(["thread.attachments", "thread.rewind_image"]);
+            capabilities.push("thread.rewind");
         }
         if self.project_context {
             capabilities.extend(["project.files", "project.file", "project.search"]);
@@ -136,6 +140,11 @@ impl ProbePermissions {
         }
         if self.agent_settings {
             capabilities.push("thread.settings.update");
+            capabilities.extend([
+                "elicitation.respond",
+                "thread.queue.clear",
+                "thread.edit_review.respond",
+            ]);
         }
         capabilities
     }
@@ -145,7 +154,7 @@ impl ProbePermissions {
             "thread.create" | "thread.create.options" | "thread.rename" | "thread.unexpose" => {
                 self.session_creation
             }
-            "thread.rewind_image" => self.attachments,
+            "thread.rewind_image" | "thread.rewind" => self.attachments,
             "thread.send"
                 if params.get("context_paths").is_some() || params.get("uploads").is_some() =>
             {
@@ -155,8 +164,10 @@ impl ProbePermissions {
             "changes.snapshot" | "changes.diff" | "changes.stage" | "changes.unstage" => {
                 self.git_changes
             }
-            "approval.respond" => self.approval_decisions,
-            "thread.settings.update" => self.agent_settings,
+            "approval.respond" | "elicitation.respond" | "thread.edit_review.respond" => {
+                self.approval_decisions
+            }
+            "thread.settings.update" | "thread.queue.clear" => self.agent_settings,
             _ => true,
         }
     }
@@ -365,16 +376,25 @@ pub fn init(cx: &mut App) {
     if let Some(manager_path) = gateway_manager {
         if !manager_path.is_absolute() || !manager_path.is_file() {
             log::warn!("ZedLink gateway manager path is unavailable");
-        } else if Command::new("python3")
-            .arg(manager_path)
-            .arg("start-gateway")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .is_err()
-        {
-            log::warn!("ZedLink gateway could not be started automatically");
+        } else {
+            cx.background_spawn(async move {
+                match smol::process::Command::new("python3")
+                    .arg(manager_path)
+                    .arg("start-gateway-detached")
+                    .output()
+                    .await
+                {
+                    Ok(output) if output.status.success() => {}
+                    Ok(output) => log::warn!(
+                        "ZedLink gateway could not be started automatically: {}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ),
+                    Err(error) => {
+                        log::warn!("ZedLink gateway could not be started automatically: {error}")
+                    }
+                }
+            })
+            .detach();
         }
     }
 
@@ -658,6 +678,21 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
                                 })
                             })
                     });
+            let rewind_points = thread
+                .entries()
+                .iter()
+                .enumerate()
+                .filter_map(|(entry_index, entry)| {
+                    let message = entry.user_message()?;
+                    message.client_id.as_ref().map(|client_id| {
+                        json!({
+                            "client_user_message_id": client_id,
+                            "entry_index": entry_index,
+                            "entries_removed": total_entries.saturating_sub(entry_index),
+                        })
+                    })
+                })
+                .collect::<Vec<_>>();
             let (entry_start_index, entry_end_index, entries) =
                 transcript_page(thread, total_entries, tail_entry_count, cx);
             let truncated = entry_start_index > 0;
@@ -702,6 +737,7 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
                     "had_error": thread.had_error(),
                     "agent_error": agent_error,
                     "image_recovery": image_recovery,
+                    "rewind_points": rewind_points,
                     "retry_status": retry_status,
                     "pending_approvals": pending_approvals(thread, cx),
                     "subagents": subagent_snapshots(thread, server_view.as_ref(), cx),
@@ -811,6 +847,12 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         "thread.commands" => command_list(&request, state, cx),
         "thread.settings" => thread_settings(&request, state, cx),
         "thread.settings.update" => update_thread_settings(&request, state, cx),
+        "thread.elicitations" => elicitation_list(&request, state, cx),
+        "elicitation.respond" => elicitation_response(&request, state, cx),
+        "thread.queue" => queue_state(&request, state, cx),
+        "thread.queue.clear" => clear_queue(&request, state, cx),
+        "thread.edit_review" => edit_review_state(&request, state, cx),
+        "thread.edit_review.respond" => edit_review_response(&request, state, cx),
         "project.files" => project_files(&request, state, cx),
         "project.file" => project_file(&request, state, cx),
         "project.search" => project_search(&request, state, cx),
@@ -822,6 +864,7 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         "thread.cancel" => cancel_request(&request, state, cx),
         "subagent.cancel" => cancel_subagent_request(&request, state, cx),
         "thread.rewind_image" => rewind_image_request(&request, state, cx),
+        "thread.rewind" => rewind_request(&request, state, cx),
         "thread.approvals" => approval_list(&request, state, cx),
         "approval.respond" => approval_response(&request, state, cx),
         _ => error(&request.request_id, "UNSUPPORTED_CAPABILITY"),
@@ -1717,6 +1760,93 @@ fn rewind_image_request(request: &ProbeRequest, state: &ProbeState, cx: &mut App
     )
 }
 
+fn rewind_request(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    let Some(thread_id) = request.params.get("thread_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let thread = match exposed_thread_for_request(request, state, cx) {
+        Ok(thread) => thread,
+        Err(code) => return error(&request.request_id, code),
+    };
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some(operation) = state.change_operations.borrow().get(&request.request_id) {
+        if operation.payload_digest != digest {
+            return error(&request.request_id, "REQUEST_CONFLICT");
+        }
+        return change_operation_result(&request.request_id, &operation.state);
+    }
+    if state.change_operations.borrow().len() >= 128 {
+        return error(&request.request_id, "RATE_LIMITED");
+    }
+    if thread.read(cx).status() != ThreadStatus::Idle {
+        return error(&request.request_id, "THREAD_BUSY");
+    }
+    let Some(expected_sequence) = request
+        .params
+        .get("expected_last_sequence")
+        .and_then(Value::as_u64)
+    else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if state
+        .events
+        .borrow()
+        .get(thread_id)
+        .map_or(0, |events| events.last_sequence)
+        != expected_sequence
+    {
+        return error(&request.request_id, "STALE_SEQUENCE");
+    }
+    let Some(client_id_value) = request.params.get("client_user_message_id") else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let Ok(client_id) =
+        serde_json::from_value::<acp_thread::ClientUserMessageId>(client_id_value.clone())
+    else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if !thread.read(cx).entries().iter().any(|entry| {
+        entry
+            .user_message()
+            .and_then(|message| message.client_id.as_ref())
+            == Some(&client_id)
+    }) {
+        return error(&request.request_id, "STALE_SEQUENCE");
+    }
+    let task = thread.update(cx, |thread, cx| thread.rewind(client_id, cx));
+    state.change_operations.borrow_mut().insert(
+        request.request_id.clone(),
+        ChangeOperationRecord {
+            payload_digest: digest,
+            state: ChangeOperationState::Running,
+        },
+    );
+    let probe_state = cx.global::<ProbeGlobal>().0.clone();
+    let request_id = request.request_id.clone();
+    cx.spawn(async move |_cx| {
+        let next_state = if task.await.is_ok() {
+            ChangeOperationState::Succeeded
+        } else {
+            ChangeOperationState::Failed
+        };
+        if let Some(operation) = probe_state
+            .change_operations
+            .borrow_mut()
+            .get_mut(&request_id)
+        {
+            operation.state = next_state;
+        }
+    })
+    .detach();
+    success(
+        &request.request_id,
+        json!({"outcome": "running", "provisional": true}),
+    )
+}
+
 fn command_list(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
     let Some(thread_id) = request.params.get("thread_id").and_then(Value::as_str) else {
         return error(&request.request_id, "INVALID_REQUEST");
@@ -1792,7 +1922,13 @@ fn update_thread_settings(request: &ProbeRequest, state: &ProbeState, cx: &mut A
     if parameters.keys().any(|key| {
         !matches!(
             key.as_str(),
-            "instance_id" | "epoch" | "thread_id" | "profile_id" | "thinking_enabled"
+            "instance_id"
+                | "epoch"
+                | "thread_id"
+                | "profile_id"
+                | "thinking_enabled"
+                | "model_id"
+                | "provider_id"
         )
     }) {
         return error(&request.request_id, "INVALID_REQUEST");
@@ -1809,7 +1945,19 @@ fn update_thread_settings(request: &ProbeRequest, state: &ProbeState, cx: &mut A
         Some(Value::Bool(enabled)) => Some(*enabled),
         _ => return error(&request.request_id, "INVALID_REQUEST"),
     };
-    if profile_id.is_none() && thinking_enabled.is_none() {
+    let requested_model = match (parameters.get("provider_id"), parameters.get("model_id")) {
+        (None, None) => None,
+        (Some(Value::String(provider_id)), Some(Value::String(model_id)))
+            if !provider_id.is_empty()
+                && provider_id.len() <= 128
+                && !model_id.is_empty()
+                && model_id.len() <= 256 =>
+        {
+            Some((provider_id.clone(), model_id.clone()))
+        }
+        _ => return error(&request.request_id, "INVALID_REQUEST"),
+    };
+    if profile_id.is_none() && thinking_enabled.is_none() && requested_model.is_none() {
         return error(&request.request_id, "INVALID_REQUEST");
     }
     let Some((thread, view)) = exposed_thread_view(thread_id, state, cx) else {
@@ -1835,12 +1983,25 @@ fn update_thread_settings(request: &ProbeRequest, state: &ProbeState, cx: &mut A
             return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
         }
     }
+    let selected_model = requested_model.and_then(|(provider_id, model_id)| {
+        LanguageModelRegistry::read_global(cx)
+            .available_models(cx)
+            .find(|model| {
+                model.provider_id().0.as_ref() == provider_id && model.id().0.as_ref() == model_id
+            })
+    });
+    if parameters.get("model_id").is_some() && selected_model.is_none() {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
     native_thread.update(cx, |thread, cx| {
         if let Some(profile_id) = profile_id {
             thread.set_profile(profile_id, cx);
         }
         if let Some(enabled) = thinking_enabled {
             thread.set_thinking_enabled(enabled, cx);
+        }
+        if let Some(model) = selected_model {
+            thread.set_model(model, cx);
         }
     });
     success(
@@ -1890,6 +2051,19 @@ fn thread_settings_value(
     };
     let native = native_thread.read(cx);
     let model = native.model();
+    let token_usage = native.latest_token_usage();
+    let models = LanguageModelRegistry::read_global(cx)
+        .available_models(cx)
+        .map(|model| {
+            json!({
+                "id": model.id().0.to_string(),
+                "name": model.name().0.to_string(),
+                "provider_id": model.provider_id().0.to_string(),
+                "supports_images": model.supports_images(),
+                "supports_thinking": model.supports_thinking(),
+            })
+        })
+        .collect::<Vec<_>>();
     let profiles = AgentProfile::available_profiles(cx)
         .iter()
         .map(|(id, name)| json!({"id": id.as_str(), "name": name.to_string()}))
@@ -1902,6 +2076,14 @@ fn thread_settings_value(
             "id": model.id().0.to_string(),
             "name": model.name().0.to_string(),
             "provider_id": model.provider_id().0.to_string(),
+        })),
+        "models": models,
+        "context_usage": token_usage.map(|usage| json!({
+            "used_tokens": usage.used_tokens,
+            "max_tokens": usage.max_tokens,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "remaining_tokens": usage.max_tokens.saturating_sub(usage.used_tokens),
         })),
         "profile_id": native.profile().as_str(),
         "profiles": profiles,
@@ -1922,6 +2104,257 @@ fn thread_agent_value(view: &Entity<ThreadView>, cx: &App) -> Value {
         "name": view.agent_display_name.to_string(),
         "kind": if view.as_native_thread(cx).is_some() { "zed" } else { "external_acp" },
     })
+}
+
+fn elicitation_list(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    let Ok(thread) = exposed_thread_for_request(request, state, cx) else {
+        return error(&request.request_id, "THREAD_NOT_EXPOSED");
+    };
+    let thread = thread.read(cx);
+    let elicitations = thread
+        .entries()
+        .iter()
+        .filter_map(|entry| {
+            let AgentThreadEntry::Elicitation(id) = entry else {
+                return None;
+            };
+            let (_, elicitation) = thread.elicitation(id)?;
+            let status = match elicitation.status {
+                acp_thread::ElicitationStatus::Pending { .. } => "pending",
+                acp_thread::ElicitationStatus::Accepted => "accepted",
+                acp_thread::ElicitationStatus::Declined => "declined",
+                acp_thread::ElicitationStatus::Canceled => "canceled",
+                acp_thread::ElicitationStatus::Completed => "completed",
+            };
+            Some(json!({
+                "elicitation_id": id.0.as_ref(),
+                "request": &elicitation.request,
+                "status": status,
+            }))
+        })
+        .collect::<Vec<_>>();
+    success(
+        &request.request_id,
+        json!({"thread_id": thread.session_id().to_string(), "elicitations": elicitations}),
+    )
+}
+
+fn elicitation_response(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    let Ok(thread) = exposed_thread_for_request(request, state, cx) else {
+        return error(&request.request_id, "THREAD_NOT_EXPOSED");
+    };
+    let Some(elicitation_id) = request
+        .params
+        .get("elicitation_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty() && id.len() <= 256)
+    else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let action = request.params.get("action").and_then(Value::as_str);
+    let response_value = match action {
+        Some("accept") => json!({
+            "action": "accept",
+            "content": request.params.get("content").cloned().unwrap_or_else(|| json!({})),
+        }),
+        Some("decline") => json!({"action": "decline"}),
+        Some("cancel") => json!({"action": "cancel"}),
+        _ => return error(&request.request_id, "INVALID_REQUEST"),
+    };
+    let Ok(response) = serde_json::from_value::<acp::CreateElicitationResponse>(response_value)
+    else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let id = acp_thread::ElicitationEntryId(elicitation_id.into());
+    let is_pending = thread
+        .read(cx)
+        .elicitation(&id)
+        .is_some_and(|(_, elicitation)| {
+            matches!(
+                elicitation.status,
+                acp_thread::ElicitationStatus::Pending { .. }
+            )
+        });
+    if !is_pending {
+        return error(&request.request_id, "ELICITATION_EXPIRED");
+    }
+    thread.update(cx, |thread, cx| {
+        thread.respond_to_elicitation(&id, response, cx)
+    });
+    success(
+        &request.request_id,
+        json!({"thread_id": thread.read(cx).session_id().to_string(), "outcome": "resolved"}),
+    )
+}
+
+fn queue_state(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    let Some((thread, view)) = request
+        .params
+        .get("thread_id")
+        .and_then(Value::as_str)
+        .and_then(|id| exposed_thread_view(id, state, cx))
+    else {
+        return error(&request.request_id, "THREAD_NOT_EXPOSED");
+    };
+    let view = view.read(cx);
+    let entries = view
+        .message_queue
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let preview = entry
+                .content
+                .iter()
+                .filter_map(|block| match block {
+                    acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            json!({
+                "index": index,
+                "preview": preview.chars().take(500).collect::<String>(),
+                "steer": entry.steer,
+            })
+        })
+        .collect::<Vec<_>>();
+    success(
+        &request.request_id,
+        json!({
+            "thread_id": thread.read(cx).session_id().to_string(),
+            "entries": entries,
+            "count": entries.len(),
+        }),
+    )
+}
+
+fn clear_queue(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    let Some(thread_id) = request.params.get("thread_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let Some((_, view)) = exposed_thread_view(thread_id, state, cx) else {
+        return error(&request.request_id, "THREAD_NOT_EXPOSED");
+    };
+    let count = view.read(cx).message_queue.len();
+    view.update(cx, |view, cx| {
+        view.message_queue.clear();
+        view.sync_queue_flag_to_native_thread(cx);
+        cx.notify();
+    });
+    success(
+        &request.request_id,
+        json!({"thread_id": thread_id, "outcome": "cleared", "removed": count}),
+    )
+}
+
+fn edit_review_state(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    let Some(thread_id) = request.params.get("thread_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let Some((_, view)) = exposed_thread_view(thread_id, state, cx) else {
+        return error(&request.request_id, "THREAD_NOT_EXPOSED");
+    };
+    let Some(native_thread) = view.read(cx).as_native_thread(cx) else {
+        return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
+    };
+    let action_log = native_thread.read(cx).action_log().clone();
+    let action_log = action_log.read(cx);
+    let changed_files = action_log.changed_buffers(cx).count();
+    let stats = action_log.diff_stats(cx);
+    success(
+        &request.request_id,
+        json!({
+            "thread_id": thread_id,
+            "pending": changed_files > 0,
+            "changed_files": changed_files,
+            "lines_added": stats.lines_added,
+            "lines_removed": stats.lines_removed,
+        }),
+    )
+}
+
+fn edit_review_response(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    let Some(thread_id) = request.params.get("thread_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let Some(action) = request.params.get("action").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if !matches!(action, "keep_all" | "reject_all") {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some(operation) = state.change_operations.borrow().get(&request.request_id) {
+        if operation.payload_digest != digest {
+            return error(&request.request_id, "REQUEST_CONFLICT");
+        }
+        return change_operation_result(&request.request_id, &operation.state);
+    }
+    if state.change_operations.borrow().len() >= 128 {
+        return error(&request.request_id, "RATE_LIMITED");
+    }
+    let Some(expected_sequence) = request
+        .params
+        .get("expected_last_sequence")
+        .and_then(Value::as_u64)
+    else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if state
+        .events
+        .borrow()
+        .get(thread_id)
+        .map_or(0, |events| events.last_sequence)
+        != expected_sequence
+    {
+        return error(&request.request_id, "STALE_SEQUENCE");
+    }
+    let Some((_, view)) = exposed_thread_view(thread_id, state, cx) else {
+        return error(&request.request_id, "THREAD_NOT_EXPOSED");
+    };
+    let Some(native_thread) = view.read(cx).as_native_thread(cx) else {
+        return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
+    };
+    let action_log = native_thread.read(cx).action_log().clone();
+    state.change_operations.borrow_mut().insert(
+        request.request_id.clone(),
+        ChangeOperationRecord {
+            payload_digest: digest,
+            state: ChangeOperationState::Running,
+        },
+    );
+    if action == "keep_all" {
+        action_log.update(cx, |log, cx| log.keep_all_edits(None, cx));
+        if let Some(operation) = state
+            .change_operations
+            .borrow_mut()
+            .get_mut(&request.request_id)
+        {
+            operation.state = ChangeOperationState::Succeeded;
+        }
+    } else {
+        let task = action_log.update(cx, |log, cx| log.reject_all_edits(None, cx));
+        let probe_state = cx.global::<ProbeGlobal>().0.clone();
+        let request_id = request.request_id.clone();
+        cx.spawn(async move |_cx| {
+            task.await;
+            if let Some(operation) = probe_state
+                .change_operations
+                .borrow_mut()
+                .get_mut(&request_id)
+            {
+                operation.state = ChangeOperationState::Succeeded;
+            }
+        })
+        .detach();
+    }
+    change_operation_result(
+        &request.request_id,
+        &state.change_operations.borrow()[&request.request_id].state,
+    )
 }
 
 fn exposed_thread_for_request(
