@@ -4762,6 +4762,11 @@ mod internal_tests {
         use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
 
         let fake = init_test(cx);
+        let database = cx
+            .update(|cx| ThreadsDatabase::connect(cx))
+            .await
+            .expect("connect threads database");
+        let tool_use_id: language_model::LanguageModelToolUseId = "held".into();
         for rewind in [false, true] {
             let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
             let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
@@ -4777,6 +4782,7 @@ mod internal_tests {
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
                 thread.add_tool(DelayTool);
+                thread.set_title("Stable title".into(), cx);
             });
             let (receipt, completion) = cx.update(|cx| {
                 connection.submit_native(session_id.clone(), Some(vec!["first".into()]), cx)
@@ -4794,7 +4800,7 @@ mod internal_tests {
                 &model,
                 &request,
                 LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-                    id: "held".into(),
+                    id: tool_use_id.clone(),
                     name: DelayTool::NAME.into(),
                     raw_input: r#"{"ms":10000}"#.into(),
                     input: LanguageModelToolUseInput::Json(json!({"ms": 10000})),
@@ -4857,6 +4863,37 @@ mod internal_tests {
             thread.read_with(cx, |thread, _| {
                 assert!(thread.is_streaming_message());
             });
+            agent.read_with(cx, |agent, cx| {
+                let session = agent.sessions.get(&session_id).expect("active session");
+                assert!(
+                    session.can_skip_save_while_streaming(cx),
+                    "the successor's save key must settle before the late result"
+                );
+                assert!(session.pending_save.lock().is_none());
+            });
+            let saved_before_result = database
+                .load_thread(session_id.clone())
+                .await
+                .expect("load thread before late result")
+                .expect("persisted thread");
+            assert_eq!(saved_before_result.title, "Stable title");
+            assert!(saved_before_result.detailed_summary.is_none());
+            let original_message_index = saved_before_result.messages.iter().position(|message| {
+                message
+                    .as_agent_message()
+                    .is_some_and(|message| message.tool_results.contains_key(&tool_use_id))
+            });
+            assert_eq!(original_message_index.is_some(), !rewind);
+            if let Some(index) = original_message_index {
+                let result = saved_before_result
+                    .messages
+                    .get(index)
+                    .and_then(|message| message.as_agent_message())
+                    .and_then(|message| message.tool_results.get(&tool_use_id))
+                    .expect("persisted synthetic cancellation on original assistant");
+                assert!(result.is_error);
+                assert_eq!(result.text_contents(), "Tool canceled by user");
+            }
             cx.executor().advance_clock(Duration::from_secs(10));
             cx.run_until_parked();
             thread.read_with(cx, |thread, _| {
@@ -4889,6 +4926,41 @@ mod internal_tests {
                 !rewind,
                 "late output belongs only to a retained original assistant message"
             );
+            let persisted = database
+                .load_thread(session_id.clone())
+                .await
+                .expect("load thread after late result")
+                .expect("persisted thread");
+            assert_eq!(persisted.title, saved_before_result.title);
+            assert!(persisted.detailed_summary.is_none());
+            assert_eq!(persisted.messages.len(), saved_before_result.messages.len());
+            assert!(
+                completion.clone().now_or_never().is_none(),
+                "the successor must remain pending during the database check"
+            );
+            if let Some(index) = original_message_index {
+                let result = persisted
+                    .messages
+                    .get(index)
+                    .and_then(|message| message.as_agent_message())
+                    .and_then(|message| message.tool_results.get(&tool_use_id))
+                    .expect("persisted result on original assistant");
+                assert_eq!(
+                    result.text_contents(),
+                    "Ding",
+                    "late output must replace synthetic cancellation in the database before the successor ends"
+                );
+                assert!(!result.is_error);
+            } else {
+                assert!(
+                    persisted.messages.iter().all(|message| {
+                        message
+                            .as_agent_message()
+                            .is_none_or(|message| !message.tool_results.contains_key(&tool_use_id))
+                    }),
+                    "rewound tool output must not enter the persisted successor history"
+                );
+            }
             assert_eq!(
                 fake.pending_completions_for(&model)
                     .iter()
@@ -5011,6 +5083,113 @@ mod internal_tests {
         assert_eq!(
             later.await.expect("later execution completes"),
             acp_v2::StopReason::EndTurn
+        );
+    }
+
+    #[gpui::test]
+    async fn test_native_e2e_helper_waits_for_turn(cx: &mut TestAppContext) {
+        use agent_servers::e2e_tests::send_and_wait_for_turn;
+
+        let fake = init_test(cx);
+        let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+        let withdrawn = send_and_wait_for_turn(&acp_thread, vec!["withdrawn".into()], cx);
+        acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        withdrawn
+            .await
+            .expect("withdrawn prompt settles without a stop");
+        assert!(fake.pending_completions().is_empty());
+
+        let generation = acp_thread.read_with(cx, |thread, _| thread.activity_generation());
+        let mut completion = send_and_wait_for_turn(&acp_thread, vec!["hello".into()], cx);
+        cx.run_until_parked();
+        acp_thread.read_with(cx, |thread, _| {
+            let submission = thread
+                .submission(thread.latest_submission_id().expect("submission"))
+                .expect("submission record");
+            assert!(matches!(
+                submission.state,
+                acp_thread::SubmissionState::Accepted { .. }
+            ));
+        });
+        assert!(
+            (&mut completion).now_or_never().is_none(),
+            "acceptance must not complete the E2E helper"
+        );
+        acp_thread.update(cx, |_, cx| {
+            cx.emit(acp_thread::AcpThreadEvent::Stopped {
+                activity_generation: generation,
+                activity_duration: None,
+                stop_reason: Some(acp_v2::StopReason::EndTurn),
+            });
+        });
+        cx.run_until_parked();
+        assert!(
+            (&mut completion).now_or_never().is_none(),
+            "a stop from earlier activity must not complete this turn"
+        );
+        send_and_wait_for_turn(&acp_thread, vec!["overlapping".into()], cx)
+            .await
+            .expect_err("the sequential helper must reject overlapping turns");
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
+        fake.send_text(&model, &request, "hello from the fake model");
+        fake.end_stream(&model, &request);
+        completion
+            .await
+            .expect("reported stop completes the helper");
+        acp_thread.read_with(cx, |thread, cx| {
+            assert!(thread.to_markdown(cx).contains("hello from the fake model"));
+        });
+
+        let mut cancelled = send_and_wait_for_turn(&acp_thread, vec!["cancel me".into()], cx);
+        cx.run_until_parked();
+        assert!(
+            (&mut cancelled).now_or_never().is_none(),
+            "the preceding idle state must not complete the new turn"
+        );
+        acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        cancelled
+            .await
+            .expect("accepted cancellation stops the turn");
+
+        let failed = send_and_wait_for_turn(&acp_thread, vec!["fail".into()], cx);
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
+        fake.send_error(
+            &model,
+            &request,
+            LanguageModelCompletionError::from_http_status(
+                LanguageModelProviderName::new("test"),
+                http_client::StatusCode::BAD_REQUEST,
+                "E2E helper provider failure".to_string(),
+                None,
+            ),
+        );
+        fake.end_stream(&model, &request);
+        let error = failed
+            .await
+            .expect_err("reported execution errors must propagate");
+        assert!(
+            error.to_string().contains("E2E helper provider failure"),
+            "lost reported error details: {error:#}"
+        );
+
+        let weak_thread = acp_thread.downgrade();
+        drop(acp_thread);
+        cx.run_until_parked();
+        assert!(
+            !weak_thread.is_upgradable(),
+            "the helper must not retain the thread"
         );
     }
 

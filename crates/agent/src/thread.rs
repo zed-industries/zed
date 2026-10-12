@@ -1275,6 +1275,7 @@ impl From<&ThreadModel> for Option<DbLanguageModel> {
 #[derive(PartialEq)]
 pub(crate) struct StreamingSaveKey {
     message_count: usize,
+    retained_history_revision: usize,
     title: Option<SharedString>,
     summary: Option<SharedString>,
     model: Option<DbLanguageModel>,
@@ -1296,6 +1297,8 @@ pub struct Thread {
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
     messages: Vec<Arc<Message>>,
+    // Message count cannot detect replacements in frozen history while a successor streams.
+    retained_history_revision: usize,
     user_store: Entity<UserStore>,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -1453,6 +1456,7 @@ impl Thread {
             pending_summary_generation: None,
             summary: None,
             messages: Vec::new(),
+            retained_history_revision: 0,
             user_store: project.read(cx).user_store(),
             running_turn: None,
             end_turn_at_next_boundary: false,
@@ -1828,6 +1832,7 @@ impl Thread {
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
+            retained_history_revision: 0,
             user_store: project.read(cx).user_store(),
             running_turn: None,
             end_turn_at_next_boundary: false,
@@ -1980,6 +1985,7 @@ impl Thread {
     pub(crate) fn streaming_save_key(&self) -> StreamingSaveKey {
         StreamingSaveKey {
             message_count: self.messages.len(),
+            retained_history_revision: self.retained_history_revision,
             title: self.title.clone(),
             summary: self.summary.clone(),
             model: (&self.model).into(),
@@ -2641,6 +2647,7 @@ impl Thread {
             .find(|message| matches!(message.as_ref(), Message::User(user) if user.id == id))
         {
             *existing = message;
+            self.retained_history_revision += 1;
         } else {
             self.messages.push(message);
         }
@@ -3566,6 +3573,7 @@ impl Thread {
                 .tool_results
                 .insert(tool_result.tool_use_id.clone(), tool_result);
             *message = Arc::new(Message::Agent(agent_message));
+            this.retained_history_revision += 1;
             this.clear_summary();
             cx.notify();
         })?;
