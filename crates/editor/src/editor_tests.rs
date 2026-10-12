@@ -8912,6 +8912,44 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_multicursor_manipulate_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let mut failures = Vec::new();
+    for (before, expected, to_upper) in [
+        ("some_ˇvariˇable_naˇme", "«SOME_VARIABLE_NAMEˇ»", true),
+        ("some_ˇvariˇable naˇme", "«SOME_VARIABLEˇ» «NAMEˇ»", true),
+        ("SOME_ˇVARIˇABLE_NAˇME", "«some_variable_nameˇ»", false),
+        ("SOME_ˇVARIˇABLE NAˇME", "«some_variableˇ» «nameˇ»", false),
+        ("«word1ˇ» woˇr«d2 word3ˇ»", "«WORD1ˇ» «WORD2 WORD3ˇ»", true),
+        ("«aˇ»b«cdˇ»eˇf", "«ABCDEFˇ»", true),
+        ("hello woˇrˇld", "hello woˇrˇld", false),
+    ] {
+        cx.set_state(before);
+        cx.update_editor(|editor, window, cx| {
+            if to_upper {
+                editor.convert_to_upper_case(&ConvertToUpperCase, window, cx)
+            } else {
+                editor.convert_to_lower_case(&ConvertToLowerCase, window, cx)
+            }
+        });
+        let actual = cx.editor_state();
+        if actual != expected {
+            failures.push(format!(
+                "before:   {before}\nexpected: {expected}\nactual:   {actual}"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} case(s) failed:\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
+#[gpui::test]
 fn test_duplicate_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

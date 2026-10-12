@@ -217,6 +217,33 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn session_scope_ids_preserve_backing_arcs_and_legacy_serialization() -> Result<()> {
+        for value in ["", "scope/ \0 雪 😀"] {
+            let session_backing: std::sync::Arc<str> = value.into();
+            let tool_backing: std::sync::Arc<str> = value.into();
+            let legacy: v1::ElicitationScope =
+                v1::ElicitationSessionScope::new(v1::SessionId::new(session_backing.clone()))
+                    .tool_call_id(v1::ToolCallId::new(tool_backing.clone()))
+                    .into();
+            let wire = serde_json::to_value(&legacy)?;
+            let converted = scope_from_v1(legacy)?;
+            let v2::ElicitationScope::Session(scope) = &converted else {
+                bail!("expected session scope");
+            };
+            assert_eq!(scope.session_id, v2::SessionId::new(value));
+            assert!(std::sync::Arc::ptr_eq(
+                &scope.session_id.0,
+                &session_backing
+            ));
+            let tool_call_id = scope.tool_call_id.as_ref().expect("tool scope");
+            assert_eq!(tool_call_id, &v2::ToolCallId::new(value));
+            assert!(std::sync::Arc::ptr_eq(&tool_call_id.0, &tool_backing));
+            assert_eq!(serde_json::to_value(converted)?, wire);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn elicitation_request_adapter_preserves_schema_scopes_and_extensions() -> Result<()> {
         let fixture = json!({
             "mode": "form",

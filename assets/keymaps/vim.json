@@ -1216,6 +1216,8 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+      "ctrl-o": "pane::GoBack",
+      "ctrl-i": "pane::GoForward",
       "g g": "markdown::ScrollToTop",
       "shift-g": "markdown::ScrollToBottom",
       "/": "buffer_search::Deploy",

@@ -552,6 +552,17 @@ message InlayHint {
   bool padding_right = 5;
   InlayHintTooltip tooltip = 6;
   ResolveState resolve_state = 7;
+  InlayHintTextEdits text_edits = 8;
+}
+
+message InlayHintTextEdits {
+  repeated InlayHintTextEdit edits = 1;
+  repeated VectorClockEntry buffer_version = 2;
+}
+
+message InlayHintTextEdit {
+  AnchorRange range = 1;
+  string new_text = 2;
 }
 
 message InlayHintLabel {
@@ -631,10 +642,12 @@ message ResolveInlayHint {
   uint64 buffer_id = 2;
   uint64 language_server_id = 3;
   InlayHint hint = 4;
+  repeated VectorClockEntry version = 5;
 }
 
 message ResolveInlayHintResponse {
   InlayHint hint = 1;
+  repeated VectorClockEntry version = 2;
 }
 
 message RefreshInlayHints {
