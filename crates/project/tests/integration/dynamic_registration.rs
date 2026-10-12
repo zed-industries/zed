@@ -2750,8 +2750,10 @@ async fn test_did_change_registration_respects_document_selector(cx: &mut gpui::
     let (project, mut fake_server) = setup_dynamic_registration_test(
         cx,
         lsp::ServerCapabilities {
+            // Test builds send incremental changes even without a sync kind, so the static
+            // `FULL` sync tells the fallback to the static options apart from no sync at all.
             text_document_sync: Some(lsp::TextDocumentSyncCapability::Kind(
-                lsp::TextDocumentSyncKind::INCREMENTAL,
+                lsp::TextDocumentSyncKind::FULL,
             )),
             ..lsp::ServerCapabilities::default()
         },
@@ -2783,20 +2785,20 @@ async fn test_did_change_registration_respects_document_selector(cx: &mut gpui::
         "change-python",
         Some(json!({
             "documentSelector": [{ "language": "python" }],
-            "syncKind": 1,
+            "syncKind": 2,
         })),
     )
     .await;
     cx.executor().run_until_parked();
     assert_eq!(
         server_capabilities(&project, server_id, cx).text_document_sync,
-        sync_options(lsp::TextDocumentSyncKind::FULL),
+        sync_options(lsp::TextDocumentSyncKind::INCREMENTAL),
         "expected the latest registration to be mirrored into the merged capabilities",
     );
     assert_eq!(
         edit_and_receive_change(&buffer, &mut fake_server, cx).await,
-        (uri.clone(), true),
-        "expected the static incremental sync for a document outside the registration's selector",
+        (uri.clone(), false),
+        "expected the static full sync for a document outside the registration's selector",
     );
 
     register_capability(
@@ -2805,28 +2807,28 @@ async fn test_did_change_registration_respects_document_selector(cx: &mut gpui::
         "change-rust",
         Some(json!({
             "documentSelector": [{ "language": "rust" }],
-            "syncKind": 1,
+            "syncKind": 2,
         })),
     )
     .await;
     cx.executor().run_until_parked();
     assert_eq!(
         edit_and_receive_change(&buffer, &mut fake_server, cx).await,
-        (uri.clone(), false),
-        "expected the matching registration's full sync to be used",
+        (uri.clone(), true),
+        "expected the matching registration's incremental sync to be used",
     );
 
     unregister_capabilities(&fake_server, method, &["change-python", "change-rust"]).await;
     cx.executor().run_until_parked();
     assert_eq!(
         server_capabilities(&project, server_id, cx).text_document_sync,
-        sync_options(lsp::TextDocumentSyncKind::INCREMENTAL),
+        sync_options(lsp::TextDocumentSyncKind::FULL),
         "expected unregistering to restore the static sync kind",
     );
     assert_eq!(
         edit_and_receive_change(&buffer, &mut fake_server, cx).await,
-        (uri, true),
-        "expected the static incremental sync after unregistering",
+        (uri, false),
+        "expected the static full sync after unregistering",
     );
 }
 
