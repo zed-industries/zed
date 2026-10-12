@@ -2755,6 +2755,48 @@ mod tests {
     use settings::Settings as _;
 
     #[test]
+    fn test_process_terminal_responses_preserve_v1_payloads() {
+        use acp_thread::ProcessOutput;
+        use serde_json::json;
+
+        let pending = process_output_to_v1(ProcessOutput::new("partial\n", false));
+        assert_eq!(
+            serde_json::to_value(pending).expect("pending output response"),
+            json!({"output": "partial\n", "truncated": false}),
+        );
+        let unknown_exit = process_output_to_v1(
+            ProcessOutput::new("", false).exit_status(acp_v2::TerminalExitStatus::new()),
+        );
+        assert_eq!(
+            serde_json::to_value(unknown_exit).expect("unknown exit response"),
+            json!({"output": "", "truncated": false, "exitStatus": {}}),
+        );
+
+        let meta =
+            acp_v2::Meta::from_iter([("custom".into(), json!({"values": [null, 7, "keep"]}))]);
+        let status = acp_v2::TerminalExitStatus::new()
+            .exit_code(u32::MAX)
+            .signal("SIG_CUSTOM")
+            .meta(meta);
+        let expected_status = json!({
+            "exitCode": u32::MAX,
+            "signal": "SIG_CUSTOM",
+            "_meta": {"custom": {"values": [null, 7, "keep"]}},
+        });
+        let output =
+            process_output_to_v1(ProcessOutput::new("héllo\n", true).exit_status(status.clone()));
+        assert_eq!(
+            serde_json::to_value(output).expect("completed output response"),
+            json!({"output": "héllo\n", "truncated": true, "exitStatus": expected_status}),
+        );
+        let wait = acp::WaitForTerminalExitResponse::new(terminal_exit_status_to_v1(status));
+        assert_eq!(
+            serde_json::to_value(wait).expect("wait response"),
+            expected_status,
+        );
+    }
+
+    #[test]
     fn test_v1_permission_conversion_preserves_options_and_arc_ids() {
         for (legacy_kind, kind) in [
             (
@@ -7965,10 +8007,22 @@ fn handle_terminal_output(
         .flatten_acp()
     {
         Ok(output) => {
-            responder.respond(output).log_err();
+            responder.respond(process_output_to_v1(output)).log_err();
         }
         Err(e) => respond_err(responder, e),
     }
+}
+
+fn process_output_to_v1(output: acp_thread::ProcessOutput) -> acp::TerminalOutputResponse {
+    acp::TerminalOutputResponse::new(output.output, output.truncated)
+        .exit_status(output.exit_status.map(terminal_exit_status_to_v1))
+}
+
+fn terminal_exit_status_to_v1(status: acp_v2::TerminalExitStatus) -> acp::TerminalExitStatus {
+    acp::TerminalExitStatus::new()
+        .exit_code(status.exit_code)
+        .signal(status.signal)
+        .meta(status.meta)
 }
 
 fn handle_wait_for_terminal_exit(
@@ -7999,7 +8053,12 @@ fn handle_wait_for_terminal_exit(
             })
             .await;
 
-        respond_result(responder, result.map(acp::WaitForTerminalExitResponse::new));
+        respond_result(
+            responder,
+            result.map(|status| {
+                acp::WaitForTerminalExitResponse::new(terminal_exit_status_to_v1(status))
+            }),
+        );
     })
     .detach();
 }
