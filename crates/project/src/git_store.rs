@@ -6410,7 +6410,10 @@ impl RepositorySnapshot {
         abs_path: &Path,
         path_style: PathStyle,
     ) -> Option<RepoPath> {
-        let rel_path = path_style.strip_prefix(abs_path, work_directory_abs_path)?;
+        let rel_path = path_style
+            .strip_prefix(abs_path, work_directory_abs_path)
+            .ok()
+            .and_then(|path| RelPath::new(path, path_style).ok())?;
         Some(RepoPath::from_rel_path(&rel_path))
     }
 

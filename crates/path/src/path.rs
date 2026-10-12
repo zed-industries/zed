@@ -11,7 +11,6 @@ use anyhow::Context;
 #[cfg(all(unix, not(target_family = "wasm")))]
 use std::os::unix::prelude::OsStrExt;
 use std::{
-    borrow::Cow,
     ffi::OsStr,
     path::{Path, PathBuf},
 };
@@ -19,7 +18,7 @@ use std::{
 use tendril::fmt::{Format, WTF8};
 
 use crate::path_component::{Component, Components, Prefix, PrefixExt, iter_after};
-use crate::rel_path::RelPath;
+use crate::rel_path::{RelPath, StripPrefixError};
 
 pub mod abs_path;
 mod path_component;
@@ -322,41 +321,15 @@ impl PathStyle {
 
     pub fn strip_prefix<'a>(
         &self,
-        child: &'a Path,
-        parent: &'a Path,
-    ) -> Option<std::borrow::Cow<'a, RelPath>> {
-        let parent = parent.to_str()?;
-        if parent.is_empty() {
-            return RelPath::new(child, *self).ok();
-        }
-        let parent = self
-            .separators()
-            .iter()
-            .find_map(|sep| parent.strip_suffix(sep))
-            .unwrap_or(parent);
-        let child = child.to_str()?;
-
-        // Match behavior of std::path::Path, which is case-insensitive for drive letters (e.g., "C:" == "c:")
-        let stripped = if self.is_windows()
-            && child.as_bytes().get(1) == Some(&b':')
-            && parent.as_bytes().get(1) == Some(&b':')
-            && child.as_bytes()[0].eq_ignore_ascii_case(&parent.as_bytes()[0])
-        {
-            child[2..].strip_prefix(&parent[2..])?
-        } else {
-            child.strip_prefix(parent)?
-        };
-        if let Some(relative) = self
-            .separators()
-            .iter()
-            .find_map(|sep| stripped.strip_prefix(sep))
-        {
-            RelPath::new(relative.as_ref(), *self).ok()
-        } else if stripped.is_empty() {
-            Some(Cow::Borrowed(RelPath::empty()))
-        } else {
-            None
-        }
+        path: &'a (impl AsRef<Path> + ?Sized),
+        prefix: impl AsRef<Path>,
+    ) -> Result<&'a Path, StripPrefixError> {
+        iter_after(
+            self.components(path.as_ref()),
+            self.components(prefix.as_ref()),
+        )
+        .map(|c| c.as_path())
+        .ok_or(StripPrefixError)
     }
 }
 
@@ -438,7 +411,6 @@ pub fn normalize_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rel_path::rel_path;
 
     #[test]
     fn test_join_path_uses_path_style_separator() {
@@ -533,160 +505,126 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_prefix() {
-        let expected = [
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b/",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/",
-                Some(rel_path("a/b/c").into_arc()),
-            ),
-            (PathStyle::Unix, "/a/b/c", "", None),
-            (PathStyle::Unix, "/a/b//c", "/a/b/", None),
-            (PathStyle::Unix, "/a/bc", "/a/b", None),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b/c",
-                Some(rel_path("").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\a\\b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\a\\b\\",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\",
-                Some(rel_path("a/b/c").into_arc()),
-            ),
-            (PathStyle::Windows, "C:\\a\\b\\c", "", None),
-            (PathStyle::Windows, "C:\\a\\b\\\\c", "C:\\a\\b\\", None),
-            (PathStyle::Windows, "C:\\a\\bc", "C:\\a\\b", None),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b\\",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b/",
-                Some(rel_path("c").into_arc()),
-            ),
-        ];
-        let actual = expected.clone().map(|(style, child, parent, _)| {
-            (
-                style,
-                child,
-                parent,
-                style
-                    .strip_prefix(child.as_ref(), parent.as_ref())
-                    .map(|rel_path| rel_path.into_arc()),
-            )
-        });
-        pretty_assertions::assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn test_unix_path_style_starts_with() {
+    fn test_unix_path_style_starts_with_and_strip_prefix() {
         let unix_paths_and_prefixes = [
-            ("", "", true),
-            ("foo", "", true),
-            ("", "foo", false),
-            ("foo", "foo", true),
-            ("foo/", "foo", true),
-            ("foo//", "foo", true),
-            ("foo///", "foo", true),
-            ("foo/.", "foo", true),
-            ("foo/./bar", "foo/bar", true),
-            ("foo/.//bar", "foo/bar", true),
-            ("foo//./bar", "foo/bar", true),
-            ("foo/bar", "foo", true),
-            ("foo/bar", "foobar", false),
-            ("foo/bar/baz", "foo/bar", true),
-            ("foo/bar", "foo/bar/baz", false),
-            ("./foo/bar/", ".", true),
-            ("/etc/passwd", "/etc", true),
-            ("/etc/passwd", "/etc/", true),
-            ("/etc/passwd", "/etc/passwd", true),
-            ("/etc/passwd", "/etc/passwd/", true),
-            ("/etc/passwd", "/etc/passwd///", true),
-            ("/etc/passwd", "/e", false),
-            ("/etc/passwd", "/etc/passwd.txt", false),
-            ("/etc/foo.rs", "/etc/foo", false),
+            ("", "", true, Some("")),
+            ("foo", "", true, Some("foo")),
+            ("", "foo", false, None),
+            ("foo", "foo", true, Some("")),
+            ("foo/", "foo", true, Some("")),
+            ("foo//", "foo", true, Some("")),
+            ("foo///", "foo", true, Some("")),
+            ("foo/.", "foo", true, Some("")),
+            ("foo/./bar", "foo/bar", true, Some("")),
+            ("foo/.//bar", "foo/bar", true, Some("")),
+            ("foo//./bar", "foo/bar", true, Some("")),
+            ("foo/bar", "foo", true, Some("bar")),
+            ("foo/bar", "foobar", false, None),
+            ("foo/bar/baz", "foo/bar", true, Some("baz")),
+            ("foo/bar", "foo/bar/baz", false, None),
+            ("./foo/bar/", ".", true, Some("foo/bar")),
+            ("/etc/passwd", "/etc", true, Some("passwd")),
+            ("/etc/passwd", "/etc/", true, Some("passwd")),
+            ("/etc/passwd", "/etc/passwd", true, Some("")),
+            ("/etc/passwd", "/etc/passwd/", true, Some("")),
+            ("/etc/passwd", "/etc/passwd///", true, Some("")),
+            ("/etc/passwd", "/e", false, None),
+            ("/etc/passwd", "/etc/passwd.txt", false, None),
+            ("/etc/foo.rs", "/etc/foo", false, None),
+            ("/foo/bar/baz", "/", true, Some("foo/bar/baz")),
+            ("/foo/bar/baz", "", true, Some("/foo/bar/baz")),
+            ("/foo/bar//baz", "/foo/bar/", true, Some("baz")),
+            ("/foo/barbaz", "/foo/bar", false, None),
         ];
 
-        for (path, prefix, expected) in unix_paths_and_prefixes {
+        for (path, prefix, expected_starts_with, expected_stripped) in unix_paths_and_prefixes {
             assert_eq!(
                 PathStyle::Unix.starts_with(Path::new(path), Path::new(prefix)),
-                expected,
+                expected_starts_with,
                 "{path:?}.starts_with({prefix:?})"
+            );
+            assert_eq!(
+                PathStyle::Unix
+                    .strip_prefix(Path::new(path), Path::new(prefix))
+                    .ok(),
+                expected_stripped.map(Path::new),
+                "{path:?}.strip_prefix({prefix:?})"
             );
         }
     }
 
     #[test]
-    fn test_windows_path_style_starts_with() {
+    fn test_windows_path_style_starts_with_and_strip_prefix() {
         let windows_paths_and_prefixes = [
             (
                 r"C:\src\rust\cargo-test\test\Cargo.toml",
                 r"c:\src\rust\cargo-test\test",
                 true,
+                Some("Cargo.toml"),
             ),
-            (r"C:\foo\.\bar.txt", r"C:\foo\bar.txt", true),
-            (r"C:\foo\.", r"C:\foo", true),
-            (r"\\server\share", r"\\server", false),
-            (r"\\server\share\foo.txt", r"\\server", false),
-            (r"\\server\share\foo.txt", r"\\server\share", true),
-            (r"\\server\share\foo.txt", r"\\server\share\", true),
-            (r"\\server\share\foo.txt", r"\\server\share/", true),
-            (r"\\server\share\foo.txt", r"\\server\other", false),
-            (r"\\server\share\foo.txt", r"\\SERVER\share", false),
-            (r"\\?\C:\foo\.\bar.txt", r"\\?\C:\foo\bar.txt", false),
-            (r"\\?\C:\foo.txt", r"\\?\C:\", true),
+            (r"C:\foo\.\bar.txt", r"C:\foo\bar.txt", true, Some("")),
+            (r"C:\foo\.", r"C:\foo", true, Some("")),
+            (r"\\server\share", r"\\server", false, None),
+            (r"\\server\share\foo.txt", r"\\server", false, None),
+            (
+                r"\\server\share\foo.txt",
+                r"\\server\share",
+                true,
+                Some("foo.txt"),
+            ),
+            (
+                r"\\server\share\foo.txt",
+                r"\\server\share\",
+                true,
+                Some("foo.txt"),
+            ),
+            (
+                r"\\server\share\foo.txt",
+                r"\\server\share/",
+                true,
+                Some("foo.txt"),
+            ),
+            (r"\\server\share\foo.txt", r"\\server\other", false, None),
+            (r"\\server\share\foo.txt", r"\\SERVER\share", false, None),
+            (r"\\?\C:\foo\.\bar.txt", r"\\?\C:\foo\bar.txt", false, None),
+            (r"\\?\C:\foo.txt", r"\\?\C:\", true, Some("foo.txt")),
             (
                 r"\\?\UNC\server\share\foo.txt",
                 r"\\?\UNC\server\share",
                 true,
+                Some(r"\foo.txt"),
             ),
-            (r"\\?\UNC\server\share\foo.txt", r"\\?\UNC\server\", false),
-            (r"\\?\bar\foo.txt", r"\\?\bar", true),
-            (r"\\?\C:\foo/bar.txt", r"\\?\C:\foo", false),
+            (
+                r"\\?\UNC\server\share\foo.txt",
+                r"\\?\UNC\server\",
+                false,
+                None,
+            ),
+            (r"\\?\bar\foo.txt", r"\\?\bar", true, Some(r"\foo.txt")),
+            (r"\\?\C:\foo/bar.txt", r"\\?\C:\foo", false, None),
+            (r"C:\foo\bar.txt", r"C:\foo", true, Some("bar.txt")),
+            (r"C:\foo\bar.txt", r"C:\foo\", true, Some("bar.txt")),
+            (r"C:\foo\bar.txt", r"C:\", true, Some(r"foo\bar.txt")),
+            (r"C:\foo\bar.txt", "", true, Some(r"C:\foo\bar.txt")),
+            (r"C:\foo\\bar.txt", r"C:\foo\", true, Some("bar.txt")),
+            (r"C:\foobar.txt", r"C:\foo", false, None),
+            (r"C:\foo/bar.txt", r"C:\foo", true, Some("bar.txt")),
+            (r"C:\foo/bar.txt", r"C:\foo\", true, Some("bar.txt")),
+            (r"C:\foo/bar.txt", r"C:\foo/", true, Some("bar.txt")),
         ];
 
-        for (path, prefix, expected) in windows_paths_and_prefixes {
+        for (path, prefix, expected_starts_with, expected_stripped) in windows_paths_and_prefixes {
             assert_eq!(
                 PathStyle::Windows.starts_with(Path::new(path), Path::new(prefix)),
-                expected,
+                expected_starts_with,
                 "{path:?}.starts_with({prefix:?})"
+            );
+            assert_eq!(
+                PathStyle::Windows
+                    .strip_prefix(Path::new(path), Path::new(prefix))
+                    .ok(),
+                expected_stripped.map(Path::new),
+                "{path:?}.strip_prefix({prefix:?})"
             );
         }
     }

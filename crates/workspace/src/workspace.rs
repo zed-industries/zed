@@ -10934,6 +10934,8 @@ pub async fn find_existing_workspace(
                             let abs_path = worktree.abs_path();
                             path_style
                                 .strip_prefix(path.as_ref(), abs_path.as_ref())
+                                .ok()
+                                .and_then(|path| RelPath::new(path, path_style).ok())
                                 .and_then(|rel| worktree.entry_for_path(&rel))
                                 .is_some_and(|e| e.is_dir())
                         })
