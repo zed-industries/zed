@@ -2011,10 +2011,6 @@ impl AgentConnection for AcpConnection {
             match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
-                    if err.code == acp::ErrorCode::AuthRequired {
-                        return Err(anyhow!(acp::Error::auth_required()));
-                    }
-
                     if err.code != ErrorCode::InternalError {
                         anyhow::bail!(err)
                     }
@@ -2111,16 +2107,10 @@ impl AgentConnection for AcpConnection {
 }
 
 fn map_acp_error(err: acp::Error) -> anyhow::Error {
-    if err.code == acp::ErrorCode::AuthRequired {
-        let mut error = AuthRequired::new();
-
-        if err.message != acp::ErrorCode::AuthRequired.to_string() {
-            error = error.with_description(err.message);
-        }
-
-        anyhow!(error)
-    } else {
-        anyhow!(err)
+    let error = anyhow!(err);
+    match AuthRequired::from_error(&error) {
+        Some(auth_required) => error.context(auth_required),
+        None => error,
     }
 }
 
@@ -2753,6 +2743,102 @@ mod tests {
 
     use super::*;
     use settings::Settings as _;
+
+    #[test]
+    fn test_auth_error_mapping_retains_sdk_record_and_description() {
+        let original = acp::Error::new(-32000, "Sign in again")
+            .data(serde_json::json!({"detail": {"retain": [null, 7]}}));
+        let mapped = map_acp_error(original.clone());
+        assert_eq!(
+            mapped.downcast_ref::<agent_client_protocol::Error>(),
+            Some(&original),
+        );
+        assert_eq!(
+            mapped
+                .downcast_ref::<AuthRequired>()
+                .expect("authentication marker")
+                .description
+                .as_deref(),
+            Some("Sign in again"),
+        );
+    }
+
+    #[gpui::test]
+    async fn prompt_auth_error_retains_sdk_record_and_classification(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_settings_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
+        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
+        let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
+        let original = acp::Error::new(
+            acp::ErrorCode::AuthRequired.into(),
+            "Sign in to continue this prompt",
+        )
+        .data(serde_json::json!({
+            "details": "The user aborted a request",
+            "auth": {"provider": "test", "retry": [null, false, 7]}
+        }));
+        let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
+        let _agent_io_task = cx.background_spawn(
+            Agent
+                .builder()
+                .name("prompt-auth-test-agent")
+                .on_receive_request(
+                    {
+                        let original = original.clone();
+                        async move |request: acp::PromptRequest, responder, _cx| {
+                            assert_eq!(request.session_id, acp::SessionId::new("auth-session"));
+                            responder.respond_with_error(original.clone())
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(agent_transport),
+        );
+        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
+        let _client_io_task = cx.background_spawn(connect_client_future(
+            "prompt-auth-test-client",
+            client_transport,
+            harness.connection.dispatch_tx.clone(),
+            connection_tx,
+        ));
+        Rc::get_mut(&mut harness.connection)
+            .expect("test harness should own the only ACP connection handle")
+            .connection = connection_rx.await.expect("receive SDK connection");
+
+        let error = cx
+            .update(|cx| {
+                harness.connection.prompt(
+                    acp_v2::PromptRequest::new(
+                        acp_v2::SessionId::new("auth-session"),
+                        vec!["Hello".into()],
+                    ),
+                    cx,
+                )
+            })
+            .await
+            .expect_err("prompt should require authentication");
+        assert_eq!(
+            error.downcast_ref::<agent_client_protocol::Error>(),
+            Some(&original),
+        );
+        let error = error.context("sending the initial prompt");
+        assert_eq!(
+            error.downcast_ref::<agent_client_protocol::Error>(),
+            Some(&original),
+        );
+        assert_eq!(
+            AuthRequired::from_error(&error)
+                .expect("initial prompt should be classified as authentication required")
+                .description
+                .as_deref(),
+            Some("Sign in to continue this prompt"),
+        );
+        assert_eq!(error.to_string(), "sending the initial prompt");
+    }
 
     #[test]
     fn test_v1_permission_conversion_preserves_options_and_arc_ids() {

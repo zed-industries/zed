@@ -2,13 +2,14 @@ use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     AuthRequired, ClientUserMessageId, ElicitationEntryId, ElicitationStatus, ElicitationStore,
     ForegroundActivity, LoadError, MaxOutputTokensError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, PermissionRequest, PermissionRequestId, RetryStatus,
-    SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    PermissionOptions, PermissionPattern, PermissionRequest, PermissionRequestId,
+    ProtocolErrorInfo, RetryStatus, SelectedPermissionOutcome, ThreadStatus, ToolCall,
+    ToolCallContent, ToolCallStatus,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NoModelConfiguredError, ThreadStore};
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::schema::v2 as acp_v2;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
@@ -170,18 +171,23 @@ impl From<anyhow::Error> for ThreadError {
 
 impl From<&anyhow::Error> for ThreadError {
     fn from(error: &anyhow::Error) -> Self {
+        let protocol_error = ProtocolErrorInfo::from_error(error);
         if error.is::<MaxOutputTokensError>() {
             Self::MaxOutputTokens
         } else if error.is::<NoModelConfiguredError>() {
             Self::NoModelSelected
-        } else if let Some(acp_error) = error.downcast_ref::<acp_v1::Error>()
-            && acp_error.code == acp_v1::ErrorCode::AuthRequired
+        } else if let Some(protocol_error) = protocol_error.as_ref()
+            && protocol_error.is_auth_required()
         {
-            Self::AuthenticationRequired(acp_error.message.clone().into())
-        } else if let Some(acp_error) = error.downcast_ref::<acp_v2::Error>()
-            && acp_error.code == acp_v2::ErrorCode::AuthRequired
-        {
-            Self::AuthenticationRequired(acp_error.message.clone().into())
+            Self::AuthenticationRequired(protocol_error.message.to_owned().into())
+        } else if let Some(auth_error) = error.downcast_ref::<AuthRequired>() {
+            Self::AuthenticationRequired(
+                auth_error
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| auth_error.to_string())
+                    .into(),
+            )
         } else if let Some(lm_error) = error.downcast_ref::<LanguageModelCompletionError>() {
             use LanguageModelCompletionError::*;
             match lm_error {
@@ -245,15 +251,8 @@ impl From<&anyhow::Error> for ThreadError {
         } else {
             let message: SharedString = format!("{:#}", error).into();
 
-            // Extract ACP error code if available
-            let acp_error_code = error
-                .downcast_ref::<acp_v1::Error>()
-                .map(|acp_error| SharedString::from(acp_error.code.to_string()))
-                .or_else(|| {
-                    error
-                        .downcast_ref::<acp_v2::Error>()
-                        .map(|acp_error| SharedString::from(i32::from(acp_error.code).to_string()))
-                });
+            let acp_error_code =
+                protocol_error.map(|error| SharedString::from(error.code.to_string()));
 
             Self::Other {
                 message,
@@ -1362,16 +1361,16 @@ impl ConversationView {
             };
 
             let result = match result.await {
-                Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
-                    Ok(err) => {
+                Err(error) => {
+                    if let Some(auth_required) = AuthRequired::from_error(&error) {
                         cx.update(|window, cx| {
-                            Self::handle_auth_required(this, err, connection, window, cx)
+                            Self::handle_auth_required(this, auth_required, connection, window, cx)
                         })
                         .log_err();
                         return;
                     }
-                    Err(err) => Err(err),
-                },
+                    Err(error)
+                }
                 Ok(thread) => Ok(thread),
             };
 
@@ -4033,6 +4032,7 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
+    use agent_client_protocol::schema::v1 as acp_v1;
     use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
@@ -4055,6 +4055,108 @@ pub(crate) mod tests {
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
+
+    #[test]
+    fn test_thread_error_protocol_codes_preserve_context_and_data() {
+        let data = json!({"detail": {"retry": false, "values": [1, 2]}});
+        for code in [-32603, -32099] {
+            for error in [
+                anyhow!(acp_v1::Error::new(code, "Backend failed").data(data.clone())),
+                anyhow!(acp_v2::Error::new(code, "Backend failed").data(data.clone())),
+                anyhow!(
+                    agent_client_protocol::Error::new(code, "Backend failed").data(data.clone())
+                ),
+            ] {
+                let error = error.context("Sending prompt");
+                let protocol = ProtocolErrorInfo::from_error(&error).expect("protocol error");
+                assert_eq!(protocol.message, "Backend failed");
+                assert_eq!(protocol.data, Some(&data));
+                let expected_message = format!("{error:#}");
+                let ThreadError::Other {
+                    message,
+                    acp_error_code,
+                } = ThreadError::from(&error)
+                else {
+                    panic!("expected a generic protocol error");
+                };
+                assert_eq!(message.as_ref(), expected_message);
+                assert!(message.contains("Sending prompt"));
+                assert!(message.contains("retry"));
+                assert_eq!(
+                    acp_error_code.as_ref().map(|code| code.as_ref()),
+                    Some(code.to_string().as_str())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_thread_error_protocol_auth_uses_only_message() {
+        for message in ["Authentication required", "Sign in to continue"] {
+            for error in [
+                anyhow!(
+                    acp_v1::Error::new(-32000, message).data(json!({"private": "auth details"}))
+                ),
+                anyhow!(
+                    acp_v2::Error::new(-32000, message).data(json!({"private": "auth details"}))
+                ),
+                anyhow!(
+                    agent_client_protocol::Error::new(-32000, message)
+                        .data(json!({"private": "auth details"}))
+                ),
+            ] {
+                let error = error.context("Sending prompt");
+                assert!(matches!(
+                    ThreadError::from(&error),
+                    ThreadError::AuthenticationRequired(description) if description == message
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn test_thread_error_auth_marker_uses_description_or_default() {
+        for (marker, expected) in [
+            (AuthRequired::new(), "Authentication required"),
+            (
+                AuthRequired::new().with_description("Sign in again".to_string()),
+                "Sign in again",
+            ),
+        ] {
+            let error = anyhow!(marker).context("Sending prompt");
+            assert!(matches!(
+                ThreadError::from(&error),
+                ThreadError::AuthenticationRequired(description) if description == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn test_thread_error_preserves_native_error_precedence() {
+        let provider_error = LanguageModelCompletionError::from_provider_response(
+            language_model::OPEN_AI_PROVIDER_NAME,
+            None,
+            None,
+            "Try again later".to_string(),
+            None,
+            ProviderErrorCategory::RateLimit,
+        );
+        let error = anyhow!(acp_v2::Error::internal_error()).context(provider_error);
+        assert!(matches!(
+            ThreadError::from(&error),
+            ThreadError::RateLimitExceeded { provider }
+                if provider.as_ref() == language_model::OPEN_AI_PROVIDER_NAME.to_string().as_str()
+        ));
+        assert!(matches!(
+            ThreadError::from(&error.context(MaxOutputTokensError)),
+            ThreadError::MaxOutputTokens
+        ));
+        let error = anyhow!(AuthRequired::new()).context(NoModelConfiguredError);
+        assert!(matches!(
+            ThreadError::from(&error),
+            ThreadError::NoModelSelected
+        ));
+    }
 
     #[test]
     fn test_data_retention_error_maps_from_provider_error() {
@@ -6906,6 +7008,67 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_typed_auth_required_on_initial_connect(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for error_source in [AuthErrorSource::Sdk, AuthErrorSource::V2] {
+            let mut connection = AuthGatedAgentConnection::new();
+            connection.error_source = error_source;
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+            conversation_view.read_with(cx, |view, cx| {
+                let connected = view
+                    .as_connected()
+                    .expect("typed auth errors should leave the connection available");
+                let AuthState::Unauthenticated {
+                    description,
+                    pending_auth_method,
+                } = &connected.auth_state
+                else {
+                    panic!("expected authentication to be required");
+                };
+                assert_eq!(
+                    description
+                        .as_ref()
+                        .expect("custom auth message should be preserved")
+                        .read(cx)
+                        .source(),
+                    "Sign in to continue"
+                );
+                assert!(pending_auth_method.is_none());
+                assert_eq!(
+                    connected.connection.auth_methods(),
+                    connection.auth_methods()
+                );
+                assert!(connected.active_id.is_none());
+                assert!(connected.threads.is_empty());
+            });
+
+            conversation_view.update_in(cx, |view, window, cx| {
+                view.authenticate(
+                    acp_v2::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID),
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            conversation_view.read_with(cx, |view, _cx| {
+                let connected = view.as_connected().expect("connection should remain");
+                assert!(connected.auth_state.is_ok());
+                assert!(connected.active_id.is_some());
+                assert_eq!(connected.threads.len(), 1);
+            });
+            assert_eq!(
+                *connection.authenticate_calls.lock(),
+                vec![acp_v2::AuthMethodId::new(
+                    AuthGatedAgentConnection::AUTH_METHOD_ID
+                )]
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn test_auth_unavailable_without_supported_methods(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -8755,12 +8918,20 @@ pub(crate) mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum AuthErrorSource {
+        Marker,
+        Sdk,
+        V2,
+    }
+
     /// Simulates an agent that requires authentication before a session can be
     /// created. `new_session` returns `AuthRequired` until `authenticate` is
     /// called with the correct method, after which sessions are created normally.
     #[derive(Clone)]
     struct AuthGatedAgentConnection {
         authenticated: Arc<Mutex<bool>>,
+        error_source: AuthErrorSource,
         auth_methods: Vec<acp_v2::AuthMethod>,
         authenticate_calls: Arc<Mutex<Vec<acp_v2::AuthMethodId>>>,
         terminal_auth_calls: Arc<Mutex<Vec<acp_v2::AuthMethodId>>>,
@@ -8774,6 +8945,7 @@ pub(crate) mod tests {
         fn new() -> Self {
             Self {
                 authenticated: Arc::new(Mutex::new(false)),
+                error_source: AuthErrorSource::Marker,
                 auth_methods: vec![
                     acp_v2::AuthMethod::Other(
                         acp_v2::OtherAuthMethod::new(
@@ -8829,9 +9001,22 @@ pub(crate) mod tests {
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             if !*self.authenticated.lock() {
-                return Task::ready(Err(acp_thread::AuthRequired::new()
-                    .with_description("Sign in to continue".to_string())
-                    .into()));
+                let error = match self.error_source {
+                    AuthErrorSource::Marker => anyhow!(
+                        AuthRequired::new().with_description("Sign in to continue".to_string())
+                    ),
+                    AuthErrorSource::Sdk => anyhow!(
+                        agent_client_protocol::Error::new(-32000, "Sign in to continue")
+                            .data(json!({"private": "auth details"}))
+                    )
+                    .context("Creating session"),
+                    AuthErrorSource::V2 => anyhow!(
+                        acp_v2::Error::new(-32000, "Sign in to continue")
+                            .data(json!({"private": "auth details"}))
+                    )
+                    .context("Creating session"),
+                };
+                return Task::ready(Err(error));
             }
 
             let session_id = acp_v2::SessionId::new("auth-gated-session");

@@ -510,6 +510,35 @@ impl dyn AgentSessionList {
     }
 }
 
+/// Read protocol fields without replacing the concrete SDK error or its context chain.
+#[derive(Clone, Copy)]
+pub struct ProtocolErrorInfo<'a> {
+    pub code: i32,
+    pub message: &'a str,
+    pub data: Option<&'a serde_json::Value>,
+}
+
+impl<'a> ProtocolErrorInfo<'a> {
+    pub fn from_error(error: &'a anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<acp_v1::Error>() {
+            return Some(Self {
+                code: error.code.into(),
+                message: &error.message,
+                data: error.data.as_ref(),
+            });
+        }
+        error.downcast_ref::<acp_v2::Error>().map(|error| Self {
+            code: error.code.into(),
+            message: &error.message,
+            data: error.data.as_ref(),
+        })
+    }
+
+    pub fn is_auth_required(&self) -> bool {
+        self.code == i32::from(acp_v2::ErrorCode::AuthRequired)
+    }
+}
+
 #[derive(Debug)]
 pub struct AuthRequired {
     pub description: Option<String>,
@@ -523,6 +552,19 @@ impl AuthRequired {
     pub fn with_description(mut self, description: String) -> Self {
         self.description = Some(description);
         self
+    }
+
+    pub fn from_error(error: &anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<Self>() {
+            return Some(Self {
+                description: error.description.clone(),
+            });
+        }
+        let error = ProtocolErrorInfo::from_error(error)?;
+        error.is_auth_required().then(|| Self {
+            description: (error.message != acp_v2::ErrorCode::AuthRequired.to_string())
+                .then(|| error.message.to_owned()),
+        })
     }
 }
 
