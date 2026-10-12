@@ -256,13 +256,13 @@ enum NativeCancellation {
 struct NativeExecution {
     _driver: Task<()>,
     message_id: ClientUserMessageId,
-    retry_recipe: Option<NativeRetryRecipe>,
+    retry_action: Option<NativeRetryAction>,
     cancellation: Option<oneshot::Sender<NativeCancellation>>,
     completion: NativeCompletion,
 }
 
 #[derive(Clone)]
-enum NativeRetryRecipe {
+enum NativeRetryAction {
     Prompt(Vec<acp_v2::ContentBlock>),
     Mcp {
         prompt_name: String,
@@ -277,15 +277,108 @@ enum NativeRetryRecipe {
     Compact,
 }
 
-impl NativeRetryRecipe {
-    fn for_prompt(content: Vec<acp_v2::ContentBlock>) -> Self {
-        if Command::parse(&content)
-            .is_some_and(|command| command.is_unqualified(COMPACT_COMMAND_NAME))
-        {
-            Self::Compact
-        } else {
-            Self::Prompt(content)
+impl NativeRetryAction {
+    fn for_prompt(
+        content: Vec<acp_v2::ContentBlock>,
+        project_state: &ProjectState,
+        cx: &App,
+    ) -> Self {
+        if let Some(parsed_command) = Command::parse(&content) {
+            if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
+                return Self::Compact;
+            }
+
+            // Skill scope qualifiers (`/:<name>` and
+            // `/<worktree>:<name>`) use a colon separator that can't
+            // collide with MCP's `/<server>.<name>` grammar. The popup
+            // inserts a qualified form for every skill so picking the
+            // global row unambiguously runs the global skill even when
+            // a same-named project-local one exists.
+            if let Some(scope) = parsed_command.skill_scope
+                && let Some(skill) = project_state.skills.iter().find(|skill| {
+                    skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
+                })
+            {
+                return Self::Skill {
+                    skill: skill.clone(),
+                    content,
+                };
+            }
+
+            // MCP prompts and skills both register slash commands. MCP
+            // prompts are checked first — if a user has both an MCP prompt
+            // and a skill with the same name, the MCP prompt wins (matching
+            // the order they appear in the catalog).
+            let registry = project_state.context_server_registry.read(cx);
+            let explicit_server_id = parsed_command
+                .explicit_server_id
+                .map(|server_id| ContextServerId(server_id.into()));
+
+            if let Some(prompt) =
+                registry.find_prompt(explicit_server_id.as_ref(), parsed_command.prompt_name)
+            {
+                let arguments = if !parsed_command.arg_value.is_empty()
+                    && let Some(arg_name) = prompt
+                        .prompt
+                        .arguments
+                        .as_ref()
+                        .and_then(|args| args.first())
+                        .map(|arg| arg.name.clone())
+                {
+                    HashMap::from_iter([(arg_name, parsed_command.arg_value.to_string())])
+                } else {
+                    Default::default()
+                };
+                return Self::Mcp {
+                    prompt_name: prompt.prompt.name.clone(),
+                    server_id: prompt.server_id.clone(),
+                    arguments,
+                    content,
+                };
+            }
+
+            // Unqualified skill match (`/skill-name` with no scope
+            // prefix and no MCP server prefix). Slash commands work
+            // for *all* skills regardless of `disable_model_invocation`
+            // — that flag only hides the skill from the model's catalog.
+            // The user explicitly typed the name, so they get to invoke
+            // it.
+            //
+            // Inlined rather than calling `apply_skill_overrides` so
+            // we don't clone the entire skill list on every prompt
+            // (including prompts like `/help` that aren't skills at
+            // all). The resolution rule matches the override-applied
+            // view: among skills with the matching name, pick the one
+            // with the highest source precedence, so the slash command
+            // picks the same entry the model sees in its catalog.
+            // Ties (e.g. two project-local skills from different
+            // worktrees) resolve to the first in iteration order to
+            // match `apply_skill_overrides`.
+            if parsed_command.explicit_server_id.is_none()
+                && parsed_command.skill_scope.is_none()
+                && !project_state.skills.is_empty()
+            {
+                let prompt_name = parsed_command.prompt_name;
+                let resolved = project_state
+                    .skills
+                    .iter()
+                    .filter(|skill| skill.name == prompt_name)
+                    .reduce(|best, candidate| {
+                        if candidate.source.precedence() > best.source.precedence() {
+                            candidate
+                        } else {
+                            best
+                        }
+                    });
+                if let Some(skill) = resolved {
+                    return Self::Skill {
+                        skill: skill.clone(),
+                        content,
+                    };
+                }
+            }
         }
+        Self::Prompt(content)
     }
 }
 
@@ -920,6 +1013,12 @@ impl NativeAgent {
         let subscriptions = vec![
             cx.subscribe(&thread_handle, Self::handle_thread_title_updated),
             cx.subscribe(&thread_handle, Self::handle_thread_token_usage_updated),
+            cx.subscribe(
+                &thread_handle,
+                |this, thread, _: &crate::thread::CancellationRequested, cx| {
+                    this.cancel_session(thread.read(cx).id());
+                },
+            ),
             cx.observe(&thread_handle, move |this, thread, cx| {
                 this.save_thread(thread, cx)
             }),
@@ -986,6 +1085,21 @@ impl NativeAgent {
         self.update_available_commands_for_project(project_id, cx);
 
         acp_thread
+    }
+
+    fn cancel_session(&mut self, session_id: &acp_v2::SessionId) {
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            return;
+        };
+        if session.pending_cancellation.send(()).is_err() {
+            log::debug!("No pending native submissions to cancel");
+        }
+        if let Some(execution) = session.execution.as_mut()
+            && let Some(sender) = execution.cancellation.take()
+            && sender.send(NativeCancellation::Cancelled).is_err()
+        {
+            log::debug!("Native execution already completed");
+        }
     }
 
     pub fn models(&self) -> &LanguageModels {
@@ -2022,23 +2136,23 @@ impl NativeAgent {
             .get_mut(session_id)
             .and_then(|session| session.execution.as_mut())
             .context("Native execution not found")?;
-        if !matches!(execution.retry_recipe, Some(NativeRetryRecipe::Compact)) {
-            execution.retry_recipe = None;
+        if !matches!(execution.retry_action, Some(NativeRetryAction::Compact)) {
+            execution.retry_action = None;
         }
         Ok(())
     }
 
-    fn set_execution_retry_recipe(
+    fn set_execution_retry_action(
         &mut self,
         session_id: &acp_v2::SessionId,
-        recipe: NativeRetryRecipe,
+        retry_action: NativeRetryAction,
     ) -> Result<()> {
         let execution = self
             .sessions
             .get_mut(session_id)
             .and_then(|session| session.execution.as_mut())
             .context("Native execution not found")?;
-        execution.retry_recipe = Some(recipe);
+        execution.retry_action = Some(retry_action);
         Ok(())
     }
 
@@ -2052,9 +2166,9 @@ impl NativeAgent {
         original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> Task<Result<acp_v2::StopReason>> {
-        if let Err(error) = self.set_execution_retry_recipe(
+        if let Err(error) = self.set_execution_retry_action(
             &session_id,
-            NativeRetryRecipe::Mcp {
+            NativeRetryAction::Mcp {
                 prompt_name: prompt_name.clone(),
                 server_id: server_id.clone(),
                 arguments: arguments.clone(),
@@ -2210,9 +2324,9 @@ impl NativeAgent {
         original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> Task<Result<acp_v2::StopReason>> {
-        if let Err(error) = self.set_execution_retry_recipe(
+        if let Err(error) = self.set_execution_retry_action(
             &session_id,
-            NativeRetryRecipe::Skill {
+            NativeRetryAction::Skill {
                 skill: skill.clone(),
                 content: original_content.clone(),
             },
@@ -2468,23 +2582,39 @@ impl NativeAgentConnection {
                                     .context("Session was released")?,
                                 session.thread.clone(),
                                 session.execution.as_ref().map(|execution| {
-                                    (execution.message_id.clone(), execution.retry_recipe.clone())
+                                    (execution.message_id.clone(), execution.retry_action.clone())
                                 }),
                             ))
                         })??;
-                    let (message_id, preparation, retry_recipe) = if let Some(content) = content {
+                    let (message_id, preparation, retry_action) = if let Some(content) = content {
                         let message_id = ClientUserMessageId::new();
-                        let retry_recipe = NativeRetryRecipe::for_prompt(content.clone());
-                        let source = if matches!(retry_recipe, NativeRetryRecipe::Compact) {
+                        let retry_action = agent.read_with(cx, |agent, cx| {
+                            let project_state = agent
+                                .session_project_state(&session_id)
+                                .context("Project state not found for session")?;
+                            anyhow::Ok(NativeRetryAction::for_prompt(
+                                content.clone(),
+                                project_state,
+                                cx,
+                            ))
+                        })??;
+                        let source = if matches!(retry_action, NativeRetryAction::Compact) {
                             Vec::new()
                         } else {
                             content
                         };
                         let path_style = thread.read(cx).project().read(cx).path_style(cx);
                         thread.update(cx, |thread, cx| {
+                            thread.prepare_local_turn(cx);
+                            // The receipt needs a retained rewind target, but a command
+                            // must not enter provider history until preparation succeeds.
+                            let history_content = match &retry_action {
+                                NativeRetryAction::Prompt(content) => content.clone(),
+                                _ => Vec::new(),
+                            };
                             thread.push_acp_user_block(
                                 message_id.clone(),
-                                source.clone(),
+                                history_content,
                                 path_style,
                                 cx,
                             )
@@ -2492,17 +2622,19 @@ impl NativeAgentConnection {
                         let preparation = acp_thread.update(cx, |thread, cx| {
                             thread.prepare_local_prompt(message_id.clone(), source, cx)
                         })?;
-                        (message_id, preparation, Some(retry_recipe))
+                        (message_id, preparation, Some(retry_action))
                     } else {
                         let previous_execution = previous_execution
-                            .filter(|(id, _recipe)| thread.read(cx).has_user_message(id));
+                            .filter(|(id, _retry_action)| thread.read(cx).has_user_message(id));
                         let message_id = previous_execution
                             .as_ref()
-                            .map(|(id, _recipe)| id.clone())
+                            .map(|(id, _retry_action)| id.clone())
                             .or_else(|| thread.read(cx).last_user_message_id())
                             .context("No user message to retry")?;
-                        let retry_recipe = previous_execution.and_then(|(_id, recipe)| recipe);
-                        (message_id, Task::ready(()), retry_recipe)
+                        let retry_action =
+                            previous_execution.and_then(|(_id, retry_action)| retry_action);
+                        thread.update(cx, |thread, cx| thread.prepare_local_turn(cx));
+                        (message_id, Task::ready(()), retry_action)
                     };
                     let (cancellation_sender, cancellation_receiver) = oneshot::channel();
                     let driver = Self::drive_execution(
@@ -2511,7 +2643,7 @@ impl NativeAgentConnection {
                         thread,
                         acp_thread.downgrade(),
                         message_id.clone(),
-                        retry_recipe.clone(),
+                        retry_action.clone(),
                         preparation,
                         cancellation_receiver,
                         completion_sender,
@@ -2525,7 +2657,7 @@ impl NativeAgentConnection {
                         session.execution = Some(NativeExecution {
                             _driver: driver,
                             message_id: message_id.clone(),
-                            retry_recipe,
+                            retry_action,
                             cancellation: Some(cancellation_sender),
                             completion: driver_completion,
                         });
@@ -2558,7 +2690,7 @@ impl NativeAgentConnection {
         thread: Entity<Thread>,
         acp_thread: WeakEntity<AcpThread>,
         message_id: ClientUserMessageId,
-        retry_recipe: Option<NativeRetryRecipe>,
+        retry_action: Option<NativeRetryAction>,
         preparation: Task<()>,
         cancellation: oneshot::Receiver<NativeCancellation>,
         completion: oneshot::Sender<std::result::Result<acp_v2::StopReason, Arc<anyhow::Error>>>,
@@ -2573,7 +2705,7 @@ impl NativeAgentConnection {
                         let connection = NativeAgentConnection(
                             agent.upgrade().context("Native agent was released")?,
                         );
-                        Ok(connection.execute_recipe(session_id, message_id, retry_recipe, cx))
+                        Ok(connection.execute_retry_action(session_id, message_id, retry_action, cx))
                     })?;
                     task.await
                 }
@@ -2582,16 +2714,10 @@ impl NativeAgentConnection {
             let result = futures::select_biased! {
                 cancellation = cancellation.fuse() => {
                     let cancellation = cancellation.unwrap_or(NativeCancellation::Cancelled);
-                    acp_thread.update(cx, |thread, cx| {
-                        thread.cancel_local_actions(match cancellation {
-                            NativeCancellation::InterruptedByFollowUp =>
-                                acp_thread::RequestPermissionOutcome::InterruptedByFollowUp,
-                            NativeCancellation::Cancelled =>
-                                acp_thread::RequestPermissionOutcome::Cancelled,
-                        }, cx);
-                    }).log_err();
                     let model_started = !thread.read_with(cx, |thread, _cx| thread.is_turn_complete());
-                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                    // Tools may ignore cancellation. Their native cleanup must not
+                    // delay the bridge's Stop event or the next accepted prompt.
+                    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
                     if model_started {
                         // Drain cancellation updates (including compaction terminalization)
                         // before publishing Idle or allowing another submission to insert.
@@ -2601,6 +2727,14 @@ impl NativeAgentConnection {
                     } else {
                         drop(execution);
                     }
+                    acp_thread.update(cx, |thread, cx| {
+                        thread.cancel_local_actions(match cancellation {
+                            NativeCancellation::InterruptedByFollowUp =>
+                                acp_thread::RequestPermissionOutcome::InterruptedByFollowUp,
+                            NativeCancellation::Cancelled =>
+                                acp_thread::RequestPermissionOutcome::Cancelled,
+                        }, cx);
+                    }).log_err();
                     Ok(acp_v2::StopReason::Cancelled)
                 },
                 result = execution => result,
@@ -2609,7 +2743,7 @@ impl NativeAgentConnection {
                 acp_thread.update(cx, |thread, cx| {
                     thread.cancel_local_actions(acp_thread::RequestPermissionOutcome::Cancelled, cx);
                 }).log_err();
-                thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
             }
             let result = match result {
                 Ok(reason) => {
@@ -3268,19 +3402,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, _cx| {
-            let Some(session) = agent.sessions.get_mut(session_id) else {
-                return;
-            };
-            if session.pending_cancellation.send(()).is_err() {
-                log::debug!("No pending native submissions to cancel");
-            }
-            if let Some(execution) = session.execution.as_mut()
-                && let Some(sender) = execution.cancellation.take()
-            {
-                if sender.send(NativeCancellation::Cancelled).is_err() {
-                    log::debug!("Native execution already completed");
-                }
-            }
+            agent.cancel_session(session_id);
         });
     }
 
@@ -3332,20 +3454,20 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 }
 
 impl NativeAgentConnection {
-    fn execute_recipe(
+    fn execute_retry_action(
         &self,
         session_id: acp_v2::SessionId,
         message_id: ClientUserMessageId,
-        recipe: Option<NativeRetryRecipe>,
+        retry_action: Option<NativeRetryAction>,
         cx: &mut App,
     ) -> Task<Result<acp_v2::StopReason>> {
-        match recipe {
-            Some(NativeRetryRecipe::Prompt(content)) => self.execute_prompt(
+        match retry_action {
+            Some(NativeRetryAction::Prompt(content)) => self.execute_prompt(
                 message_id,
                 acp_v2::PromptRequest::new(session_id, content),
                 cx,
             ),
-            Some(NativeRetryRecipe::Mcp {
+            Some(NativeRetryAction::Mcp {
                 prompt_name,
                 server_id,
                 arguments,
@@ -3361,10 +3483,10 @@ impl NativeAgentConnection {
                     cx,
                 )
             }),
-            Some(NativeRetryRecipe::Skill { skill, content }) => self.0.update(cx, |agent, cx| {
+            Some(NativeRetryAction::Skill { skill, content }) => self.0.update(cx, |agent, cx| {
                 agent.send_skill_invocation(message_id, session_id, skill, content, cx)
             }),
-            Some(NativeRetryRecipe::Compact) => self.0.update(cx, |agent, cx| {
+            Some(NativeRetryAction::Compact) => self.0.update(cx, |agent, cx| {
                 agent.send_compact_command(message_id, session_id, cx)
             }),
             None => self.run_turn(session_id, cx, |thread, cx| {
@@ -3399,126 +3521,6 @@ impl NativeAgentConnection {
         {
             return Task::ready(Err(error));
         }
-
-        if let Some(parsed_command) = Command::parse(&params.prompt) {
-            if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
-                return self.0.update(cx, |agent, cx| {
-                    agent.send_compact_command(client_user_message_id, session_id, cx)
-                });
-            }
-
-            // Skill scope qualifiers (`/:<name>` and
-            // `/<worktree>:<name>`) use a colon separator that can't
-            // collide with MCP's `/<server>.<name>` grammar. The popup
-            // inserts a qualified form for every skill so picking the
-            // global row unambiguously runs the global skill even when
-            // a same-named project-local one exists.
-            if let Some(scope) = parsed_command.skill_scope
-                && let Some(skill) = project_state.skills.iter().find(|skill| {
-                    skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
-                })
-            {
-                let skill = skill.clone();
-                return self.0.update(cx, |agent, cx| {
-                    agent.send_skill_invocation(
-                        client_user_message_id,
-                        session_id.clone(),
-                        skill,
-                        params.prompt,
-                        cx,
-                    )
-                });
-            }
-
-            // MCP prompts and skills both register slash commands. MCP
-            // prompts are checked first — if a user has both an MCP prompt
-            // and a skill with the same name, the MCP prompt wins (matching
-            // the order they appear in the catalog).
-            let registry = project_state.context_server_registry.read(cx);
-
-            let explicit_server_id = parsed_command
-                .explicit_server_id
-                .map(|server_id| ContextServerId(server_id.into()));
-
-            if let Some(prompt) =
-                registry.find_prompt(explicit_server_id.as_ref(), parsed_command.prompt_name)
-            {
-                let arguments = if !parsed_command.arg_value.is_empty()
-                    && let Some(arg_name) = prompt
-                        .prompt
-                        .arguments
-                        .as_ref()
-                        .and_then(|args| args.first())
-                        .map(|arg| arg.name.clone())
-                {
-                    HashMap::from_iter([(arg_name, parsed_command.arg_value.to_string())])
-                } else {
-                    Default::default()
-                };
-
-                let prompt_name = prompt.prompt.name.clone();
-                let server_id = prompt.server_id.clone();
-
-                return self.0.update(cx, |agent, cx| {
-                    agent.send_mcp_prompt(
-                        client_user_message_id,
-                        session_id.clone(),
-                        prompt_name,
-                        server_id,
-                        arguments,
-                        params.prompt,
-                        cx,
-                    )
-                });
-            }
-
-            // Unqualified skill match (`/skill-name` with no scope
-            // prefix and no MCP server prefix). Slash commands work
-            // for *all* skills regardless of `disable_model_invocation`
-            // — that flag only hides the skill from the model's catalog.
-            // The user explicitly typed the name, so they get to invoke
-            // it.
-            //
-            // Inlined rather than calling `apply_skill_overrides` so
-            // we don't clone the entire skill list on every prompt
-            // (including prompts like `/help` that aren't skills at
-            // all). The resolution rule matches the override-applied
-            // view: among skills with the matching name, pick the one
-            // with the highest source precedence, so the slash command
-            // picks the same entry the model sees in its catalog.
-            // Ties (e.g. two project-local skills from different
-            // worktrees) resolve to the first in iteration order to
-            // match `apply_skill_overrides`.
-            if parsed_command.explicit_server_id.is_none()
-                && parsed_command.skill_scope.is_none()
-                && !project_state.skills.is_empty()
-            {
-                let prompt_name = parsed_command.prompt_name;
-                let resolved = project_state
-                    .skills
-                    .iter()
-                    .filter(|skill| skill.name == prompt_name)
-                    .reduce(|best, candidate| {
-                        if candidate.source.precedence() > best.source.precedence() {
-                            candidate
-                        } else {
-                            best
-                        }
-                    });
-                if let Some(skill) = resolved {
-                    let skill = skill.clone();
-                    return self.0.update(cx, |agent, cx| {
-                        agent.send_skill_invocation(
-                            client_user_message_id,
-                            session_id.clone(),
-                            skill,
-                            params.prompt,
-                            cx,
-                        )
-                    });
-                }
-            }
-        };
 
         let path_style = project_state.project.read(cx).path_style(cx);
         let agent = self.0.downgrade();
@@ -3648,20 +3650,24 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
         client_user_message_id: acp_thread::ClientUserMessageId,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        match self.thread.update(cx, |thread, cx| {
-            thread.truncate(client_user_message_id.clone(), cx)?;
-            Ok(thread.latest_token_usage())
-        }) {
-            Ok(usage) => {
-                self.acp_thread
-                    .update(cx, |thread, cx| {
-                        thread.update_token_usage(usage, cx);
-                    })
-                    .ok();
-                Task::ready(Ok(()))
-            }
-            Err(error) => Task::ready(Err(error)),
-        }
+        let cancellation = match self.acp_thread.update(cx, |thread, cx| thread.cancel(cx)) {
+            Ok(cancellation) => cancellation,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        let thread = self.thread.clone();
+        let acp_thread = self.acp_thread.clone();
+        cx.spawn(async move |cx| {
+            // Preparation is session-owned and may precede the model turn.
+            cancellation.await;
+            let usage = thread.update(cx, |thread, cx| {
+                thread.truncate(client_user_message_id, cx)?;
+                anyhow::Ok(thread.latest_token_usage())
+            })?;
+            acp_thread
+                .update(cx, |thread, cx| thread.update_token_usage(usage, cx))
+                .log_err();
+            Ok(())
+        })
     }
 }
 
@@ -4043,7 +4049,7 @@ impl SubagentHandle for NativeSubagentHandle {
                     if thread.read_with(cx, |thread, _| thread.is_turn_complete()) {
                         task.await
                     } else {
-                        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                        thread.update(cx, |thread, cx| thread.request_cancel(cx)).await;
                         Err(anyhow!(
                             "The agent is nearing the end of its context window and has been \
                              stopped. You can prompt the thread again to have the agent wrap up \
@@ -4272,8 +4278,19 @@ pub fn skill_body_resolver_for_project(
                         project.open_buffer((worktree_id, relative_path), cx)
                     })
                     .await?;
-                let content =
-                    cx.update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
+                let content = cx.update(|cx| {
+                    // Retries can retain skills after their worktree leaves the catalog.
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        let worktree_store = project.read(cx).worktree_store();
+                        anyhow::ensure!(
+                            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                trusted_worktrees.can_trust(&worktree_store, worktree_id, cx)
+                            }),
+                            "Cannot load a skill from a restricted worktree"
+                        );
+                    }
+                    anyhow::Ok(buffer.read(cx).as_text_snapshot().as_rope().to_string())
+                })?;
 
                 read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
             })
@@ -4656,6 +4673,248 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_native_rewind_cancels_pending_preparation(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let message_id = ClientUserMessageId::new();
+        let content = vec!["rewound before model startup".into()];
+        let (release, preparation) = oneshot::channel::<()>();
+        let completion = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(fake.model("fake"), cx);
+                let path_style = thread.project().read(cx).path_style(cx);
+                thread
+                    .push_acp_user_block(message_id.clone(), content.clone(), path_style, cx)
+                    .expect("accepted provider message");
+            });
+            acp_thread.update(cx, |thread, cx| {
+                thread
+                    .prepare_local_prompt(message_id.clone(), content.clone(), cx)
+                    .expect("accepted display message")
+                    .detach();
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                        cx,
+                    )
+                    .expect("running");
+            });
+            // The initial Git checkpoint can remain pending after acceptance.
+            let preparation = cx.spawn(async move |_cx| {
+                preparation.await.expect("release preparation");
+            });
+            let (sender, receiver) = oneshot::channel();
+            let completion = receiver.shared();
+            let (cancellation, cancelled) = oneshot::channel();
+            let retry_action = Some(NativeRetryAction::Prompt(content));
+            let driver = NativeAgentConnection::drive_execution(
+                agent.downgrade(),
+                session_id.clone(),
+                thread.clone(),
+                acp_thread.downgrade(),
+                message_id.clone(),
+                retry_action.clone(),
+                preparation,
+                cancelled,
+                sender,
+                cx,
+            );
+            agent.update(cx, |agent, _cx| {
+                agent
+                    .sessions
+                    .get_mut(&session_id)
+                    .expect("session")
+                    .execution = Some(NativeExecution {
+                    _driver: driver,
+                    message_id: message_id.clone(),
+                    retry_action,
+                    cancellation: Some(cancellation),
+                    completion: completion.clone(),
+                });
+            });
+            completion
+        });
+        cx.run_until_parked();
+        acp_thread
+            .update(cx, |thread, cx| thread.rewind(message_id.clone(), cx))
+            .await
+            .expect("rewind accepted message");
+        if release.send(()).is_err() {
+            log::debug!("Rewind already dropped pending preparation");
+        }
+        cx.run_until_parked();
+        assert!(
+            fake.pending_completions().is_empty(),
+            "rewind must fence startup"
+        );
+        assert!(!thread.read_with(cx, |thread, _| thread.has_user_message(&message_id)));
+        assert_eq!(
+            completion.await.expect("settled").expect("cancelled"),
+            acp_v2::StopReason::Cancelled
+        );
+    }
+
+    #[gpui::test]
+    async fn test_native_stop_does_not_wait_for_uncooperative_tool(cx: &mut TestAppContext) {
+        use crate::tests::test_tools::DelayTool;
+        use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
+
+        let fake = init_test(cx);
+        for rewind in [false, true] {
+            let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+            let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+            let model = fake.model("fake");
+            cx.update(|cx| {
+                let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+                for profile in settings.profiles.values_mut() {
+                    profile.tools.insert(DelayTool::NAME.into(), true);
+                }
+                agent_settings::AgentSettings::override_global(settings, cx);
+            });
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.add_tool(DelayTool);
+            });
+            let (receipt, completion) = cx.update(|cx| {
+                connection.submit_native(session_id.clone(), Some(vec!["first".into()]), cx)
+            });
+            receipt.await.expect("first accepted");
+            let first_message_id = thread
+                .read_with(cx, |thread, _| thread.last_user_message_id())
+                .expect("first user");
+            cx.run_until_parked();
+            let request = fake
+                .pending_completions_for(&model)
+                .pop()
+                .expect("first reaches model");
+            fake.send_event(
+                &model,
+                &request,
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: "held".into(),
+                    name: DelayTool::NAME.into(),
+                    raw_input: r#"{"ms":10000}"#.into(),
+                    input: LanguageModelToolUseInput::Json(json!({"ms": 10000})),
+                    is_input_complete: true,
+                    thought_signature: None,
+                }),
+            );
+            fake.end_stream(&model, &request);
+            cx.run_until_parked();
+            acp_thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread.entries().iter().any(|entry| matches!(
+                        entry,
+                        acp_thread::AgentThreadEntry::ToolCall(call)
+                            if call.status() == acp_thread::ToolCallStatus::InProgress
+                    )),
+                    "tool must start before cancellation"
+                );
+            });
+
+            cx.update(|cx| connection.cancel(&session_id, cx));
+            cx.run_until_parked();
+            assert!(
+                completion.clone().now_or_never().is_some(),
+                "Stop must complete without waiting for an uncooperative tool result"
+            );
+            assert_eq!(
+                completion
+                    .await
+                    .expect("driver settled")
+                    .expect("cancelled"),
+                acp_v2::StopReason::Cancelled
+            );
+            acp_thread.read_with(cx, |thread, _| {
+                assert!(
+                    matches!(thread.foreground_state(), acp_v2::StateUpdate::Idle(idle)
+                    if idle.stop_reason == Some(acp_v2::StopReason::Cancelled))
+                );
+            });
+            if rewind {
+                acp_thread
+                    .update(cx, |thread, cx| thread.rewind(first_message_id.clone(), cx))
+                    .await
+                    .expect("rewind old owner before its result arrives");
+            }
+
+            let (receipt, completion) = cx.update(|cx| {
+                connection.submit_native(session_id.clone(), Some(vec!["next".into()]), cx)
+            });
+            receipt
+                .await
+                .expect("next accepted before held tool returns");
+            cx.run_until_parked();
+            let request = fake
+                .pending_completions_for(&model)
+                .pop()
+                .expect("next reaches model before held tool returns");
+            fake.send_text(&model, &request, "next ");
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                assert!(thread.is_streaming_message());
+            });
+            cx.executor().advance_clock(Duration::from_secs(10));
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread.is_streaming_message(),
+                    "old cancellation cleanup must not flush the successor's partial"
+                );
+                let message = thread
+                    .last_received_or_pending_message()
+                    .expect("successor assistant message");
+                assert!(
+                    message
+                        .as_agent_message()
+                        .expect("assistant message")
+                        .tool_results
+                        .is_empty(),
+                    "late tool results must not be inserted into the successor's native history"
+                );
+            });
+            let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+            assert_eq!(
+                saved.messages.iter().any(|message| {
+                    message.as_agent_message().is_some_and(|message| {
+                        message
+                            .tool_results
+                            .values()
+                            .any(|result| result.text_contents() == "Ding")
+                    })
+                }),
+                !rewind,
+                "late output belongs only to a retained original assistant message"
+            );
+            assert_eq!(
+                fake.pending_completions_for(&model)
+                    .iter()
+                    .filter(|request| request.thread_id == Some(session_id.to_string()))
+                    .count(),
+                1,
+                "old cancellation cleanup must not start another request"
+            );
+            fake.send_text(&model, &request, "response");
+            fake.end_stream(&model, &request);
+            assert_eq!(
+                completion
+                    .await
+                    .expect("next driver settled")
+                    .expect("done"),
+                acp_v2::StopReason::EndTurn
+            );
+            acp_thread.read_with(cx, |thread, cx| {
+                let markdown = thread.to_markdown(cx);
+                assert!(markdown.contains("next response"));
+                assert!(!markdown.contains("Ding"));
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_native_cancel_withdraws_pending_acceptance(cx: &mut TestAppContext) {
         let fake = init_test(cx);
         let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
@@ -4997,6 +5256,148 @@ mod internal_tests {
         });
         cx.run_until_parked();
         requests_receiver
+    }
+
+    async fn assert_failed_native_command_context(
+        command: &str,
+        reload: bool,
+        cx: &mut TestAppContext,
+    ) {
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let mut requests = setup_native_prompt_server(&project, cx);
+        agent.update(cx, |agent, _| {
+            agent
+                .projects
+                .get_mut(&project.entity_id())
+                .expect("project state")
+                .skills = Arc::new(vec![make_global_skill("missing-skill", "Missing skill")]);
+        });
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        let content = vec![command.into()];
+        let (receipt, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), Some(content), cx));
+        let receipt = receipt.await.expect("command accepted");
+        if command == "/native-prompts.prepare" {
+            requests
+                .next()
+                .await
+                .expect("fetch prompt")
+                .send(json!({"malformed": true}))
+                .expect("malformed response");
+        }
+        completion
+            .await
+            .expect("driver completed")
+            .expect_err("command preparation fails");
+        assert!(fake.pending_completions().is_empty());
+        let accepted_id = thread
+            .read_with(cx, |thread, _| thread.last_user_message_id())
+            .expect("accepted command retained");
+        assert_eq!(accepted_id.message_id(), receipt.message_id);
+
+        let (acp_thread, thread) = if reload {
+            drop(thread);
+            drop(acp_thread);
+            release_dropped_entities(cx);
+            agent.read_with(cx, |agent, _| {
+                assert!(!agent.sessions.contains_key(&session_id));
+            });
+            let acp_thread = agent
+                .update(cx, |agent, cx| {
+                    agent.open_thread(session_id.clone(), project.clone(), cx)
+                })
+                .await
+                .expect("reload failed command");
+            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+            let (retry, completion) =
+                cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+            assert_eq!(
+                retry.await.expect("reloaded retry accepted").message_id,
+                receipt.message_id
+            );
+            cx.run_until_parked();
+            let request = fake
+                .pending_completions_for(&model)
+                .pop()
+                .expect("reloaded retry resumes retained history");
+            assert!(
+                !request_texts_after_system(&request.messages)
+                    .iter()
+                    .any(|text| text.contains(command)),
+                "reload retry must not send an unprepared command to the model"
+            );
+            cx.update(|cx| connection.cancel(&session_id, cx));
+            completion
+                .await
+                .expect("retry driver completed")
+                .expect("retry cancelled");
+            (acp_thread, thread)
+        } else {
+            (acp_thread, thread)
+        };
+        let (receipt, completion) = cx.update(|cx| {
+            connection.submit_native(
+                session_id.clone(),
+                Some(vec!["ordinary follow-up".into()]),
+                cx,
+            )
+        });
+        receipt.await.expect("follow-up accepted");
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("follow-up reaches model");
+        let expected_context = if reload {
+            vec!["Continue where you left off", "ordinary follow-up"]
+        } else {
+            vec!["ordinary follow-up"]
+        };
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            expected_context,
+            "failed preparation must not contaminate a subsequent model prompt"
+        );
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert!(
+            matches!(saved.messages.first().map(|message| message.as_ref()),
+            Some(Message::User(marker)) if marker.id == accepted_id && marker.content.is_empty()),
+            "the receipt and rewind target remain retained without unprepared provider content"
+        );
+        acp_thread.read_with(cx, |thread, cx| {
+            assert!(thread.can_rewind_to(Some(&accepted_id), cx));
+        });
+        fake.send_text(&model, &request, "done");
+        fake.end_stream(&model, &request);
+        completion
+            .await
+            .expect("follow-up driver completed")
+            .expect("follow-up completed");
+    }
+
+    #[gpui::test]
+    async fn test_native_failed_mcp_follow_up_context(cx: &mut TestAppContext) {
+        assert_failed_native_command_context("/native-prompts.prepare", false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_native_failed_mcp_reload_context(cx: &mut TestAppContext) {
+        assert_failed_native_command_context("/native-prompts.prepare", true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_native_failed_skill_follow_up_context(cx: &mut TestAppContext) {
+        assert_failed_native_command_context("/:missing-skill do work", false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_native_failed_skill_reload_context(cx: &mut TestAppContext) {
+        assert_failed_native_command_context("/:missing-skill do work", true, cx).await;
     }
 
     #[gpui::test]
@@ -6077,10 +6478,29 @@ mod internal_tests {
                     cx.run_until_parked();
                 }
 
-                let cancellation_task = thread.update(cx, |thread, cx| thread.cancel(cx));
+                fake.send_event(
+                    &model,
+                    &request,
+                    LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
+                        input_tokens: 1234,
+                        ..Default::default()
+                    }),
+                );
+                let cancellation_task = thread.update(cx, |thread, cx| {
+                    let cancellation = thread.cancel(cx);
+                    thread.prepare_local_turn(cx);
+                    cancellation
+                });
                 (response_stream, cancellation_task)
             };
             cancellation_task.await;
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(
+                    thread.cumulative_token_usage(),
+                    language_model::TokenUsage::default(),
+                    "{scenario}: queued compaction usage must not apply after cancellation"
+                );
+            });
 
             let response = cx
                 .update(|cx| {
@@ -7793,6 +8213,23 @@ mod internal_tests {
             body, "edited body",
             "resolver must read the in-memory buffer, not the on-disk file"
         );
+        cx.update(|cx| {
+            use project::trusted_worktrees::PathTrust;
+            TrustedWorktrees::try_get_global(cx)
+                .expect("trust initialized")
+                .update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.restrict(
+                        project.read(cx).worktree_store().downgrade(),
+                        collections::HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                        cx,
+                    );
+                });
+        });
+        let error = cx
+            .update(|cx| resolver(skill, &mut cx.to_async()))
+            .await
+            .expect_err("a retained skill cannot bypass revoked worktree trust");
+        assert!(error.to_string().contains("restricted"));
     }
 
     /// A project SKILL.md whose on-disk size exceeds the cap must be

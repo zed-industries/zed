@@ -55,7 +55,7 @@ use std::{
 };
 use util::path;
 
-mod test_tools;
+pub(crate) mod test_tools;
 use test_tools::*;
 
 /// Returns the fake provider that serves the registry's default model.
@@ -7398,6 +7398,33 @@ async fn test_subagent_compaction_exhausts_transient_retries(cx: &mut TestAppCon
         )));
     cx.run_until_parked();
     assert_eq!(test.fake.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
+async fn test_subagent_parent_cancellation_before_acceptance(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    let send = cx.update(|cx| {
+        test.handle
+            .send("subagent task prompt".into(), &cx.to_async())
+    });
+    while test
+        .parent
+        .read_with(cx, |thread, cx| thread.running_subagent_ids(cx).is_empty())
+    {
+        assert!(cx.executor().tick(), "subagent registers with its parent");
+    }
+    assert!(
+        test.thread
+            .read_with(cx, |thread, _| thread.last_user_message_id().is_none())
+    );
+    test.parent.update(cx, |thread, cx| thread.cancel(cx)).await;
+    cx.run_until_parked();
+    assert!(
+        test.fake.pending_completions().is_empty(),
+        "cancelled child must not start a provider request"
+    );
+    assert_eq!(send.await.unwrap_err().to_string(), "User canceled");
+    test.assert_stopped(cx);
 }
 
 #[gpui::test]

@@ -2357,7 +2357,9 @@ impl Thread {
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
         for subagent in self.running_subagents.drain(..) {
             if let Some(subagent) = subagent.upgrade() {
-                subagent.update(cx, |thread, cx| thread.cancel(cx)).detach();
+                subagent
+                    .update(cx, |thread, cx| thread.request_cancel(cx))
+                    .detach();
             }
         }
 
@@ -2366,15 +2368,24 @@ impl Thread {
             return Task::ready(());
         };
 
+        let prompt_id = running_turn.prompt_id.clone();
         let turn_task = running_turn.cancel();
 
         cx.spawn(async move |this, cx| {
             turn_task.await;
             this.update(cx, |this, cx| {
-                this.flush_pending_message(cx);
+                if this.prompt_id == prompt_id {
+                    this.flush_pending_message(cx);
+                }
             })
             .ok();
         })
+    }
+
+    pub(crate) fn request_cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        // A native session can own work before there is a model turn to cancel.
+        cx.emit(CancellationRequested);
+        self.cancel(cx)
     }
 
     pub fn set_end_turn_at_next_boundary(&mut self, end_at_boundary: bool) {
@@ -2463,6 +2474,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.cancel(cx).detach();
+        self.advance_prompt_id();
         // Clear pending message since cancel will try to flush it asynchronously,
         // and we don't want that content to be added after we truncate
         self.pending_message.take();
@@ -2585,6 +2597,7 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        self.advance_prompt_id();
         self.messages.push(Arc::new(Message::Resume));
         cx.notify();
 
@@ -2711,6 +2724,7 @@ impl Thread {
         let event_stream = ThreadEventStream::new(events_tx);
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         let task = cx.spawn({
+            let prompt_id = self.prompt_id.clone();
             let event_stream = event_stream.clone();
             async move |this, cx| {
                 let result = if let Some((model, request)) = compaction {
@@ -2732,7 +2746,9 @@ impl Thread {
                 // (possibly for a new turn), so leave it alone.
                 if *cancellation_rx.borrow() {
                     this.update(cx, |this, _| {
-                        this.emit_compaction_telemetry_outcome("canceled", None)
+                        if this.prompt_id == prompt_id {
+                            this.emit_compaction_telemetry_outcome("canceled", None);
+                        }
                     })
                     .log_err();
                     return;
@@ -2760,6 +2776,7 @@ impl Thread {
             }
         });
         self.running_turn = Some(RunningTurn::new(
+            self.prompt_id.clone(),
             event_stream,
             BTreeMap::default(),
             cancellation_tx,
@@ -2767,6 +2784,13 @@ impl Thread {
         ));
 
         Ok(events_rx)
+    }
+
+    pub(crate) fn prepare_local_turn(&mut self, cx: &mut Context<Self>) {
+        // Freeze the old partial before inserting a successor's user message,
+        // and fence detached cleanup while its checkpoint or command is prepared.
+        self.flush_pending_message(cx);
+        self.advance_prompt_id();
     }
 
     pub fn push_acp_user_block(
@@ -2827,13 +2851,21 @@ impl Thread {
         let tools = self.enabled_tools(cx);
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         let task = cx.spawn({
+            let prompt_id = self.prompt_id.clone();
+            let user_message_id = self.last_user_message_id();
             let event_stream = event_stream.clone();
             async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result =
-                    Self::run_turn_internal(&this, &event_stream, cancellation_rx.clone(), cx)
-                        .await;
+                let turn_result = Self::run_turn_internal(
+                    &this,
+                    &event_stream,
+                    &prompt_id,
+                    user_message_id.as_ref(),
+                    cancellation_rx.clone(),
+                    cx,
+                )
+                .await;
 
                 // Check if we were cancelled - if so, cancel() already took running_turn
                 // and we shouldn't touch it (it might be a NEW turn now)
@@ -2870,13 +2902,21 @@ impl Thread {
                 _ = this.update(cx, |this, _| this.running_turn.take());
             }
         });
-        self.running_turn = Some(RunningTurn::new(event_stream, tools, cancellation_tx, task));
+        self.running_turn = Some(RunningTurn::new(
+            self.prompt_id.clone(),
+            event_stream,
+            tools,
+            cancellation_tx,
+            task,
+        ));
         Ok(events_rx)
     }
 
     async fn run_turn_internal(
         this: &WeakEntity<Self>,
         event_stream: &ThreadEventStream,
+        prompt_id: &PromptId,
+        user_message_id: Option<&ClientUserMessageId>,
         mut cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -2885,6 +2925,9 @@ impl Thread {
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
         let mut refusal_fallback_model: Option<LanguageModel> = None;
         loop {
+            if *cancellation_rx.borrow() {
+                return Ok(());
+            }
             match Self::perform_compaction_if_needed(
                 this,
                 event_stream,
@@ -2900,7 +2943,9 @@ impl Thread {
                 Ok(ControlFlow::Continue(())) => {}
                 Ok(ControlFlow::Break(())) => {
                     this.update(cx, |this, _| {
-                        this.emit_compaction_telemetry_outcome("canceled", None)
+                        if &this.prompt_id == prompt_id {
+                            this.emit_compaction_telemetry_outcome("canceled", None);
+                        }
                     })?;
                     return Ok(());
                 }
@@ -2922,7 +2967,11 @@ impl Thread {
                             {
                                 Ok(ControlFlow::Break(())) => {
                                     this.update(cx, |this, _| {
-                                        this.emit_compaction_telemetry_outcome("canceled", None)
+                                        if &this.prompt_id == prompt_id {
+                                            this.emit_compaction_telemetry_outcome(
+                                                "canceled", None,
+                                            );
+                                        }
                                     })?;
                                     return Ok(());
                                 }
@@ -2962,6 +3011,9 @@ impl Thread {
                 }
             }
 
+            if *cancellation_rx.borrow() {
+                return Ok(());
+            }
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
@@ -3007,7 +3059,14 @@ impl Thread {
             let mut had_refusal = false;
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
-                let first_event = futures::select! {
+                let first_event = futures::select_biased! {
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            cancelled = true;
+                            break;
+                        }
+                        continue;
+                    }
                     event = events.next().fuse() => event,
                     tool_result = futures::StreamExt::select_next_some(&mut tool_results) => {
                         let (owning_message_ix, tool_result) = tool_result;
@@ -3029,13 +3088,6 @@ impl Thread {
                         // are parallel tool calls) we want to continue
                         // processing those tool inputs.
                         if is_error && is_still_streaming {
-                            break;
-                        }
-                        continue;
-                    }
-                    _ = cancellation_rx.changed().fuse() => {
-                        if *cancellation_rx.borrow() {
-                            cancelled = true;
                             break;
                         }
                         continue;
@@ -3111,6 +3163,9 @@ impl Thread {
             // This prevents deadlock when the LLM stream ends (e.g. because of an error)
             // before sending a tool use with `is_input_complete: true`.
             this.update(cx, |this, _cx| {
+                if &this.prompt_id != prompt_id {
+                    return;
+                }
                 if let Some(running_turn) = this.running_turn.as_mut() {
                     if running_turn.streaming_tool_inputs.is_empty() {
                         return;
@@ -3178,20 +3233,38 @@ impl Thread {
             let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
 
             for (owning_message_ix, tool_result) in early_tool_results {
-                Self::process_tool_result(this, event_stream, cx, owning_message_ix, tool_result)?;
+                Self::process_tool_result(
+                    this,
+                    event_stream,
+                    prompt_id,
+                    user_message_id,
+                    cx,
+                    owning_message_ix,
+                    tool_result,
+                )?;
             }
             while let Some((owning_message_ix, tool_result)) = tool_results.next().await {
-                Self::process_tool_result(this, event_stream, cx, owning_message_ix, tool_result)?;
+                Self::process_tool_result(
+                    this,
+                    event_stream,
+                    prompt_id,
+                    user_message_id,
+                    cx,
+                    owning_message_ix,
+                    tool_result,
+                )?;
             }
 
             this.update(cx, |this, cx| {
-                this.flush_pending_message(cx);
-                if this.title.is_none() {
-                    this.generate_title(cx);
+                if &this.prompt_id == prompt_id {
+                    this.flush_pending_message(cx);
+                    if this.title.is_none() {
+                        this.generate_title(cx);
+                    }
                 }
             })?;
 
-            if cancelled {
+            if cancelled || *cancellation_rx.borrow() {
                 log::debug!("Turn cancelled by user, exiting");
                 return Ok(());
             }
@@ -3210,6 +3283,9 @@ impl Thread {
                 {
                     ControlFlow::Break(_) => return Ok(()),
                     ControlFlow::Continue(_) => {}
+                }
+                if *cancellation_rx.borrow() {
+                    return Ok(());
                 }
                 this.update(cx, |this, _cx| {
                     if let Some(Message::Agent(message)) = this.last_message() {
@@ -3321,8 +3397,7 @@ impl Thread {
         let result: Result<ControlFlow<()>> = async {
             let provider =
                 cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&model))?;
-            let stream = futures::select! {
-                result = provider.stream_completion(&model, request, cx).fuse() => result,
+            let stream = futures::select_biased! {
                 _ = cancellation_rx.changed().fuse() => {
                     if *cancellation_rx.borrow() {
                         log::debug!("Compaction cancelled before request started");
@@ -3330,13 +3405,13 @@ impl Thread {
                     }
                     return Ok(ControlFlow::Continue(()));
                 }
+                result = provider.stream_completion(&model, request, cx).fuse() => result,
             };
             let mut stream = stream?;
 
             let mut summary = String::new();
             loop {
-                let event = futures::select! {
-                    event = stream.next().fuse() => event,
+                let event = futures::select_biased! {
                     _ = cancellation_rx.changed().fuse() => {
                         if *cancellation_rx.borrow() {
                             log::debug!("Compaction cancelled while summarizing");
@@ -3344,8 +3419,12 @@ impl Thread {
                         }
                         continue;
                     }
+                    event = stream.next().fuse() => event,
                 };
 
+                if *cancellation_rx.borrow() {
+                    return Ok(ControlFlow::Break(()));
+                }
                 let Some(event) = event else {
                     break;
                 };
@@ -3425,6 +3504,8 @@ impl Thread {
     fn process_tool_result(
         this: &WeakEntity<Thread>,
         event_stream: &ThreadEventStream,
+        prompt_id: &PromptId,
+        user_message_id: Option<&ClientUserMessageId>,
         cx: &mut AsyncApp,
         owning_message_ix: usize,
         tool_result: LanguageModelToolResult,
@@ -3446,10 +3527,47 @@ impl Thread {
                 }
             },
         );
-        this.update(cx, |this, _cx| {
-            this.pending_message()
+        this.update(cx, |this, cx| {
+            // A cancelled turn can finish its tools after a successor has started.
+            if &this.prompt_id == prompt_id {
+                this.pending_message()
+                    .tool_results
+                    .insert(tool_result.tool_use_id.clone(), tool_result);
+                return;
+            }
+            let Some(user_message_id) = user_message_id else {
+                return;
+            };
+            let owning_user_message = this.messages.iter().take(owning_message_ix).rev().find_map(
+                |message| match message.as_ref() {
+                    Message::User(user) => Some(&user.id),
+                    _ => None,
+                },
+            );
+            if owning_user_message != Some(user_message_id) {
+                return;
+            }
+            let Some(message) = this.messages.get_mut(owning_message_ix) else {
+                return;
+            };
+            let Some(agent_message) = message.as_agent_message() else {
+                return;
+            };
+            if !agent_message.content.iter().any(|content| {
+                matches!(content, AgentMessageContent::ToolUse(tool_use)
+                    if tool_use.id == tool_result.tool_use_id)
+            }) {
+                return;
+            }
+            // Keep late terminal output on its frozen owner, never on a reused
+            // message index after rewind or on the successor's pending message.
+            let mut agent_message = agent_message.clone();
+            agent_message
                 .tool_results
-                .insert(tool_result.tool_use_id.clone(), tool_result)
+                .insert(tool_result.tool_use_id.clone(), tool_result);
+            *message = Arc::new(Message::Agent(agent_message));
+            this.clear_summary();
+            cx.notify();
         })?;
         Ok(())
     }
@@ -4963,6 +5081,7 @@ enum CompactionInsertion {
 }
 
 struct RunningTurn {
+    prompt_id: PromptId,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
@@ -4983,12 +5102,14 @@ struct RunningTurn {
 
 impl RunningTurn {
     fn new(
+        prompt_id: PromptId,
         event_stream: ThreadEventStream,
         tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
         cancellation_tx: watch::Sender<bool>,
         task: Task<()>,
     ) -> Self {
         Self {
+            prompt_id,
             _task: task,
             event_stream,
             tools,
@@ -5136,6 +5257,10 @@ pub async fn stream_thread_title(
 pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);
 
 impl EventEmitter<TokenUsageUpdated> for Thread {}
+
+pub(crate) struct CancellationRequested;
+
+impl EventEmitter<CancellationRequested> for Thread {}
 
 pub struct TitleUpdated;
 
