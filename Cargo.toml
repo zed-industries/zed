@@ -861,6 +861,7 @@ slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union", "const_new"] }
 spin = { version = "0.10", default-features = false, features = ["mutex", "spin_mutex", "lock_api"] }
 smol = "2.0"
+smolmachines = "1.27.0"
 sqlformat = "0.2"
 sqlx = { version = "0.8", default-features = false }
 stacksafe = "1.0"

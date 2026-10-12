@@ -56,6 +56,11 @@ serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
+# The `microvm` backend: one persistent smol machine per project, driven
+# in-process through the SDK (which locates or fetches the engine itself).
+# `sha2` derives the per-project machine name.
+sha2.workspace = true
+smolmachines.workspace = true
 # Safe wrappers for the SCM_RIGHTS fd-passing and `fstat` the bind validator
 # needs, so that code doesn't hand-roll `msghdr`/`CMSG_*`/`mem::zeroed` unsafe.
 nix = { workspace = true, features = ["fs", "socket", "uio"] }

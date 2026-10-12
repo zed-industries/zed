@@ -19,6 +19,8 @@ use http_proxy::{Allowlist, HostPattern, ProxyConfig, ProxyEvent, UpstreamProxy}
 
 #[cfg(target_os = "linux")]
 mod linux_bubblewrap;
+#[cfg(target_os = "linux")]
+mod microvm;
 
 #[cfg(target_os = "macos")]
 mod macos_seatbelt;
@@ -395,11 +397,26 @@ pub struct WrappedCommand {
     pub cwd: Option<PathBuf>,
 }
 
+/// Which implementation enforces a [`SandboxPolicy`].
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum SandboxBackend {
+    /// The platform sandbox: Seatbelt on macOS, Bubblewrap on Linux and WSL.
+    #[default]
+    Os,
+    /// A persistent per-project smol machine (microVM) with the writable
+    /// paths mounted at their host paths and the network policy applied to
+    /// the whole guest. Currently Linux only.
+    Microvm,
+}
+
 /// Errors returned by the sandbox abstraction.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SandboxError {
     /// No sandbox implementation is available for this platform.
     UnsupportedPlatform,
+    /// The microVM backend cannot run here (no engine, no hypervisor, or the
+    /// machine could not be prepared).
+    MicrovmUnavailable(String),
     /// No usable Bubblewrap executable was found.
     BwrapNotFound,
     /// The only Bubblewrap executable found is setuid-root, which is refused.
@@ -425,6 +442,9 @@ impl fmt::Display for SandboxError {
         match self {
             SandboxError::UnsupportedPlatform => {
                 write!(formatter, "sandboxing is not supported on this platform")
+            }
+            SandboxError::MicrovmUnavailable(message) => {
+                write!(formatter, "the microVM sandbox is unavailable: {message}")
             }
             SandboxError::BwrapNotFound => {
                 write!(formatter, "no usable `bwrap` binary was found on PATH")
@@ -483,6 +503,7 @@ enum NetSetup {
 /// Keep it alive for as long as commands wrapped by it are running; dropping it
 /// tears down the proxy.
 pub struct Sandbox {
+    backend: SandboxBackend,
     fs: FsSetup,
     network: NetSetup,
     /// In-process network proxy for the restricted-network case, spawned on the
@@ -517,6 +538,14 @@ impl Sandbox {
     /// upstream proxy named in the command's environment), and `bwrap`
     /// availability is checked separately via [`Sandbox::can_create`].
     pub fn new(policy: SandboxPolicy) -> Result<Self, SandboxError> {
+        Self::with_backend(policy, SandboxBackend::Os)
+    }
+
+    /// Create a sandbox for `policy` enforced by `backend`.
+    pub fn with_backend(
+        policy: SandboxPolicy,
+        backend: SandboxBackend,
+    ) -> Result<Self, SandboxError> {
         let fs = match policy.fs {
             SandboxFsPolicy::Unrestricted { protected_paths } => FsSetup {
                 allow_fs_write: true,
@@ -548,6 +577,7 @@ impl Sandbox {
         };
 
         Ok(Self {
+            backend,
             fs,
             network,
             proxy: None,
@@ -583,6 +613,27 @@ impl Sandbox {
     /// former Landlock probe, bwrap needs no ABI-matching against the real
     /// ruleset, so there's no reason to mirror the real command's mounts.)
     pub fn can_create(policy: &SandboxPolicy) -> Result<(), SandboxError> {
+        Self::can_create_with(policy, SandboxBackend::Os)
+    }
+
+    /// [`Sandbox::can_create`] for a specific backend. The microVM backend
+    /// checks for an engine and a usable hypervisor without booting anything.
+    pub fn can_create_with(
+        policy: &SandboxPolicy,
+        backend: SandboxBackend,
+    ) -> Result<(), SandboxError> {
+        if backend == SandboxBackend::Microvm {
+            #[cfg(target_os = "linux")]
+            {
+                let _ = policy;
+                return microvm::availability();
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = policy;
+                return Err(SandboxError::UnsupportedPlatform);
+            }
+        }
         #[cfg(target_os = "linux")]
         {
             let permissions = linux_bubblewrap::SandboxPermissions {
@@ -609,6 +660,16 @@ impl Sandbox {
     /// The returned [`WrappedCommand`] is plain data; keep `self` alive while it
     /// runs (it owns the proxy and any per-command policy file).
     pub async fn wrap(&mut self, command: &CommandAndArgs) -> Result<WrappedCommand, SandboxError> {
+        if self.backend == SandboxBackend::Microvm {
+            #[cfg(target_os = "linux")]
+            {
+                return microvm::wrap(&self.fs, &self.network, command);
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                return Err(SandboxError::UnsupportedPlatform);
+            }
+        }
         #[cfg(target_os = "linux")]
         {
             self.wrap_linux(command)

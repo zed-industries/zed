@@ -68,6 +68,9 @@ pub struct SandboxWrap {
     /// the release can't be determined, in which case the WSL backend falls back
     /// to running bwrap without in-sandbox bind validation.
     pub wsl_zed_release: Option<(String, String)>,
+    /// Which sandbox implementation runs the command: the platform sandbox or
+    /// a per-project microVM. Chosen by the `agent.sandbox_backend` setting.
+    pub backend: settings::SandboxBackendContent,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -81,6 +84,14 @@ pub enum SandboxNetworkAccess {
     Restricted(Allowlist),
     /// Allow unrestricted outbound network access.
     All,
+}
+
+/// The settings-level backend choice as the sandbox crate's own type.
+pub fn sandbox_backend(content: settings::SandboxBackendContent) -> sandbox::SandboxBackend {
+    match content {
+        settings::SandboxBackendContent::Os => sandbox::SandboxBackend::Os,
+        settings::SandboxBackendContent::Microvm => sandbox::SandboxBackend::Microvm,
+    }
 }
 
 /// A structured, serializable reason the OS sandbox could not be created for a
@@ -220,7 +231,8 @@ impl SandboxWrap {
         let policy = self
             .to_policy()
             .map_err(|error| LinuxWslSandboxError::Other(format!("{error:#}")))?;
-        sandbox::Sandbox::can_create(&policy).map_err(LinuxWslSandboxError::from)
+        sandbox::Sandbox::can_create_with(&policy, sandbox_backend(self.backend))
+            .map_err(LinuxWslSandboxError::from)
     }
 
     /// Translate this request into the cross-platform [`sandbox::SandboxPolicy`].
@@ -376,8 +388,11 @@ pub(crate) async fn prepare_sandbox_wrap(
         return Ok((program, args, env, None));
     };
 
-    let mut sandbox =
-        sandbox::Sandbox::new(sandbox_wrap.to_policy()?).map_err(anyhow::Error::new)?;
+    let mut sandbox = sandbox::Sandbox::with_backend(
+        sandbox_wrap.to_policy()?,
+        sandbox_backend(sandbox_wrap.backend),
+    )
+    .map_err(anyhow::Error::new)?;
     // Windows/WSL only: tell the sandbox which Linux `zed` to provision inside
     // WSL as its `--wsl-sandbox-helper`. A no-op (and a no-op setter) elsewhere.
     #[cfg(target_os = "windows")]

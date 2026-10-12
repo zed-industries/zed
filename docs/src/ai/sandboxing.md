@@ -183,6 +183,44 @@ Git metadata writes are not grantable while a terminal command is sandboxed. Thi
 linked worktree metadata, refs, the index, hooks, local Git config, and other Git-controlled metadata files. Approving a
 specific writable path or `allow_fs_write_all` does not make Git metadata writable.
 
+## MicroVM Backend {#microvm-backend}
+
+> **Experimental.** Linux only, and the setting is off unless you turn it on.
+
+By default the sandbox is the operating system's: Seatbelt on macOS, Bubblewrap on Linux and WSL. Set
+`agent.sandbox_backend` to `"microvm"` to run every sandboxed terminal command inside a persistent
+[smol machine](https://smolmachines.com) instead: a Linux microVM with its own kernel, one per project.
+
+```json [settings]
+{
+  "agent": {
+    "sandbox_backend": "microvm"
+  }
+}
+```
+
+The same grants apply, enforced by the machine rather than by the host kernel:
+
+- Open project directories are mounted read-write at the same absolute paths, so `cwd` and the paths in tool output
+  are identical inside and outside the machine. Protected Git metadata is mounted read-only on top.
+- Everything else is the machine's own disk. Installing tools (`pip`, `npm`, `apt`, `cargo install`) needs no write
+  grant and leaves the host untouched.
+- Network access is applied to the whole machine: no network device until you approve network access, a per-host
+  allow-list that the engine enforces for every connection (not only HTTP through a proxy), or unrestricted egress.
+- Commands run under the guest's `/bin/sh -lc` in a terminal session the guest owns, so interactive-shell job
+  control behaves normally.
+
+Requirements: a usable `/dev/kvm`, and the `smolvm` engine. Zed uses an installed engine when its version matches,
+or downloads the matching release into your cache the first time a machine is needed. The first command for a project
+pulls the machine image (`debian:bookworm-slim` unless `ZED_SANDBOX_MICROVM_IMAGE` is set) and boots once with
+network to do so, before any command runs; later commands reuse the warm machine. Machines are named
+`zed-sandbox-<hash>`, labelled `zed.sandbox=1`, started as branch sources, and can be inspected or removed with
+`smolvm machine ls` / `smolvm machine delete`.
+
+Current limitations: Linux hosts only; `allow_fs_write_all` mounts the command's working directory rather than the
+whole host filesystem; approving a new write path or changing the network grant restarts the warm machine; the
+sandbox browser and `fetch` tool are unaffected.
+
 ## Platform Support {#platform-support}
 
 Sandboxing uses different operating system mechanisms on each platform. The user-facing prompts are similar, but the

@@ -735,10 +735,11 @@ async fn run_terminal_tool(
                         .to_string(),
                 );
             }
-            let (writable_paths, protected_paths) = cx.update(|cx| {
+            let (writable_paths, protected_paths, backend) = cx.update(|cx| {
                 (
                     sandbox_worktree_writable_paths(project.read(cx), cx),
                     sandbox_git_dirs(project.read(cx), cx),
+                    agent_settings::AgentSettings::get_global(cx).sandbox_backend,
                 )
             });
             let wrap = acp_thread::SandboxWrap {
@@ -749,6 +750,7 @@ async fn run_terminal_tool(
                 allow_fs_write: effective.allow_fs_write_all,
                 is_local: is_local_project,
                 wsl_zed_release: wsl_zed_release.clone(),
+                backend,
             };
 
             // The viability check runs a brief probe subprocess, so do it off

@@ -8362,6 +8362,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
@@ -15191,6 +15192,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
@@ -15725,7 +15727,9 @@ dependencies = [
  "seccompiler",
  "serde",
  "serde_json",
+ "sha2",
  "smol",
+ "smolmachines",
  "tempfile",
  "windows-registry 0.6.1",
 ]
@@ -16819,12 +16823,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "smol-cloud"
+version = "1.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "198e21ac349bc53fc2fa28e13df5afa16465a8e6e08885168096efdd493a3d84"
+dependencies = [
+ "base64 0.22.1",
+ "reqwest 0.12.24",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "smol_str"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "smolmachines"
+version = "1.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71bbd76db99a5f78bd867d6a9ec1075ac1a934b87042c6c43fca830b565d6366"
+dependencies = [
+ "flate2",
+ "futures-util",
+ "reqwest 0.12.24",
+ "rustls",
+ "serde_json",
+ "sha2",
+ "smol-cloud",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
@@ -17821,6 +17858,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "target-lexicon"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18487,6 +18535,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tungstenite 0.28.0",
+ "webpki-roots 0.26.8",
 ]
 
 [[package]]
@@ -18817,7 +18866,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fb391ac70462b3097a755618fbf9c8f95ecc1eb379a414f7b46f202ed10db1f"
 dependencies = [
  "cc",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]

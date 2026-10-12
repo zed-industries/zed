@@ -408,6 +408,41 @@ pub struct AgentSettingsContent {
     /// These are populated when choosing "Allow always" from a sandbox
     /// escalation prompt.
     pub sandbox_permissions: Option<SandboxPermissionsContent>,
+
+    /// Which sandbox wraps agent-run terminal commands.
+    ///
+    /// `os` (the default) uses the platform sandbox: Seatbelt on macOS,
+    /// Bubblewrap on Linux and inside WSL. `microvm` runs every command in a
+    /// persistent per-project smol machine, a Linux microVM with its own
+    /// kernel, with the project mounted at the same path and the same network
+    /// and write grants applied. Requires a hypervisor (`/dev/kvm` on Linux);
+    /// currently Linux only.
+    /// Default: os
+    pub sandbox_backend: Option<SandboxBackendContent>,
+}
+
+/// The implementation behind agent terminal sandboxing.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxBackendContent {
+    /// The platform sandbox: Seatbelt (macOS), Bubblewrap (Linux, WSL).
+    #[default]
+    Os,
+    /// A persistent per-project smol machine (microVM) per sandbox scope.
+    Microvm,
 }
 
 impl AgentSettingsContent {

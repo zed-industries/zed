@@ -250,7 +250,12 @@ pub struct AgentSettings {
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
     pub sandbox_permissions: SandboxPermissions,
+    pub sandbox_backend: SandboxBackend,
 }
+
+/// Which sandbox implementation wraps agent terminal commands; see
+/// [`settings::SandboxBackendContent`].
+pub type SandboxBackend = settings::SandboxBackendContent;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ThreadsSidebarSettings {
@@ -846,6 +851,7 @@ impl Settings for AgentSettings {
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
             sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
+            sandbox_backend: agent.sandbox_backend.unwrap_or_default(),
         }
     }
 }
