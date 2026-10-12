@@ -163,8 +163,9 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_CONNECTION_TIMEOUT: Duration =
     Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
-const RECONNECT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
-const RESYNC_TIMEOUT: Duration = Duration::from_secs(15);
+const RECONNECT_HANDSHAKE_TIMEOUT: Duration =
+    Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 15 });
+const RESYNC_TIMEOUT: Duration = Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 15 });
 
 pub const MAX_RECONNECT_ATTEMPTS: usize = 3;
 
@@ -717,16 +718,8 @@ impl RemoteClient {
             };
 
             let multiplex_task = Self::monitor(this.clone(), io_task, cx);
-            let (connection_ready_tx, connection_ready_rx) = oneshot::channel();
-            client.reconnect(
-                outgoing_tx,
-                ChannelClient::start_reconnecting_messages(
-                    Arc::downgrade(&client),
-                    incoming_rx,
-                    connection_ready_tx,
-                    cx,
-                ),
-            );
+            let connection_ready_rx = client.reconnect(incoming_rx, outgoing_tx, cx);
+            let resync = client.resync(RESYNC_TIMEOUT);
 
             if let Err(error) = async {
                 connection_ready_rx
@@ -735,7 +728,7 @@ impl RemoteClient {
                     .context("Timed out waiting for remote connection")?
                     .context("Remote connection closed before becoming ready")?;
 
-                client.resync(RESYNC_TIMEOUT).await
+                resync.await
             }
             .await
             {
@@ -1595,7 +1588,7 @@ impl ChannelClient {
         Ok(handshake_id)
     }
 
-    pub(crate) fn start_handling_messages(
+    fn start_handling_messages(
         this: Weak<Self>,
         incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         cx: &AsyncApp,
@@ -1606,39 +1599,6 @@ impl ChannelClient {
             } else {
                 return anyhow::Ok(());
             };
-
-            Self::read_messages(this, incoming_rx, handshake_id, cx).await
-        })
-    }
-
-    fn start_reconnecting_messages(
-        this: Weak<Self>,
-        mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
-        connection_ready_tx: oneshot::Sender<()>,
-        cx: &AsyncApp,
-    ) -> Task<Result<()>> {
-        cx.spawn(async move |cx| {
-            let handshake_id = if let Some(this) = this.upgrade() {
-                this.send_handshake()?
-            } else {
-                return anyhow::Ok(());
-            };
-
-            loop {
-                let Some(incoming) = incoming_rx.next().await else {
-                    return anyhow::Ok(());
-                };
-                let Some(this) = this.upgrade() else {
-                    return anyhow::Ok(());
-                };
-                if incoming.responding_to == Some(handshake_id)
-                    && matches!(incoming.payload, Some(proto::envelope::Payload::Ack(_)))
-                {
-                    connection_ready_tx.send(()).ok();
-                    break;
-                }
-                Self::handle_message(this, incoming, cx).await;
-            }
 
             Self::read_messages(this, incoming_rx, handshake_id, cx).await
         })
@@ -1796,11 +1756,40 @@ impl ChannelClient {
 
     pub(crate) fn reconnect(
         self: &Arc<Self>,
+        mut incoming_rx: UnboundedReceiver<Envelope>,
         outgoing_tx: UnboundedSender<Envelope>,
-        task: Task<Result<()>>,
-    ) {
+        cx: &AsyncApp,
+    ) -> oneshot::Receiver<()> {
         *self.outgoing_tx.lock() = outgoing_tx;
-        *self.task.lock() = task;
+        let handshake_id = self.send_handshake();
+        let (connection_ready_tx, connection_ready_rx) = oneshot::channel();
+
+        *self.task.lock() = cx.spawn({
+            let this = Arc::downgrade(self);
+            async move |cx| {
+                let handshake_id = handshake_id?;
+
+                loop {
+                    let Some(incoming) = incoming_rx.next().await else {
+                        return anyhow::Ok(());
+                    };
+                    let Some(this) = this.upgrade() else {
+                        return anyhow::Ok(());
+                    };
+                    if incoming.responding_to == Some(handshake_id)
+                        && matches!(incoming.payload, Some(proto::envelope::Payload::Ack(_)))
+                    {
+                        connection_ready_tx.send(()).ok();
+                        break;
+                    }
+                    Self::handle_message(this, incoming, cx).await;
+                }
+
+                Self::read_messages(this, incoming_rx, handshake_id, cx).await
+            }
+        });
+
+        connection_ready_rx
     }
 
     fn request<T: RequestMessage>(
@@ -1825,26 +1814,26 @@ impl ChannelClient {
         }
     }
 
-    async fn resync(&self, timeout: Duration) -> Result<()> {
-        smol::future::or(
-            async {
-                self.request_internal(proto::FlushBufferedMessages {}, false)
-                    .await?;
+    fn resync(&self, timeout: Duration) -> impl Future<Output = Result<()>> {
+        // Queue the flush before waiting for the handshake, or its ack_id could
+        // cause the server to discard messages we missed while disconnected.
+        let response = self.request_internal(proto::FlushBufferedMessages {}, false);
 
-                for envelope in self.buffer.lock().iter() {
-                    self.outgoing_tx
-                        .lock()
-                        .unbounded_send(envelope.clone())
-                        .ok();
-                }
-                Ok(())
-            },
-            async {
-                self.executor.timer(timeout).await;
-                anyhow::bail!("Timed out resyncing remote client")
-            },
-        )
-        .await
+        async move {
+            response
+                .with_timeout(timeout, &self.executor)
+                .await
+                .context("Timed out resyncing remote client")??;
+
+            for envelope in self.buffer.lock().iter() {
+                self.outgoing_tx
+                    .lock()
+                    .unbounded_send(envelope.clone())
+                    .ok();
+            }
+
+            Ok(())
+        }
     }
 
     async fn ping(&self, timeout: Duration) -> Result<()> {
@@ -2066,7 +2055,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn resync_timeout_starts_after_the_handshake(
+    async fn test_resync_timeout_starts_after_the_handshake(
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
     ) {
@@ -2136,10 +2125,17 @@ mod tests {
         ));
         assert_ne!(reconnect_handshake.id, initial_handshake.id);
 
-        // Each phase takes less than 15s, but 12s + 6s exceeds a shared 15s timeout.
-        cx.background_executor.timer(Duration::from_secs(12)).await;
+        let flush_request = outgoing_rx.next().await.unwrap();
+        assert!(matches!(
+            flush_request.payload,
+            Some(proto::envelope::Payload::FlushBufferedMessages(_))
+        ));
+        assert_eq!(flush_request.ack_id, Some(last_response_id));
 
-        // The server greeting alone must not start resync; the server must ACK our reconnect handshake.
+        incoming_tx
+            .unbounded_send(proto::Ack {}.into_envelope(98, Some(ping.id), None))
+            .unwrap();
+
         let server_greeting_id = 99;
         incoming_tx
             .unbounded_send(proto::RemoteStarted {}.into_envelope(server_greeting_id, None, None))
@@ -2152,21 +2148,25 @@ mod tests {
         ));
         assert!(outgoing_rx.next().now_or_never().is_none());
 
+        cx.background_executor
+            .timer(RECONNECT_HANDSHAKE_TIMEOUT - Duration::from_secs(1))
+            .await;
+
         incoming_tx
             .unbounded_send(proto::Ack {}.into_envelope(100, Some(reconnect_handshake.id), None))
             .unwrap();
-        let flush_request = outgoing_rx.next().await.unwrap();
-        assert!(matches!(
-            flush_request.payload,
-            Some(proto::envelope::Payload::FlushBufferedMessages(_))
-        ));
-        assert_eq!(flush_request.ack_id, Some(last_response_id));
 
-        cx.background_executor.timer(Duration::from_secs(6)).await;
+        cx.background_executor.timer(RESYNC_TIMEOUT / 2).await;
         assert_eq!(
             remote.read_with(cx, |remote, _| remote.connection_state()),
             ConnectionState::Reconnecting
         );
+
+        remote.update(cx, |remote, _| {
+            remote.client.send(proto::Test { id: 3 }).unwrap();
+        });
+        let message_during_resync = outgoing_rx.next().await.unwrap();
+        assert_eq!(message_during_resync.ack_id, Some(98));
 
         incoming_tx
             .unbounded_send(proto::Ack {}.into_envelope(101, Some(flush_request.id), None))
@@ -2180,6 +2180,7 @@ mod tests {
         for expected in unacknowledged_messages {
             assert_eq!(outgoing_rx.next().await.unwrap(), expected);
         }
+        assert_eq!(outgoing_rx.next().await.unwrap(), message_during_resync);
         assert!(outgoing_rx.next().now_or_never().is_none());
     }
 

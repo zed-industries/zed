@@ -260,13 +260,9 @@ impl RemoteConnection for MockRemoteConnection {
     fn simulate_disconnect(&self, cx: &AsyncApp) {
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-        self.server_channel.reconnect(
-            outgoing_tx,
-            ChannelClient::start_handling_messages(
-                Arc::downgrade(&self.server_channel),
-                incoming_rx,
-                &self.server_cx.get(cx),
-            ),
+        drop(
+            self.server_channel
+                .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(cx)),
         );
     }
 
@@ -293,14 +289,11 @@ impl RemoteConnection for MockRemoteConnection {
         let (mut server_incoming_tx, server_incoming_rx) = mpsc::unbounded::<Envelope>();
         let (server_outgoing_tx, mut server_outgoing_rx) = mpsc::unbounded::<Envelope>();
 
-        self.server_channel.reconnect(
+        drop(self.server_channel.reconnect(
+            server_incoming_rx,
             server_outgoing_tx,
-            ChannelClient::start_handling_messages(
-                Arc::downgrade(&self.server_channel),
-                server_incoming_rx,
-                &self.server_cx.get(cx),
-            ),
-        );
+            &self.server_cx.get(cx),
+        ));
 
         cx.background_spawn(async move {
             loop {
