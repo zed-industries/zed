@@ -13427,7 +13427,7 @@ pub(crate) fn open_link(
                             ));
                             break;
                         }
-                        let paths = if path_style.is_absolute(&path.to_string_lossy())
+                        let paths = if path_style.has_root(&path)
                             || path.starts_with("~")
                         {
                             vec![path]
@@ -13625,7 +13625,7 @@ fn file_link_parts(input: &str, path_style: PathStyle) -> Option<(&str, Option<&
     let (path, fragment) = input
         .split_once('#')
         .map_or((input, None), |(path, fragment)| (path, Some(fragment)));
-    if !path_style.is_absolute(path)
+    if !path_style.has_root(Path::new(path))
         && let Ok(url) = Url::parse(input)
         && (!url.scheme().contains('.')
             || url.path().trim_matches(':').is_empty()
@@ -13644,7 +13644,7 @@ fn file_link_candidates(
     fragment_point: Option<Point>,
     path_style: PathStyle,
 ) -> Vec<(PathBuf, Option<Point>)> {
-    if path_style.is_windows() && path_style.is_absolute(path) {
+    if path_style.is_windows() && path_style.has_root(Path::new(path)) {
         return [
             MentionUri::parse_hyperlink(path, path_style).ok(),
             MentionUri::parse_hyperlink_literal(path, path_style),
