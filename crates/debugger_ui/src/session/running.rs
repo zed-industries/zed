@@ -252,7 +252,7 @@ impl SubView {
         this.update(cx, |this, _| {
             this.with_actions(Box::new(move |_, cx| {
                 weak_list
-                    .update(cx, |this, _| this.render_control_strip())
+                    .update(cx, |this, cx| this.render_control_strip(cx))
                     .unwrap_or_else(|_| div().into_any_element())
             }));
         });
