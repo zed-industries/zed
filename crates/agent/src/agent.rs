@@ -31,7 +31,8 @@ pub use tools::*;
 
 use acp_thread::{
     AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
-    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
+    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, ProcessOutput,
+    TokenUsageRatio,
 };
 use agent_client_protocol::schema::v1 as acp_v1;
 use agent_client_protocol::schema::v2 as acp_v2;
@@ -3700,12 +3701,12 @@ impl TerminalHandle for AcpTerminalHandle {
         Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
     }
 
-    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp_v1::TerminalExitStatus>>> {
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp_v2::TerminalExitStatus>>> {
         self.terminal
             .read_with(cx, |term, _cx| term.wait_for_exit())
     }
 
-    fn current_output(&self, cx: &AsyncApp) -> Result<acp_v1::TerminalOutputResponse> {
+    fn current_output(&self, cx: &AsyncApp) -> Result<ProcessOutput> {
         Ok(self
             .terminal
             .read_with(cx, |term, cx| term.current_output(cx)))
