@@ -8,6 +8,7 @@ use unicode_segmentation::UnicodeSegmentation;
 pub(crate) struct Candidate {
     pub(crate) source: Range<usize>,
     pub(crate) font_id: FontId,
+    pub(crate) is_emoji: bool,
     pub(crate) color: bool,
     pub(crate) glyphs: Option<GlyphSpan>,
 }
@@ -52,6 +53,7 @@ pub(crate) fn collect_candidates(
         candidates.push(Candidate {
             source: start..end,
             font_id: run.font_id,
+            is_emoji: fallback.is_emoji,
             color: fallback.emoji_presentation,
             glyphs: None,
         });

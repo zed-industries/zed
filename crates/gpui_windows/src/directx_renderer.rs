@@ -417,7 +417,7 @@ impl DirectXRenderer {
     ) -> Result<image::RgbaImage> {
         // A pending device-lost recovery (`skip_draws`) leaves the atlas holding
         // tile references from the previous device; drawing before the forced
-        // re-render rebuilds them panics in `DirectXAtlasState::texture`.
+        // re-render rebuilds them panics in `DirectXAtlasTextures::texture`.
         anyhow::ensure!(
             !self.skip_draws,
             "render_to_image unavailable while recovering from a lost device"
@@ -745,7 +745,9 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let Some(texture_view) = self.atlas.get_texture_view(texture_id) else {
+            return Ok(());
+        };
         self.pipelines.mono_sprites.draw_range_with_texture(
             &devices.device_context,
             &texture_view,
@@ -769,7 +771,9 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let Some(texture_view) = self.atlas.get_texture_view(texture_id) else {
+            return Ok(());
+        };
         self.pipelines.subpixel_sprites.draw_range_with_texture(
             &devices.device_context,
             &texture_view,
@@ -793,7 +797,9 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let Some(texture_view) = self.atlas.get_texture_view(texture_id) else {
+            return Ok(());
+        };
         self.pipelines.poly_sprites.draw_range_with_texture(
             &devices.device_context,
             &texture_view,

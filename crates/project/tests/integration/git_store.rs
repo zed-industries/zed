@@ -99,6 +99,44 @@ mod conflict_set_tests {
     }
 
     #[test]
+    fn test_parse_conflicts_with_empty_sides() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            =======
+            their version
+            >>>>>>> branch
+            <<<<<<< HEAD
+            our version
+            =======
+            >>>>>>> branch
+        "#
+        .unindent();
+
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), test_content);
+        let conflict_snapshot = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(conflict_snapshot.conflicts.len(), 2);
+
+        for conflict in conflict_snapshot.conflicts.iter() {
+            for side in [&conflict.ours, &conflict.theirs] {
+                assert!(side.start.cmp(&side.end, &buffer).is_le(), "{side:?}");
+            }
+        }
+        assert_eq!(
+            conflict_snapshot.conflicts[0].ours.to_point(&buffer),
+            Point::new(1, 0)..Point::new(1, 0)
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[1].theirs.to_point(&buffer),
+            Point::new(7, 0)..Point::new(7, 0)
+        );
+
+        // Text typed into an empty side becomes part of that side.
+        let ours = conflict_snapshot.conflicts[0].ours.clone();
+        buffer.edit([(Point::new(1, 0)..Point::new(1, 0), "resolution\n")]);
+        assert_eq!(ours.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
+    }
+
+    #[test]
     fn test_nested_conflict_markers() {
         // Create a buffer with nested conflict markers
         let test_content = r#"
@@ -1252,14 +1290,26 @@ mod git_worktrees {
 
     #[test]
     fn test_worktree_directory_uses_remote_path_style() {
-        let work_dir = Path::new("/home/user/dev/lsp-tests");
-
-        let directory =
-            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
+        // Unix remote
+        let anchor = Path::new("/home/user/dev/lsp-tests");
 
         assert_eq!(
-            directory,
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Unix).unwrap(),
             PathBuf::from("/home/user/dev/worktrees/lsp-tests")
+        );
+
+        // Windows remote: the anchor intentionally mixes `/` and `\` separators.
+        let anchor = Path::new(r"C:\Users/user/dev\lsp-tests");
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Windows).unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\worktrees\lsp-tests")
+        );
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, ".git\\zed-worktrees", PathStyle::Windows)
+                .unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\lsp-tests\.git\zed-worktrees")
         );
     }
 
@@ -1922,20 +1972,40 @@ mod resolve_worktree_tests {
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/olivetti/zed",
+                PathStyle::Unix,
                 Some("olivetti".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            (
+                "/home/bob/zed",
+                "/home/bob/zed2",
+                PathStyle::Unix,
+                Some("zed2".into()),
+            ),
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/zed/selectric",
+                PathStyle::Unix,
                 Some("selectric".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed", None),
+            ("/home/bob/zed", "/home/bob/zed", PathStyle::Unix, None),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\worktrees\zed\olivetti\zed",
+                PathStyle::Windows,
+                Some("olivetti".into()),
+            ),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\zed2",
+                PathStyle::Windows,
+                Some("zed2".into()),
+            ),
         ];
-        for (main_worktree_path, linked_worktree_path, expected) in examples {
+        for (main_worktree_path, linked_worktree_path, path_style, expected) in examples {
             let short_name = linked_worktree_short_name(
                 Path::new(main_worktree_path),
                 Path::new(linked_worktree_path),
+                path_style,
             );
             assert_eq!(
                 short_name, expected,

@@ -144,9 +144,14 @@ impl FsWatcher {
     fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
         let case_insensitive = !self.fs.is_path_case_sensitive(&path);
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
-        if self.registrations.lock().contains_key(&key) {
-            log::trace!("path to watch is already watched: {path:?}");
-            return Ok(());
+        let existing = self.registrations.lock().get(&key).cloned();
+        if let Some(existing) = existing {
+            log::trace!("path to watch is already registered: {path:?}");
+            return existing.os_watcher.rewatch_if_stale(
+                &mut existing.os_watcher.state.lock(),
+                SanitizedPath::new(&path),
+                &key,
+            );
         }
         match register_existing_path(
             &self.native_watcher,
@@ -598,7 +603,16 @@ async fn poll_path_until_created(
 
         // Probe case sensitivity now that the path exists, rather than at add
         // time when it didn't.
-        let case_insensitive = !fs.is_path_case_sensitive(&path);
+        let case_insensitive = if fs.is_fake() {
+            !fs.is_path_case_sensitive(&path)
+        } else {
+            smol::unblock({
+                let path = path.clone();
+                let fs = fs.clone();
+                move || !fs.is_path_case_sensitive(&path)
+            })
+            .await
+        };
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
 
         if registrations.lock().contains_key(&key) {
@@ -606,15 +620,32 @@ async fn poll_path_until_created(
             return;
         }
 
-        match register_existing_path(
-            &native_watcher,
-            &poll_watcher,
-            fs.as_ref(),
-            path.clone(),
-            case_insensitive,
-            tx.clone(),
-            pending_path_events.clone(),
-        ) {
+        let register = {
+            let path = path.clone();
+            let tx = tx.clone();
+            let pending_path_events = pending_path_events.clone();
+            let fs = fs.clone();
+            let native_watcher = native_watcher.clone();
+            let poll_watcher = poll_watcher.clone();
+            move || {
+                register_existing_path(
+                    &native_watcher,
+                    &poll_watcher,
+                    fs.as_ref(),
+                    path,
+                    case_insensitive,
+                    tx,
+                    pending_path_events,
+                )
+            }
+        };
+        let registration = if fs.is_fake() {
+            register()
+        } else {
+            smol::unblock(register).await
+        };
+
+        match registration {
             Ok(Some(registration)) => {
                 {
                     let mut pending_registrations = pending_registrations.lock();
@@ -695,10 +726,6 @@ fn push_notify_event(
         .collect::<Vec<_>>();
 
     if event.need_rescan() {
-        if !watcher_logging_rate_limited() {
-            log::warn!("filesystem watcher lost sync for {watched_root:?}; scheduling rescan");
-        }
-
         // A rescan event names the subtrees that lost sync (FSEvents
         // `MustScanSubDirs`); only a pathless one (inotify queue overflow) means
         // the whole watched root is suspect.
@@ -715,28 +742,6 @@ fn push_notify_event(
     }
     log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
-}
-
-fn watcher_logging_rate_limited() -> bool {
-    static LAST_WARN: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
-    let Some((ref mut started, ref mut emitted)) = *LAST_WARN.lock() else {
-        *LAST_WARN.lock() = Some((Instant::now(), 0));
-        return false;
-    };
-
-    if started.elapsed().as_secs() < 1 {
-        if *emitted < 20 {
-            log::warn!("filesystem watcher lost sync for many files, not logging more");
-            return true;
-        } else {
-            *emitted += 1;
-        }
-    } else {
-        *emitted = 0;
-        *started = Instant::now()
-    }
-
-    true
 }
 
 fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
@@ -801,6 +806,7 @@ struct WatcherRegistrationState {
 struct PathRegistrationState {
     watcher_ids: Vec<WatcherRegistrationId>,
     has_os_watcher: bool,
+    stale: bool,
 }
 
 /// The registered watch paths for one backend, keyed by [`WatchKey`] so that
@@ -870,6 +876,17 @@ impl WatcherState {
             .is_some_and(|cooldown_until| cooldown_until > Instant::now())
     }
 
+    fn start_native_watch_limit_cooldown(&mut self, path: &Path) {
+        let should_log = !self.is_native_watch_limit_cooldown_active();
+        self.cooldown_until = Some(Instant::now() + *NATIVE_WATCH_LIMIT_COOLDOWN);
+        if should_log {
+            log::warn!(
+                "OS file watch limit reached while watching {path:?}; skipping new native file watcher registrations for {} seconds",
+                NATIVE_WATCH_LIMIT_COOLDOWN.as_secs()
+            );
+        }
+    }
+
     fn remove_registration(&mut self, id: WatcherRegistrationId) -> Option<Arc<SanitizedPath>> {
         let registration_state = self.watchers.remove(&id)?;
         let path_state = self.paths.get_mut(&registration_state.key)?;
@@ -905,10 +922,8 @@ pub struct OsWatcher {
     recursive: bool,
     state: Arc<Mutex<WatcherState>>,
 
-    // Never hold the state lock while calling the backend: a backend call can be
-    // slow (a poll watch scans its whole tree up front, an FSEvents watch rebuilds
-    // the stream) and dispatch needs the state to route every other registration's
-    // events. Whoever re-locks the state afterwards must re-check what they assumed.
+    // Hold state across backend mutations. Callbacks don't acquire state or
+    // invert the lock order.
     backend: Mutex<Option<Box<dyn WatchBackend>>>,
     event_tx: async_channel::Sender<notify::Result<notify::Event>>,
     _dispatch_task: Task<()>,
@@ -939,8 +954,9 @@ impl OsWatcher {
         let dispatch_task = executor.spawn({
             let state = state.clone();
             async move {
+                let mut rescan_history = diagnostics::RescanHistory::default();
                 while let Ok(first) = event_rx.recv().await {
-                    dispatch_batch(kind, &state, first, &event_rx);
+                    dispatch_batch(kind, &state, &mut rescan_history, first, &event_rx);
                 }
             }
         });
@@ -997,7 +1013,9 @@ impl OsWatcher {
             .covered_by_recursive_ancestor(&path, self.recursive);
         let path_already_registered = state.paths.contains(&key);
 
-        if !path_already_covered && !path_already_registered {
+        if path_already_registered {
+            self.rewatch_if_stale(&mut state, &path, &key)?;
+        } else if !path_already_covered {
             if self.kind == OsWatcherKind::Native && state.is_native_watch_limit_cooldown_active() {
                 self.diagnostics.record(|| {
                     WatchDiagnosticEvent::new(
@@ -1012,18 +1030,16 @@ impl OsWatcher {
                 return Ok(None);
             }
 
-            drop(state);
             match self.watch(path.as_path()) {
                 Ok(()) => {}
                 Err(error)
                     if self.kind == OsWatcherKind::Native && is_max_files_watch_error(&error) =>
                 {
-                    self.start_native_watch_limit_cooldown(path.as_path());
+                    state.start_native_watch_limit_cooldown(path.as_path());
                     return Ok(None);
                 }
                 Err(error) => return Err(error),
             }
-            state = self.state.lock();
         }
 
         let id = state.last_registration;
@@ -1042,9 +1058,32 @@ impl OsWatcher {
             .or_insert_with(|| PathRegistrationState {
                 watcher_ids: vec![id],
                 has_os_watcher: !path_already_covered,
+                stale: false,
             });
 
         Ok(Some(id))
+    }
+
+    fn rewatch_if_stale(
+        &self,
+        state: &mut WatcherState,
+        path: &SanitizedPath,
+        key: &WatchKey,
+    ) -> anyhow::Result<()> {
+        let Some(path_state) = state.paths.get_mut(key) else {
+            return Ok(());
+        };
+        if !path_state.stale {
+            return Ok(());
+        }
+
+        log::trace!("rewatching stale path: {path:?}");
+        // A renamed directory's watch survives under the old path; unwatch it
+        // so the backend won't skip installation as a duplicate.
+        self.unwatch(path.as_path()).log_err();
+        self.watch(path.as_path())?;
+        path_state.stale = false;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -1058,20 +1097,13 @@ impl OsWatcher {
         first: notify::Result<notify::Event>,
         event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
     ) {
-        dispatch_batch(self.kind, &self.state, first, event_rx);
-    }
-
-    fn start_native_watch_limit_cooldown(&self, path: &Path) {
-        let mut state = self.state.lock();
-        let now = Instant::now();
-        let should_log = !state.is_native_watch_limit_cooldown_active();
-        state.cooldown_until = Some(now + *NATIVE_WATCH_LIMIT_COOLDOWN);
-        if should_log {
-            log::warn!(
-                "OS file watch limit reached while watching {path:?}; skipping new native file watcher registrations for {} seconds",
-                NATIVE_WATCH_LIMIT_COOLDOWN.as_secs()
-            );
-        }
+        dispatch_batch(
+            self.kind,
+            &self.state,
+            &mut diagnostics::RescanHistory::default(),
+            first,
+            event_rx,
+        );
     }
 
     pub fn remove(&self, id: WatcherRegistrationId) {
@@ -1079,7 +1111,6 @@ impl OsWatcher {
         let Some(path) = state.remove_registration(id) else {
             return;
         };
-        drop(state);
         self.unwatch(path.as_path()).log_err();
     }
 
@@ -1217,18 +1248,53 @@ fn dispatch(
     log::trace!("handle {kind:?} watcher event: {event:?}");
 
     let callbacks = {
-        let state = state.lock();
+        let mut state = state.lock();
+        // Invalidate before callbacks can trigger a scan.
+        if !kind.is_recursive() && event.need_rescan() {
+            // Overflow may have dropped removal events.
+            for path_state in state.paths.0.values_mut() {
+                path_state.stale = true;
+            }
+        } else if !kind.is_recursive()
+            && matches!(
+                event.kind,
+                EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_))
+            )
+        {
+            for path in &event.paths {
+                let path = SanitizedPath::new(path);
+                for event_key in [WatchKey::exact(path), WatchKey::folded(path)] {
+                    let Some(path_state) = state.paths.get_mut(&event_key) else {
+                        continue;
+                    };
+                    path_state.stale = true;
+                    if !matches!(event.kind, EventKind::Modify(_)) {
+                        continue;
+                    }
+                    // Descendant watches follow the directory without their own rename events.
+                    for (key, path_state) in &mut state.paths.0 {
+                        let descendant = match (key, &event_key) {
+                            (WatchKey::Exact(key), WatchKey::Exact(event_key)) => {
+                                key.starts_with(event_key)
+                            }
+                            (WatchKey::Folded(key), WatchKey::Folded(event_key)) => {
+                                Path::new(key.as_ref()).starts_with(Path::new(event_key.as_ref()))
+                            }
+                            _ => false,
+                        };
+                        if descendant {
+                            path_state.stale = true;
+                        }
+                    }
+                }
+            }
+        }
         if event.need_rescan() {
-            let callbacks = state
+            state
                 .watchers
                 .values()
                 .map(|registration| registration.callback.clone())
-                .collect::<Vec<_>>();
-            log::warn!(
-                "{kind:?} filesystem watcher lost sync; scheduling rescans for {} registrations",
-                callbacks.len()
-            );
-            callbacks
+                .collect::<Vec<_>>()
         } else {
             let mut ids = Vec::new();
             for path in &event.paths {
@@ -1252,6 +1318,7 @@ fn dispatch(
 fn dispatch_batch(
     kind: OsWatcherKind,
     state: &Mutex<WatcherState>,
+    rescan_history: &mut diagnostics::RescanHistory,
     first: notify::Result<notify::Event>,
     event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
 ) {
@@ -1272,6 +1339,12 @@ fn dispatch_batch(
             rescan_dispatched = true;
         }
 
+        // Log writes can block, so keep them off the native watcher reader.
+        if let Ok(event) = &event
+            && let Some(report) = rescan_history.record(event)
+        {
+            log::error!("{kind:?} filesystem watcher requested rescan: {report}");
+        }
         dispatch(kind, state, event);
     }
 }
@@ -1515,6 +1588,58 @@ mod tests {
 
         let native_backend = native_backend.lock();
         assert_eq!(native_backend.watch_calls, &[first_path.to_path_buf()]);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[test]
+    fn removed_or_renamed_path_is_rewatched_once() {
+        let dir = PathBuf::from("/Repo/Dir");
+        let subdir = PathBuf::from("/Repo/Dir/Subdir");
+        let removal = notify::Event {
+            paths: vec![dir.clone()],
+            ..notify::Event::new(EventKind::Remove(notify::event::RemoveKind::Folder))
+        };
+        let overflow = notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        let rename = |path: &str| notify::Event {
+            paths: vec![PathBuf::from(path)],
+            ..notify::Event::new(EventKind::Modify(notify::event::ModifyKind::Name(
+                notify::event::RenameMode::From,
+            )))
+        };
+
+        for (event, case_insensitive, rewatched) in [
+            (removal, false, &dir),
+            (overflow, false, &dir),
+            (rename("/Repo/Dir"), false, &subdir),
+            (rename("/repo/dir"), true, &subdir),
+        ] {
+            let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+            let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+            for path in [&dir, &dir, &subdir] {
+                watcher
+                    .add(path.as_path().into(), case_insensitive, |_| {})
+                    .expect("add watch")
+                    .expect("watch registered");
+            }
+
+            watcher.dispatch(Ok(event));
+            let rewatched = SanitizedPath::new(rewatched);
+            let key = WatchKey::for_registration(rewatched, case_insensitive);
+            watcher
+                .rewatch_if_stale(&mut watcher.state.lock(), rewatched, &key)
+                .expect("rewatch");
+
+            let backend = backend.lock();
+            assert_eq!(
+                backend.watch_calls,
+                &[
+                    dir.clone(),
+                    subdir.clone(),
+                    rewatched.as_path().to_path_buf()
+                ]
+            );
+            assert_eq!(backend.unwatch_calls, &[rewatched.as_path().to_path_buf()]);
+        }
     }
 
     fn modify_event(path: &str) -> notify::Event {

@@ -1,4 +1,6 @@
-import { danger, message, warn, fail, schedule } from "danger";
+import { danger, message, fail, schedule } from "danger";
+import { releaseNotesSection, releaseNotesEntries } from "../lib/release-notes";
+
 const { prHygiene } = require("danger-plugin-pr-hygiene");
 
 prHygiene({
@@ -12,13 +14,13 @@ prHygiene({
   },
 });
 
-const RELEASE_NOTES_PATTERN = /Release Notes:(\r?\n)+- /gm;
 const body = danger.github.pr.body;
-
-const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(body);
+const releaseNotes = releaseNotesSection(body);
+const entries = releaseNotesEntries(releaseNotes);
+const hasReleaseNotes = releaseNotes !== "";
 
 if (!hasReleaseNotes) {
-  warn(
+  fail(
     [
       "This PR is missing release notes.",
       "",
@@ -36,14 +38,66 @@ if (!hasReleaseNotes) {
       "",
       "- N/A",
       "```",
+      "",
+      "If your change touches a `gpui`-related crate, you must also add an entry for the GPUI release notes:",
+      "```",
+      "Release Notes:",
+      "",
+      "- Added/Fixed/Improved ...",
+      "- [GPUI] Added/Fixed/Improved ...",
+      "```",
+      "",
+      'If the change is not user-facing for GPUI users, use "- [GPUI] N/A" for that entry.',
     ].join("\n"),
   );
+} else if (
+  entries.some((entry) => {
+    const description = entry.replace(/^-\s*(?:\[GPUI\]\s*)?/i, "").trim();
+    return description === "" || /^(?:N\/A\s+or\s+)?Added\/Fixed\/Improved\s*(?:\.{3}|…)$/i.test(description);
+  })
+) {
+  fail(
+    [
+      "This PR has no proper release notes.",
+      "",
+      'Please replace them with "N/A" or a description of the changes.',
+    ].join("\n"),
+  );
+}
+
+const GPUI_RELEASE_NOTES_PATTERN = /^- \[GPUI\]/im;
+
+const gpuiCrates = danger.git.fileMatch("crates/gpui*/**");
+
+if (gpuiCrates.edited || gpuiCrates.deleted) {
+  if (!entries.some((entry) => GPUI_RELEASE_NOTES_PATTERN.test(entry))) {
+    const { edited, deleted } = gpuiCrates.getKeyedPaths();
+    const touchedGpuiCratesStr = [...edited, ...deleted]
+      .map((file) => "`" + file.split("/")[1] + "`")
+      .filter((crate, index, self) => self.indexOf(crate) === index)
+      .join(", ");
+    fail(
+      [
+        `This PR modifies GPUI crates (${touchedGpuiCratesStr}), which requires a GPUI release notes entry.`,
+        "",
+        'Please add at least one entry prefixed with `[GPUI]` to the "Release Notes" section:',
+        "```",
+        "Release Notes:",
+        "",
+        "- Added/Fixed/Improved ...",
+        "- [GPUI] Added/Fixed/Improved ...",
+        "```",
+        "",
+        'If the change is not user-facing for GPUI users, use "- [GPUI] N/A" for that entry.',
+      ].join("\n"),
+    );
+  }
 }
 
 const ISSUE_LINK_PATTERN =
   /(?:- )?(?<!(?:Close[sd]?|Fixe[sd]|Resolve[sd]|Implement[sed]|Follow-up of|Part of):?\s+)https:\/\/github\.com\/[\w-]+\/[\w-]+\/issues\/\d+/gi;
 
-const bodyWithoutReleaseNotes = hasReleaseNotes ? body.split(/Release Notes:/)[0] : body;
+const bodyWithoutReleaseNotes = hasReleaseNotes ? body.slice(0, body.length - releaseNotes.length) : body;
 const includesIssueUrl = ISSUE_LINK_PATTERN.test(bodyWithoutReleaseNotes);
 
 if (includesIssueUrl) {

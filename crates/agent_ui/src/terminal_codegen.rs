@@ -1,7 +1,7 @@
 use crate::inline_prompt_editor::CodegenStatus;
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
-use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelRequest};
+use language_model::{LanguageModelRegistry, LanguageModelRequest};
 use language_models::provider::anthropic::telemetry::{
     AnthropicCompletionType, AnthropicEventData, AnthropicEventReporter, AnthropicEventType,
 };
@@ -37,11 +37,11 @@ impl TerminalCodegen {
     }
 
     pub fn start(&mut self, prompt_task: Task<LanguageModelRequest>, cx: &mut Context<Self>) {
-        let Some(ConfiguredModel { model, .. }) =
-            LanguageModelRegistry::read_global(cx).inline_assistant_model()
-        else {
+        let registry = LanguageModelRegistry::read_global(cx);
+        let Some(model) = registry.inline_assistant_model() else {
             return;
         };
+        let provider = registry.provider_for_model(&model);
 
         let anthropic_reporter = AnthropicEventReporter::new(&model, cx);
         let session_id = self.session_id;
@@ -52,7 +52,10 @@ impl TerminalCodegen {
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(async move |this, cx| {
             let prompt = prompt_task.await;
-            let response = model.stream_completion_text(prompt, cx).await;
+            let response = match provider {
+                Ok(provider) => provider.stream_completion_text(&model, prompt, cx).await,
+                Err(error) => Err(error),
+            };
             let generate = async {
                 let message_id = response
                     .as_ref()
