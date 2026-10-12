@@ -1,14 +1,22 @@
-use gpui::{Action as _, App, PromptButton, PromptLevel, ReadGlobal};
+use gpui::{
+    Action as _, AnyElement, App, Context, PromptButton, PromptLevel, ReadGlobal, ScrollHandle,
+    SharedString, Window, prelude::*,
+};
 use itertools::Itertools as _;
+use serde::Deserialize;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
     LanguageSettingsContent, SemanticTokens, SettingsContent, SettingsStore,
     ZedLinkConnectionProvider,
 };
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
 use theme::SystemAppearance;
-use ui::IntoElement;
+use ui::{
+    Button, ButtonSize, ButtonStyle, Color, Divider, IntoElement, Label, LabelSize, TintColor,
+    prelude::*,
+};
+use util::ResultExt as _;
 
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
@@ -25,6 +33,70 @@ const DEFAULT_STRING: String = String::new();
 /// to avoid the "NO DEFAULT" case.
 const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
 const TAILSCALE_DNS_ADMIN_URL: &str = "https://login.tailscale.com/admin/dns";
+
+#[derive(Clone, Deserialize)]
+struct ZedLinkGatewayStatus {
+    configured: bool,
+    project_root: String,
+    state_dir: String,
+    targets: Vec<ZedLinkTargetStatus>,
+    routes: Vec<ZedLinkRouteStatus>,
+    gateway: ZedLinkGatewayProcessStatus,
+    patched_zed: ZedLinkPatchedZedStatus,
+}
+
+#[derive(Clone, Deserialize)]
+struct ZedLinkTargetStatus {
+    label: String,
+    probe: String,
+    online: bool,
+}
+
+#[derive(Clone, Deserialize)]
+struct ZedLinkRouteStatus {
+    label: String,
+    provider: String,
+    url: String,
+    bind: String,
+    enabled: bool,
+    primary: bool,
+}
+
+#[derive(Clone, Deserialize)]
+struct ZedLinkGatewayProcessStatus {
+    online: bool,
+    built: bool,
+    paired_devices: usize,
+}
+
+#[derive(Clone, Deserialize)]
+struct ZedLinkPatchedZedStatus {
+    built: bool,
+    executable: String,
+    launcher_installed: bool,
+    command_installed: bool,
+}
+
+#[derive(Clone, Default)]
+struct ZedLinkGatewayDashboardState {
+    status: Option<Result<ZedLinkGatewayStatus, String>>,
+    loading: bool,
+    operation: Option<&'static str>,
+    message: Option<(bool, String)>,
+}
+
+static ZEDLINK_GATEWAY_DASHBOARD: OnceLock<Mutex<ZedLinkGatewayDashboardState>> = OnceLock::new();
+
+fn zedlink_gateway_dashboard() -> &'static Mutex<ZedLinkGatewayDashboardState> {
+    ZEDLINK_GATEWAY_DASHBOARD.get_or_init(|| Mutex::new(ZedLinkGatewayDashboardState::default()))
+}
+
+fn zedlink_gateway_dashboard_state() -> MutexGuard<'static, ZedLinkGatewayDashboardState> {
+    match zedlink_gateway_dashboard().lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
 
 const DEFAULT_AUDIO_OUTPUT: AudioOutputDeviceName = AudioOutputDeviceName(None);
 const DEFAULT_EMPTY_AUDIO_OUTPUT: Option<&AudioOutputDeviceName> = Some(&DEFAULT_AUDIO_OUTPUT);
@@ -155,6 +227,366 @@ fn run_zedlink_manager_action(action: &'static str, window: &mut gpui::Window, c
             anyhow::Ok(())
         })
         .detach();
+}
+
+fn update_zedlink_gateway_dashboard(
+    action: Option<&'static str>,
+    window: &mut Window,
+    cx: &mut Context<crate::SettingsWindow>,
+) {
+    let manager_path = SettingsStore::global(cx)
+        .merged_settings()
+        .zedlink
+        .as_ref()
+        .and_then(|settings| settings.manager_path.as_deref())
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned);
+
+    {
+        let mut dashboard = zedlink_gateway_dashboard_state();
+        dashboard.loading = true;
+        dashboard.operation = action;
+        dashboard.message = None;
+        if manager_path.is_none() {
+            dashboard.loading = false;
+            dashboard.status = Some(Err(
+                "Run ZedLink: Repair setup, then reopen this page.".to_string()
+            ));
+        }
+    }
+
+    let Some(manager_path) = manager_path else {
+        cx.notify();
+        return;
+    };
+
+    let settings_window = cx.weak_entity();
+    window
+        .spawn(cx, async move |cx| {
+            let mut action_message = None;
+            if let Some(action) = action {
+                match smol::process::Command::new("python3")
+                    .arg(&manager_path)
+                    .arg(action)
+                    .output()
+                    .await
+                {
+                    Ok(output) if output.status.success() => {
+                        let detail = String::from_utf8_lossy(&output.stdout)
+                            .trim()
+                            .chars()
+                            .take(600)
+                            .collect::<String>();
+                        action_message = Some((true, detail));
+                    }
+                    Ok(output) => {
+                        let detail = String::from_utf8_lossy(&output.stderr)
+                            .trim()
+                            .chars()
+                            .take(600)
+                            .collect::<String>();
+                        let mut dashboard = zedlink_gateway_dashboard_state();
+                        dashboard.loading = false;
+                        dashboard.operation = None;
+                        dashboard.message = Some((false, detail));
+                        settings_window.update(cx, |_, cx| cx.notify()).log_err();
+                        return anyhow::Ok(());
+                    }
+                    Err(error) => {
+                        let mut dashboard = zedlink_gateway_dashboard_state();
+                        dashboard.loading = false;
+                        dashboard.operation = None;
+                        dashboard.message = Some((false, error.to_string()));
+                        settings_window.update(cx, |_, cx| cx.notify()).log_err();
+                        return anyhow::Ok(());
+                    }
+                }
+            }
+
+            let status = match smol::process::Command::new("python3")
+                .arg(&manager_path)
+                .arg("status-json")
+                .output()
+                .await
+            {
+                Ok(output) if output.status.success() => {
+                    serde_json::from_slice::<ZedLinkGatewayStatus>(&output.stdout)
+                        .map_err(|error| format!("ZedLink returned an invalid status: {error}"))
+                }
+                Ok(output) => Err(String::from_utf8_lossy(&output.stderr)
+                    .trim()
+                    .chars()
+                    .take(600)
+                    .collect()),
+                Err(error) => Err(error.to_string()),
+            };
+            {
+                let mut dashboard = zedlink_gateway_dashboard_state();
+                dashboard.status = Some(status);
+                dashboard.loading = false;
+                dashboard.operation = None;
+                dashboard.message = action_message;
+            }
+            settings_window.update(cx, |_, cx| cx.notify()).log_err();
+            anyhow::Ok(())
+        })
+        .detach();
+}
+
+fn zedlink_status_row(
+    title: impl Into<SharedString>,
+    detail: impl Into<SharedString>,
+    value: impl Into<SharedString>,
+    healthy: Option<bool>,
+) -> AnyElement {
+    v_flex()
+        .w_full()
+        .child(
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .justify_between()
+                .gap_6()
+                .py_3()
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .gap_0p5()
+                        .child(Label::new(title.into()))
+                        .child(
+                            Label::new(detail.into())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(
+                    Label::new(value.into())
+                        .size(LabelSize::Small)
+                        .color(match healthy {
+                            Some(true) => Color::Success,
+                            Some(false) => Color::Error,
+                            None => Color::Muted,
+                        }),
+                ),
+        )
+        .child(Divider::horizontal())
+        .into_any_element()
+}
+
+fn render_zedlink_gateway_page(
+    _settings_window: &crate::SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    window: &mut Window,
+    cx: &mut Context<crate::SettingsWindow>,
+) -> AnyElement {
+    let should_load = {
+        let dashboard = zedlink_gateway_dashboard_state();
+        dashboard.status.is_none() && !dashboard.loading
+    };
+    if should_load {
+        update_zedlink_gateway_dashboard(None, window, cx);
+    }
+    let dashboard = zedlink_gateway_dashboard_state().clone();
+    let gateway_online = dashboard
+        .status
+        .as_ref()
+        .and_then(|status| status.as_ref().ok())
+        .is_some_and(|status| status.gateway.online);
+
+    let controls = h_flex()
+        .flex_wrap()
+        .gap_2()
+        .child(
+            Button::new("zedlink-gateway-refresh", "Refresh")
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .disabled(dashboard.loading)
+                .on_click(cx.listener(|_, _, window, cx| {
+                    update_zedlink_gateway_dashboard(None, window, cx)
+                })),
+        )
+        .child(
+            Button::new("zedlink-gateway-start", "Start")
+                .style(ButtonStyle::Filled)
+                .size(ButtonSize::Medium)
+                .disabled(dashboard.loading || gateway_online)
+                .on_click(cx.listener(|_, _, window, cx| {
+                    update_zedlink_gateway_dashboard(Some("start-gateway-detached"), window, cx)
+                })),
+        )
+        .child(
+            Button::new("zedlink-gateway-restart", "Restart")
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .disabled(dashboard.loading || !gateway_online)
+                .on_click(cx.listener(|_, _, window, cx| {
+                    update_zedlink_gateway_dashboard(Some("restart-gateway-detached"), window, cx)
+                })),
+        )
+        .child(
+            Button::new("zedlink-gateway-stop", "Stop")
+                .style(ButtonStyle::Tinted(TintColor::Error))
+                .size(ButtonSize::Medium)
+                .disabled(dashboard.loading || !gateway_online)
+                .on_click(cx.listener(|_, _, window, cx| {
+                    update_zedlink_gateway_dashboard(Some("stop-gateway"), window, cx)
+                })),
+        )
+        .child(
+            Button::new("zedlink-gateway-diagnose", "Run Diagnostics")
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .disabled(dashboard.loading)
+                .on_click(cx.listener(|_, _, window, cx| {
+                    update_zedlink_gateway_dashboard(Some("diagnose"), window, cx)
+                })),
+        );
+
+    let mut content = v_flex()
+        .id("zedlink-gateway-page")
+        .size_full()
+        .min_w_0()
+        .overflow_y_scroll()
+        .track_scroll(scroll_handle)
+        .px_8()
+        .pt_2p5()
+        .pb_16()
+        .gap_2()
+        .child(Label::new("Gateway Control").size(LabelSize::Large))
+        .child(
+            Label::new("Live state for the local bridge, private gateway, connection route, and paired devices.")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(controls);
+
+    if dashboard.loading {
+        let operation = dashboard.operation.unwrap_or("refresh");
+        content = content.child(
+            Label::new(format!("{}…", operation.replace('-', " ")))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        );
+    }
+    if let Some((successful, message)) =
+        dashboard.message.filter(|(_, message)| !message.is_empty())
+    {
+        content = content.child(
+            Label::new(message)
+                .size(LabelSize::Small)
+                .color(if successful {
+                    Color::Success
+                } else {
+                    Color::Error
+                }),
+        );
+    }
+
+    match dashboard.status {
+        Some(Ok(status)) if status.configured => {
+            let primary_route = status.routes.iter().find(|route| route.primary);
+            content = content
+                .child(Divider::horizontal().my_3())
+                .child(zedlink_status_row(
+                    "Gateway",
+                    if status.gateway.built {
+                        "Gateway binary is built"
+                    } else {
+                        "Gateway binary is missing"
+                    },
+                    if status.gateway.online {
+                        "RUNNING"
+                    } else {
+                        "STOPPED"
+                    },
+                    Some(status.gateway.online),
+                ))
+                .child(zedlink_status_row(
+                    "Native Zed bridge",
+                    status
+                        .targets
+                        .iter()
+                        .map(|target| format!("{} · {}", target.label, target.probe))
+                        .join("\n"),
+                    if status.targets.iter().any(|target| target.online) {
+                        "CONNECTED"
+                    } else {
+                        "UNAVAILABLE"
+                    },
+                    Some(status.targets.iter().any(|target| target.online)),
+                ))
+                .child(zedlink_status_row(
+                    "Active connection",
+                    primary_route
+                        .map(|route| {
+                            format!(
+                                "{} · {} · {} · {}",
+                                route.label, route.provider, route.url, route.bind
+                            )
+                        })
+                        .unwrap_or_else(|| "No primary connection configured".to_string()),
+                    primary_route
+                        .map(|route| if route.enabled { "ENABLED" } else { "DISABLED" })
+                        .unwrap_or("MISSING"),
+                    primary_route.map(|route| route.enabled),
+                ))
+                .child(zedlink_status_row(
+                    "Paired devices",
+                    "Browsers and installed apps authorized by this gateway",
+                    status.gateway.paired_devices.to_string(),
+                    None,
+                ))
+                .child(zedlink_status_row(
+                    "Project",
+                    status.project_root,
+                    "SCOPED",
+                    Some(true),
+                ))
+                .child(zedlink_status_row(
+                    "Patched Zed",
+                    status.patched_zed.executable,
+                    if status.patched_zed.built
+                        && status.patched_zed.launcher_installed
+                        && status.patched_zed.command_installed
+                    {
+                        "READY"
+                    } else {
+                        "INCOMPLETE"
+                    },
+                    Some(
+                        status.patched_zed.built
+                            && status.patched_zed.launcher_installed
+                            && status.patched_zed.command_installed,
+                    ),
+                ))
+                .child(zedlink_status_row(
+                    "Private state",
+                    status.state_dir,
+                    "LOCAL",
+                    None,
+                ));
+        }
+        Some(Ok(_)) => {
+            content = content
+                .child(Divider::horizontal().my_3())
+                .child(Label::new("ZedLink setup is not configured.").color(Color::Warning))
+                .child(
+                    Label::new("Run ZedLink: Set up this project, then refresh this page.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                );
+        }
+        Some(Err(error)) => {
+            content = content
+                .child(Divider::horizontal().my_3())
+                .child(Label::new("Gateway status unavailable").color(Color::Error))
+                .child(Label::new(error).size(LabelSize::Small).color(Color::Muted));
+        }
+        None => {}
+    }
+
+    content.into_any_element()
 }
 
 fn manage_zedlink_devices(window: &mut gpui::Window, cx: &mut App) {
@@ -610,48 +1042,7 @@ fn zedlink_page() -> SettingsPage {
                 search_aliases: &["diagnose", "gateway", "restart", "start", "status", "stop"],
                 in_json: false,
                 files: USER,
-                render: |this, scroll_handle, window, cx| {
-                    let items = [
-                        SettingsPageItem::SectionHeader("Gateway"),
-                        SettingsPageItem::ActionLink(ActionLink {
-                            title: "Gateway Status".into(),
-                            description: Some("Show the configured project, private routes, patched Zed bridge, gateway process, and paired-device count.".into()),
-                            button_text: "Show Status".into(),
-                            on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("status", window, cx)),
-                            files: USER,
-                        }),
-                        SettingsPageItem::ActionLink(ActionLink {
-                            title: "Start Gateway".into(),
-                            description: Some("Start the configured private HTTPS gateway in the background. Use Status to confirm it becomes ready.".into()),
-                            button_text: "Start".into(),
-                            on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("start-gateway-detached", window, cx)),
-                            files: USER,
-                        }),
-                        SettingsPageItem::ActionLink(ActionLink {
-                            title: "Restart Gateway".into(),
-                            description: Some("Reload saved connection profiles while preserving gateway identity and paired devices.".into()),
-                            button_text: "Restart".into(),
-                            on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("restart-gateway-detached", window, cx)),
-                            files: USER,
-                        }),
-                        SettingsPageItem::ActionLink(ActionLink {
-                            title: "Stop Gateway".into(),
-                            description: Some("Close all ZedLink listeners. Saved connections, device pairings, and native conversations remain intact.".into()),
-                            button_text: "Stop".into(),
-                            on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("stop-gateway", window, cx)),
-                            files: USER,
-                        }),
-                        SettingsPageItem::ActionLink(ActionLink {
-                            title: "Run Diagnostics".into(),
-                            description: Some("Check the patched binary, settings, private paths, TLS profiles, native bridge, gateway, and paired-device count.".into()),
-                            button_text: "Diagnose".into(),
-                            on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("diagnose", window, cx)),
-                            files: USER,
-                        }),
-                    ];
-                    this.render_sub_page_items(items.iter().enumerate(), scroll_handle, window, cx)
-                        .into_any_element()
-                },
+                render: render_zedlink_gateway_page,
             }),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Paired Devices".into(),
