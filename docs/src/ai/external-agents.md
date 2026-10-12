@@ -169,11 +169,14 @@ Open [Agent Settings](./agent-settings.md), go to the **External Agents** page, 
       "type": "custom",
       "command": "node",
       "args": ["~/projects/agent/index.js", "--acp"],
-      "env": {}
+      "env": {},
+      "icon": "~/projects/agent/icon.svg"
     }
   }
 }
 ```
+
+You can optionally configure a custom SVG icon by setting `"icon"` in `settings.json` or using the **Upload** button in the External Agents settings page.
 
 Registry-installed agents can also have per-agent settings under `agent_servers.<agent-id>`.
 
