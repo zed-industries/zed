@@ -26,7 +26,7 @@ Forge explores what a developer environment could look like when the tooling nor
 | **Visual Workflow Engine**   | Executable visual workflows with branching and error handling |
 | **Database Workbench**       | SQLite, PostgreSQL, MySQL and MSSQL in one workspace          |
 | **Runtime Management**       | Node, .NET, Python and Rust project tooling                   |
-| **Package Management**       | npm, NuGet, pip and Cargo package workflows                    |
+| **Package Management**       | npm, NuGet, pip and Cargo package workflows                   |
 | **Rust / Cargo Manager**     | crates.io search, outdated deps and OSV advisories            |
 | **GitHub / Helm**            | Native GitHub client and repository Workspace browsing        |
 | **Git Insights**             | Repository activity, changed files and collaborators          |
@@ -673,8 +673,8 @@ The more interesting experiment is what happens when they become part of the sam
 ```mermaid
 flowchart TD
     GH["GitHub"] --> Helm["Helm"] --> Project["Project"]
-    Project --> Runtime["Runtime setup<br/>Node / .NET / Python"]
-    Project --> Deps["Dependencies<br/>npm / NuGet / pip"]
+    Project --> Runtime["Runtime setup<br/>Node / .NET / Python / Rust"]
+    Project --> Deps["Dependencies<br/>npm / NuGet / pip / Cargo"]
     Runtime --> DB["Database"]
     Deps --> DB
     DB --> WF["Workflow engine"]
@@ -741,7 +741,8 @@ Some areas are more mature than others.
 - SQL language-server completion remains rough.
 - Cross-platform testing is not yet complete.
 - Automated test coverage is currently limited.
-- There is currently no packaged public release.
+- Releases are unsigned development builds, not a polished public release (see Build).
+- macOS builds are produced by CI but have not been tested.
 
 The repository should therefore be viewed as an **active research and engineering project**, rather than a finished commercial product.
 
@@ -783,7 +784,9 @@ Unsigned development builds for Windows, Linux and macOS can also be produced
 by the [`build_installers`](.github/workflows/build_installers.yml) workflow:
 run it manually from the Actions tab, or push a tag matching `dev-v*` to
 publish a prerelease. The builds are unsigned, so each platform warns on first
-run (SmartScreen on Windows, Gatekeeper on macOS).
+run (SmartScreen on Windows, Gatekeeper on macOS). Windows is the tested
+platform; the Linux and macOS builds come from the same workflow but have not
+been tested by hand.
 
 ---
 
