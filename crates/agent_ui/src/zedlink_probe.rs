@@ -206,7 +206,12 @@ impl ProbePermissions {
             capabilities.push("thread.rewind");
         }
         if self.project_context {
-            capabilities.extend(["project.files", "project.file", "project.search"]);
+            capabilities.extend([
+                "project.files",
+                "project.directory",
+                "project.file",
+                "project.search",
+            ]);
         }
         if self.git_changes {
             capabilities.extend([
@@ -262,7 +267,9 @@ impl ProbePermissions {
             {
                 self.attachments
             }
-            "project.files" | "project.file" | "project.search" => self.project_context,
+            "project.files" | "project.directory" | "project.file" | "project.search" => {
+                self.project_context
+            }
             "changes.snapshot" | "changes.diff" | "changes.stage" | "changes.unstage" => {
                 self.git_changes
             }
@@ -957,7 +964,7 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         "debugger.catalog" => debugger_catalog(&request, state, cx),
         "debugger.launch" => debugger_launch(&request, state, cx),
         "debugger.control" => debugger_control(&request, state, cx),
-        "project.files" => project_files(&request, state, cx),
+        "project.files" | "project.directory" => project_files(&request, state, cx),
         "project.file" => project_file(&request, state, cx),
         "project.search" => project_search(&request, state, cx),
         "changes.snapshot" => changes_snapshot(&request, state, cx),
@@ -2573,6 +2580,42 @@ fn project_files(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         Ok(worktree) => worktree,
         Err(code) => return error(&request.request_id, code),
     };
+    let directory = if request.method == "project.directory" {
+        let Some(path) = request.params.get("path").and_then(Value::as_str) else {
+            return error(&request.request_id, "INVALID_REQUEST");
+        };
+        if !path.is_empty() {
+            let relative = Path::new(path);
+            if path.len() > 1024
+                || relative.is_absolute()
+                || excluded_remote_path(path)
+                || relative
+                    .components()
+                    .any(|component| !matches!(component, Component::Normal(_)))
+            {
+                return error(&request.request_id, "INVALID_REQUEST");
+            }
+            let allowed = worktree.read(cx).entries(false, 0).any(|entry| {
+                entry.path.as_unix_str() == path
+                    && entry.is_dir()
+                    && !entry.is_hidden
+                    && !entry.is_private
+                    && !entry.is_external
+                    && !entry.is_fifo
+                    && !entry.is_ignored
+            });
+            let absolute = fs::canonicalize(state.project_root.join(path));
+            if !allowed
+                || !absolute
+                    .is_ok_and(|path| path.starts_with(&state.project_root) && path.is_dir())
+            {
+                return error(&request.request_id, "FILE_UNAVAILABLE");
+            }
+        }
+        Some(path)
+    } else {
+        None
+    };
     let mut truncated = false;
     let entries = worktree
         .read(cx)
@@ -2585,6 +2628,16 @@ fn project_files(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
                 && !entry.is_fifo
                 && !entry.is_ignored
                 && !excluded_remote_path(entry.path.as_unix_str())
+                && directory.is_none_or(|directory| {
+                    let path = entry.path.as_unix_str();
+                    let remainder = if directory.is_empty() {
+                        Some(path)
+                    } else {
+                        path.strip_prefix(directory)
+                            .and_then(|suffix| suffix.strip_prefix('/'))
+                    };
+                    remainder.is_some_and(|path| !path.is_empty() && !path.contains('/'))
+                })
         })
         .take(MAX_PROJECT_FILES + 1)
         .enumerate()
@@ -2602,7 +2655,7 @@ fn project_files(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         .collect::<Vec<_>>();
     success(
         &request.request_id,
-        json!({"entries": entries, "truncated": truncated, "provisional": false}),
+        json!({"entries": entries, "directory": directory, "truncated": truncated, "provisional": false}),
     )
 }
 
