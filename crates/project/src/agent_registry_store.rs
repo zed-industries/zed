@@ -2,20 +2,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use fs::Fs;
-use futures::future::join_all;
+use futures::{AsyncReadExt, future::join_all};
 use gpui::{
-    App, AppContext as _, BackgroundExecutor, Context, Entity, Global,
+    App, AppContext as _, BackgroundExecutor, Context, Entity, FutureExt as _, Global,
     SharedString, Task, TaskExt,
 };
-use http_client::HttpClient;
+use http_client::{AsyncBody, HttpClient, StatusCode};
 use serde::Deserialize;
 use settings::Settings as _;
 use util::ResultExt;
-
-use crate::agent_icon::fetch_url_body;
 
 use crate::{AgentId, DisableAiSettings};
 
@@ -525,7 +523,7 @@ async fn download_icon(
     executor: &BackgroundExecutor,
 ) -> Result<()> {
     let (status, body) =
-        crate::agent_icon::fetch_url_body(http_client, icon_url, REGISTRY_ICON_FETCH_TIMEOUT, executor)
+        fetch_url_body(http_client, icon_url, REGISTRY_ICON_FETCH_TIMEOUT, executor)
             .await
             .with_context(|| format!("fetching icon for {}", entry.id))?;
 
@@ -534,13 +532,43 @@ async fn download_icon(
         bail!("icon status error {}, response: {text:?}", status.as_u16());
     }
 
-    crate::agent_icon::validate_svg(&body)?;
-
     let icon_path = registry_cache_dir()
         .join("icons")
         .join(format!("{}.svg", entry.id));
     fs.write(&icon_path, &body).await?;
     Ok(())
+}
+
+async fn fetch_url_body(
+    http_client: Arc<dyn HttpClient>,
+    url: &str,
+    timeout: Duration,
+    executor: &BackgroundExecutor,
+) -> Result<(StatusCode, Vec<u8>)> {
+    async {
+        let mut response = http_client
+            .get(url, AsyncBody::default(), true)
+            .await
+            .with_context(|| format!("requesting {url}"))?;
+
+        let status = response.status();
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .with_context(|| format!("reading response from {url}"))?;
+
+        Ok((status, body))
+    }
+    .with_timeout(timeout, executor)
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "timed out after {}s while fetching {url}",
+            timeout.as_secs()
+        )
+    })?
 }
 
 fn resolve_icon_url(entry: &RegistryEntry) -> Option<String> {
