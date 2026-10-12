@@ -3848,6 +3848,8 @@ pub fn skill_body_resolver_for_project(
                     worktree
                         .path_style()
                         .strip_prefix(&skill.skill_file_path, &worktree_root)
+                        .ok()
+                        .and_then(|path| RelPath::new(path, worktree.path_style()).ok())
                         .map(|relative_path| relative_path.into_arc())
                         .context("skill file is not inside its worktree")
                 })?;

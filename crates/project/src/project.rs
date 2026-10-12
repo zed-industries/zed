@@ -2583,7 +2583,10 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style.strip_prefix(path, abs_path.as_ref())?;
+                let relative_path = path_style
+                    .strip_prefix(path, abs_path.as_ref())
+                    .ok()
+                    .and_then(|path| RelPath::new(path, path_style).ok())?;
                 // Don't exclude the worktree root itself, only actual subdirectories
                 let is_subpath = !relative_path.is_empty();
                 // Gitignored subtrees aren't scanned, so their contents don't
@@ -2617,7 +2620,10 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style.strip_prefix(path, abs_path.as_ref())?;
+                let relative_path = path_style
+                    .strip_prefix(path, abs_path.as_ref())
+                    .ok()
+                    .and_then(|path| RelPath::new(path, path_style).ok())?;
                 let is_subpath =
                     !relative_path.is_empty() && !worktree.is_path_ignored(&relative_path);
                 is_subpath.then(|| worktree.is_visible())

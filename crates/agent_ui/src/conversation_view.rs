@@ -3915,6 +3915,8 @@ impl AgentCodeSpanResolver {
         let relative_path: Option<Arc<RelPath>> = if path_style.is_absolute(path) {
             path_style
                 .strip_prefix(path, worktree_abs_path)
+                .ok()
+                .and_then(|path| RelPath::new(path, path_style).ok())
                 .map(std::borrow::Cow::into_owned)
                 .map(Into::into)
         } else {
