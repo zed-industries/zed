@@ -31,6 +31,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use settings::SettingsStore;
 use sha2::{Digest, Sha256};
+use terminal::TaskStatus;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use util::rel_path::RelPath;
 
 use crate::agent_panel::{AgentPanel, CreateThreadOptions};
@@ -53,6 +55,8 @@ const MAX_SEARCH_MATCHES: usize = 200;
 const MAX_UPLOAD_BYTES: usize = 1024 * 1024;
 const MAX_ATTACHMENTS: usize = 8;
 const MAX_DIFF_BYTES: usize = 512 * 1024;
+const MAX_TERMINAL_SNAPSHOT_BYTES: usize = 256 * 1024;
+const MAX_TERMINAL_INPUT_BYTES: usize = 16 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +85,7 @@ struct ProbeState {
     diffs: RefCell<HashMap<String, DiffRecord>>,
     searches: RefCell<HashMap<String, SearchRecord>>,
     change_operations: RefCell<HashMap<String, ChangeOperationRecord>>,
+    terminal_operations: RefCell<HashMap<String, String>>,
 }
 
 #[derive(Clone, Copy)]
@@ -91,6 +96,9 @@ struct ProbePermissions {
     git_changes: bool,
     approval_decisions: bool,
     agent_settings: bool,
+    terminal_read: bool,
+    terminal_input: bool,
+    task_control: bool,
 }
 
 impl ProbePermissions {
@@ -146,6 +154,15 @@ impl ProbePermissions {
                 "thread.edit_review.respond",
             ]);
         }
+        if self.terminal_read {
+            capabilities.extend(["terminal.list", "terminal.snapshot"]);
+        }
+        if self.terminal_input {
+            capabilities.push("terminal.input");
+        }
+        if self.task_control {
+            capabilities.extend(["task.list", "task.stop"]);
+        }
         capabilities
     }
 
@@ -168,6 +185,9 @@ impl ProbePermissions {
                 self.approval_decisions
             }
             "thread.settings.update" | "thread.queue.clear" => self.agent_settings,
+            "terminal.list" | "terminal.snapshot" => self.terminal_read,
+            "terminal.input" => self.terminal_input,
+            "task.list" | "task.stop" => self.task_control,
             _ => true,
         }
     }
@@ -259,6 +279,18 @@ pub fn init(cx: &mut App) {
             .as_ref()
             .and_then(|settings| settings.allow_agent_settings)
             .unwrap_or(true),
+        terminal_read: settings
+            .as_ref()
+            .and_then(|settings| settings.allow_terminal_read)
+            .unwrap_or(false),
+        terminal_input: settings
+            .as_ref()
+            .and_then(|settings| settings.allow_terminal_input)
+            .unwrap_or(false),
+        task_control: settings
+            .as_ref()
+            .and_then(|settings| settings.allow_task_control)
+            .unwrap_or(false),
     };
     let gateway_manager = settings.as_ref().and_then(|settings| {
         if !settings.start_gateway_on_launch.unwrap_or(true) {
@@ -343,6 +375,7 @@ pub fn init(cx: &mut App) {
                 diffs: RefCell::new(HashMap::new()),
                 searches: RefCell::new(HashMap::new()),
                 change_operations: RefCell::new(HashMap::new()),
+                terminal_operations: RefCell::new(HashMap::new()),
             },
         ))
     })();
@@ -853,6 +886,11 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         "thread.queue.clear" => clear_queue(&request, state, cx),
         "thread.edit_review" => edit_review_state(&request, state, cx),
         "thread.edit_review.respond" => edit_review_response(&request, state, cx),
+        "terminal.list" => terminal_list(&request, state, cx),
+        "terminal.snapshot" => terminal_snapshot(&request, state, cx),
+        "terminal.input" => terminal_input(&request, state, cx),
+        "task.list" => task_list(&request, state, cx),
+        "task.stop" => task_stop(&request, state, cx),
         "project.files" => project_files(&request, state, cx),
         "project.file" => project_file(&request, state, cx),
         "project.search" => project_search(&request, state, cx),
@@ -3278,6 +3316,247 @@ fn loaded_threads(project_root: &Path, cx: &App) -> Vec<Entity<AcpThread>> {
         .into_iter()
         .map(|(thread, _)| thread)
         .collect()
+}
+
+fn terminal_list(request: &ProbeRequest, state: &ProbeState, cx: &App) -> Value {
+    let terminals = loaded_terminal_views(&state.project_root, cx)
+        .iter()
+        .map(|view| terminal_value(view, cx))
+        .collect::<Vec<_>>();
+    success(
+        &request.request_id,
+        json!({
+            "instance_id": state.instance_id,
+            "epoch": state.epoch,
+            "terminals": terminals,
+            "provisional": true,
+        }),
+    )
+}
+
+fn terminal_snapshot(request: &ProbeRequest, state: &ProbeState, cx: &App) -> Value {
+    let Some(id) = request.params.get("terminal_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let Some(view) = loaded_terminal_views(&state.project_root, cx)
+        .into_iter()
+        .find(|view| terminal_id(view) == id)
+    else {
+        return error(&request.request_id, "TERMINAL_UNAVAILABLE");
+    };
+    let metadata = terminal_value(&view, cx);
+    let terminal = view.read(cx).terminal().clone();
+    let terminal = terminal.read(cx);
+    let content = terminal.get_content();
+    let mut start = content.len().saturating_sub(MAX_TERMINAL_SNAPSHOT_BYTES);
+    while !content.is_char_boundary(start) {
+        start += 1;
+    }
+    success(
+        &request.request_id,
+        json!({
+            "instance_id": state.instance_id,
+            "epoch": state.epoch,
+            "terminal": metadata,
+            "content": &content[start..],
+            "truncated": start > 0,
+            "total_lines": terminal.total_lines(),
+            "viewport_lines": terminal.viewport_lines(),
+            "provisional": true,
+        }),
+    )
+}
+
+fn terminal_input(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    if request.params.get("instance_id").and_then(Value::as_str) != Some(state.instance_id.as_str())
+        || request.params.get("epoch").and_then(Value::as_str) != Some(state.epoch.as_str())
+    {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    let Some(id) = request.params.get("terminal_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let Some(input) = request.params.get("input").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if input.is_empty() || input.len() > MAX_TERMINAL_INPUT_BYTES {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some(existing) = state.terminal_operations.borrow().get(&request.request_id) {
+        return if existing == &digest {
+            success(
+                &request.request_id,
+                json!({"outcome": "accepted", "duplicate": true}),
+            )
+        } else {
+            error(&request.request_id, "REQUEST_ID_CONFLICT")
+        };
+    }
+    let Some(view) = loaded_terminal_views(&state.project_root, cx)
+        .into_iter()
+        .find(|view| terminal_id(view) == id)
+    else {
+        return error(&request.request_id, "TERMINAL_UNAVAILABLE");
+    };
+    let terminal = view.read(cx).terminal().clone();
+    terminal.update(cx, |terminal, _| terminal.input(input.as_bytes().to_vec()));
+    state
+        .terminal_operations
+        .borrow_mut()
+        .insert(request.request_id.clone(), digest);
+    success(
+        &request.request_id,
+        json!({"outcome": "accepted", "duplicate": false}),
+    )
+}
+
+fn task_list(request: &ProbeRequest, state: &ProbeState, cx: &App) -> Value {
+    let tasks = loaded_terminal_views(&state.project_root, cx)
+        .into_iter()
+        .filter_map(|view| {
+            let id = terminal_id(&view);
+            let view = view.read(cx);
+            let terminal = view.terminal().read(cx);
+            let task = terminal.task()?;
+            Some(json!({
+                "terminal_id": id,
+                "task_id": task.spawned_task.id.0,
+                "label": task.spawned_task.full_label,
+                "command_label": task.spawned_task.command_label,
+                "status": terminal_task_status(task.status),
+            }))
+        })
+        .collect::<Vec<_>>();
+    success(
+        &request.request_id,
+        json!({
+            "instance_id": state.instance_id,
+            "epoch": state.epoch,
+            "tasks": tasks,
+            "provisional": true,
+        }),
+    )
+}
+
+fn task_stop(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    if request.params.get("instance_id").and_then(Value::as_str) != Some(state.instance_id.as_str())
+        || request.params.get("epoch").and_then(Value::as_str) != Some(state.epoch.as_str())
+    {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    let Some(id) = request.params.get("terminal_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some(existing) = state.terminal_operations.borrow().get(&request.request_id) {
+        return if existing == &digest {
+            success(
+                &request.request_id,
+                json!({"outcome": "requested", "duplicate": true}),
+            )
+        } else {
+            error(&request.request_id, "REQUEST_ID_CONFLICT")
+        };
+    }
+    let Some(view) = loaded_terminal_views(&state.project_root, cx)
+        .into_iter()
+        .find(|view| terminal_id(view) == id)
+    else {
+        return error(&request.request_id, "TERMINAL_UNAVAILABLE");
+    };
+    let terminal = view.read(cx).terminal().clone();
+    if !terminal
+        .read(cx)
+        .task()
+        .is_some_and(|task| task.status == TaskStatus::Running)
+    {
+        return error(&request.request_id, "TASK_NOT_RUNNING");
+    }
+    terminal.update(cx, |terminal, _| terminal.kill_active_task());
+    state
+        .terminal_operations
+        .borrow_mut()
+        .insert(request.request_id.clone(), digest);
+    success(
+        &request.request_id,
+        json!({"outcome": "requested", "duplicate": false}),
+    )
+}
+
+fn loaded_terminal_views(project_root: &Path, cx: &App) -> Vec<Entity<TerminalView>> {
+    let workspaces = workspace::AppState::global(cx)
+        .workspace_store
+        .read(cx)
+        .workspaces()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut terminals = Vec::new();
+    for workspace in workspaces {
+        let Some(workspace) = workspace.upgrade() else {
+            continue;
+        };
+        if !workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .visible_worktrees(cx)
+            .any(|worktree| worktree.read(cx).abs_path().as_ref() == project_root)
+        {
+            continue;
+        }
+        let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+            continue;
+        };
+        for pane in panel.read(cx).panes() {
+            for item in pane.read(cx).items() {
+                if let Some(view) = item.downcast::<TerminalView>() {
+                    terminals.push(view);
+                }
+            }
+        }
+    }
+    terminals.sort_by_key(|view| view.entity_id());
+    terminals.dedup_by_key(|view| view.entity_id());
+    terminals
+}
+
+fn terminal_id(view: &Entity<TerminalView>) -> String {
+    view.entity_id().as_u64().to_string()
+}
+
+fn terminal_task_status(status: TaskStatus) -> Value {
+    match status {
+        TaskStatus::Unknown => json!({"state": "unknown"}),
+        TaskStatus::Running => json!({"state": "running"}),
+        TaskStatus::Completed { success } => json!({"state": "completed", "success": success}),
+    }
+}
+
+fn terminal_value(view: &Entity<TerminalView>, cx: &App) -> Value {
+    let id = terminal_id(view);
+    let view = view.read(cx);
+    let terminal = view.terminal().read(cx);
+    let task = terminal.task().map(|task| {
+        json!({
+            "id": task.spawned_task.id.0,
+            "label": task.spawned_task.full_label,
+            "status": terminal_task_status(task.status),
+        })
+    });
+    json!({
+        "terminal_id": id,
+        "title": terminal.title(false),
+        "working_directory": terminal.working_directory().map(|path| path.to_string_lossy().into_owned()),
+        "pid": terminal.pid().map(|pid| pid.as_u32()),
+        "task": task,
+    })
 }
 
 fn loaded_thread_views(

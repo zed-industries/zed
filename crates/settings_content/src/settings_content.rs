@@ -398,6 +398,25 @@ pub struct ZedLinkSettingsContent {
     /// Default: true
     pub allow_agent_settings: Option<bool>,
 
+    /// Allows paired devices to inspect terminals that belong to the configured
+    /// project. Terminal contents never leave the project-scoped bridge unless
+    /// this permission is enabled.
+    ///
+    /// Default: false
+    pub allow_terminal_read: Option<bool>,
+
+    /// Allows paired devices to send input to project terminals already open in
+    /// Zed. This does not create a separate shell or bypass Zed's terminal.
+    ///
+    /// Default: false
+    pub allow_terminal_input: Option<bool>,
+
+    /// Allows paired devices to stop task-backed terminals in the configured
+    /// project.
+    ///
+    /// Default: false
+    pub allow_task_control: Option<bool>,
+
     /// Identifier of the connection profile edited by the ZedLink Connections
     /// settings page.
     pub connection_id: Option<String>,
