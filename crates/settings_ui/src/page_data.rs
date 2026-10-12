@@ -10902,7 +10902,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 10] {
+    fn lsp_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -11091,6 +11091,26 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                     write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.document_symbols = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Project Symbols",
+                description: "Controls the source of project symbols used by \"Go to Symbol in Project\".",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("languages.$(language).project_symbols"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.project_symbols.as_ref()
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.project_symbols = value;
                         })
                     },
                 }),

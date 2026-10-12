@@ -4360,6 +4360,38 @@ To enable LSP document symbols for a specific language:
 }
 ```
 
+## Project Symbols
+
+- Description: Controls the source of project symbols used by "Go to Symbol in Project". By default, the language server's `workspace/symbol` is used when available, and the tree-sitter symbol index serves as a fallback for languages without a supporting language server.
+- Setting: `project_symbols`
+- Default: `auto`
+
+**Options**
+
+1. `auto`: Use the language server's `workspace/symbol` when available, falling back to the tree-sitter symbol index for languages without a supporting language server.
+2. `language_server`: Always use `workspace/symbol`. Languages without a supporting language server have no project symbols.
+3. `tree_sitter`: Always use the tree-sitter symbol index.
+
+To always use the tree-sitter symbol index globally:
+
+```json [settings]
+{
+  "project_symbols": "tree_sitter"
+}
+```
+
+To always use the tree-sitter symbol index for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "project_symbols": "tree_sitter"
+    }
+  }
+}
+```
+
 ## Use Smartcase Search
 
 - Description: When enabled, automatically adjusts search case sensitivity based on your query. If your search query contains any uppercase letters, the search becomes case-sensitive; if it contains only lowercase letters, the search becomes case-insensitive. \
