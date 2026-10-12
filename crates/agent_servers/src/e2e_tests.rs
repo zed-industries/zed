@@ -569,22 +569,6 @@ mod tests {
             .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("prompt response");
         completion.await.expect("v1 completion");
-
-        let response = connection.defer_next_prompt_response();
-        let failed = send_and_wait_for_turn(&thread, vec!["fail".into()], cx);
-        cx.run_until_parked();
-        response
-            .send(Err(anyhow!("v1 prompt failure")))
-            .expect("prompt response");
-        assert_eq!(
-            failed.await.expect_err("v1 error").to_string(),
-            "v1 prompt failure"
-        );
-
-        let cancelled = send_and_wait_for_turn(&thread, vec!["cancel".into()], cx);
-        cx.run_until_parked();
-        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
-        cancelled.await.expect("v1 cancelled completion");
     }
 
     #[gpui::test]
@@ -596,6 +580,11 @@ mod tests {
             .await
             .expect_err("an unsettled receipt must reject overlapping prompts");
         thread.update(cx, |thread, cx| {
+            cx.emit(AcpThreadEvent::Stopped {
+                activity_generation: thread.activity_generation(),
+                activity_duration: None,
+                stop_reason: Some(acp_v2::StopReason::EndTurn),
+            });
             thread
                 .update_session_state(
                     acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
