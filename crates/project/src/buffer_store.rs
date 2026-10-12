@@ -40,6 +40,8 @@ pub struct BufferStore {
     path_to_buffer_id: HashMap<ProjectPath, BufferId>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
+    pending_buffer_shares: HashMap<u64, Task<()>>,
+    next_buffer_share_id: u64,
     non_searchable_buffers: HashSet<BufferId>,
     project_search: RemoteProjectSearchState,
 }
@@ -850,6 +852,8 @@ impl BufferStore {
             opened_buffers: Default::default(),
             path_to_buffer_id: Default::default(),
             shared_buffers: Default::default(),
+            pending_buffer_shares: HashMap::default(),
+            next_buffer_share_id: 0,
             loading_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
             worktree_store,
@@ -877,6 +881,8 @@ impl BufferStore {
             path_to_buffer_id: Default::default(),
             loading_buffers: Default::default(),
             shared_buffers: Default::default(),
+            pending_buffer_shares: HashMap::default(),
+            next_buffer_share_id: 0,
             non_searchable_buffers: Default::default(),
             worktree_store,
             project_search: Default::default(),
@@ -1635,12 +1641,11 @@ impl BufferStore {
             return Task::ready(Ok(()));
         };
 
-        cx.spawn(async move |this, cx| {
-            let Some(buffer) = this.read_with(cx, |this, _| this.get(buffer_id))? else {
-                return anyhow::Ok(());
-            };
-
-            let operations = buffer.update(cx, |b, cx| b.serialize_ops(None, cx));
+        let buffer = buffer.clone();
+        let share_id = util::post_inc(&mut self.next_buffer_share_id);
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let transfer = cx.spawn(async move |buffer_store, cx| {
+            let operations = buffer.update(cx, |buffer, cx| buffer.serialize_ops(None, cx));
             let operations = operations.await;
             let state = buffer.update(cx, |buffer, cx| buffer.to_proto(cx));
 
@@ -1673,6 +1678,17 @@ impl BufferStore {
                 .await
                 .log_err();
             }
+
+            completion_tx.send(()).ok();
+            buffer_store
+                .update(cx, |store, _| {
+                    store.pending_buffer_shares.remove(&share_id);
+                })
+                .ok();
+        });
+        self.pending_buffer_shares.insert(share_id, transfer);
+        cx.background_spawn(async move {
+            completion_rx.await?;
             Ok(())
         })
     }
