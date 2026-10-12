@@ -510,10 +510,10 @@ pub enum PrepareRenameResponse {
 pub enum InlayId {
     EditPrediction(usize),
     DebuggerValue(usize),
+    ReplResult(usize),
     // LSP
     Hint(usize),
     Color(usize),
-    ReplResult(usize),
 }
 
 impl InlayId {
@@ -536,7 +536,14 @@ pub struct InlayHint {
     pub padding_left: bool,
     pub padding_right: bool,
     pub tooltip: Option<InlayHintTooltip>,
+    pub text_edits: Option<InlayHintTextEdits>,
     pub resolve_state: ResolveState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InlayHintTextEdits {
+    pub edits: Vec<(Range<Anchor>, String)>,
+    pub buffer_version: clock::Global,
 }
 
 /// The user's intent behind a given completion confirmation.
@@ -859,6 +866,12 @@ impl InlayHint {
             InlayHintLabel::String(s) => Rope::from(s),
             InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &*part.value).collect(),
         }
+    }
+
+    pub fn has_text_edits(&self) -> bool {
+        self.text_edits
+            .as_ref()
+            .is_some_and(|text_edits| !text_edits.edits.is_empty())
     }
 }
 

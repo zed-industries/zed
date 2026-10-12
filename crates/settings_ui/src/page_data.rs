@@ -1282,6 +1282,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()?
                             .font_family
                             .as_ref()
+                            .or(settings_content.theme.ui_font_family.as_ref())
                     },
                     write: |settings_content, value, _| {
                         settings_content
@@ -1305,6 +1306,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()?
                             .code_font_family
                             .as_ref()
+                            .or(settings_content.theme.buffer_font_family.as_ref())
                     },
                     write: |settings_content, value, _| {
                         settings_content
