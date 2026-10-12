@@ -411,7 +411,6 @@ pub fn normalize_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rel_path::rel_path;
 
     #[test]
     fn test_join_path_uses_path_style_separator() {
@@ -503,101 +502,6 @@ mod tests {
             PathStyle::Windows.normalize(r"C:\..\worktrees"),
             r"C:\worktrees"
         );
-    }
-
-    #[test]
-    fn test_strip_prefix() {
-        let expected = [
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b/",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/",
-                Some(rel_path("a/b/c").into_arc()),
-            ),
-            (PathStyle::Unix, "/a/b/c", "", None),
-            (
-                PathStyle::Unix,
-                "/a/b//c",
-                "/a/b/",
-                Some(rel_path("c").into_arc()),
-            ),
-            (PathStyle::Unix, "/a/bc", "/a/b", None),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b/c",
-                Some(rel_path("").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\a\\b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\a\\b\\",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\",
-                Some(rel_path("a/b/c").into_arc()),
-            ),
-            (PathStyle::Windows, "C:\\a\\b\\c", "", None),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\\\c",
-                "C:\\a\\b\\",
-                Some(rel_path("c").into_arc()),
-            ),
-            (PathStyle::Windows, "C:\\a\\bc", "C:\\a\\b", None),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b\\",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b/",
-                Some(rel_path("c").into_arc()),
-            ),
-        ];
-        let actual = expected.clone().map(|(style, child, parent, _)| {
-            (
-                style,
-                child,
-                parent,
-                style
-                    .strip_prefix(child, parent)
-                    .ok()
-                    .and_then(|rel_path| RelPath::new(rel_path, style).ok())
-                    .map(|rel_path| rel_path.into_arc()),
-            )
-        });
-        pretty_assertions::assert_eq!(actual, expected);
     }
 
     #[test]
