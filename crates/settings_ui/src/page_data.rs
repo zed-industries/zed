@@ -1387,7 +1387,7 @@ fn zedlink_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "View Project Terminals",
-                description: "Allow paired devices to inspect terminals open in this configured project. Disabled by default.",
+                description: "Allow paired devices to inspect terminals open in this configured project. This is read-only unless Send Terminal Input is also enabled. Changes apply immediately. Disabled by default.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("zedlink.allow_terminal_read"),
@@ -1410,7 +1410,7 @@ fn zedlink_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Send Terminal Input",
-                description: "Allow paired devices to type into project terminals already open in Zed. Disabled by default.",
+                description: "Allow paired devices to type into project terminals already open in Zed. Requires View Project Terminals. Changes apply immediately. Disabled by default.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("zedlink.allow_terminal_input"),

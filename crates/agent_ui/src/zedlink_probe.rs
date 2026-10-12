@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet, VecDeque},
     fs::{self, DirBuilder, Permissions},
     io::{BufRead, BufReader, Read, Write},
@@ -80,7 +80,7 @@ struct ProbeCommand {
 
 struct ProbeState {
     project_root: PathBuf,
-    permissions: ProbePermissions,
+    permissions: Cell<ProbePermissions>,
     instance_id: String,
     epoch: String,
     submissions: RefCell<HashMap<String, SubmissionRecord>>,
@@ -112,6 +112,68 @@ struct ProbePermissions {
 }
 
 impl ProbePermissions {
+    fn from_settings(cx: &App) -> Self {
+        let settings = cx
+            .global::<SettingsStore>()
+            .merged_settings()
+            .zedlink
+            .clone();
+        Self {
+            session_creation: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_session_creation)
+                .unwrap_or(true),
+            attachments: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_attachments)
+                .unwrap_or(true),
+            project_context: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_project_context)
+                .unwrap_or(true),
+            git_changes: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_git_changes)
+                .unwrap_or(true),
+            approval_decisions: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_approval_decisions)
+                .unwrap_or(true),
+            agent_settings: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_agent_settings)
+                .unwrap_or(true),
+            terminal_read: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_terminal_read)
+                .unwrap_or(false),
+            terminal_input: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_terminal_input)
+                .unwrap_or(false),
+            task_control: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_task_control)
+                .unwrap_or(false),
+            task_start: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_task_start)
+                .unwrap_or(false),
+            debugger_read: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_debugger_read)
+                .unwrap_or(false),
+            debugger_start: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_debugger_start)
+                .unwrap_or(false),
+            debugger_control: settings
+                .as_ref()
+                .and_then(|settings| settings.allow_debugger_control)
+                .unwrap_or(false),
+        }
+    }
+
     fn capabilities(self) -> Vec<&'static str> {
         let mut capabilities = vec![
             "thread.list",
@@ -167,7 +229,7 @@ impl ProbePermissions {
         if self.terminal_read {
             capabilities.extend(["terminal.list", "terminal.snapshot"]);
         }
-        if self.terminal_input {
+        if self.terminal_read && self.terminal_input {
             capabilities.push("terminal.input");
         }
         if self.task_control {
@@ -208,7 +270,7 @@ impl ProbePermissions {
             }
             "thread.settings.update" | "thread.queue.clear" => self.agent_settings,
             "terminal.list" | "terminal.snapshot" => self.terminal_read,
-            "terminal.input" => self.terminal_input,
+            "terminal.input" => self.terminal_read && self.terminal_input,
             "task.list" | "task.stop" => self.task_control,
             "task.catalog" | "task.run" => self.task_start,
             "debugger.snapshot" => self.debugger_read,
@@ -280,60 +342,7 @@ pub fn init(cx: &mut App) {
         .merged_settings()
         .zedlink
         .clone();
-    let permissions = ProbePermissions {
-        session_creation: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_session_creation)
-            .unwrap_or(true),
-        attachments: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_attachments)
-            .unwrap_or(true),
-        project_context: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_project_context)
-            .unwrap_or(true),
-        git_changes: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_git_changes)
-            .unwrap_or(true),
-        approval_decisions: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_approval_decisions)
-            .unwrap_or(true),
-        agent_settings: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_agent_settings)
-            .unwrap_or(true),
-        terminal_read: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_terminal_read)
-            .unwrap_or(false),
-        terminal_input: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_terminal_input)
-            .unwrap_or(false),
-        task_control: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_task_control)
-            .unwrap_or(false),
-        task_start: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_task_start)
-            .unwrap_or(false),
-        debugger_read: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_debugger_read)
-            .unwrap_or(false),
-        debugger_start: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_debugger_start)
-            .unwrap_or(false),
-        debugger_control: settings
-            .as_ref()
-            .and_then(|settings| settings.allow_debugger_control)
-            .unwrap_or(false),
-    };
+    let permissions = ProbePermissions::from_settings(cx);
     let gateway_manager = settings.as_ref().and_then(|settings| {
         if !settings.start_gateway_on_launch.unwrap_or(true) {
             return None;
@@ -406,7 +415,7 @@ pub fn init(cx: &mut App) {
             listener,
             ProbeState {
                 project_root,
-                permissions,
+                permissions: Cell::new(permissions),
                 instance_id: uuid::Uuid::new_v4().to_string(),
                 epoch: uuid::Uuid::new_v4().to_string(),
                 submissions: RefCell::new(HashMap::new()),
@@ -427,6 +436,12 @@ pub fn init(cx: &mut App) {
         return;
     };
     let state = Rc::new(state);
+
+    cx.observe_global::<SettingsStore>({
+        let state = state.clone();
+        move |cx| state.permissions.set(ProbePermissions::from_settings(cx))
+    })
+    .detach();
 
     let (sender, receiver) = async_channel::bounded::<ProbeCommand>(16);
     let listener_thread = std::thread::Builder::new()
@@ -618,7 +633,8 @@ fn handle_stream(
 }
 
 fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
-    if !state.permissions.allows(&request.method, &request.params) {
+    let permissions = state.permissions.get();
+    if !permissions.allows(&request.method, &request.params) {
         return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
     }
     match request.method.as_str() {
@@ -627,7 +643,7 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
             json!({
                 "instance_id": state.instance_id,
                 "epoch": state.epoch,
-                "capabilities": state.permissions.capabilities(),
+                "capabilities": permissions.capabilities(),
                 "project": state.project_root.file_name().and_then(|name| name.to_str()),
                 "provisional": true,
             }),
