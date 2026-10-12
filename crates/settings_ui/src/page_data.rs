@@ -157,6 +157,82 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     ]
 }
 
+fn pair_zedlink_in_terminal(window: &mut Window, cx: &mut App) {
+    let manager_path = SettingsStore::global(cx)
+        .merged_settings()
+        .zedlink
+        .as_ref()
+        .and_then(|settings| settings.manager_path.as_deref())
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned);
+    window
+        .spawn(cx, async move |cx| {
+            let result = async {
+                let manager_path = manager_path
+                    .ok_or_else(|| anyhow::anyhow!("Run ZedLink: Repair setup first."))?;
+                let quoted_path = task::ShellKind::Posix
+                    .try_quote(&manager_path)
+                    .ok_or_else(|| anyhow::anyhow!("The manager path cannot be quoted safely."))?;
+                let workspace_window =
+                    workspace::activate_any_workspace_window(cx).ok_or_else(|| {
+                        anyhow::anyhow!("Open a local Zed workspace to show the terminal QR.")
+                    })?;
+                let task = workspace_window.update(cx, |multi_workspace, window, cx| {
+                    let workspace = multi_workspace.workspace().clone();
+                    workspace.update(cx, |workspace, cx| {
+                        anyhow::ensure!(
+                            workspace.project().read(cx).is_local(),
+                            "Pairing must run in a local Zed workspace."
+                        );
+                        Ok(workspace.spawn_in_terminal(
+                            task::SpawnInTerminal {
+                                id: task::TaskId("zedlink-pair-terminal".into()),
+                                label: "ZedLink: Pair device — Terminal QR".into(),
+                                full_label: "ZedLink: Pair device — Terminal QR".into(),
+                                command: Some("python3".into()),
+                                args: vec![
+                                    quoted_path.into_owned(),
+                                    "pair-primary-terminal".into(),
+                                ],
+                                shell: task::Shell::Program("sh".into()),
+                                use_new_terminal: true,
+                                allow_concurrent_runs: false,
+                                reveal: task::RevealStrategy::Always,
+                                hide: task::HideStrategy::Never,
+                                show_command: false,
+                                show_summary: false,
+                                ..Default::default()
+                            },
+                            window,
+                            cx,
+                        ))
+                    })
+                })??;
+                let status = task
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("Zed's terminal provider is unavailable."))??;
+                anyhow::ensure!(
+                    status.success(),
+                    "Pairing failed. Check the terminal for details."
+                );
+                anyhow::Ok(())
+            }
+            .await;
+            if let Err(error) = result {
+                cx.prompt(
+                    PromptLevel::Warning,
+                    "Terminal pairing unavailable",
+                    Some(&error.to_string()),
+                    &["OK"],
+                )
+                .await
+                .log_err();
+            }
+        })
+        .detach();
+}
+
 fn run_zedlink_manager_action(action: &'static str, window: &mut gpui::Window, cx: &mut App) {
     let manager_path = SettingsStore::global(cx)
         .merged_settings()
@@ -1058,8 +1134,15 @@ fn zedlink_page() -> SettingsPage {
                         SettingsPageItem::ActionLink(ActionLink {
                             title: "Pair New Device".into(),
                             description: Some("Create a private, five-minute pairing page with a QR code and manual code for phones, tablets, and desktop browsers.".into()),
-                            button_text: "Pair Device".into(),
+                            button_text: "Open Browser QR".into(),
                             on_click: Arc::new(|_, window, cx| run_zedlink_manager_action("pair-primary", window, cx)),
+                            files: USER,
+                        }),
+                        SettingsPageItem::ActionLink(ActionLink {
+                            title: "Pair New Device in Terminal".into(),
+                            description: Some("Show the one-use QR and manual code in a local Zed terminal using the primary connection. No browser is opened. The challenge expires after five minutes.".into()),
+                            button_text: "Show Terminal QR".into(),
+                            on_click: Arc::new(|_, window, cx| pair_zedlink_in_terminal(window, cx)),
                             files: USER,
                         }),
                         SettingsPageItem::ActionLink(ActionLink {

@@ -65,6 +65,7 @@ settings.workspace = true
 shell_command_parser.workspace = true
 smol.workspace = true
 strum.workspace = true
+task.workspace = true
 telemetry.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
