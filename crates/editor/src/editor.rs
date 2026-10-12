@@ -1370,13 +1370,14 @@ struct HoveredCursor {
 /// in vim mode we never do.
 ///
 /// Similarly, you might want to disable scrolling if you don't want the viewport to
-/// move.
+/// move. Explicit jumps can opt into revealing folded destinations with [`Self::unfold`].
 #[derive(Clone)]
 pub struct SelectionEffects {
     nav_history: Option<bool>,
     completions: bool,
     scroll: Option<Autoscroll>,
     from_search: bool,
+    unfold: bool,
 }
 
 impl Default for SelectionEffects {
@@ -1386,10 +1387,20 @@ impl Default for SelectionEffects {
             completions: true,
             scroll: Some(Autoscroll::fit()),
             from_search: false,
+            unfold: false,
         }
     }
 }
 impl SelectionEffects {
+    /// Reveals the selected ranges and their folded buffers before scrolling.
+    /// Also applies when selections are unchanged; deferred changes reveal the final selections.
+    pub fn unfold(self) -> Self {
+        Self {
+            unfold: true,
+            ..self
+        }
+    }
+
     pub fn scroll(scroll: Autoscroll) -> Self {
         Self {
             scroll: Some(scroll),

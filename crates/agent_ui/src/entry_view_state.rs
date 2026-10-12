@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
 use agent::ThreadStore;
-use agent_client_protocol::schema::v1 as acp_v1;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -48,7 +48,7 @@ pub struct EntryViewState {
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
     expanded_compactions: HashSet<usize>,
-    expanded_tool_calls: HashSet<acp_v1::ToolCallId>,
+    expanded_tool_calls: HashSet<acp_v2::ToolCallId>,
 }
 
 impl EntryViewState {
@@ -74,7 +74,7 @@ impl EntryViewState {
         }
     }
 
-    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
+    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp_v2::ToolCallId) -> bool {
         self.expanded_tool_calls.contains(tool_call_id)
     }
 
@@ -82,15 +82,15 @@ impl EntryViewState {
         self.is_tool_call_expanded(&tool_call.id) || tool_call.authorization_id().is_some()
     }
 
-    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v1::ToolCallId) {
+    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v2::ToolCallId) {
         self.expanded_tool_calls.insert(tool_call_id);
     }
 
-    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp_v1::ToolCallId) {
+    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp_v2::ToolCallId) {
         self.expanded_tool_calls.remove(tool_call_id);
     }
 
-    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp_v1::ToolCallId) {
+    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp_v2::ToolCallId) {
         if !self.expanded_tool_calls.remove(tool_call_id) {
             self.expanded_tool_calls.insert(tool_call_id.clone());
         }
@@ -553,9 +553,9 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(acp_v1::ToolCallId),
-    NewTerminal(acp_v1::ToolCallId),
-    TerminalMovedToBackground(acp_v1::ToolCallId),
+    NewDiff(acp_v2::ToolCallId),
+    NewTerminal(acp_v2::ToolCallId),
+    TerminalMovedToBackground(acp_v2::ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
     OpenDiffLocation {
         path: String,
@@ -979,9 +979,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
-                                session_id.0.clone(),
-                            )),
+                            acp_v2::ElicitationSessionScope::new(session_id.clone()),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",

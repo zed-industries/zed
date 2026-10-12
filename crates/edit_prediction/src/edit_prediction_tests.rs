@@ -1,8 +1,11 @@
-use client::{RefreshLlmTokenListener, UserStore, test::FakeServer};
+use client::{
+    Credentials, RefreshLlmTokenListener, UserStore,
+    test::{FakeServer, make_get_authenticated_user_response},
+};
 use clock::FakeSystemClock;
 use clock::ReplicaId;
 use cloud_api_types::{
-    CreateLlmTokenResponse, LlmToken, Organization, OrganizationConfiguration,
+    CreateLlmTokenResponse, KnownOrUnknown, LlmToken, Organization, OrganizationConfiguration,
     OrganizationEditPredictionConfiguration, OrganizationId, Plan, SettledEditPrediction,
     SubmitEditPredictionSettledBatchBody, SubmitEditPredictionSettledResponse,
 };
@@ -467,6 +470,87 @@ async fn test_request_events(cx: &mut TestAppContext) {
 
     assert_eq!(prediction.edits.len(), 1);
     assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
+}
+
+#[gpui::test]
+async fn test_edit_history_releases_single_file_worktree_when_buffer_is_dropped(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/"),
+        json!({
+            "root": { "other.md": "other\n" },
+            "external.md": "one\n\nthree\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/external.md"), cx)
+        })
+        .await
+        .unwrap();
+    let other_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/other.md"), cx)
+        })
+        .await
+        .unwrap();
+    let worktree = project.read_with(cx, |project, cx| {
+        let (worktree, _) = project
+            .find_worktree(Path::new(path!("/external.md")), cx)
+            .unwrap();
+        assert!(worktree.read(cx).is_single_file());
+        assert!(!worktree.read(cx).is_visible());
+        worktree.downgrade()
+    });
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        ep_store.register_buffer(&other_buffer, &project, cx);
+    });
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(4..4, "two")], None, cx);
+    });
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    cx.update(|_| drop(other_buffer));
+    cx.run_until_parked();
+    ep_store.read_with(cx, |ep_store, _| {
+        let project_state = &ep_store.projects[&project.entity_id()];
+        assert!(project_state.last_event.is_some());
+    });
+
+    let weak_buffer = buffer.downgrade();
+    cx.update(|_| drop(buffer));
+    cx.run_until_parked();
+    weak_buffer.assert_released();
+    worktree.assert_released();
+
+    let events = ep_store.read_with(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| {
+                let zeta_prompt::Event::BufferChange { diff, .. } = event.event.as_ref();
+                diff.as_str()
+            })
+            .collect::<Vec<_>>(),
+        [indoc! {"
+            @@ -1,3 +1,3 @@
+             one
+            -
+            +two
+             three
+        "}],
+    );
 }
 
 #[gpui::test]
@@ -2133,6 +2217,137 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
     let (_request, respond_tx) = requests.predict.next().await.unwrap();
     respond_tx.send(empty_response()).unwrap();
     cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_zed_cloud_predictions_skip_organizations_without_subscriptions(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({ "foo.md": "Hello!\nHow\nBye\n" }))
+        .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let position = buffer
+        .read_with(cx, |buffer, _cx| buffer.snapshot())
+        .anchor_before(language::Point::new(1, 3));
+    let request_prediction = |ep_store: &Entity<EditPredictionStore>, cx: &mut TestAppContext| {
+        ep_store.update(cx, |ep_store, cx| {
+            ep_store.request_prediction(
+                &project,
+                &buffer,
+                position,
+                PredictEditsRequestTrigger::Other,
+                cx,
+            )
+        })
+    };
+
+    let organization = |id: &str| Organization {
+        id: OrganizationId(id.into()),
+        name: id.into(),
+        is_personal: false,
+    };
+    let mut authenticated_user = make_get_authenticated_user_response(1, "user".into());
+    authenticated_user.organizations = vec![organization("unsubscribed"), organization("paid")];
+    authenticated_user.plans_by_organization.insert(
+        OrganizationId("paid".into()),
+        KnownOrUnknown::Known(Plan::ZedBusiness),
+    );
+    let authenticated_user = serde_json::to_string(&authenticated_user).unwrap();
+    let local_completion_requests = Arc::new(Mutex::new(0));
+    let client = ep_store.read_with(cx, |ep_store, _cx| ep_store.client.clone());
+    client.http_client().as_fake().replace_handler({
+        let local_completion_requests = local_completion_requests.clone();
+        move |old_handler, request| {
+            let authenticated_user = authenticated_user.clone();
+            let local_completion_requests = local_completion_requests.clone();
+            async move {
+                let body = match request.uri().path() {
+                    "/client/users/me" => authenticated_user,
+                    "/v1/completions" => {
+                        *local_completion_requests.lock() += 1;
+                        serde_json::to_string(&RawCompletionResponse {
+                            id: "local".into(),
+                            object: "text_completion".into(),
+                            created: 0,
+                            model: "local".into(),
+                            choices: vec![RawCompletionChoice {
+                                text: String::new(),
+                                finish_reason: Some("stop".into()),
+                            }],
+                            usage: RawCompletionUsage {
+                                prompt_tokens: 0,
+                                completion_tokens: 0,
+                                total_tokens: 0,
+                            },
+                        })
+                        .unwrap()
+                    }
+                    _ => return old_handler(request).await,
+                };
+                Ok(Response::builder().body(body.into()).unwrap())
+            }
+        }
+    });
+    client.override_authenticate(|_| {
+        Task::ready(Ok(Credentials {
+            user_id: 1,
+            access_token: "test".into(),
+        }))
+    });
+    client.sign_in(false, &cx.to_async()).await.unwrap();
+    cx.run_until_parked();
+
+    let blocked_request = request_prediction(&ep_store, cx);
+    cx.run_until_parked();
+    assert_no_predict_request_ready(&mut requests.predict);
+    assert!(matches!(blocked_request.now_or_never(), Some(Ok(None))));
+
+    let set_provider = |provider, cx: &mut TestAppContext| {
+        cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+            settings_store.update_user_settings(cx, |settings| {
+                let edit_predictions = settings
+                    .project
+                    .all_languages
+                    .edit_predictions
+                    .get_or_insert_default();
+                edit_predictions.provider = Some(provider);
+                edit_predictions.open_ai_compatible_api =
+                    Some(settings::CustomEditPredictionProviderSettingsContent {
+                        api_url: Some("http://localhost:8080/v1/completions".into()),
+                        model: Some("local".into()),
+                        prompt_format: Some(settings::EditPredictionPromptFormatContent::Zeta2),
+                        max_output_tokens: Some(64),
+                        prediction_debounce: None,
+                    });
+            });
+        });
+    };
+    cx.update(|cx| cx.set_http_client(client.http_client()));
+    set_provider(settings::EditPredictionProvider::OpenAiCompatibleApi, cx);
+    request_prediction(&ep_store, cx).await.unwrap();
+    assert_eq!(*local_completion_requests.lock(), 1);
+    set_provider(settings::EditPredictionProvider::Zed, cx);
+
+    let user_store = ep_store.read_with(cx, |ep_store, _cx| ep_store.user_store.clone());
+    user_store
+        .update(cx, |user_store, cx| {
+            user_store.set_current_organization(Arc::new(organization("paid")), cx)
+        })
+        .await
+        .unwrap();
+    let paid_request = request_prediction(&ep_store, cx);
+    let (_, paid_response) = requests.predict.next().await.unwrap();
+    paid_response.send(empty_response()).unwrap();
+    paid_request.await.unwrap();
 }
 
 #[gpui::test]
@@ -4440,6 +4655,73 @@ async fn test_edit_prediction_settled_sample_data_requires_observing_all_events_
 
     let missed_request = settled_by_id.remove("prediction-missed").unwrap();
     assert_eq!(missed_request.sample_data, None);
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled_drops_sample_when_buffer_release_finalized_missed_event(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests, project, buffer) = init_sample_capture_test(
+        json!({
+            "LICENSE": MIT_LICENSE,
+            "foo.md": "one\n",
+            "other.md": "two\n",
+        }),
+        cx,
+    )
+    .await;
+    let other_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/other.md"), cx)
+        })
+        .await
+        .unwrap();
+    let boundary = ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&other_buffer, &project, cx);
+        let project_state = &ep_store.projects[&project.entity_id()];
+        PromptHistoryBoundary {
+            first_event_seq: project_state.next_last_event_seq,
+            snapshot: None,
+        }
+    });
+
+    other_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "updated ")], None, cx);
+    });
+    cx.update(|_| drop(other_buffer));
+    cx.run_until_parked();
+    ep_store.read_with(cx, |ep_store, _| {
+        assert!(ep_store.projects[&project.entity_id()].last_event.is_none());
+    });
+
+    enqueue_sample_capture(
+        &ep_store,
+        &project,
+        &buffer,
+        "prediction-after-close",
+        Point::new(0, 0)..Point::new(1, 0),
+        CapturedPredictionContext {
+            repository_url: None,
+            revision: None,
+            uncommitted_diff: None,
+            buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
+        },
+        Some(boundary),
+        VecDeque::new(),
+        cx,
+    )
+    .await;
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let request = requests
+        .settled
+        .next()
+        .await
+        .expect("settled request should be sent");
+    assert_eq!(request.sample_data, None);
 }
 
 #[gpui::test]

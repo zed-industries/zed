@@ -604,7 +604,7 @@ struct ManagedNodeRuntime {
 }
 
 impl ManagedNodeRuntime {
-    const VERSION: &str = "v24.11.0";
+    const VERSION: &str = "v24.21.0";
 
     #[cfg(not(windows))]
     const NODE_PATH: &str = "bin/node";
