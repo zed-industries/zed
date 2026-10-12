@@ -16,7 +16,6 @@ use crate::sandboxing::{
     sandbox_worktree_writable_paths, sandboxing_available_for_project,
     sandboxing_enabled_for_project,
 };
-use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::{
     AgentProfileId, AgentProfileSettings, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
@@ -781,7 +780,7 @@ pub trait ThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
-        extra_env: Vec<acp::EnvVariable>,
+        extra_env: Vec<(String, String)>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<acp_thread::SandboxWrap>,

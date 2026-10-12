@@ -339,13 +339,13 @@ pub struct AcpConnection {
 
 #[derive(Clone, Default)]
 struct AcpConnectionDefaults {
-    mode: Rc<RefCell<Option<acp::SessionModeId>>>,
+    mode: Rc<RefCell<Option<acp_v2::SessionConfigValueId>>>,
     config_options: Rc<RefCell<HashMap<String, AgentConfigOptionValue>>>,
 }
 
 impl AcpConnectionDefaults {
     fn new(
-        mode: Option<acp::SessionModeId>,
+        mode: Option<acp_v2::SessionConfigValueId>,
         config_options: HashMap<String, AgentConfigOptionValue>,
     ) -> Self {
         Self {
@@ -354,7 +354,7 @@ impl AcpConnectionDefaults {
         }
     }
 
-    fn mode(&self) -> Option<acp::SessionModeId> {
+    fn mode(&self) -> Option<acp_v2::SessionConfigValueId> {
         self.mode.borrow().clone()
     }
 
@@ -364,7 +364,7 @@ impl AcpConnectionDefaults {
 
     fn set(
         &self,
-        mode: Option<acp::SessionModeId>,
+        mode: Option<acp_v2::SessionConfigValueId>,
         config_options: HashMap<String, AgentConfigOptionValue>,
     ) {
         *self.mode.borrow_mut() = mode;
@@ -393,7 +393,9 @@ impl AcpConnectionDefaults {
             } => default_config_options.clone(),
         };
         self.set(
-            agent_settings.default_mode().map(acp::SessionModeId::new),
+            agent_settings
+                .default_mode()
+                .map(acp_v2::SessionConfigValueId::new),
             default_config_options,
         );
     }
@@ -591,7 +593,7 @@ pub async fn connect(
     project: Entity<Project>,
     command: AgentServerCommand,
     agent_server_store: WeakEntity<AgentServerStore>,
-    default_mode: Option<acp::SessionModeId>,
+    default_mode: Option<acp_v2::SessionConfigValueId>,
     default_config_options: HashMap<String, AgentConfigOptionValue>,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
@@ -809,7 +811,7 @@ impl AcpConnection {
         project: Entity<Project>,
         command: AgentServerCommand,
         agent_server_store: WeakEntity<AgentServerStore>,
-        default_mode: Option<acp::SessionModeId>,
+        default_mode: Option<acp_v2::SessionConfigValueId>,
         default_config_options: HashMap<String, AgentConfigOptionValue>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
@@ -1708,6 +1710,7 @@ impl AgentConnection for AcpConnection {
 
             let default_mode = self.defaults.mode();
             if let Some(default_mode) = default_mode {
+                let default_mode = acp::SessionModeId::new(default_mode.0);
                 if let Some(modes) = modes.as_ref() {
                     let mut modes_ref = modes.borrow_mut();
                     let has_mode = modes_ref
@@ -2772,26 +2775,27 @@ mod tests {
         let fs = fs::FakeFs::new(cx.executor());
         fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
         let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
-        let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
-        let original = acp::Error::new(
-            acp::ErrorCode::AuthRequired.into(),
-            "Sign in to continue this prompt",
-        )
-        .data(serde_json::json!({
-            "details": "The user aborted a request",
-            "auth": {"provider": "test", "retry": [null, false, 7]}
-        }));
+        let mut harness = test_support::connect_fake_acp_connection(project.clone(), cx).await;
+        let response_error = Arc::new(Mutex::new(acp::Error::auth_required()));
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
         let _agent_io_task = cx.background_spawn(
             Agent
                 .builder()
                 .name("prompt-auth-test-agent")
                 .on_receive_request(
+                    async move |_request: acp::NewSessionRequest, responder, _cx| {
+                        responder.respond(acp::NewSessionResponse::new("auth-session"))
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .on_receive_request(
                     {
-                        let original = original.clone();
+                        let response_error = response_error.clone();
                         async move |request: acp::PromptRequest, responder, _cx| {
                             assert_eq!(request.session_id, acp::SessionId::new("auth-session"));
-                            responder.respond_with_error(original.clone())
+                            responder.respond_with_error(
+                                response_error.lock().expect("response error").clone(),
+                            )
                         }
                     },
                     agent_client_protocol::on_receive_request!(),
@@ -2809,35 +2813,102 @@ mod tests {
             .expect("test harness should own the only ACP connection handle")
             .connection = connection_rx.await.expect("receive SDK connection");
 
-        let error = cx
+        let thread = cx
             .update(|cx| {
-                harness.connection.prompt(
-                    acp_v2::PromptRequest::new(
-                        acp_v2::SessionId::new("auth-session"),
-                        vec!["Hello".into()],
-                    ),
+                harness.connection.clone().new_session(
+                    project,
+                    PathList::new(&[std::path::PathBuf::from("/a")]),
                     cx,
                 )
             })
             .await
-            .expect_err("prompt should require authentication");
-        assert_eq!(
-            error.downcast_ref::<agent_client_protocol::Error>(),
-            Some(&original),
-        );
-        let error = error.context("sending the initial prompt");
-        assert_eq!(
-            error.downcast_ref::<agent_client_protocol::Error>(),
-            Some(&original),
-        );
-        assert_eq!(
-            AuthRequired::from_error(&error)
-                .expect("initial prompt should be classified as authentication required")
-                .description
-                .as_deref(),
-            Some("Sign in to continue this prompt"),
-        );
-        assert_eq!(error.to_string(), "sending the initial prompt");
+            .expect("registered session");
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        for data in [
+            serde_json::json!({"auth": {"provider": "test", "retry": [null, false, 7]}}),
+            serde_json::json!({"details": "The user aborted a request"}),
+        ] {
+            let original = acp::Error::new(
+                acp::ErrorCode::AuthRequired.into(),
+                "Sign in to continue this prompt",
+            )
+            .data(data);
+            *response_error.lock().expect("response error") = original.clone();
+            cx.update(|cx| harness.connection.cancel(&session_id, cx));
+            assert!(
+                harness
+                    .connection
+                    .sessions
+                    .borrow()
+                    .get(&session_id)
+                    .expect("registered session")
+                    .suppress_abort_err
+            );
+            let error = cx
+                .update(|cx| {
+                    harness.connection.prompt(
+                        acp_v2::PromptRequest::new(session_id.clone(), vec!["Hello".into()]),
+                        cx,
+                    )
+                })
+                .await
+                .expect_err("authentication errors must not be suppressed by cancellation")
+                .context("sending the initial prompt");
+            assert_eq!(
+                error.downcast_ref::<agent_client_protocol::Error>(),
+                Some(&original),
+            );
+            assert_eq!(
+                AuthRequired::from_error(&error)
+                    .expect("initial prompt should be classified as authentication required")
+                    .description
+                    .as_deref(),
+                Some("Sign in to continue this prompt"),
+            );
+            assert!(
+                !harness
+                    .connection
+                    .sessions
+                    .borrow()
+                    .get(&session_id)
+                    .expect("registered session")
+                    .suppress_abort_err
+            );
+        }
+    }
+
+    #[test]
+    fn test_legacy_modes_use_config_choices_without_overriding_config_options() {
+        let id = acp::SessionModeId::new("opaque/手動");
+        let meta =
+            acp::Meta::from_iter([("custom".into(), serde_json::json!({"keep": [null, 7]}))]);
+        let mode = acp::SessionMode::new(id.clone(), "Manual label")
+            .description("Mode description")
+            .meta(meta.clone());
+        let choice = mode_from_v1(&mode);
+        assert!(Arc::ptr_eq(&choice.value.0, &id.0));
+        assert_eq!(choice.name, mode.name);
+        assert_eq!(choice.description, mode.description);
+        assert_eq!(choice.meta, Some(meta));
+
+        let modes =
+            acp::SessionModeState::new(id, vec![mode, acp::SessionMode::new("auto", "Auto")]);
+        let (legacy, config) = config_state(Some(modes.clone()), None).expect("legacy modes");
+        assert!(config.is_none());
+        let choices = legacy
+            .expect("legacy fallback")
+            .borrow()
+            .available_modes
+            .iter()
+            .map(mode_from_v1)
+            .map(|choice| choice.value.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(choices, ["opaque/手動", "auto"]);
+
+        let (legacy, config) =
+            config_state(Some(modes), Some(Vec::new())).expect("config options take precedence");
+        assert!(legacy.is_none());
+        assert!(config.is_some());
     }
 
     #[test]
@@ -4442,6 +4513,77 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn legacy_mode_set_preserves_wire_ids_and_rolls_back_on_failure(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use acp_thread::AgentSessionModes as _;
+
+        let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        cx.background_spawn(
+            Agent
+                .builder()
+                .on_receive_request(
+                    {
+                        let requests = requests.clone();
+                        async move |request: acp::SetSessionModeRequest, responder, _cx| {
+                            let rejected = request.mode_id.0.as_ref() == "reject";
+                            requests.lock().expect("mode requests").push(request);
+                            if rejected {
+                                responder.respond_with_error(acp::Error::invalid_params())
+                            } else {
+                                responder.respond(acp::SetSessionModeResponse::default())
+                            }
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(agent_transport),
+        )
+        .detach();
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        cx.background_spawn(Client.builder().connect_with(
+            client_transport,
+            move |connection: ConnectionTo<Agent>| async move {
+                sender.send(connection).expect("client connection");
+                futures::future::pending::<Result<(), acp::Error>>().await
+            },
+        ))
+        .detach();
+        let modes = AcpSessionModes {
+            session_id: acp_v2::SessionId::new("mode-session"),
+            connection: receiver.await.expect("client connected"),
+            state: Rc::new(RefCell::new(acp::SessionModeState::new(
+                "auto",
+                vec![
+                    acp::SessionMode::new("auto", "Auto"),
+                    acp::SessionMode::new("opaque/手動", "Manual"),
+                ],
+            ))),
+        };
+        let selected = acp_v2::SessionConfigValueId::new("opaque/手動");
+        let change = cx.update(|cx| modes.set_mode(selected.clone(), cx));
+        assert_eq!(modes.current_mode(), selected);
+        change.await.expect("mode changed");
+        let rejected = acp_v2::SessionConfigValueId::new("reject");
+        let change = cx.update(|cx| modes.set_mode(rejected.clone(), cx));
+        assert_eq!(modes.current_mode(), rejected);
+        change.await.expect_err("peer rejected mode change");
+        assert_eq!(modes.current_mode(), selected);
+        let requests = requests.lock().expect("mode requests");
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| (request.session_id.to_string(), request.mode_id.to_string()))
+                .collect::<Vec<_>>(),
+            [
+                ("mode-session".into(), "opaque/手動".into()),
+                ("mode-session".into(), "reject".into())
+            ],
+        );
+    }
+
+    #[gpui::test]
     async fn settings_changes_refresh_active_connection_defaults(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
@@ -4464,7 +4606,7 @@ mod tests {
                         default_mode: Some("manual".to_string()),
                         default_config_options: HashMap::from_iter([(
                             "mode".to_string(),
-                            AgentConfigOptionValue::from("manual"),
+                            AgentConfigOptionValue::from("config-value"),
                         )]),
                         favorite_config_option_values: HashMap::default(),
                     }
@@ -4477,7 +4619,7 @@ mod tests {
 
         assert_eq!(
             harness.connection.defaults.mode(),
-            Some(acp::SessionModeId::new("manual"))
+            Some(acp_v2::SessionConfigValueId::new("manual"))
         );
         assert_eq!(
             harness
@@ -4486,7 +4628,7 @@ mod tests {
                 .config_option("mode")
                 .as_ref()
                 .and_then(AgentConfigOptionValue::as_value_id),
-            Some("manual"),
+            Some("config-value"),
         );
 
         cx.update(|cx| {
@@ -7392,16 +7534,31 @@ struct AcpSessionModes {
     state: Rc<RefCell<acp::SessionModeState>>,
 }
 
+fn mode_from_v1(mode: &acp::SessionMode) -> acp_v2::SessionConfigSelectOption {
+    acp_v2::SessionConfigSelectOption::new(
+        acp_v2::SessionConfigValueId::new(mode.id.0.clone()),
+        mode.name.clone(),
+    )
+    .description(mode.description.clone())
+    .meta(mode.meta.clone())
+}
+
 impl acp_thread::AgentSessionModes for AcpSessionModes {
-    fn current_mode(&self) -> acp::SessionModeId {
-        self.state.borrow().current_mode_id.clone()
+    fn current_mode(&self) -> acp_v2::SessionConfigValueId {
+        acp_v2::SessionConfigValueId::new(self.state.borrow().current_mode_id.0.clone())
     }
 
-    fn all_modes(&self) -> Vec<acp::SessionMode> {
-        self.state.borrow().available_modes.clone()
+    fn all_modes(&self) -> Vec<acp_v2::SessionConfigSelectOption> {
+        self.state
+            .borrow()
+            .available_modes
+            .iter()
+            .map(mode_from_v1)
+            .collect()
     }
 
-    fn set_mode(&self, mode_id: acp::SessionModeId, cx: &mut App) -> Task<Result<()>> {
+    fn set_mode(&self, mode_id: acp_v2::SessionConfigValueId, cx: &mut App) -> Task<Result<()>> {
+        let mode_id = acp::SessionModeId::new(mode_id.0);
         let connection = self.connection.clone();
         let session_id = acp::SessionId::new(self.session_id.0.clone());
         let old_mode_id;

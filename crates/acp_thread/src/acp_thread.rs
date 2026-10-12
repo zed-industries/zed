@@ -3578,7 +3578,7 @@ pub enum AcpThreadEvent {
     PromptCapabilitiesUpdated,
     Refusal,
     AvailableCommandsUpdated(Vec<acp_v2::AvailableCommand>),
-    ModeUpdated(acp_v1::SessionModeId),
+    ModeUpdated(acp_v2::SessionConfigValueId),
     ConfigOptionsUpdated(Vec<acp_v2::SessionConfigOption>),
     WorkingDirectoriesUpdated,
 }
@@ -4444,7 +4444,9 @@ impl AcpThread {
             acp_v1::SessionUpdate::CurrentModeUpdate(acp_v1::CurrentModeUpdate {
                 current_mode_id,
                 ..
-            }) => cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id)),
+            }) => cx.emit(AcpThreadEvent::ModeUpdated(
+                acp_v2::SessionConfigValueId::new(current_mode_id.0),
+            )),
             acp_v1::SessionUpdate::ConfigOptionUpdate(acp_v1::ConfigOptionUpdate {
                 config_options,
                 ..
@@ -7327,7 +7329,7 @@ impl AcpThread {
         &self,
         command: String,
         args: Vec<String>,
-        extra_env: Vec<acp_v1::EnvVariable>,
+        extra_env: Vec<(String, String)>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<SandboxWrap>,
@@ -7346,8 +7348,8 @@ impl AcpThread {
 
             disable_pagers_through_env(&mut env);
 
-            for var in extra_env {
-                env.insert(var.name, var.value);
+            for (name, value) in extra_env {
+                env.insert(name, value);
             }
             env
         });
@@ -14155,6 +14157,42 @@ mod tests {
             assert!(call.raw_input.is_none());
             assert!(call.raw_output.is_none());
         });
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_terminal_environment_pairs_reach_process(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        cx.executor().allow_parking();
+        cx.update(|cx| cx.set_global(::terminal::HeadlessTerminal(true)));
+        let terminal = thread
+            .update(cx, |thread, cx| {
+                thread.create_terminal(
+                    r#"[ "$ZED_ACP_PAIR" = 'quote "$literal" héllo' ] &&
+                       [ "${ZED_ACP_EMPTY+x}" = x ] && [ -z "$ZED_ACP_EMPTY" ] &&
+                       [ "$PAGER" = caller-pager ] && [ "$GIT_PAGER" = cat ]"#
+                        .into(),
+                    Vec::new(),
+                    vec![
+                        ("ZED_ACP_PAIR".into(), "overridden".into()),
+                        ("ZED_ACP_PAIR".into(), r#"quote "$literal" héllo"#.into()),
+                        ("ZED_ACP_EMPTY".into(), String::new()),
+                        ("PAGER".into(), "caller-pager".into()),
+                    ],
+                    None,
+                    None,
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("client process with environment pairs");
+        let exit = terminal
+            .read_with(cx, |terminal, _| terminal.wait_for_exit())
+            .expect("client process exit")
+            .await;
+        assert_eq!(exit.exit_code, Some(0));
     }
 
     #[gpui::test]

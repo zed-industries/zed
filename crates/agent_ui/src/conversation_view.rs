@@ -176,11 +176,7 @@ impl From<&anyhow::Error> for ThreadError {
             Self::MaxOutputTokens
         } else if error.is::<NoModelConfiguredError>() {
             Self::NoModelSelected
-        } else if let Some(protocol_error) = protocol_error.as_ref()
-            && protocol_error.is_auth_required()
-        {
-            Self::AuthenticationRequired(protocol_error.message.to_owned().into())
-        } else if let Some(auth_error) = error.downcast_ref::<AuthRequired>() {
+        } else if let Some(auth_error) = AuthRequired::from_error(error) {
             Self::AuthenticationRequired(
                 auth_error
                     .description
@@ -4061,7 +4057,6 @@ pub(crate) mod tests {
         let data = json!({"detail": {"retry": false, "values": [1, 2]}});
         for code in [-32603, -32099] {
             for error in [
-                anyhow!(acp_v1::Error::new(code, "Backend failed").data(data.clone())),
                 anyhow!(acp_v2::Error::new(code, "Backend failed").data(data.clone())),
                 anyhow!(
                     agent_client_protocol::Error::new(code, "Backend failed").data(data.clone())
@@ -4095,9 +4090,6 @@ pub(crate) mod tests {
         for message in ["Authentication required", "Sign in to continue"] {
             for error in [
                 anyhow!(
-                    acp_v1::Error::new(-32000, message).data(json!({"private": "auth details"}))
-                ),
-                anyhow!(
                     acp_v2::Error::new(-32000, message).data(json!({"private": "auth details"}))
                 ),
                 anyhow!(
@@ -4127,6 +4119,27 @@ pub(crate) mod tests {
             assert!(matches!(
                 ThreadError::from(&error),
                 ThreadError::AuthenticationRequired(description) if description == expected
+            ));
+        }
+
+        for error in [
+            anyhow!(agent_client_protocol::Error::auth_required()),
+            anyhow!(acp_v2::Error::auth_required()),
+        ] {
+            let error = error.context(
+                AuthRequired::new().with_description("Use the application login".to_string()),
+            );
+            assert_eq!(
+                AuthRequired::from_error(&error)
+                    .expect("authentication required")
+                    .description
+                    .as_deref(),
+                Some("Use the application login")
+            );
+            assert!(matches!(
+                ThreadError::from(&error),
+                ThreadError::AuthenticationRequired(description)
+                    if description == "Use the application login"
             ));
         }
     }
@@ -6762,13 +6775,27 @@ pub(crate) mod tests {
     async fn test_auth_required_on_initial_connect(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let connection = AuthGatedAgentConnection::new();
+        for error_source in [
+            AuthErrorSource::Marker,
+            AuthErrorSource::Sdk,
+            AuthErrorSource::V2,
+        ] {
+            assert_auth_required_on_initial_connect(error_source, cx).await;
+        }
+    }
+
+    async fn assert_auth_required_on_initial_connect(
+        error_source: AuthErrorSource,
+        cx: &mut TestAppContext,
+    ) {
+        let mut connection = AuthGatedAgentConnection::new();
+        connection.error_source = error_source;
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
 
         // When new_session returns AuthRequired, the server should transition
         // to Connected + Unauthenticated rather than getting stuck in Loading.
-        conversation_view.read_with(cx, |view, _cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let connected = view
                 .as_connected()
                 .expect("Should be in Connected state even though auth is required");
@@ -6819,10 +6846,22 @@ pub(crate) mod tests {
                     acp_v2::AuthMethodId::new(AuthGatedAgentConnection::TERMINAL_AUTH_METHOD_ID),
                 ]
             );
-            assert!(
-                !connected.auth_state.is_ok(),
-                "Auth state should be Unauthenticated"
+            let AuthState::Unauthenticated {
+                description,
+                pending_auth_method,
+            } = &connected.auth_state
+            else {
+                panic!("Auth state should be Unauthenticated");
+            };
+            assert_eq!(
+                description
+                    .as_ref()
+                    .expect("custom auth message should be preserved")
+                    .read(cx)
+                    .source(),
+                "Sign in to continue"
             );
+            assert!(pending_auth_method.is_none());
             assert!(
                 !view.supports_logout(),
                 "Logout should be hidden while unauthenticated"
@@ -7005,67 +7044,6 @@ pub(crate) mod tests {
                 "Unauthenticated auth UI should render request elicitations outside ThreadView"
             );
         });
-    }
-
-    #[gpui::test]
-    async fn test_typed_auth_required_on_initial_connect(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        for error_source in [AuthErrorSource::Sdk, AuthErrorSource::V2] {
-            let mut connection = AuthGatedAgentConnection::new();
-            connection.error_source = error_source;
-            let (conversation_view, cx) =
-                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
-
-            conversation_view.read_with(cx, |view, cx| {
-                let connected = view
-                    .as_connected()
-                    .expect("typed auth errors should leave the connection available");
-                let AuthState::Unauthenticated {
-                    description,
-                    pending_auth_method,
-                } = &connected.auth_state
-                else {
-                    panic!("expected authentication to be required");
-                };
-                assert_eq!(
-                    description
-                        .as_ref()
-                        .expect("custom auth message should be preserved")
-                        .read(cx)
-                        .source(),
-                    "Sign in to continue"
-                );
-                assert!(pending_auth_method.is_none());
-                assert_eq!(
-                    connected.connection.auth_methods(),
-                    connection.auth_methods()
-                );
-                assert!(connected.active_id.is_none());
-                assert!(connected.threads.is_empty());
-            });
-
-            conversation_view.update_in(cx, |view, window, cx| {
-                view.authenticate(
-                    acp_v2::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID),
-                    window,
-                    cx,
-                );
-            });
-            cx.run_until_parked();
-            conversation_view.read_with(cx, |view, _cx| {
-                let connected = view.as_connected().expect("connection should remain");
-                assert!(connected.auth_state.is_ok());
-                assert!(connected.active_id.is_some());
-                assert_eq!(connected.threads.len(), 1);
-            });
-            assert_eq!(
-                *connection.authenticate_calls.lock(),
-                vec![acp_v2::AuthMethodId::new(
-                    AuthGatedAgentConnection::AUTH_METHOD_ID
-                )]
-            );
-        }
     }
 
     #[gpui::test]
