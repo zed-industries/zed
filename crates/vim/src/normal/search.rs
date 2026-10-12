@@ -308,15 +308,35 @@ impl Vim {
         let Some(pane) = self.pane(window, cx) else {
             return;
         };
+        if self.search.helix_select {
+            let selected_matches = pane.update(cx, |pane, cx| {
+                let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
+                else {
+                    return false;
+                };
+                search_bar.update(cx, |search_bar, cx| {
+                    let query = search_bar.query(cx).into();
+                    Vim::globals(cx).registers.insert('/', query);
+                    let selected_matches =
+                        search_bar.select_all_matches(&Default::default(), window, cx);
+                    if selected_matches {
+                        search_bar.dismiss(&buffer_search::Dismiss, window, cx);
+                    }
+                    selected_matches
+                })
+            });
+            if selected_matches {
+                self.search = SearchState {
+                    prior_mode: self.mode,
+                    ..Default::default()
+                };
+            }
+            return;
+        }
+
         let new_selections = self.editor_selections(window, cx);
         let result = pane.update(cx, |pane, cx| {
             let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
-            if self.search.helix_select {
-                search_bar.update(cx, |search_bar, cx| {
-                    search_bar.select_all_matches(&Default::default(), window, cx)
-                });
-                return None;
-            }
             search_bar.update(cx, |search_bar, cx| {
                 let mut count = self.search.count;
                 let direction = self.search.direction;
