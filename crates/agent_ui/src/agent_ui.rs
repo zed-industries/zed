@@ -153,7 +153,7 @@ pub(crate) fn project_path_for_file_link(
         Some(project_path)
     };
     let path = SanitizedPath::new(path).as_path();
-    if path_style.is_absolute(path.to_str()?) {
+    if path_style.is_absolute(path) {
         let project_path = project.project_path_for_absolute_path(path, cx)?;
         let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
         let root = worktree.read(cx).abs_path();
