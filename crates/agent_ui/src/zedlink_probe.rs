@@ -21,16 +21,20 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{AgentProfile, AgentProfileId};
 use anyhow::{Context as _, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use dap::SteppingGranularity;
+use debugger_ui::debugger_panel::DebugPanel;
 use git::{
     repository::{DiffType, RepoPath},
     status::{FileStatus, StageStatus},
 };
 use gpui::{App, AppContext, Entity, Global, Subscription, Task};
 use language_model::LanguageModelRegistry;
+use project::{TaskSourceKind, debugger::session::ThreadId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use settings::SettingsStore;
 use sha2::{Digest, Sha256};
+use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use terminal::TaskStatus;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use util::rel_path::RelPath;
@@ -99,6 +103,9 @@ struct ProbePermissions {
     terminal_read: bool,
     terminal_input: bool,
     task_control: bool,
+    task_start: bool,
+    debugger_read: bool,
+    debugger_control: bool,
 }
 
 impl ProbePermissions {
@@ -163,6 +170,15 @@ impl ProbePermissions {
         if self.task_control {
             capabilities.extend(["task.list", "task.stop"]);
         }
+        if self.task_start {
+            capabilities.extend(["task.catalog", "task.run"]);
+        }
+        if self.debugger_read {
+            capabilities.push("debugger.snapshot");
+        }
+        if self.debugger_control {
+            capabilities.push("debugger.control");
+        }
         capabilities
     }
 
@@ -188,6 +204,9 @@ impl ProbePermissions {
             "terminal.list" | "terminal.snapshot" => self.terminal_read,
             "terminal.input" => self.terminal_input,
             "task.list" | "task.stop" => self.task_control,
+            "task.catalog" | "task.run" => self.task_start,
+            "debugger.snapshot" => self.debugger_read,
+            "debugger.control" => self.debugger_control,
             _ => true,
         }
     }
@@ -290,6 +309,18 @@ pub fn init(cx: &mut App) {
         task_control: settings
             .as_ref()
             .and_then(|settings| settings.allow_task_control)
+            .unwrap_or(false),
+        task_start: settings
+            .as_ref()
+            .and_then(|settings| settings.allow_task_start)
+            .unwrap_or(false),
+        debugger_read: settings
+            .as_ref()
+            .and_then(|settings| settings.allow_debugger_read)
+            .unwrap_or(false),
+        debugger_control: settings
+            .as_ref()
+            .and_then(|settings| settings.allow_debugger_control)
             .unwrap_or(false),
     };
     let gateway_manager = settings.as_ref().and_then(|settings| {
@@ -891,6 +922,10 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         "terminal.input" => terminal_input(&request, state, cx),
         "task.list" => task_list(&request, state, cx),
         "task.stop" => task_stop(&request, state, cx),
+        "task.catalog" => task_catalog(&request, state, cx),
+        "task.run" => task_run(&request, state, cx),
+        "debugger.snapshot" => debugger_snapshot(&request, state, cx),
+        "debugger.control" => debugger_control(&request, state, cx),
         "project.files" => project_files(&request, state, cx),
         "project.file" => project_file(&request, state, cx),
         "project.search" => project_search(&request, state, cx),
@@ -3490,27 +3525,385 @@ fn task_stop(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value 
     )
 }
 
-fn loaded_terminal_views(project_root: &Path, cx: &App) -> Vec<Entity<TerminalView>> {
-    let workspaces = workspace::AppState::global(cx)
+fn task_catalog(request: &ProbeRequest, state: &ProbeState, cx: &App) -> Value {
+    if !matches_instance(request, state) {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    let tasks = configured_tasks(&state.project_root, cx)
+        .into_iter()
+        .map(|(_, source, task)| {
+            json!({
+                "task_id": task.id.0,
+                "label": task.display_label(),
+                "source": task_source_label(&source),
+            })
+        })
+        .collect::<Vec<_>>();
+    success(
+        &request.request_id,
+        json!({
+            "instance_id": state.instance_id,
+            "epoch": state.epoch,
+            "tasks": tasks,
+            "provisional": true,
+        }),
+    )
+}
+
+fn task_run(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    if !matches_instance(request, state) {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    if !params_contain_only(&request.params, &["instance_id", "epoch", "task_id"]) {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let Some(task_id) = request.params.get("task_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if task_id.is_empty() || task_id.len() > 4096 {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some(existing) = state.terminal_operations.borrow().get(&request.request_id) {
+        return if existing == &digest {
+            success(
+                &request.request_id,
+                json!({"outcome": "requested", "duplicate": true}),
+            )
+        } else {
+            error(&request.request_id, "REQUEST_ID_CONFLICT")
+        };
+    }
+    if state.terminal_operations.borrow().len() >= 256 {
+        return error(&request.request_id, "RATE_LIMITED");
+    }
+    let Some((workspace, source, task)) = configured_tasks(&state.project_root, cx)
+        .into_iter()
+        .find(|(_, _, task)| task.id.0 == task_id)
+    else {
+        return error(&request.request_id, "TASK_UNAVAILABLE");
+    };
+    let scheduled = cx.with_window(workspace.entity_id(), |window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.schedule_resolved_task(source, task, false, window, cx);
+        });
+    });
+    if scheduled.is_none() {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    state
+        .terminal_operations
+        .borrow_mut()
+        .insert(request.request_id.clone(), digest);
+    success(
+        &request.request_id,
+        json!({"outcome": "requested", "duplicate": false}),
+    )
+}
+
+fn debugger_snapshot(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    if !matches_instance(request, state) {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    let mut sessions = Vec::new();
+    for panel in loaded_debug_panels(&state.project_root, cx) {
+        let debug_sessions = panel.read(cx).sessions().collect::<Vec<_>>();
+        for debug_session in debug_sessions {
+            let session = debug_session.read(cx).session(cx);
+            let value = session.update(cx, |session, cx| {
+                let restart = session
+                    .capabilities()
+                    .supports_restart_request
+                    .unwrap_or(false);
+                let step_back = session
+                    .capabilities()
+                    .supports_step_back
+                    .unwrap_or(false);
+                let single_thread = session
+                    .capabilities()
+                    .supports_single_thread_execution_requests
+                    .unwrap_or(false);
+                let threads = session
+                    .threads(cx)
+                    .into_iter()
+                    .map(|(thread, status)| {
+                        json!({
+                            "thread_id": thread.id,
+                            "name": thread.name,
+                            "status": status.label().to_lowercase(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                json!({
+                    "session_id": session.session_id().0.to_string(),
+                    "label": session.label().map(|label| label.to_string()).unwrap_or_else(|| "Debugger".to_string()),
+                    "adapter": session.adapter().to_string(),
+                    "terminated": session.is_terminated(),
+                    "capabilities": {
+                        "restart": restart,
+                        "step_back": step_back,
+                        "single_thread": single_thread,
+                    },
+                    "threads": threads,
+                })
+            });
+            sessions.push(value);
+        }
+    }
+    success(
+        &request.request_id,
+        json!({
+            "instance_id": state.instance_id,
+            "epoch": state.epoch,
+            "sessions": sessions,
+            "provisional": true,
+        }),
+    )
+}
+
+fn debugger_control(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    if !matches_instance(request, state) {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    if !params_contain_only(
+        &request.params,
+        &["instance_id", "epoch", "session_id", "action", "thread_id"],
+    ) {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let Some(session_id) = request.params.get("session_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let Some(action) = request.params.get("action").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if session_id.is_empty() || session_id.len() > 128 {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    if !matches!(
+        action,
+        "pause"
+            | "continue"
+            | "step_over"
+            | "step_in"
+            | "step_out"
+            | "step_back"
+            | "restart"
+            | "stop"
+    ) {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some(existing) = state.terminal_operations.borrow().get(&request.request_id) {
+        return if existing == &digest {
+            success(
+                &request.request_id,
+                json!({"outcome": "requested", "duplicate": true}),
+            )
+        } else {
+            error(&request.request_id, "REQUEST_ID_CONFLICT")
+        };
+    }
+    if state.terminal_operations.borrow().len() >= 256 {
+        return error(&request.request_id, "RATE_LIMITED");
+    }
+    let debug_session = loaded_debug_panels(&state.project_root, cx)
+        .into_iter()
+        .flat_map(|panel| panel.read(cx).sessions().collect::<Vec<_>>())
+        .find(|debug_session| {
+            debug_session
+                .read(cx)
+                .session(cx)
+                .read(cx)
+                .session_id()
+                .0
+                .to_string()
+                == session_id
+        });
+    let Some(debug_session) = debug_session else {
+        return error(&request.request_id, "DEBUGGER_UNAVAILABLE");
+    };
+    let session = debug_session.read(cx).session(cx);
+    if session.read(cx).is_terminated() {
+        return error(&request.request_id, "DEBUGGER_UNAVAILABLE");
+    }
+    if action == "restart"
+        && !session
+            .read(cx)
+            .capabilities()
+            .supports_restart_request
+            .unwrap_or(false)
+    {
+        return error(&request.request_id, "DEBUGGER_STATE_CONFLICT");
+    }
+    let outcome = if matches!(action, "restart" | "stop") {
+        session.update(cx, |session, cx| match action {
+            "restart" => {
+                session.restart(None, cx);
+                true
+            }
+            "stop" => {
+                session.shutdown(cx).detach();
+                true
+            }
+            _ => false,
+        })
+    } else {
+        let Some(thread_id) = request.params.get("thread_id").and_then(Value::as_i64) else {
+            return error(&request.request_id, "INVALID_REQUEST");
+        };
+        if thread_id < 0 {
+            return error(&request.request_id, "INVALID_REQUEST");
+        }
+        session.update(cx, |session, cx| {
+            let thread_id = ThreadId(thread_id);
+            let threads = session.threads(cx);
+            let Some((_, status)) = threads.iter().find(|(thread, _)| thread.id == thread_id.0)
+            else {
+                return false;
+            };
+            match action {
+                "pause" if matches!(status, project::debugger::session::ThreadStatus::Running) => {
+                    session.pause_thread(thread_id, cx);
+                }
+                "continue"
+                    if matches!(status, project::debugger::session::ThreadStatus::Stopped) =>
+                {
+                    session.continue_program(thread_id, cx);
+                }
+                "step_over"
+                    if matches!(status, project::debugger::session::ThreadStatus::Stopped) =>
+                {
+                    session.step_over(thread_id, SteppingGranularity::Statement, cx);
+                }
+                "step_in"
+                    if matches!(status, project::debugger::session::ThreadStatus::Stopped) =>
+                {
+                    session.step_in(thread_id, SteppingGranularity::Statement, cx);
+                }
+                "step_out"
+                    if matches!(status, project::debugger::session::ThreadStatus::Stopped) =>
+                {
+                    session.step_out(thread_id, SteppingGranularity::Statement, cx);
+                }
+                "step_back"
+                    if matches!(status, project::debugger::session::ThreadStatus::Stopped)
+                        && session.capabilities().supports_step_back.unwrap_or(false) =>
+                {
+                    session.step_back(thread_id, SteppingGranularity::Statement, cx);
+                }
+                _ => return false,
+            }
+            true
+        })
+    };
+    if !outcome {
+        return error(&request.request_id, "DEBUGGER_STATE_CONFLICT");
+    }
+    state
+        .terminal_operations
+        .borrow_mut()
+        .insert(request.request_id.clone(), digest);
+    success(
+        &request.request_id,
+        json!({"outcome": "requested", "duplicate": false}),
+    )
+}
+
+fn matches_instance(request: &ProbeRequest, state: &ProbeState) -> bool {
+    request.params.get("instance_id").and_then(Value::as_str) == Some(state.instance_id.as_str())
+        && request.params.get("epoch").and_then(Value::as_str) == Some(state.epoch.as_str())
+}
+
+fn params_contain_only(params: &Value, allowed: &[&str]) -> bool {
+    params
+        .as_object()
+        .is_some_and(|params| params.keys().all(|key| allowed.contains(&key.as_str())))
+}
+
+fn configured_tasks(
+    project_root: &Path,
+    cx: &App,
+) -> Vec<(Entity<workspace::Workspace>, TaskSourceKind, ResolvedTask)> {
+    let mut tasks = Vec::new();
+    for workspace in loaded_project_workspaces(project_root, cx) {
+        let project = workspace.read(cx).project().clone();
+        let project = project.read(cx);
+        let Some(worktree) = project
+            .visible_worktrees(cx)
+            .find(|worktree| worktree.read(cx).abs_path().as_ref() == project_root)
+        else {
+            continue;
+        };
+        let worktree_id = worktree.read(cx).id();
+        let mut task_variables = TaskVariables::default();
+        task_variables.insert(
+            VariableName::WorktreeRoot,
+            project_root.to_string_lossy().into_owned(),
+        );
+        let context = TaskContext {
+            cwd: Some(project_root.to_path_buf()),
+            task_variables,
+            project_env: project.cli_environment(cx).unwrap_or_default(),
+        };
+        let Some(inventory) = project.task_store().read(cx).task_inventory().cloned() else {
+            continue;
+        };
+        for (source, task) in inventory
+            .read(cx)
+            .configured_tasks_for_worktree(worktree_id, &context)
+        {
+            tasks.push((workspace.clone(), source, task));
+        }
+    }
+    tasks.sort_by(|left, right| left.2.display_label().cmp(right.2.display_label()));
+    tasks.dedup_by(|left, right| left.2.id == right.2.id);
+    tasks
+}
+
+fn task_source_label(source: &TaskSourceKind) -> &'static str {
+    match source {
+        TaskSourceKind::Worktree { .. } => "project",
+        TaskSourceKind::AbsPath { .. } => "global",
+        TaskSourceKind::Language { .. } => "language",
+        TaskSourceKind::Lsp { .. } => "language server",
+        TaskSourceKind::UserInput => "history",
+    }
+}
+
+fn loaded_debug_panels(project_root: &Path, cx: &App) -> Vec<Entity<DebugPanel>> {
+    loaded_project_workspaces(project_root, cx)
+        .into_iter()
+        .filter_map(|workspace| workspace.read(cx).panel::<DebugPanel>(cx))
+        .collect()
+}
+
+fn loaded_project_workspaces(project_root: &Path, cx: &App) -> Vec<Entity<workspace::Workspace>> {
+    workspace::AppState::global(cx)
         .workspace_store
         .read(cx)
         .workspaces()
-        .cloned()
-        .collect::<Vec<_>>();
+        .filter_map(|workspace| workspace.upgrade())
+        .filter(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .any(|worktree| worktree.read(cx).abs_path().as_ref() == project_root)
+        })
+        .collect()
+}
+
+fn loaded_terminal_views(project_root: &Path, cx: &App) -> Vec<Entity<TerminalView>> {
     let mut terminals = Vec::new();
-    for workspace in workspaces {
-        let Some(workspace) = workspace.upgrade() else {
-            continue;
-        };
-        if !workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .visible_worktrees(cx)
-            .any(|worktree| worktree.read(cx).abs_path().as_ref() == project_root)
-        {
-            continue;
-        }
+    for workspace in loaded_project_workspaces(project_root, cx) {
         let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             continue;
         };

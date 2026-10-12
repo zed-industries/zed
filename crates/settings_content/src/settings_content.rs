@@ -417,6 +417,24 @@ pub struct ZedLinkSettingsContent {
     /// Default: false
     pub allow_task_control: Option<bool>,
 
+    /// Allows paired devices to start tasks selected from Zed's configured
+    /// project task inventory. Raw commands are never accepted.
+    ///
+    /// Default: false
+    pub allow_task_start: Option<bool>,
+
+    /// Allows paired devices to inspect debugger sessions already running in
+    /// the configured project.
+    ///
+    /// Default: false
+    pub allow_debugger_read: Option<bool>,
+
+    /// Allows paired devices to pause, continue, step, restart, or stop
+    /// debugger sessions already running in the configured project.
+    ///
+    /// Default: false
+    pub allow_debugger_control: Option<bool>,
+
     /// Identifier of the connection profile edited by the ZedLink Connections
     /// settings page.
     pub connection_id: Option<String>,

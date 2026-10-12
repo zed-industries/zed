@@ -20,7 +20,7 @@ pub mod debugger_panel;
 mod dropdown_menus;
 mod new_process_modal;
 mod persistence;
-pub(crate) mod session;
+pub mod session;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod tests;

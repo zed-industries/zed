@@ -859,7 +859,7 @@ fn zedlink_page() -> SettingsPage {
         ]
     }
 
-    fn access_section() -> [SettingsPageItem; 10] {
+    fn access_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Remote Permissions"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1058,6 +1058,71 @@ fn zedlink_page() -> SettingsPage {
                             .zedlink
                             .get_or_insert_default()
                             .allow_task_control = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Start Configured Tasks",
+                description: "Allow paired devices to start tasks already defined in Zed for this project. Raw commands are never accepted. Disabled by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("zedlink.allow_task_start"),
+                    pick: |settings_content| {
+                        settings_content.zedlink.as_ref()?.allow_task_start.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .zedlink
+                            .get_or_insert_default()
+                            .allow_task_start = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "View Debugger Sessions",
+                description: "Allow paired devices to inspect debugger sessions already running in this project. Disabled by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("zedlink.allow_debugger_read"),
+                    pick: |settings_content| {
+                        settings_content
+                            .zedlink
+                            .as_ref()?
+                            .allow_debugger_read
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .zedlink
+                            .get_or_insert_default()
+                            .allow_debugger_read = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Control Debugger Sessions",
+                description: "Allow paired devices to pause, continue, step, restart, and stop existing debugger sessions. Disabled by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("zedlink.allow_debugger_control"),
+                    pick: |settings_content| {
+                        settings_content
+                            .zedlink
+                            .as_ref()?
+                            .allow_debugger_control
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .zedlink
+                            .get_or_insert_default()
+                            .allow_debugger_control = value
                     },
                 }),
                 metadata: None,
