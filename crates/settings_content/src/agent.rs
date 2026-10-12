@@ -282,7 +282,47 @@ pub struct AgentSettingsContent {
     pub max_content_width: Option<crate::PixelSetting>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
-    /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
+    /// The model, reasoning, and speed settings for new subagents spawned by Zed Agent's `spawn_agent` tool. This setting does not configure external agents.
+    ///
+    /// By default, subagents inherit the parent thread's model, reasoning, and speed settings. The parent agent can override the model by passing the `model` argument to `spawn_agent`, for example when you ask it to use a specific model for a delegated task.
+    ///
+    /// Configure this setting in `settings.json` with a `provider` and `model`. To choose a reasoning effort for a model that supports it, also set `enable_thinking` and `effort`:
+    ///
+    /// ```json
+    /// {
+    ///   "agent": {
+    ///     "subagent_model": {
+    ///       "effort": "low",
+    ///       "enable_thinking": true,
+    ///       "model": "claude-opus-4-6",
+    ///       "provider": "anthropic"
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Choose an `effort` value supported by the selected model. Omitting `effort` from this object does not inherit the parent's effort. It leaves effort to the selected provider and model's default behavior. Omitting `enable_thinking` defaults to `false`, although models that cannot disable thinking still use it.
+    ///
+    /// To find supported effort values:
+    ///
+    /// 1. Choose the target provider and model from the model selector in a native Zed Agent thread, even if it is already selected, to save it as `agent.default_model`.
+    /// 2. Enable thinking if it is off, then open the thinking effort menu. The "Change Thinking Effort" menu lists the model's supported levels. If the model offers no effort choices, omit `effort`.
+    /// 3. Choose a level and read `agent.default_model.effort` in `settings.json` for the exact value to use in `agent.subagent_model.effort`.
+    ///
+    /// These controls change the current thread and saved default model settings, and can update a matching favorite model. Restore your previous selections afterward if needed.
+    ///
+    /// The optional `speed` field accepts `"fast"` or `"standard"`. It applies only to models that support fast mode. Omitting it from `agent.subagent_model` leaves speed unspecified rather than inheriting the parent's speed. Fast mode can cost more or require a provider commitment, depending on the provider and model.
+    ///
+    /// | Model Selection | Settings Applied |
+    /// | --- | --- |
+    /// | Parent agent omits `model`, and `agent.subagent_model` is unset | Inherits the parent thread's current thinking, effort, and speed settings. |
+    /// | Parent agent omits `model`, and `agent.subagent_model` is configured | Uses `enable_thinking`, `effort`, and `speed` from `agent.subagent_model`. |
+    /// | Parent agent supplies `model` matching the provider and model in `agent.subagent_model` | Uses `enable_thinking`, `effort`, and `speed` from `agent.subagent_model`. |
+    /// | Parent agent supplies `model`, and `agent.subagent_model` is unset or specifies a different provider or model | Uses matching `agent.default_model` settings. Without a match, enables thinking if supported, uses the model's default effort when available, and leaves speed unspecified. |
+    ///
+    /// When using matching `agent.default_model` settings, unsupported or omitted `effort` falls back to the selected model's default effort, when available.
+    ///
+    /// The `spawn_agent` tool has no separate effort or speed arguments. Selecting the parent's model explicitly is not equivalent to omitting `model`: the table's explicit-selection rules apply instead of inheriting the parent's live settings. Subagents with an explicit or configured model do not follow later changes to the parent's model, reasoning, or speed settings. Resuming a subagent keeps its existing model, reasoning, and speed settings.
     pub subagent_model: Option<LanguageModelSelection>,
     /// Favorite models to show at the top of the model selector.
     #[serde(default)]

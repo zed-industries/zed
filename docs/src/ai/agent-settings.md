@@ -156,6 +156,12 @@ Zed supports feature-specific model settings for Inline Assistant, Git commit ge
 
 See [LLM Providers](./llm-providers.md) for model access, and [All Settings](../reference/all-settings.md) for the complete settings reference.
 
+### Subagent Models {#subagent-models}
+
+By default, Zed Agent's subagents inherit the parent thread's model, thinking setting, reasoning effort, and speed. Set `agent.subagent_model` in `settings.json` to choose separate model, reasoning, and speed settings. The parent agent can override the model by passing the `model` argument to `spawn_agent`. When that argument matches the provider and model in `agent.subagent_model`, its `enable_thinking`, `effort`, and `speed` settings are preserved.
+
+See [Subagent Model](../reference/all-settings.md#agent-subagent-model) for a configuration example, how to find supported effort values, and a table explaining which settings apply. This setting does not configure [External Agents](./external-agents.md).
+
 ## Model Temperature {#model-temperature}
 
 Most Zed AI features use the selected model's default generation behavior.
