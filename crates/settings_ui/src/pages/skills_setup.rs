@@ -1,6 +1,7 @@
 use agent_skills::{Skill, SkillIndex, SkillSource, encode_skill_share_link};
 use fs::RemoveOptions;
-use gpui::{App, ClipboardItem, PromptLevel, ScrollHandle, SharedString, prelude::*};
+use gpui::{App, ClipboardItem, Entity, PromptLevel, ScrollHandle, SharedString, prelude::*};
+use project::{Project, WorktreeId};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
@@ -8,6 +9,26 @@ use util::paths::PathExt as _;
 
 use crate::pages::SkillCreatorOpenMode;
 use crate::{SettingsUiFile, SettingsWindow};
+
+/// Resolves the project that owns a project-local skill, so file operations
+/// go through the project (and thus the remote server for dev-container
+/// workspaces) instead of the host filesystem. Returns `None` for global
+/// skills, which are host-local.
+fn project_for_skill(
+    source: &SkillSource,
+    settings_window: &SettingsWindow,
+    cx: &App,
+) -> Option<Entity<Project>> {
+    let SkillSource::ProjectLocal { worktree_id, .. } = source else {
+        return None;
+    };
+    crate::all_projects(settings_window.original_window.as_ref(), cx).find(|project| {
+        project
+            .read(cx)
+            .worktree_for_id(WorktreeId::from_usize(worktree_id.0), cx)
+            .is_some()
+    })
+}
 
 /// Skills shown on the Skills page for the currently selected settings file:
 /// - User file → global skills only
@@ -123,6 +144,9 @@ fn render_skill_row(
         _ => ("global", "on this machine"),
     };
 
+    let share_skill_source = skill.source.clone();
+    let delete_skill_source = skill.source.clone();
+
     let share_copied = settings_window.last_copied_skill_directory_path.as_deref()
         == Some(skill.directory_path.as_path());
     let warning_message = skill.load_warnings.first().map(|warning| warning.message());
@@ -151,13 +175,32 @@ fn render_skill_row(
             .icon_color(share_icon_color)
             .tooltip(Tooltip::text("Copy Share Link"))
             .visible_on_hover(&group)
-            .on_click(cx.listener(move |_settings_window, _event, _window, cx| {
+            .on_click(cx.listener(move |settings_window, _event, _window, cx| {
                 let skill_file_path = share_skill_file_path.clone();
                 let directory_path = share_directory_path.clone();
+                let project = project_for_skill(&share_skill_source, settings_window, cx);
                 let app_state = workspace::AppState::global(cx);
                 let fs = app_state.fs.clone();
-                cx.spawn(
-                    async move |settings_window, cx| match fs.load(&skill_file_path).await {
+                cx.spawn(async move |settings_window, cx| {
+                    let content = match &project {
+                        Some(project) => {
+                            let Some(project_path) = project.update(cx, |project, cx| {
+                                project.project_path_for_absolute_path(&skill_file_path, cx)
+                            }) else {
+                                log::error!(
+                                    "failed to read skill file {} for sharing: not in project",
+                                    skill_file_path.display()
+                                );
+                                return;
+                            };
+                            let buffer = project
+                                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                                .await;
+                            buffer.map(|buffer| buffer.update(cx, |buffer, _cx| buffer.text()))
+                        }
+                        None => fs.load(&skill_file_path).await,
+                    };
+                    match content {
                         Ok(content) => {
                             let link = encode_skill_share_link(&content);
                             settings_window
@@ -175,8 +218,8 @@ fn render_skill_row(
                                 skill_file_path.display()
                             );
                         }
-                    },
-                )
+                    }
+                })
                 .detach();
             }))
         })
@@ -246,53 +289,81 @@ fn render_skill_row(
                                 cx,
                             );
 
+                            let project =
+                                project_for_skill(&delete_skill_source, settings_window, cx);
                             let app_state = workspace::AppState::global(cx);
                             let fs = app_state.fs.clone();
                             cx.spawn(async move |settings_window, cx| {
-                                if answer.await != Ok(0) {
-                                    return;
-                                }
+                            if answer.await != Ok(0) {
+                                return;
+                            }
 
-                                let confirmed = settings_window
-                                    .update(cx, |settings_window, cx| {
-                                        let inserted = settings_window
-                                            .hidden_deleted_skill_directory_paths
-                                            .insert(directory_path.clone());
-                                        if inserted {
-                                            cx.notify();
-                                        }
-                                        inserted
-                                    })
-                                    .unwrap_or(false);
-                                if !confirmed {
-                                    return;
-                                }
+                            let confirmed = settings_window
+                                .update(cx, |settings_window, cx| {
+                                    let inserted = settings_window
+                                        .hidden_deleted_skill_directory_paths
+                                        .insert(directory_path.clone());
+                                    if inserted {
+                                        cx.notify();
+                                    }
+                                    inserted
+                                })
+                                .unwrap_or(false);
+                            if !confirmed {
+                                return;
+                            }
 
-                                let trash_result = fs
-                                    .trash(
+                            let trash_result = match &project {
+                                Some(project) => {
+                                    let Some(entry_id) = project.update(cx, |project, cx| {
+                                        project
+                                            .project_path_for_absolute_path(&directory_path, cx)
+                                            .and_then(|project_path| {
+                                                project
+                                                    .entry_for_path(&project_path, cx)
+                                                    .map(|entry| entry.id)
+                                            })
+                                    }) else {
+                                        log::error!(
+                                            "failed to trash skill directory {}: not in project",
+                                            directory_path.display()
+                                        );
+                                        return;
+                                    };
+                                    let Some(trash_task) = project.update(cx, |project, cx| {
+                                        project.trash_entry(entry_id, cx)
+                                    }) else {
+                                        return;
+                                    };
+                                    trash_task.await
+                                }
+                                None => {
+                                    fs.trash(
                                         &directory_path,
                                         RemoveOptions {
                                             recursive: true,
                                             ignore_if_not_exists: true,
                                         },
                                     )
-                                    .await;
-                                if let Err(error) = trash_result {
-                                    log::error!(
-                                        "failed to move skill directory {} to trash: {error:#}",
-                                        directory_path.display()
-                                    );
-                                    settings_window
-                                        .update(cx, |settings_window, cx| {
-                                            settings_window
-                                                .hidden_deleted_skill_directory_paths
-                                                .remove(&directory_path);
-                                            cx.notify();
-                                        })
-                                        .ok();
+                                    .await
                                 }
-                            })
-                            .detach();
+                            };
+                            if let Err(error) = trash_result {
+                                log::error!(
+                                    "failed to move skill directory {} to trash: {error:#}",
+                                    directory_path.display()
+                                );
+                                settings_window
+                                    .update(cx, |settings_window, cx| {
+                                        settings_window
+                                            .hidden_deleted_skill_directory_paths
+                                            .remove(&directory_path);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .detach();
                         },
                     )),
                 )
