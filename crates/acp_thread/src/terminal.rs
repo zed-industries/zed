@@ -400,7 +400,7 @@ pub(crate) async fn prepare_sandbox_wrap(
 }
 
 pub struct Terminal {
-    id: acp_v1::TerminalId,
+    id: acp_v2::TerminalId,
     command: Entity<Markdown>,
     working_dir: Option<PathBuf>,
     terminal: Entity<terminal::Terminal>,
@@ -478,7 +478,7 @@ pub struct TerminalOutput {
 
 impl Terminal {
     pub fn new(
-        id: acp_v1::TerminalId,
+        id: acp_v2::TerminalId,
         command_label: &str,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<usize>,
@@ -555,7 +555,7 @@ impl Terminal {
     }
 
     pub fn new_display(
-        id: acp_v1::TerminalId,
+        id: acp_v2::TerminalId,
         command_label: Option<&str>,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<usize>,
@@ -589,7 +589,7 @@ impl Terminal {
         }
     }
 
-    pub fn id(&self) -> &acp_v1::TerminalId {
+    pub fn id(&self) -> &acp_v2::TerminalId {
         &self.id
     }
 
