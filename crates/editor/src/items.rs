@@ -807,6 +807,7 @@ impl Item for Editor {
 
         h_flex()
             .gap_1()
+            .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
             .when(params.truncate_title_middle, |this| {
                 this.w_full().min_w_0().overflow_hidden()
             })
@@ -1216,17 +1217,6 @@ impl Item for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
-        let editor_id = cx.entity_id();
-        // Inactive tabs aren't rendered, so the preview actions can't be dispatched to them.
-        let is_active_in_pane = self
-            .workspace()
-            .and_then(|workspace| workspace.read(cx).pane_for_item_id(editor_id))
-            .and_then(|pane| pane.read(cx).active_item())
-            .is_some_and(|item| item.item_id() == editor_id);
-        if !is_active_in_pane {
-            return Vec::new();
-        }
-
         let mut actions = Vec::new();
 
         let is_markdown = self

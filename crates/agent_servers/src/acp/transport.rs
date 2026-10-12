@@ -6,10 +6,10 @@ use futures::{
 };
 use gpui::{AsyncApp, Entity};
 use project::{Project, agent_server_store::AgentServerCommand};
-use remote::remote_client::Interactive;
+use remote::command::RemoteCommand;
 use std::{io, pin::Pin, process::Stdio};
 use task::{Shell, ShellBuilder};
-use util::{ResultExt as _, process::Child};
+use util::process::Child;
 
 pub(super) struct StdioProcess {
     pub child: Child,
@@ -32,32 +32,32 @@ pub(super) fn spawn_stdio(
             .next()
             .cloned()
     });
-    let (path, arguments, environment) = project
-        .read_with(cx, |project, cx| {
-            project.remote_client().and_then(|client| {
-                let template = client
-                    .read(cx)
-                    .build_command(
-                        Some(command.path.display().to_string()),
-                        &command.args,
-                        &command.env.clone().into_iter().flatten().collect(),
-                        root_dir.as_ref().map(|path| path.display().to_string()),
-                        None,
-                        Interactive::No,
-                    )
-                    .log_err()?;
-                Some((template.program, template.args, template.env))
+    let remote_command = project.read_with(cx, |project, cx| {
+        project
+            .remote_client()
+            .map(|client| {
+                client.read(cx).build_stdio_command(RemoteCommand {
+                    program: command.path.display().to_string(),
+                    args: command.args.clone(),
+                    env: command.env.clone().unwrap_or_default(),
+                    working_dir: root_dir.as_ref().map(|path| path.display().to_string()),
+                })
             })
-        })
-        .unwrap_or_else(|| {
-            (
-                command.path.display().to_string(),
-                command.args,
-                command.env.unwrap_or_default(),
-            )
-        });
+            .transpose()
+    })?;
+    let (path, arguments, environment, command_input) = match remote_command {
+        Some((template, input)) => (template.program, template.args, template.env, Some(input)),
+        None => (
+            command.path.display().to_string(),
+            command.args,
+            command.env.unwrap_or_default(),
+            None,
+        ),
+    };
 
-    let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
+    let builder = ShellBuilder::new(&Shell::System, cfg!(windows))
+        .non_interactive()
+        .literal_args();
     let mut child = builder.build_std_command(Some(path.clone()), &arguments);
     child.envs(environment);
     if let Some(cwd) = project.read_with(cx, |project, _cx| {
@@ -96,13 +96,16 @@ pub(super) fn spawn_stdio(
         .boxed();
 
     let outgoing = Box::pin(futures::sink::unfold(
-        (Box::pin(stdin), debug_log.clone()),
-        async move |(mut writer, debug_log), line: String| {
+        (Box::pin(stdin), debug_log.clone(), command_input),
+        async move |(mut writer, debug_log, mut command_input), line: String| {
+            if let Some(input) = command_input.take() {
+                writer.write_all(&input).await?;
+            }
             debug_log.record_line(AcpDebugMessageDirection::Outgoing, &line);
             let mut bytes = line.into_bytes();
             bytes.push(b'\n');
             writer.write_all(&bytes).await?;
-            Ok::<_, io::Error>((writer, debug_log))
+            Ok::<_, io::Error>((writer, debug_log, command_input))
         },
     ));
 

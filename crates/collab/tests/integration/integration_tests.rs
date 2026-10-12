@@ -1631,7 +1631,7 @@ async fn assert_lsp_log_streams_reconnect(
         LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             }
             .into(),
@@ -2921,7 +2921,7 @@ async fn test_propagate_saves_and_fs_changes(
         LanguageConfig {
             name: "Rust".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -2933,7 +2933,7 @@ async fn test_propagate_saves_and_fs_changes(
         LanguageConfig {
             name: "JavaScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
+                path_suffixes: vec!["js".into()],
                 ..Default::default()
             })
             .into(),
@@ -4805,7 +4805,7 @@ async fn test_collaborating_with_diagnostics(
         LanguageConfig {
             name: "Rust".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -5530,7 +5530,7 @@ async fn test_prettier_formatting_buffer(
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),

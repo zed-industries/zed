@@ -8,8 +8,6 @@ use serde_json::Value;
 use std::{ops::Range, sync::LazyLock};
 #[cfg(feature = "editing")]
 use tree_sitter::{Query, StreamingIterator as _};
-#[cfg(feature = "editing")]
-use util::RangeExt;
 
 #[cfg(feature = "editing")]
 pub fn update_value_in_json_text<'a>(
@@ -144,7 +142,7 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
 
         // Don't enter sub objects until we find an exact
         // match for the current keypath
-        if last_value_range.contains_inclusive(&value_range) {
+        if last_value_range.start <= value_range.start && value_range.end <= last_value_range.end {
             continue;
         }
 

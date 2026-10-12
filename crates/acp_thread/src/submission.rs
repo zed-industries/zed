@@ -63,7 +63,7 @@ pub enum SubmissionState {
 }
 
 pub struct SubmissionRecord {
-    pub content: Arc<[acp_v1::ContentBlock]>,
+    pub content: Arc<[acp_v2::ContentBlock]>,
     pub state: SubmissionState,
     task: Option<Task<()>>,
 }
@@ -134,7 +134,7 @@ impl SessionSubmissions {
         })
     }
 
-    pub(crate) fn register(&mut self, content: Arc<[acp_v1::ContentBlock]>) -> SubmissionId {
+    pub(crate) fn register(&mut self, content: Arc<[acp_v2::ContentBlock]>) -> SubmissionId {
         self.next_id += 1;
         let id = SubmissionId(self.next_id);
         self.latest_id = Some(id);
