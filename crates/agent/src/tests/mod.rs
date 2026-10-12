@@ -230,7 +230,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
     fn create_terminal(
         &self,
         _command: String,
-        _extra_env: Vec<acp::EnvVariable>,
+        _extra_env: Vec<(String, String)>,
         _cwd: Option<std::path::PathBuf>,
         output_byte_limit: Option<u64>,
         _sandbox_wrap: Option<acp_thread::SandboxWrap>,
@@ -283,7 +283,7 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
     fn create_terminal(
         &self,
         _command: String,
-        _extra_env: Vec<acp::EnvVariable>,
+        _extra_env: Vec<(String, String)>,
         _cwd: Option<std::path::PathBuf>,
         _output_byte_limit: Option<u64>,
         _sandbox_wrap: Option<acp_thread::SandboxWrap>,

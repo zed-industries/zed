@@ -3391,7 +3391,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
-        extra_env: Vec<acp_v1::EnvVariable>,
+        extra_env: Vec<(String, String)>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<acp_thread::SandboxWrap>,
@@ -3440,9 +3440,9 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                     let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
                     let temp_dir_string = temp_dir.to_string_lossy().into_owned();
                     extra_env.extend([
-                        acp_v1::EnvVariable::new("TMPDIR", &temp_dir_string),
-                        acp_v1::EnvVariable::new("TMP", &temp_dir_string),
-                        acp_v1::EnvVariable::new("TEMP", &temp_dir_string),
+                        ("TMPDIR".into(), temp_dir_string.clone()),
+                        ("TMP".into(), temp_dir_string.clone()),
+                        ("TEMP".into(), temp_dir_string),
                     ]);
                     // The command's `$TMPDIR` must live inside the sandbox's
                     // writable scope. The per-thread temp directory is owned
