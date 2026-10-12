@@ -39,6 +39,7 @@ use task::{
 };
 use terminal::TaskStatus;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use theme::ActiveTheme;
 use util::rel_path::RelPath;
 
 use crate::agent_panel::{AgentPanel, CreateThreadOptions};
@@ -3416,6 +3417,25 @@ fn terminal_snapshot(request: &ProbeRequest, state: &ProbeState, cx: &App) -> Va
     while !content.is_char_boundary(start) {
         start += 1;
     }
+    let mut runs = terminal.get_styled_content(MAX_TERMINAL_SNAPSHOT_BYTES);
+    let styles_truncated = runs.len() > 2048;
+    if styles_truncated {
+        let prefix = runs
+            .drain(..runs.len() - 2047)
+            .map(|(text, _)| text)
+            .collect::<String>();
+        runs.insert(0, (prefix, terminal::Cell::default()));
+    }
+    let colored_runs = runs.into_iter().map(|(text, cell)| {
+            let mut fg = cell.foreground();
+            let mut bg = cell.background();
+            if cell.is_inverse() { std::mem::swap(&mut fg, &mut bg); }
+            let hex = |color| {
+                let rgba: gpui::Rgba = terminal_view::terminal_element::convert_color(&color, cx.theme()).into();
+                format!("#{:02x}{:02x}{:02x}", (rgba.r * 255.0).round() as u8, (rgba.g * 255.0).round() as u8, (rgba.b * 255.0).round() as u8)
+            };
+            json!({"text": text, "foreground": hex(fg), "background": hex(bg), "bold": cell.is_bold(), "italic": cell.is_italic(), "underline": cell.has_underline(), "dim": cell.is_dim()})
+        }).collect::<Vec<_>>();
     success(
         &request.request_id,
         json!({
@@ -3423,6 +3443,8 @@ fn terminal_snapshot(request: &ProbeRequest, state: &ProbeState, cx: &App) -> Va
             "epoch": state.epoch,
             "terminal": metadata,
             "content": &content[start..],
+            "styled_runs": colored_runs,
+            "styles_truncated": styles_truncated,
             "truncated": start > 0,
             "total_lines": terminal.total_lines(),
             "viewport_lines": terminal.viewport_lines(),

@@ -18,7 +18,7 @@ use alacritty_terminal::{
     sync::FairMutex,
     term::{
         Config, Osc52, RenderableCursor, SEMANTIC_ESCAPE_CHARS, Term, TermMode,
-        cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink},
+        cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink, LineLength},
         search::{Match, RegexIter, RegexSearch},
     },
     tty,
@@ -927,6 +927,73 @@ pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> 
         scrolled_to_bottom: content.display_offset == 0,
         bottom_row_occupied,
     }
+}
+
+pub(super) fn styled_content(term: &Term<ZedListener>, max_bytes: usize) -> Vec<(String, Cell)> {
+    let grid = term.grid();
+    let mut rows = Vec::new();
+    let mut bytes = 0;
+    for line in (term.topmost_line().0..=term.bottommost_line().0)
+        .rev()
+        .map(Line::from)
+    {
+        let row = &grid[line];
+        let length = row.line_length().0;
+        let mut runs: Vec<(String, Cell)> = Vec::new();
+        for column in 0..length {
+            let cell = &row[Column(column)];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+            let mut text = if cell.c == '\t' {
+                " ".to_owned()
+            } else {
+                cell.c.to_string()
+            };
+            text.extend(cell.zerowidth().into_iter().flatten());
+            bytes += text.len();
+            if let Some((previous, style)) = runs.last_mut()
+                && style.cell.fg == cell.fg
+                && style.cell.bg == cell.bg
+                && style.cell.flags == cell.flags
+            {
+                previous.push_str(&text);
+            } else {
+                runs.push((text, terminal_cell_from_alacritty(cell)));
+            }
+        }
+        if length == 0 || !row[Column(length - 1)].flags.contains(Flags::WRAPLINE) {
+            runs.push(("\n".to_owned(), Cell::default()));
+            bytes += 1;
+        }
+        rows.push(runs);
+        if bytes >= max_bytes {
+            break;
+        }
+    }
+    let mut runs = rows.into_iter().rev().flatten().collect::<Vec<_>>();
+    let mut discard = bytes.saturating_sub(max_bytes);
+    for (text, _) in &mut runs {
+        if discard == 0 {
+            break;
+        }
+        let mut end = discard.min(text.len());
+        while !text.is_char_boundary(end) {
+            end += 1;
+        }
+        discard = discard.saturating_sub(end);
+        text.drain(..end);
+    }
+    runs.retain(|(text, _)| !text.is_empty());
+    if let Some((text, _)) = runs.last_mut()
+        && text.ends_with('\n')
+    {
+        text.pop();
+    }
+    runs
 }
 
 pub(super) fn content_text(term: &Term<ZedListener>) -> String {

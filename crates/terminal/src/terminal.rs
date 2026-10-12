@@ -2446,6 +2446,11 @@ impl Terminal {
         f(RenderableCells::new(content.display_iter))
     }
 
+    pub fn get_styled_content(&self, max_bytes: usize) -> Vec<(String, Cell)> {
+        let term = self.term.lock_unfair();
+        crate::alacritty::styled_content(&term, max_bytes)
+    }
+
     pub fn get_content(&self) -> String {
         let term = self.term.lock_unfair();
         content_text(&term)
