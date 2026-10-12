@@ -1402,13 +1402,11 @@ fn resolve_cd_in_worktrees(
         } else {
             (*root_name).to_string()
         };
-        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix))?;
+        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix)).ok()?;
         if subpath.is_empty() {
             Some(abs_path.clone())
         } else {
-            path_style
-                .join_path(abs_path, &*subpath.display(path_style))
-                .ok()
+            path_style.join_path(abs_path, subpath).ok()
         }
     })
 }
