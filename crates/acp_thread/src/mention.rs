@@ -13,7 +13,7 @@ use url::Url;
 use urlencoding::decode;
 use util::{
     ResultExt,
-    paths::{PathStyle, PathWithPosition, is_absolute},
+    paths::{PathStyle, PathWithPosition},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -94,7 +94,7 @@ impl MentionUri {
             Ok(())
         };
 
-        if is_absolute(input, path_style) && !input.contains("://") {
+        if path_style.has_root(Path::new(input)) && !input.contains("://") {
             return parse_absolute_path(input)
                 .with_context(|| format!("Invalid absolute path mention URI: {input}"));
         }
@@ -634,7 +634,7 @@ fn bare_path_target(input: &str, path_style: PathStyle) -> Option<&str> {
         .strip_prefix('`')
         .and_then(|input| input.strip_suffix('`'))
         .unwrap_or(input);
-    (is_absolute(input, path_style) && !input.contains("://")).then_some(input)
+    (path_style.has_root(Path::new(input)) && !input.contains("://")).then_some(input)
 }
 
 fn split_path_fragment(input: &str) -> (&str, Option<&str>) {
