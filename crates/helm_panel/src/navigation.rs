@@ -134,7 +134,7 @@ impl HelmPanel {
         let buttons: [(&'static str, IconName, &'static str, bool); 3] = [
             (
                 "helm-nav-home",
-                IconName::LayoutDashboard,
+                IconName::Home,
                 "Home",
                 self.screen != HelmScreen::Menu,
             ),

@@ -311,7 +311,16 @@ pub fn release_row(ix: usize, release: &Release, cx: &App) -> ListItem {
                         )
                         .when(release.draft, |row| row.child(chip("draft")))
                         .when(release.prerelease, |row| {
-                            row.child(Pill::warning().xsmall().rounded_full().child("pre-release"))
+                            // Tinted, not filled: the filled warning pill's
+                            // label is unreadable in themes where the fill
+                            // and its foreground are close in colour.
+                            let warning = cx.theme().warning;
+                            row.child(
+                                Pill::custom(warning.opacity(0.2), warning, warning.opacity(0.3))
+                                    .xsmall()
+                                    .rounded_full()
+                                    .child("pre-release"),
+                            )
                         }),
                 )
                 .child(
