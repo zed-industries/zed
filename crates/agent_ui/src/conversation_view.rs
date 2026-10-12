@@ -13604,6 +13604,21 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_replayed_terminal_output_search_reveals_last_match(cx: &mut TestAppContext) {
+        assert_replayed_terminal_output_search_reveals_matches("seq 1 100".to_string(), cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_replayed_terminal_output_search_reveals_matches_below_long_command(
+        cx: &mut TestAppContext,
+    ) {
+        let command = format!("cat <<'EOF'\n{}EOF", "ordinary command line\n".repeat(100));
+        assert_replayed_terminal_output_search_reveals_matches(command, cx).await;
+    }
+
+    async fn assert_replayed_terminal_output_search_reveals_matches(
+        command: String,
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
@@ -13619,10 +13634,10 @@ pub(crate) mod tests {
             .update(cx, |thread, cx| {
                 thread.upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new(tool_call_id.clone())
-                        .title("seq 1 100")
+                        .title(command.clone())
                         .kind(acp_v2::ToolKind::Execute)
                         .status(acp_v2::ToolCallStatus::Completed)
-                        .raw_input(json!({"command": "seq 1 100", "cd": "."}))
+                        .raw_input(json!({"command": command, "cd": "."}))
                         .raw_output(json!(saved_output)),
                     cx,
                 )
@@ -13673,7 +13688,7 @@ pub(crate) mod tests {
         };
         assert!(
             active_match_is_visible(cx),
-            "the first match should be visible at the top of the saved output",
+            "search navigation should reveal the first match in the saved terminal output",
         );
 
         search_bar.update_in(cx, |search_bar, window, cx| {

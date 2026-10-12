@@ -2516,47 +2516,49 @@ impl MarkdownElement {
         let autoscroll_index = self
             .markdown
             .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
-        let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
+        let (mut position, line_height) =
+            rendered_text.position_for_source_index(autoscroll_index)?;
 
-        match &self.autoscroll {
-            AutoscrollBehavior::Controlled(scroll_handle) => {
-                let viewport = scroll_handle.bounds();
-                let margin = line_height * 3.;
-                let top_goal = viewport.top() + margin;
-                let bottom_goal = viewport.bottom() - margin;
-                let current_offset = scroll_handle.offset();
+        if let AutoscrollBehavior::Controlled(scroll_handle) = &self.autoscroll {
+            let viewport = scroll_handle.bounds();
+            let margin = line_height * 3.;
+            let top_goal = viewport.top() + margin;
+            let bottom_goal = viewport.bottom() - margin;
+            let current_offset = scroll_handle.offset();
 
-                let new_offset_y = if position.y < top_goal {
-                    current_offset.y + (top_goal - position.y)
-                } else if position.y + line_height > bottom_goal {
-                    current_offset.y + (bottom_goal - (position.y + line_height))
-                } else {
-                    current_offset.y
-                };
+            let new_offset_y = if position.y < top_goal {
+                current_offset.y + (top_goal - position.y)
+            } else if position.y + line_height > bottom_goal {
+                current_offset.y + (bottom_goal - (position.y + line_height))
+            } else {
+                current_offset.y
+            };
 
-                let new_offset = point(
-                    current_offset.x,
-                    new_offset_y.clamp(-scroll_handle.max_offset().y, Pixels::ZERO),
-                );
-                if new_offset != current_offset {
-                    scroll_handle.set_offset(new_offset);
-                    // The scroll container has already laid out this frame with the old
-                    // offset, and a refresh requested mid-draw is dropped, so repaint
-                    // once this draw is done.
-                    window.defer(cx, |window, _| window.refresh());
-                }
-            }
-            AutoscrollBehavior::Propagate => {
-                let text_style = self.style.base_text_style.clone();
-                let font_id = window.text_system().resolve_font(&text_style.font());
-                let font_size = text_style.font_size.to_pixels(window.rem_size());
-                let em_width = window.text_system().em_width(font_id, font_size).unwrap();
-                window.request_autoscroll(Bounds::from_corners(
-                    point(position.x - 3. * em_width, position.y - 3. * line_height),
-                    point(position.x + 3. * em_width, position.y + 3. * line_height),
-                ));
+            let new_offset = point(
+                current_offset.x,
+                new_offset_y.clamp(-scroll_handle.max_offset().y, Pixels::ZERO),
+            );
+            if new_offset != current_offset {
+                scroll_handle.set_offset(new_offset);
+                // The scroll container has already laid out this frame with the old
+                // offset, and a refresh requested mid-draw is dropped, so repaint
+                // once this draw is done.
+                window.defer(cx, |window, _| window.refresh());
+                position.y += new_offset.y - current_offset.y;
             }
         }
+
+        // A controlled scroll container can itself lie outside an ancestor's
+        // viewport (e.g. below a tall header in a `List` item), so ancestors are
+        // asked to reveal the match too, where the scroll above moves it to.
+        let text_style = self.style.base_text_style.clone();
+        let font_id = window.text_system().resolve_font(&text_style.font());
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let em_width = window.text_system().em_width(font_id, font_size).ok()?;
+        window.request_autoscroll(Bounds::from_corners(
+            point(position.x - 3. * em_width, position.y - 3. * line_height),
+            point(position.x + 3. * em_width, position.y + 3. * line_height),
+        ));
         Some(())
     }
 
