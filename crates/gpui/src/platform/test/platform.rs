@@ -4,11 +4,11 @@ use crate::NoopTextSystem;
 use crate::PathPromptOptions;
 use crate::{
     ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SharedString,
-    SourceMetadata, SystemNotification, SystemNotificationResponse, Task, TestDisplay, TestWindow,
-    ThermalState, WindowAppearance, WindowParams, size,
+    DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform,
+    PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SharedString, SourceMetadata, SystemNotification, SystemNotificationResponse, Task,
+    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
@@ -32,7 +32,8 @@ pub(crate) struct TestPlatform {
     foreground_executor: ForegroundExecutor,
 
     pub(crate) active_window: RefCell<Option<TestWindow>>,
-    active_display: Rc<dyn PlatformDisplay>,
+    displays: RefCell<Vec<TestDisplay>>,
+    displays_changed_callback: RefCell<Option<Box<dyn FnMut()>>>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -140,6 +141,57 @@ impl TestPlatform {
         Self::with_platform(executor, foreground_executor, text_system, None)
     }
 
+    pub(crate) fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.connect_display(display_id, refresh_interval);
+        self.report_displays_changed();
+    }
+
+    /// Adds a display without telling App yet, as when the platform's
+    /// notifications about a window arrive before those about displays.
+    pub(crate) fn connect_display(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        let mut display = TestDisplay::with_id(display_id);
+        display.refresh_interval = refresh_interval;
+        self.displays.borrow_mut().push(display);
+    }
+
+    pub(crate) fn simulate_display_removed(&self, display_id: DisplayId) {
+        self.displays
+            .borrow_mut()
+            .retain(|display| display.id() != display_id);
+        self.report_displays_changed();
+    }
+
+    pub(crate) fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        for display in self.displays.borrow_mut().iter_mut() {
+            if display.id() == display_id {
+                display.refresh_interval = refresh_interval;
+            }
+        }
+        self.report_displays_changed();
+    }
+
+    fn report_displays_changed(&self) {
+        let callback = self.displays_changed_callback.borrow_mut().take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.displays_changed_callback
+                .borrow_mut()
+                .get_or_insert(callback);
+        }
+    }
+
     pub fn with_platform(
         executor: BackgroundExecutor,
         foreground_executor: ForegroundExecutor,
@@ -155,7 +207,8 @@ impl TestPlatform {
             prompts: Default::default(),
             screen_capture_sources: Default::default(),
             active_cursor: Default::default(),
-            active_display: Rc::new(TestDisplay::new()),
+            displays: RefCell::new(vec![TestDisplay::new()]),
+            displays_changed_callback: Default::default(),
             active_window: Default::default(),
             expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
@@ -458,11 +511,22 @@ impl Platform for TestPlatform {
     }
 
     fn displays(&self) -> Vec<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        vec![self.active_display.clone()]
+        self.displays
+            .borrow()
+            .iter()
+            .map(|display| Rc::new(display.clone()) as Rc<dyn PlatformDisplay>)
+            .collect()
     }
 
     fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        Some(self.active_display.clone())
+        self.displays
+            .borrow()
+            .first()
+            .map(|display| Rc::new(display.clone()) as Rc<dyn PlatformDisplay>)
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        *self.displays_changed_callback.borrow_mut() = Some(callback);
     }
 
     fn is_screen_capture_supported(&self) -> bool {
@@ -503,7 +567,8 @@ impl Platform for TestPlatform {
             handle,
             params,
             self.weak.clone(),
-            self.active_display.clone(),
+            self.primary_display()
+                .unwrap_or_else(|| Rc::new(TestDisplay::new())),
             renderer,
         );
         Ok(Box::new(window))
