@@ -382,14 +382,14 @@ pub trait AgentSessionConfigOptions {
 pub struct AgentSessionListRequest {
     pub cwd: Option<PathBuf>,
     pub cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentSessionListResponse {
     pub sessions: Vec<AgentSessionInfo>,
     pub next_cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 impl AgentSessionListResponse {
