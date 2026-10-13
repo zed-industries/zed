@@ -730,11 +730,20 @@ fn client_builder(
 /// Builds a v2 terminal-notification handler without selecting it for application connections.
 /// Other session updates remain unclaimed so later inbound handlers can process them.
 pub fn v2_terminal_client_builder(
+    dispatch: impl FnMut(DecodedTerminalNotification) -> Result<(), agent_client_protocol::Error>
+    + Send
+    + 'static,
+) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
+    with_v2_terminal_notifications(Client.v2(), dispatch)
+}
+
+fn with_v2_terminal_notifications<Handler: HandleDispatchFrom<Agent>>(
+    builder: V2Builder<Client, Handler>,
     mut dispatch: impl FnMut(DecodedTerminalNotification) -> Result<(), agent_client_protocol::Error>
     + Send
     + 'static,
 ) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
-    Client.v2().on_receive_notification(
+    builder.on_receive_notification(
         async move |message: UntypedMessage, connection: V2ConnectionTo<Agent>| {
             let kind = message
                 .params()
@@ -831,14 +840,19 @@ impl AcpConnection {
         builder: V2Builder<Client, Handler>,
     ) -> V2Builder<Client, impl HandleDispatchFrom<Agent> + use<Handler>> {
         let dispatch_sender = self.dispatch_tx.clone();
-        with_v2_session_notifications(builder, move |notification| {
+        let dispatch = move |notification| {
             enqueue_notification(
                 &dispatch_sender,
                 notification,
                 handle_v2_session_notification,
             );
             Ok(())
-        })
+        };
+        let builder = with_v2_terminal_notifications(builder, {
+            let dispatch = dispatch.clone();
+            move |notification| dispatch(notification.into())
+        });
+        with_v2_session_notifications(builder, dispatch)
     }
 
     pub fn subscribe_debug_messages(
@@ -3072,18 +3086,6 @@ mod tests {
         _legacy_agent_task: Task<Result<()>>,
     }
 
-    fn apply_v2_terminal_for_test(
-        notification: DecodedTerminalNotification,
-        cx: &mut AsyncApp,
-        context: &ClientContext,
-    ) {
-        session_thread(context, &notification.session_id)
-            .expect("registered terminal session")
-            .update(cx, |thread, cx| notification.apply(thread, cx))
-            .expect("live terminal session")
-            .expect("apply decoded terminal update");
-    }
-
     fn v2_terminal_meta(scope: &str) -> acp_v2::Meta {
         acp_v2::Meta::from_iter([("scope".to_owned(), serde_json::json!(scope))])
     }
@@ -3111,57 +3113,64 @@ mod tests {
                 Arc::new(Mutex::new(None::<futures::channel::oneshot::Sender<()>>));
             let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
             let (client_sender, client_receiver) = futures::channel::oneshot::channel();
-            let terminal_builder = v2_terminal_client_builder({
-                let dispatch_sender = connection.dispatch_tx.clone();
-                let received = received.clone();
-                let acknowledgment = acknowledgment.clone();
-                move |notification| {
-                    let is_barrier = notification
-                        .meta
-                        .as_ref()
-                        .and_then(|meta| meta.get("terminalTestBarrier"))
-                        == Some(&serde_json::json!(true));
-                    if !is_barrier {
-                        let (chunk_meta, bytes) = match &notification.update {
-                            DecodedTerminalUpdate::Patch { .. } => (None, None),
-                            DecodedTerminalUpdate::Output { data, meta, .. } => {
-                                (meta.clone(), Some(data.clone()))
+            let observed_builder = Client.v2().on_receive_notification(
+                {
+                    let received = received.clone();
+                    async move |message: UntypedMessage, connection: V2ConnectionTo<Agent>| {
+                        if acp_v2::UpdateSessionNotification::matches_method(message.method()) {
+                            let decoded = terminal_updates::parse_terminal_notification(&message)
+                                .map_err(anyhow::Error::from)
+                                .and_then(terminal_updates::decode_terminal_notification);
+                            match decoded {
+                                Ok(Some(notification)) => {
+                                    let (chunk_meta, bytes) = match notification.update {
+                                        DecodedTerminalUpdate::Patch { .. } => (None, None),
+                                        DecodedTerminalUpdate::Output { data, meta, .. } => {
+                                            (meta, Some(data))
+                                        }
+                                    };
+                                    received.lock().expect("receive mutex").push(
+                                        V2TerminalReceive {
+                                            envelope_meta: notification.meta,
+                                            chunk_meta,
+                                            bytes,
+                                        },
+                                    );
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    log::debug!("Terminal observation was not decoded: {error:#}");
+                                }
                             }
-                        };
-                        received
-                            .lock()
-                            .expect("receive mutex")
-                            .push(V2TerminalReceive {
-                                envelope_meta: notification.meta.clone(),
-                                chunk_meta,
-                                bytes,
-                            });
+                        }
+                        // Only the production binding may claim and apply the update.
+                        Ok(Handled::No {
+                            message: (message, connection),
+                            retry: false,
+                        })
                     }
-                    enqueue_notification(
-                        &dispatch_sender,
-                        notification,
-                        apply_v2_terminal_for_test,
-                    );
-                    if is_barrier {
-                        acknowledgment
-                            .lock()
-                            .expect("acknowledgment mutex")
-                            .take()
-                            .expect("installed receive barrier")
-                            .send(())
-                            .expect("waiting receive barrier");
-                    }
-                    Ok(())
-                }
-            });
+                },
+                agent_client_protocol::on_receive_notification!(),
+            );
             let client_builder = connection
-                .with_v2_session_ingress(terminal_builder)
+                .with_v2_session_ingress(observed_builder)
                 .on_receive_notification(
                     {
                         let fallback = fallback.clone();
+                        let acknowledgment = acknowledgment.clone();
                         async move |message: agent_client_protocol::UntypedMessage,
                                     _connection: V2ConnectionTo<Agent>| {
-                            fallback.lock().expect("fallback mutex").push(message);
+                            if message.method() == "_test/session_barrier" {
+                                acknowledgment
+                                    .lock()
+                                    .expect("acknowledgment mutex")
+                                    .take()
+                                    .expect("installed receive barrier")
+                                    .send(())
+                                    .expect("waiting receive barrier");
+                            } else {
+                                fallback.lock().expect("fallback mutex").push(message);
+                            }
                             Ok(())
                         }
                     },
@@ -3246,18 +3255,13 @@ mod tests {
                     .replace(sender)
                     .is_none()
             );
-            self.send(
-                serde_json::json!({
-                    "sessionUpdate": "terminal_output_chunk",
-                    "terminalId": "terminal-1",
-                    "data": ""
-                }),
-                Some(acp_v2::Meta::from_iter([(
-                    "terminalTestBarrier".to_owned(),
-                    serde_json::json!(true),
-                )])),
-            );
-            // Notification errors have no reply. This valid chunk acknowledges SDK
+            self.agent
+                .send_notification(
+                    UntypedMessage::new("_test/session_barrier", serde_json::json!({}))
+                        .expect("SDK barrier notification"),
+                )
+                .expect("send SDK barrier");
+            // Notification errors have no reply. This separate packet acknowledges SDK
             // dispatch before the foreground barrier acknowledges model application.
             let delivered = async {
                 receiver.await.expect("SDK receive barrier");
@@ -3632,7 +3636,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn v2_message_sdk_routes_sessions_and_ignores_released_owners(
+    async fn v2_session_sdk_routes_updates_and_ignores_released_owners(
         cx: &mut gpui::TestAppContext,
     ) {
         use acp_thread::AgentThreadEntry;
@@ -3655,15 +3659,21 @@ mod tests {
             })
             .await
             .expect("register another session");
-        for (session_id, text) in [
-            ("v2-terminal-session", "main"),
-            ("child-session", "child"),
-            ("unknown-session", "ignored"),
+        for (session_id, text, encoded_output) in [
+            ("v2-terminal-session", "main", "bWFpbg=="),
+            ("child-session", "child", "Y2hpbGQ="),
+            ("unknown-session", "ignored", "aWdub3JlZA=="),
         ] {
             harness.send_to(
                 session_id,
                 json!({"sessionUpdate": "user_message", "messageId": "shared",
                     "content": [{"type": "text", "text": text}]}),
+                None,
+            );
+            harness.send_to(
+                session_id,
+                json!({"sessionUpdate": "terminal_update", "terminalId": "shared-display",
+                    "output": {"data": encoded_output}, "exitStatus": {"exitCode": 0}}),
                 None,
             );
         }
@@ -3674,8 +3684,23 @@ mod tests {
                     panic!("one message in the routed session");
                 };
                 assert_eq!(user.content.to_markdown(cx), expected);
+                let terminal = thread
+                    .terminal("shared-display".into())
+                    .expect("routed terminal");
+                assert_eq!(
+                    terminal
+                        .read(cx)
+                        .output()
+                        .expect("terminal snapshot")
+                        .content
+                        .trim_end(),
+                    expected
+                );
             });
         }
+        let child_terminal = child
+            .read_with(cx, |thread, _| thread.terminal("shared-display".into()))
+            .expect("child terminal");
         assert_eq!(harness.connection.sessions.borrow().len(), 2);
         let released = cx.update(|cx| {
             harness
@@ -3699,6 +3724,15 @@ mod tests {
                 "content": [{"type": "text", "text": "late replacement"}]}),
             None,
         );
+        for update in [
+            json!({"sessionUpdate": "terminal_update", "terminalId": "shared-display",
+                "command": "late command", "output": {"data": "bGF0ZQ=="},
+                "exitStatus": {"exitCode": 7}}),
+            json!({"sessionUpdate": "terminal_output_chunk", "terminalId": "shared-display",
+                "data": "bGF0ZQ=="}),
+        ] {
+            harness.send_to("child-session", update, None);
+        }
         harness.drain(cx).await;
         assert!(!harness.connection.sessions.borrow().contains_key(&child_id));
         child.read_with(cx, |thread, cx| {
@@ -3706,6 +3740,11 @@ mod tests {
                 panic!("released owner's retained message");
             };
             assert_eq!(user.content.to_markdown(cx), "child");
+        });
+        child_terminal.read_with(cx, |terminal, _| {
+            let output = terminal.output().expect("retained child output");
+            assert_eq!(output.content.trim_end(), "child");
+            assert_eq!(output.exit_status.exit_code, Some(0));
         });
 
         let V2SessionHarness {
@@ -3718,18 +3757,34 @@ mod tests {
         } = harness;
         let _transport_tasks = (_client_task, _agent_task, _legacy_agent_task);
         let weak_thread = thread.downgrade();
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
         let notification =
             InboundSessionNotification::try_from(acp_v2::UpdateSessionNotification::new(
-                thread.read_with(cx, |thread, _| thread.session_id().clone()),
+                session_id.clone(),
                 acp_v2::SessionUpdate::AgentMessage(
                     acp_v2::AgentMessage::new("queued-before-drop").content(vec!["queued".into()]),
                 ),
             ))
             .expect("message notification");
+        let terminal_notification =
+            terminal_updates::decode_terminal_notification(acp_v2::UpdateSessionNotification::new(
+                session_id,
+                acp_v2::SessionUpdate::TerminalOutputChunk(acp_v2::TerminalOutputChunk::new(
+                    "shared-display",
+                    "bGF0ZQ==",
+                )),
+            ))
+            .expect("decoded terminal bytes")
+            .expect("terminal notification");
         cx.update(|_| {
             enqueue_notification(
                 &connection.dispatch_tx,
                 notification,
+                handle_v2_session_notification,
+            );
+            enqueue_notification(
+                &connection.dispatch_tx,
+                terminal_notification.into(),
                 handle_v2_session_notification,
             );
             drop(thread);
