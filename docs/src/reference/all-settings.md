@@ -3563,6 +3563,16 @@ Positive `integer` values or `null` for unlimited tabs
 
 `boolean` values
 
+## Modeline Lines
+
+- Description: Number of lines to search for [modelines](../modelines.md) at the beginning and end of files
+- Setting: `modeline_lines`
+- Default: `5`
+
+**Options**
+
+Positive `integer` values, or `0` to disable modeline parsing
+
 ## Multi Cursor Modifier
 
 - Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it does not conflict with the multicursor modifier.
