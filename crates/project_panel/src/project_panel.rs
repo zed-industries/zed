@@ -2031,20 +2031,12 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((worktree, entry)) = self.selected_entry(cx) else {
+        let Some(project_path) = self
+            .selected_file_project_path(cx)
+            .filter(|project_path| SvgPreviewView::is_svg_path(project_path.path.as_std_path()))
+        else {
             return;
         };
-        let is_svg = SvgPreviewView::is_svg_path(entry.path.as_std_path());
-
-        if !entry.is_file() || !is_svg {
-            return;
-        }
-
-        let project_path = ProjectPath {
-            worktree_id: worktree.id(),
-            path: entry.path.clone(),
-        };
-
         self.workspace
             .update(cx, |workspace, cx| {
                 SvgPreviewView::open_for_project_path(project_path, workspace, window, cx)
