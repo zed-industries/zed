@@ -1049,6 +1049,7 @@ impl X11Client {
                     .set_bounds(bounds)
                     .context("X11: Failed to set window bounds")
                     .log_err();
+                self.0.borrow_mut().follow_window_crtc(event.window);
             }
             Event::PropertyNotify(event) => {
                 let window = self.get_window(event.window)?;
@@ -1996,42 +1997,7 @@ impl X11ClientState {
                 });
             }
             (true, None) => {
-                let Some(screen_resources) = get_reply(
-                    || "Failed to get screen resources",
-                    self.xcb_connection
-                        .randr_get_screen_resources_current(x_window),
-                )
-                .log_err() else {
-                    return;
-                };
-
-                // Ideally this would be re-queried when the window changes screens, but there
-                // doesn't seem to be an efficient / straightforward way to do this. Should also be
-                // updated when screen configurations change.
-                let mode_info = screen_resources.crtcs.iter().find_map(|crtc| {
-                    let crtc_info = self
-                        .xcb_connection
-                        .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-                        .ok()?
-                        .reply()
-                        .ok()?;
-
-                    screen_resources
-                        .modes
-                        .iter()
-                        .find(|m| m.id == crtc_info.mode)
-                });
-                let refresh_rate = match mode_info {
-                    Some(mode_info) => mode_refresh_rate(mode_info),
-                    None => {
-                        log::error!(
-                            "Failed to get screen mode info from xrandr, \
-                            defaulting to 60hz refresh rate."
-                        );
-                        Duration::from_micros(1_000_000 / 60)
-                    }
-                };
-
+                let refresh_rate = self.window_refresh_rate(x_window);
                 let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
                 let Some(window_ref) = self.windows.get_mut(&x_window) else {
                     return;
@@ -2041,6 +2007,100 @@ impl X11ClientState {
                     event_loop_token,
                 });
             }
+        }
+    }
+
+    /// The refresh of the CRTC showing the window's center, so each window is paced by the
+    /// monitor it is on rather than by whichever CRTC randr lists first.
+    fn window_refresh_rate(&self, x_window: xproto::Window) -> Duration {
+        let screen_resources = get_reply(
+            || "Failed to get screen resources",
+            self.xcb_connection
+                .randr_get_screen_resources_current(x_window),
+        )
+        .log_err();
+        let crtcs: Vec<CrtcArea> = screen_resources
+            .iter()
+            .flat_map(|resources| {
+                resources.crtcs.iter().filter_map(|crtc| {
+                    let info = self
+                        .xcb_connection
+                        .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
+                        .ok()?
+                        .reply()
+                        .ok()?;
+                    let mode = resources.modes.iter().find(|m| m.id == info.mode)?;
+                    Some(CrtcArea {
+                        x: info.x.into(),
+                        y: info.y.into(),
+                        width: info.width.into(),
+                        height: info.height.into(),
+                        refresh: mode_refresh_rate(mode),
+                    })
+                })
+            })
+            .collect();
+        let center = self.window_center(x_window);
+        crtc_refresh_at(&crtcs, center).unwrap_or_else(|| {
+            log::error!(
+                "Failed to get screen mode info from xrandr, \
+                defaulting to 60hz refresh rate."
+            );
+            Duration::from_micros(1_000_000 / 60)
+        })
+    }
+
+    /// The window's center in root coordinates.
+    fn window_center(&self, x_window: xproto::Window) -> Option<(i32, i32)> {
+        let geometry = self
+            .xcb_connection
+            .get_geometry(x_window)
+            .ok()?
+            .reply()
+            .ok()?;
+        let translated = self
+            .xcb_connection
+            .translate_coordinates(
+                x_window,
+                geometry.root,
+                (geometry.width / 2) as i16,
+                (geometry.height / 2) as i16,
+            )
+            .ok()?
+            .reply()
+            .ok()?;
+        Some((translated.dst_x.into(), translated.dst_y.into()))
+    }
+
+    /// Restarts a visible window's refresh loop at the rate of the monitor it moved to.
+    fn follow_window_crtc(&mut self, x_window: xproto::Window) {
+        let Some(RefreshState::PeriodicRefresh { refresh_rate, .. }) = self
+            .windows
+            .get(&x_window)
+            .and_then(|w| w.refresh_state.as_ref())
+        else {
+            return;
+        };
+        let current = *refresh_rate;
+        let refresh_rate = self.window_refresh_rate(x_window);
+        if refresh_rate == current {
+            return;
+        }
+        let Some(window_ref) = self.windows.get_mut(&x_window) else {
+            return;
+        };
+        if let Some(RefreshState::PeriodicRefresh {
+            event_loop_token, ..
+        }) = window_ref.refresh_state.take()
+        {
+            self.loop_handle.remove(event_loop_token);
+        }
+        let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
+        if let Some(window_ref) = self.windows.get_mut(&x_window) {
+            window_ref.refresh_state = Some(RefreshState::PeriodicRefresh {
+                refresh_rate,
+                event_loop_token,
+            });
         }
     }
 
@@ -2215,6 +2275,32 @@ impl X11ClientState {
         .log_err();
         self.xcb_connection.flush().log_err();
     }
+}
+
+/// A CRTC's area on the root window and the refresh of its current mode.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CrtcArea {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    refresh: Duration,
+}
+
+/// The refresh of the CRTC showing `point`, or of the first CRTC when none does (the window is
+/// off every monitor, or its position is unknown). `None` when there is no CRTC with a mode.
+fn crtc_refresh_at(crtcs: &[CrtcArea], point: Option<(i32, i32)>) -> Option<Duration> {
+    let containing = point.and_then(|(x, y)| {
+        crtcs.iter().find(|c| {
+            c.width > 0
+                && c.height > 0
+                && x >= c.x
+                && x < c.x + c.width
+                && y >= c.y
+                && y < c.y + c.height
+        })
+    });
+    containing.or(crtcs.first()).map(|c| c.refresh)
 }
 
 // Adapted from:
@@ -2894,6 +2980,47 @@ fn xkb_state_for_key_event(xkb: &xkbc::State, event_state: xproto::KeyButMask) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_is_paced_by_the_crtc_it_is_on() {
+        let hz = |hz: u64| Duration::from_micros(1_000_000 / hz);
+        let crtcs = [
+            CrtcArea {
+                x: 0,
+                y: 0,
+                width: 2560,
+                height: 1440,
+                refresh: hz(144),
+            },
+            CrtcArea {
+                x: 2560,
+                y: 0,
+                width: 2560,
+                height: 1600,
+                refresh: hz(240),
+            },
+        ];
+        assert_eq!(crtc_refresh_at(&crtcs, Some((100, 100))), Some(hz(144)));
+        assert_eq!(crtc_refresh_at(&crtcs, Some((3000, 900))), Some(hz(240)));
+        // Right edge belongs to the next CRTC.
+        assert_eq!(crtc_refresh_at(&crtcs, Some((2560, 0))), Some(hz(240)));
+        // Off every monitor, or not known: the first CRTC, as before.
+        assert_eq!(crtc_refresh_at(&crtcs, Some((-50, 10))), Some(hz(144)));
+        assert_eq!(crtc_refresh_at(&crtcs, None), Some(hz(144)));
+        assert_eq!(crtc_refresh_at(&[], Some((0, 0))), None);
+        // A disabled CRTC (no area) never matches.
+        let off = [
+            CrtcArea {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                refresh: hz(60),
+            },
+            crtcs[1],
+        ];
+        assert_eq!(crtc_refresh_at(&off, Some((3000, 10))), Some(hz(240)));
+    }
 
     fn test_keymap(layouts: &str) -> xkbc::Keymap {
         test_keymap_with_variant(layouts, "")
