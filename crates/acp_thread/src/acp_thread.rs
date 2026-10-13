@@ -3334,6 +3334,7 @@ pub struct TokenUsage {
 pub struct SessionCost {
     pub amount: f64,
     pub currency: SharedString,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 pub const TOKEN_USAGE_WARNING_THRESHOLD: f32 = 0.8;
@@ -4454,16 +4455,14 @@ impl AcpThread {
                 config_options::from_v1(config_options).map_err(acp_v1::Error::from)?,
             )),
             acp_v1::SessionUpdate::UsageUpdate(update) => {
-                let usage = self.token_usage.get_or_insert_with(Default::default);
-                usage.max_tokens = update.size;
-                usage.used_tokens = update.used;
-                if let Some(cost) = update.cost {
-                    self.cost = Some(SessionCost {
-                        amount: cost.amount,
-                        currency: cost.currency.into(),
-                    });
-                }
-                cx.emit(AcpThreadEvent::TokenUsageUpdated);
+                self.update_usage(
+                    acp_v2::UsageUpdate::new(update.used, update.size)
+                        .cost(update.cost.map(|cost| {
+                            acp_v2::Cost::new(cost.amount, cost.currency).meta(cost.meta)
+                        }))
+                        .meta(update.meta),
+                    cx,
+                );
             }
             _ => {}
         }
@@ -5302,6 +5301,21 @@ impl AcpThread {
             self.cost = None;
         }
         self.token_usage = usage;
+        cx.emit(AcpThreadEvent::TokenUsageUpdated);
+    }
+
+    pub fn update_usage(&mut self, update: acp_v2::UsageUpdate, cx: &mut Context<Self>) {
+        let usage = self.token_usage.get_or_insert_with(Default::default);
+        usage.max_tokens = update.size;
+        usage.used_tokens = update.used;
+        // The schema uses Option for cost, so omission and null both mean no new report.
+        if let Some(cost) = update.cost {
+            self.cost = Some(SessionCost {
+                amount: cost.amount,
+                currency: cost.currency.into(),
+                meta: cost.meta,
+            });
+        }
         cx.emit(AcpThreadEvent::TokenUsageUpdated);
     }
 

@@ -3463,6 +3463,206 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_config_sdk_replaces_owner_and_notifies_subscribers(cx: &mut gpui::TestAppContext) {
+        use acp_thread::AcpThreadEvent;
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let session_id = harness
+            .thread
+            .read_with(cx, |thread, _| thread.session_id().clone());
+        assert!(
+            cx.read(|cx| harness.connection.session_config_options(&session_id, cx))
+                .is_none()
+        );
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&harness.thread, {
+                let events = events.clone();
+                let connection = harness.connection.clone();
+                let session_id = session_id.clone();
+                move |_, event, cx| {
+                    if let AcpThreadEvent::ConfigOptionsUpdated(options) = event {
+                        let owner = connection
+                            .session_config_options(&session_id, cx)
+                            .expect("config owner installed before the event");
+                        assert_eq!(owner.config_options(), *options);
+                        events.borrow_mut().push(options.clone());
+                    }
+                }
+            })
+        });
+        let first = json!([
+            {"configId": "opaque/手動", "name": "Mode", "description": "Select a mode",
+                "category": "mode", "type": "select", "currentValue": "custom",
+                "options": [{"value": "custom", "name": "Custom", "description": "Offered",
+                    "_meta": {"scope": "value", "retain": [null, 7]}}],
+                "_meta": {"scope": "option"}},
+            {"configId": "future", "name": "Future", "type": "_future",
+                "payload": {"retain": [false, null]}, "_meta": {"scope": "future"}}
+        ]);
+        let mut expected_events = Vec::new();
+        harness.send(
+            json!({"sessionUpdate": "config_option_update", "configOptions": first,
+                "_meta": {"scope": "update"}}),
+            Some(v2_terminal_meta("delivery")),
+        );
+        harness.drain(cx).await;
+        expected_events.push(
+            serde_json::from_value::<Vec<acp_v2::SessionConfigOption>>(first.clone())
+                .expect("initial options"),
+        );
+        let owner = cx
+            .read(|cx| harness.connection.session_config_options(&session_id, cx))
+            .expect("config owner");
+        assert_eq!(owner.config_options(), expected_events[0]);
+        let mut updates = cx.update(|cx| owner.watch(cx).expect("config subscription"));
+        drop(updates.borrow());
+        for options in [
+            json!([{"configId": "enabled", "name": "Enabled", "type": "boolean",
+                "currentValue": true, "_meta": {"scope": "replacement"}}]),
+            json!([]),
+        ] {
+            let expected: Vec<acp_v2::SessionConfigOption> =
+                serde_json::from_value(options.clone()).expect("replacement options");
+            harness.send(
+                json!({"sessionUpdate": "config_option_update", "configOptions": options}),
+                None,
+            );
+            harness.drain(cx).await;
+            updates
+                .changed()
+                .now_or_never()
+                .expect("config replacement notification")
+                .expect("live config subscription");
+            assert_eq!(owner.config_options(), expected);
+            expected_events.push(expected);
+        }
+        harness.send_to(
+            "unknown-session",
+            json!({"sessionUpdate": "config_option_update", "configOptions": first}),
+            None,
+        );
+        harness.drain(cx).await;
+        assert!(updates.changed().now_or_never().is_none());
+        assert!(owner.config_options().is_empty());
+        assert!(
+            !harness
+                .connection
+                .sessions
+                .borrow()
+                .contains_key(&"unknown-session".into())
+        );
+        harness.thread.read_with(cx, |thread, _| {
+            assert!(thread.entries().is_empty());
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), expected_events);
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_usage_sdk_preserves_counters_and_optional_cost(cx: &mut gpui::TestAppContext) {
+        use acp_thread::{AcpThreadEvent, TokenUsage};
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let events = Rc::new(RefCell::new(0));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&harness.thread, {
+                let events = events.clone();
+                move |_, event, _| {
+                    if matches!(event, AcpThreadEvent::TokenUsageUpdated) {
+                        *events.borrow_mut() += 1;
+                    }
+                    assert!(!matches!(event, AcpThreadEvent::Error));
+                }
+            })
+        });
+        harness.send(
+            json!({"sessionUpdate": "usage_update", "used": 0, "size": 10000}),
+            None,
+        );
+        harness.drain(cx).await;
+        harness.thread.update(cx, |thread, cx| {
+            assert_eq!(
+                thread.token_usage().expect("initial usage").max_tokens,
+                10000
+            );
+            assert!(thread.cost().is_none());
+            thread.update_token_usage(
+                Some(TokenUsage {
+                    max_tokens: 10000,
+                    used_tokens: 0,
+                    input_tokens: 123,
+                    output_tokens: 456,
+                    max_output_tokens: Some(789),
+                }),
+                cx,
+            );
+        });
+        for (update, expected_amount, expected_currency) in [
+            (
+                json!({"used": 1000, "size": 10000,
+                "cost": {"amount": 0.42, "currency": "USD", "_meta": {"scope": "cost"}}}),
+                0.42,
+                "USD",
+            ),
+            (json!({"used": 2000, "size": 20000}), 0.42, "USD"),
+            (json!({"used": 0, "size": 0, "cost": null}), 0.42, "USD"),
+            (
+                json!({"used": 3000, "size": 30000, "cost": {"amount": 0, "currency": "EUR"}}),
+                0.0,
+                "EUR",
+            ),
+        ] {
+            let expected: acp_v2::UsageUpdate =
+                serde_json::from_value(update.clone()).expect("usage source");
+            let mut update = update;
+            let object = update.as_object_mut().expect("usage object");
+            object.insert("sessionUpdate".into(), json!("usage_update"));
+            object.insert("_meta".into(), json!({"scope": "update"}));
+            harness.send(update, Some(v2_terminal_meta("delivery")));
+            harness.drain(cx).await;
+            harness.thread.read_with(cx, |thread, _| {
+                assert_eq!(
+                    thread.token_usage(),
+                    Some(&TokenUsage {
+                        max_tokens: expected.size,
+                        used_tokens: expected.used,
+                        input_tokens: 123,
+                        output_tokens: 456,
+                        max_output_tokens: Some(789),
+                    })
+                );
+                let cost = thread.cost().expect("retained cost");
+                assert_eq!(cost.amount, expected_amount);
+                assert_eq!(cost.currency.as_ref(), expected_currency);
+                assert_eq!(
+                    cost.meta,
+                    (expected_currency == "USD").then(|| v2_terminal_meta("cost"))
+                );
+                assert!(thread.entries().is_empty());
+                assert!(!thread.had_error());
+            });
+        }
+        harness.send_to(
+            "unknown-session",
+            json!({"sessionUpdate": "usage_update", "used": 999, "size": 999,
+                "cost": {"amount": 999, "currency": "USD"}}),
+            None,
+        );
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.token_usage().expect("usage").used_tokens, 3000);
+            assert_eq!(thread.cost().expect("cost").amount, 0.0);
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), 6);
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
+    }
+
+    #[gpui::test]
     async fn v2_tool_sdk_patches_chunks_and_display_references(cx: &mut gpui::TestAppContext) {
         use acp_thread::{ToolCallContent, ToolCallStatus};
         use serde_json::json;
@@ -3849,6 +4049,18 @@ mod tests {
                     "output": {"data": encoded_output}, "exitStatus": {"exitCode": 0}}),
                 None,
             );
+            harness.send_to(
+                session_id,
+                json!({"sessionUpdate": "config_option_update", "configOptions": [
+                    {"configId": "shared", "name": text, "type": "boolean", "currentValue": true}
+                ]}),
+                None,
+            );
+            harness.send_to(
+                session_id,
+                json!({"sessionUpdate": "usage_update", "used": text.len(), "size": 10000}),
+                None,
+            );
         }
         harness.drain(cx).await;
         for (thread, expected) in [(&harness.thread, "main"), (&child, "child")] {
@@ -3857,6 +4069,19 @@ mod tests {
                     panic!("one message in the routed session");
                 };
                 assert_eq!(user.content.to_markdown(cx), expected);
+                assert_eq!(
+                    thread.token_usage().expect("routed usage").used_tokens,
+                    expected.len() as u64
+                );
+                let config = harness
+                    .connection
+                    .session_config_options(thread.session_id(), cx)
+                    .expect("routed config");
+                assert_eq!(config.config_options().len(), 1);
+                assert_eq!(
+                    config.config_options().first().expect("config option").name,
+                    expected
+                );
                 let terminal = thread
                     .terminal("shared-display".into())
                     .expect("routed terminal");
@@ -3874,6 +4099,10 @@ mod tests {
         let child_terminal = child
             .read_with(cx, |thread, _| thread.terminal("shared-display".into()))
             .expect("child terminal");
+        let child_config = cx
+            .read(|cx| harness.connection.session_config_options(&child_id, cx))
+            .expect("child config owner");
+        let child_options = child_config.config_options();
         assert_eq!(harness.connection.sessions.borrow().len(), 2);
         let released = cx.update(|cx| {
             harness
@@ -3903,6 +4132,8 @@ mod tests {
                 "exitStatus": {"exitCode": 7}}),
             json!({"sessionUpdate": "terminal_output_chunk", "terminalId": "shared-display",
                 "data": "bGF0ZQ=="}),
+            json!({"sessionUpdate": "config_option_update", "configOptions": []}),
+            json!({"sessionUpdate": "usage_update", "used": 999, "size": 999}),
         ] {
             harness.send_to("child-session", update, None);
         }
@@ -3913,7 +4144,9 @@ mod tests {
                 panic!("released owner's retained message");
             };
             assert_eq!(user.content.to_markdown(cx), "child");
+            assert_eq!(thread.token_usage().expect("retained usage").used_tokens, 5);
         });
+        assert_eq!(child_config.config_options(), child_options);
         child_terminal.read_with(cx, |terminal, _| {
             let output = terminal.output().expect("retained child output");
             assert_eq!(output.content.trim_end(), "child");
@@ -3931,6 +4164,10 @@ mod tests {
         let _transport_tasks = (_client_task, _agent_task, _legacy_agent_task);
         let weak_thread = thread.downgrade();
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let config = cx
+            .read(|cx| connection.session_config_options(&session_id, cx))
+            .expect("config owner before drop");
+        let options = config.config_options();
         let notification =
             InboundSessionNotification::try_from(acp_v2::UpdateSessionNotification::new(
                 session_id.clone(),
@@ -3941,7 +4178,7 @@ mod tests {
             .expect("message notification");
         let terminal_notification =
             terminal_updates::decode_terminal_notification(acp_v2::UpdateSessionNotification::new(
-                session_id,
+                session_id.clone(),
                 acp_v2::SessionUpdate::TerminalOutputChunk(acp_v2::TerminalOutputChunk::new(
                     "shared-display",
                     "bGF0ZQ==",
@@ -3960,12 +4197,29 @@ mod tests {
                 terminal_notification.into(),
                 handle_v2_session_notification,
             );
+            for update in [
+                acp_v2::SessionUpdate::ConfigOptionUpdate(acp_v2::ConfigOptionUpdate::new(
+                    Vec::new(),
+                )),
+                acp_v2::SessionUpdate::UsageUpdate(acp_v2::UsageUpdate::new(999, 999)),
+            ] {
+                enqueue_notification(
+                    &connection.dispatch_tx,
+                    InboundSessionNotification::try_from(acp_v2::UpdateSessionNotification::new(
+                        session_id.clone(),
+                        update,
+                    ))
+                    .expect("queued config/usage notification"),
+                    handle_v2_session_notification,
+                );
+            }
             drop(thread);
         });
         drain_foreground_queue(&connection.dispatch_tx)
             .await
             .expect("apply queued work after owner drop");
         assert!(weak_thread.upgrade().is_none());
+        assert_eq!(config.config_options(), options);
     }
 
     #[gpui::test]
@@ -4267,7 +4521,7 @@ mod tests {
                 "sessionId": "v2-terminal-session", "_meta": {"scope": "known envelope"},
                 "futureOuter": {"preserve": [1, null, true]},
                 "update": {
-                    "sessionUpdate": "config_option_update", "configOptions": [],
+                    "sessionUpdate": "state_update", "state": "running",
                     "_meta": {"scope": "known update"}, "futureKnownField": {"nested": "keep"}
                 }
             }),
@@ -8430,14 +8684,31 @@ fn handle_v2_session_notification(
             return;
         }
     };
+    let Some(thread) = thread.upgrade() else {
+        log::warn!("Received ACP v2 update for a released session");
+        return;
+    };
     if let InboundSessionUpdate::SessionInfo(update) = &notification.update
         && let Some(session_list) = context.session_list.borrow().as_ref()
     {
         session_list.send_info_update(notification.session_id.clone(), update.clone());
     }
+    if let InboundSessionUpdate::ConfigOptions(update) = &notification.update {
+        let config_options = {
+            let mut sessions = context.sessions.borrow_mut();
+            let Some(session) = sessions.get_mut(&notification.session_id) else {
+                return;
+            };
+            session
+                .config_options
+                .get_or_insert_with(|| ConfigOptions::new(Rc::new(RefCell::new(Vec::new()))))
+                .clone()
+        };
+        *config_options.config_options.borrow_mut() = update.config_options.clone();
+        config_options.tx.borrow_mut().send(()).log_err();
+    }
     thread
         .update(cx, |thread, cx| notification.apply(thread, cx))
-        .and_then(|result| result)
         .log_err();
 }
 
