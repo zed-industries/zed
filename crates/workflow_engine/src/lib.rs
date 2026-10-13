@@ -40,6 +40,6 @@ pub use schema::{
     Action, ActionMap, Branch, JsonLogicExpr, Limit, RunOutcome, ScriptRuntime, ScriptSource,
     WorkflowDefinition,
 };
-pub use status::{RunStatus, StatusSink};
+pub use status::{IterationScope, RunStatus, StatusSink};
 pub use task_chain::ServiceSpec;
 pub use validation::{ValidationIssue, ValidationSeverity, validate_definition};

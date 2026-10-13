@@ -22,7 +22,7 @@ use super::executors::execute_leaf;
 use super::registry;
 use super::scheduler::run_level;
 use super::schema::{Action, RunOutcome};
-use super::status::{RunStatus, StatusSink};
+use super::status::{IterationScope, RunStatus, StatusSink};
 
 /// Scans a just-finished `LevelResult` for `Skipped` outcomes and reports
 /// them — the only outcome `execute_action` itself never sees, since a
@@ -357,21 +357,30 @@ async fn execute_foreach(
         return Ok(Map::new());
     };
 
+    let total = items.len();
     let mut running = FuturesUnordered::new();
     for (index, item) in items.into_iter().enumerate() {
+        // Every iteration reports under the same action ids, so each gets a
+        // sink that says which one it is.
+        let iteration_status = status.in_iteration(IterationScope {
+            container_id: action_id.to_string(),
+            index,
+            total,
+            item: item.clone(),
+        });
         let iteration_ctx = ctx.child().with_item(item);
         running.push(async move {
             let result = run_level(body, &iteration_ctx, |id, a, c| {
-                execute_action(id, a, c, solution_root, status)
+                execute_action(id, a, c, solution_root, &iteration_status)
             })
             .await;
+            report_skipped(&result, &iteration_status);
             (index, result)
         });
     }
 
     let mut first_error: Option<String> = None;
     while let Some((index, result)) = running.next().await {
-        report_skipped(&result, status);
         if !result.all_ok() && first_error.is_none() {
             let message = result
                 .errors
@@ -625,6 +634,55 @@ mod tests {
             .evaluate(&serde_json::json!({"var": "double.outputs.result"}))
             .unwrap();
         assert!(leaked.is_null());
+    }
+
+    /// The body runs under the same action id every time, so each report
+    /// has to say which iteration it came from and what its item was.
+    #[tokio::test]
+    async fn foreach_reports_which_iteration_a_body_action_ran_in() {
+        let mut foreach = Action::new("Foreach");
+        foreach.foreach = Some(serde_json::json!([10, 20, 30]));
+        let mut body = ActionMap::new();
+        let (id, action) =
+            transform_action("double", serde_json::json!({"*": [{"var": "$item"}, 2]}));
+        body.insert(id, action);
+        foreach.actions = Some(body);
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink_seen = seen.clone();
+        let status = StatusSink::with_scope(move |scope, id, status, detail| {
+            if status == RunStatus::Succeeded {
+                sink_seen
+                    .lock()
+                    .unwrap()
+                    .push((scope.to_vec(), id.to_string(), detail));
+            }
+        });
+        execute_action("loop", &foreach, &RunContext::new(), root(), &status)
+            .await
+            .unwrap();
+
+        let mut seen = seen.lock().unwrap().clone();
+        seen.sort_by_key(|(scope, _, _)| scope.first().map(|s| s.index));
+        // The loop itself reports outside any iteration; its body inside one.
+        let (scope, id, _) = &seen[0];
+        assert!(scope.is_empty());
+        assert_eq!(id, "loop");
+        for (position, item) in [10, 20, 30].into_iter().enumerate() {
+            let (scope, id, detail) = &seen[position + 1];
+            assert_eq!(id, "double");
+            assert_eq!(
+                scope.as_slice(),
+                [IterationScope {
+                    container_id: "loop".to_string(),
+                    index: position,
+                    total: 3,
+                    item: serde_json::json!(item),
+                }]
+            );
+            let outputs: Value = serde_json::from_str(detail.as_deref().unwrap()).unwrap();
+            assert_eq!(outputs["result"], serde_json::json!(item * 2));
+        }
     }
 
     #[tokio::test]

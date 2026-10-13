@@ -90,12 +90,11 @@
       ]
     },
     "handleError": {
-      "type": "sendEmail",
-      "label": "Email Ops Team",
+      "type": "log",
+      "label": "Log Validation Failure",
       "inputs": {
-        "to": "ops@forge.dev",
-        "subject": "Order validation failed",
-        "body": {
+        "level": "error",
+        "message": {
           "var": "validate.outputs.error"
         }
       },
@@ -165,7 +164,7 @@
               "inputs": {
                 "method": "POST",
                 "url": "https://api.forge.dev/v1/charge",
-                "body": {
+                "bodyExpression": {
                   "var": "normalize.outputs.result"
                 }
               },

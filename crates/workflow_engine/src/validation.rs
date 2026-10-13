@@ -15,7 +15,7 @@
 //! | Check | Severity |
 //! |---|---|
 //! | Action type not in REGISTRY | Error |
-//! | Runnable = false (DbMigration / AiCheck stub) | Error |
+//! | Runnable = false (a registered stub; none exist right now) | Error |
 //! | Required input field is blank/missing | Error |
 //! | `FieldKind::Json` value is not valid JSON | Error |
 //! | `FieldKind::Expression` value is not a JSON object | Warning |
@@ -115,6 +115,15 @@ fn validate_map(actions: &ActionMap, path_prefix: &str, issues: &mut Vec<Validat
         } else {
             format!("{path_prefix}{id}")
         };
+        if id == crate::engine::VARIABLES_KEY {
+            issues.push(ValidationIssue::error(
+                &node_path,
+                None,
+                format!(
+                    "\"{id}\" is reserved for the flow's variables and can't be an action id"
+                ),
+            ));
+        }
         validate_action(&node_path, action, issues);
 
         // Recurse into container bodies with appropriate path prefixes —
@@ -219,6 +228,27 @@ fn validate_action(node_path: &str, action: &Action, issues: &mut Vec<Validation
                     continue;
                 }
 
+                // A structured value is a JSONLogic expression resolved at
+                // run time, so only literal text can be checked here.
+                if !input_def.options.is_empty()
+                    && v.is_string()
+                    && !input_def
+                        .options
+                        .iter()
+                        .any(|option| option.eq_ignore_ascii_case(text.trim()))
+                {
+                    issues.push(ValidationIssue::error(
+                        node_path,
+                        Some(input_def.name),
+                        format!(
+                            "\"{}\" must be one of {}",
+                            input_def.name,
+                            input_def.options.join(", ")
+                        ),
+                    ));
+                    continue;
+                }
+
                 match input_def.kind {
                     FieldKind::Json => {
                         validate_json_field(node_path, input_def.name, &text, issues);
@@ -237,7 +267,74 @@ fn validate_action(node_path: &str, action: &Action, issues: &mut Vec<Validation
         }
     }
 
+    // ── HTTP-specific checks ──────────────────────────────────────────────
+    if action.type_id == "http"
+        && action.inputs.contains_key("body")
+        && action.inputs.contains_key("bodyExpression")
+    {
+        issues.push(ValidationIssue::error(
+            node_path,
+            Some("bodyExpression"),
+            "Set either \"body\" or \"bodyExpression\", not both",
+        ));
+    }
+
+    // ── Variable-specific checks ──────────────────────────────────────────
+    if action.type_id == "SetVariable" {
+        let literal = action.inputs.contains_key("value");
+        let expression = action.inputs.contains_key("valueExpression");
+        if literal == expression {
+            issues.push(ValidationIssue::error(
+                node_path,
+                Some("value"),
+                if literal {
+                    "Set either \"value\" or \"valueExpression\", not both"
+                } else {
+                    "Set Variable needs a \"value\" or a \"valueExpression\""
+                },
+            ));
+        }
+    }
+    if action.type_id == "InitVariable"
+        && let Some(kind) = action
+            .inputs
+            .get("type")
+            .and_then(Value::as_str)
+            .and_then(crate::engine::VariableType::parse)
+        && let Some(value) = action.inputs.get("value")
+        && let Err(problem) = kind.coerce(value.clone())
+    {
+        issues.push(ValidationIssue::error(
+            node_path,
+            Some("value"),
+            format!("\"value\" doesn't fit the variable's type: {problem}"),
+        ));
+    }
+    if matches!(action.type_id.as_str(), "InitVariable" | "SetVariable")
+        && action
+            .inputs
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.contains('.'))
+    {
+        issues.push(ValidationIssue::error(
+            node_path,
+            Some("name"),
+            "\"name\" can't contain a \".\" — it would be read as a path",
+        ));
+    }
+
     // ── Script-specific checks ────────────────────────────────────────────
+    if action.type_id == "script"
+        && action.inputs.contains_key("args")
+        && action.inputs.contains_key("argsExpression")
+    {
+        issues.push(ValidationIssue::error(
+            node_path,
+            Some("argsExpression"),
+            "Set either \"args\" or \"argsExpression\", not both",
+        ));
+    }
     if action.type_id == "script" {
         validate_script_source(node_path, action, issues);
     }
@@ -430,6 +527,49 @@ mod tests {
         assert!(validate_definition(&def).is_empty());
     }
 
+    // ── Closed value set ──────────────────────────────────────────────────
+
+    #[test]
+    fn http_method_outside_the_set_is_an_error() {
+        let mut a = http_action();
+        a.inputs.insert("method".into(), json!("FETCH"));
+        let def = def_with([("fetch", a)]);
+        let issues = validate_definition(&def);
+        assert!(
+            issues.iter().any(|i| i.node_path == "fetch"
+                && i.field.as_deref() == Some("method")
+                && i.severity == ValidationSeverity::Error),
+            "an unknown method should be an error: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn http_method_is_matched_case_insensitively() {
+        for method in ["get", "Merge", " PATCH "] {
+            let mut a = http_action();
+            a.inputs.insert("method".into(), json!(method));
+            let def = def_with([("fetch", a)]);
+            let issues = validate_definition(&def);
+            assert!(issues.is_empty(), "{method:?} should be accepted: {issues:#?}");
+        }
+    }
+
+    #[test]
+    fn http_body_and_body_expression_together_is_an_error() {
+        let mut a = http_action();
+        a.inputs.insert("body".into(), json!({"a": 1}));
+        a.inputs
+            .insert("bodyExpression".into(), json!({"var": "x.outputs.y"}));
+        let def = def_with([("fetch", a)]);
+        let issues = validate_definition(&def);
+        assert!(
+            issues.iter().any(|i| i.node_path == "fetch"
+                && i.field.as_deref() == Some("bodyExpression")
+                && i.severity == ValidationSeverity::Error),
+            "both body inputs should be an error: {issues:#?}"
+        );
+    }
+
     // ── Required field ────────────────────────────────────────────────────
 
     #[test]
@@ -550,20 +690,40 @@ mod tests {
 
     // ── Unrunnable type ───────────────────────────────────────────────────
 
+    // FUTURE FEATURE — the registry has no `runnable: false` entry while
+    // `DbMigration`/`AiCheck` are parked (see `registry::REGISTRY`), so the
+    // runnable check has nothing to exercise it. Restore this with them.
+    //
+    // #[test]
+    // fn unrunnable_type_is_an_error() {
+    //     let mut a = Action::new("DbMigration");
+    //     a.inputs
+    //         .insert("sql_file".into(), json!("migrations/001.sql"));
+    //     a.inputs.insert("connection_id".into(), json!("default"));
+    //     let def = def_with([("migrate", a)]);
+    //     let issues = validate_definition(&def);
+    //     assert!(
+    //         issues.iter().any(|i| i.node_path == "migrate"
+    //             && i.field.is_none()
+    //             && i.severity == ValidationSeverity::Error),
+    //         "unrunnable DbMigration should be an error: {issues:#?}"
+    //     );
+    // }
+
+    /// A flow written before the future-feature types were parked still
+    /// blocks Run, now as an unknown type.
     #[test]
-    fn unrunnable_type_is_an_error() {
-        let mut a = Action::new("DbMigration");
-        a.inputs
-            .insert("sql_file".into(), json!("migrations/001.sql"));
-        a.inputs.insert("connection_id".into(), json!("default"));
-        let def = def_with([("migrate", a)]);
-        let issues = validate_definition(&def);
-        assert!(
-            issues.iter().any(|i| i.node_path == "migrate"
-                && i.field.is_none()
-                && i.severity == ValidationSeverity::Error),
-            "unrunnable DbMigration should be an error: {issues:#?}"
-        );
+    fn parked_future_types_are_errors() {
+        for type_id in ["sendEmail", "DbMigration", "AiCheck"] {
+            let def = def_with([("parked", Action::new(type_id))]);
+            let issues = validate_definition(&def);
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.node_path == "parked" && i.severity == ValidationSeverity::Error),
+                "{type_id} should be an error: {issues:#?}"
+            );
+        }
     }
 
     // ── runAfter / cycle ──────────────────────────────────────────────────

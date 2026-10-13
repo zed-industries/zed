@@ -294,7 +294,10 @@ impl ScriptRuntime {
     pub fn from_path(path: &Path) -> Option<Self> {
         match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
             "py" => Some(ScriptRuntime::Python),
-            "js" | "ts" => Some(ScriptRuntime::Node),
+            // `.mjs`/`.cjs` (and the TypeScript `.mts`/`.cts`) are the same
+            // runtime; the extension only tells Node which module system the
+            // file uses.
+            "js" | "mjs" | "cjs" | "ts" | "mts" | "cts" => Some(ScriptRuntime::Node),
             "ps1" => Some(ScriptRuntime::Powershell),
             "csproj" => Some(ScriptRuntime::Dotnet),
             "sh" | "bash" => Some(ScriptRuntime::Bash),

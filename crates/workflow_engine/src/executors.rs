@@ -17,7 +17,7 @@ use tokio::process::Command as TokioCommand;
 
 use crate::async_rt::on_tokio;
 
-use super::engine::RunContext;
+use super::engine::{RunContext, VariableType};
 use super::process_tracker;
 use super::schema::{Action, ScriptRuntime, ScriptSource};
 
@@ -37,20 +37,26 @@ pub async fn execute_leaf(
     solution_root: &Path,
 ) -> Result<Map<String, Value>, String> {
     match action.type_id.as_str() {
-        "http" => execute_http(action).await,
+        "http" => execute_http(action, ctx).await,
         "transform" => execute_transform(action, ctx).await,
-        "script" => execute_script(action, solution_root).await,
+        "script" => execute_script(action, ctx, solution_root).await,
         "delay" => execute_delay(action).await,
         "notify" => execute_notify(action, ctx).await,
         "log" => execute_log(action, ctx).await,
-        "sendEmail" => execute_send_email(action, ctx).await,
         "WaitForPort" => execute_wait_for_port(action).await,
         "SetEnv" => execute_set_env(action),
         "StartProcess" => execute_start_process(action_id, action, solution_root).await,
-        "DbMigration" | "AiCheck" => Err(format!(
-            "{} is not implemented — stub in the original Tauri app too",
-            action.type_id
-        )),
+        "InitVariable" => execute_init_variable(action, ctx),
+        "SetVariable" => execute_set_variable(action, ctx),
+        // FUTURE FEATURE — `sendEmail`, `DbMigration` and `AiCheck` are
+        // parked; see the notes in `registry::REGISTRY` for what each needs.
+        // They fall through to "unknown action type" below until restored.
+        //
+        // "sendEmail" => execute_send_email(action, ctx).await,
+        // "DbMigration" | "AiCheck" => Err(format!(
+        //     "{} is not implemented — stub in the original Tauri app too",
+        //     action.type_id
+        // )),
         other => Err(format!("unknown action type: {other}")),
     }
 }
@@ -108,10 +114,145 @@ fn require_f64(action: &Action, field: &str) -> Result<f64, String> {
         })
 }
 
-async fn execute_http(action: &Action) -> Result<Map<String, Value>, String> {
-    let method = require_str(action, "method")?.to_string();
-    let url = require_str(action, "url")?.to_string();
-    let body = action.inputs.get("body").cloned();
+/// The `name` input of a variable action, which is also the key the variable
+/// is read under (`variables.<name>`), so it can't be blank or hold a `.`.
+fn variable_name(action: &Action) -> Result<String, String> {
+    let name = require_str(action, "name")?.trim().to_string();
+    if name.is_empty() {
+        return Err(format!("{}: \"name\" must not be blank", action.type_id));
+    }
+    if name.contains('.') {
+        return Err(format!(
+            "{}: \"name\" can't contain a \".\" — \"{name}\" would be read as a path",
+            action.type_id
+        ));
+    }
+    Ok(name)
+}
+
+fn variable_outputs(name: String, value: Value) -> Map<String, Value> {
+    let mut outputs = Map::new();
+    outputs.insert("name".to_string(), Value::String(name));
+    outputs.insert("value".to_string(), value);
+    outputs
+}
+
+/// Creates a flow variable: a name, a type, and a starting value, readable
+/// by every later expression as `variables.<name>`. Without a `value` it
+/// starts at the type's own empty value.
+fn execute_init_variable(action: &Action, ctx: &RunContext) -> Result<Map<String, Value>, String> {
+    let name = variable_name(action)?;
+    let type_name = require_str(action, "type")?;
+    let kind = VariableType::parse(type_name).ok_or_else(|| {
+        format!(
+            "InitVariable: unknown type \"{type_name}\" — use one of {}",
+            VariableType::NAMES.join(", ")
+        )
+    })?;
+    let value = action
+        .inputs
+        .get("value")
+        .cloned()
+        .unwrap_or_else(|| kind.default_value());
+    let value = ctx
+        .init_variable(&name, kind, value)
+        .map_err(|e| format!("InitVariable: {e}"))?;
+    Ok(variable_outputs(name, value))
+}
+
+/// Replaces an initialized variable's value: with `value` as written, or
+/// with the result of `valueExpression`. They are separate inputs for the
+/// same reason `http` has `body` and `bodyExpression`.
+fn execute_set_variable(action: &Action, ctx: &RunContext) -> Result<Map<String, Value>, String> {
+    let name = variable_name(action)?;
+    let value = match (
+        action.inputs.get("value"),
+        action.inputs.get("valueExpression"),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "SetVariable: set either \"value\" or \"valueExpression\", not both".to_string(),
+            );
+        }
+        (Some(value), None) => value.clone(),
+        (None, Some(expression)) => ctx
+            .evaluate(expression)
+            .map_err(|e| format!("SetVariable: \"valueExpression\" failed: {e}"))?,
+        (None, None) => {
+            return Err("SetVariable: needs a \"value\" or a \"valueExpression\"".to_string());
+        }
+    };
+    let value = ctx
+        .set_variable(&name, value)
+        .map_err(|e| format!("SetVariable: {e}"))?;
+    Ok(variable_outputs(name, value))
+}
+
+/// The request body for an `http` action: `body` sent as written, or the
+/// result of evaluating `bodyExpression`. They are separate inputs because
+/// the JSONLogic engine reads every JSON object as an operator call (see
+/// `RunContext::evaluate`), so one field couldn't hold both a literal object
+/// and an expression.
+fn http_body(action: &Action, ctx: &RunContext) -> Result<Option<Value>, String> {
+    match (
+        action.inputs.get("body"),
+        action.inputs.get("bodyExpression"),
+    ) {
+        (Some(_), Some(_)) => {
+            Err("http: set either \"body\" or \"bodyExpression\", not both".to_string())
+        }
+        (Some(body), None) => Ok(Some(body.clone())),
+        (None, Some(expression)) => ctx
+            .evaluate(expression)
+            .map(Some)
+            .map_err(|e| format!("http: \"bodyExpression\" failed: {e}")),
+        (None, None) => Ok(None),
+    }
+}
+
+/// The request headers for an `http` action, from its `headers` object. A
+/// string value is sent as written and an object value is evaluated as
+/// JSONLogic, so a token from an earlier action can be passed along.
+fn http_headers(action: &Action, ctx: &RunContext) -> Result<Vec<(String, String)>, String> {
+    let Some(headers) = action.inputs.get("headers") else {
+        return Ok(Vec::new());
+    };
+    let headers = headers.as_object().ok_or_else(|| {
+        "http: \"headers\" must be a JSON object of header names to values".to_string()
+    })?;
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let value = match value {
+                Value::String(text) => text.clone(),
+                Value::Object(_) => match ctx
+                    .evaluate(value)
+                    .map_err(|e| format!("http: header \"{name}\" failed: {e}"))?
+                {
+                    Value::String(text) => text,
+                    other => other.to_string(),
+                },
+                other => other.to_string(),
+            };
+            Ok((name.clone(), value))
+        })
+        .collect()
+}
+
+/// How much of a failed response's body goes into the error message.
+const HTTP_ERROR_BODY_CHARS: usize = 500;
+
+/// Sends the request and resolves `Succeeded` with `status` and `body` for a
+/// 2xx response. Any other status resolves `Failed`, the same as `notify`:
+/// a flow that wants to carry on handles it with a `["Failed"]` `runAfter`
+/// or a `Try`.
+async fn execute_http(action: &Action, ctx: &RunContext) -> Result<Map<String, Value>, String> {
+    // Method tokens are case-sensitive on the wire, so a hand-written `get`
+    // would otherwise be sent as a literal lowercase method.
+    let method = require_str(action, "method")?.trim().to_ascii_uppercase();
+    let url = resolve_string_field(action, "url", ctx)?;
+    let body = http_body(action, ctx)?;
+    let headers = http_headers(action, ctx)?;
 
     on_tokio(async move {
         let client = reqwest::Client::builder()
@@ -122,26 +263,48 @@ async fn execute_http(action: &Action) -> Result<Map<String, Value>, String> {
             .parse()
             .map_err(|_| format!("http: invalid method \"{method}\""))?;
         let mut req = client.request(parsed_method, &url);
-        if let Some(b) = body {
-            let body_text = serde_json::to_string(&b)
-                .map_err(|e| format!("http: failed to serialize body: {e}"))?;
-            req = req
-                .header("Content-Type", "application/json")
-                .body(body_text);
+        let has_content_type = headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("content-type"));
+        for (name, value) in &headers {
+            req = req.header(name.as_str(), value.as_str());
+        }
+        if let Some(body) = body {
+            // A string body is text, not JSON: sending it JSON-encoded would
+            // wrap it in quotes.
+            let (body_text, content_type) = match body {
+                Value::String(text) => (text, "text/plain; charset=utf-8"),
+                other => (
+                    serde_json::to_string(&other)
+                        .map_err(|e| format!("http: failed to serialize body: {e}"))?,
+                    "application/json",
+                ),
+            };
+            if !has_content_type {
+                req = req.header("Content-Type", content_type);
+            }
+            req = req.body(body_text);
         }
         let res = req
             .send()
             .await
             .map_err(|e| format!("http: network error: {e}"))?;
-        let status = res.status().as_u16();
+        let status = res.status();
         let text = res
             .text()
             .await
             .map_err(|e| format!("http: failed to read response body: {e}"))?;
+        if !status.is_success() {
+            let shown: String = text.trim().chars().take(HTTP_ERROR_BODY_CHARS).collect();
+            return Err(format!(
+                "http: {method} {url} returned {} — {shown}",
+                status.as_u16()
+            ));
+        }
         let body_value = serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text));
 
         let mut outputs = Map::new();
-        outputs.insert("status".to_string(), Value::from(status));
+        outputs.insert("status".to_string(), Value::from(status.as_u16()));
         outputs.insert("body".to_string(), body_value);
         Ok(outputs)
     })
@@ -167,8 +330,30 @@ async fn execute_transform(
     Ok(outputs)
 }
 
+/// What a `script` action pipes to its process's stdin: `args` as written,
+/// or the result of evaluating `argsExpression`, which is how a script is
+/// given a variable, the loop's `$item`, or an earlier action's result. Two
+/// inputs for the same reason `http` has `body` and `bodyExpression`.
+fn script_stdin(action: &Action, ctx: &RunContext) -> Result<Option<Value>, String> {
+    match (
+        action.inputs.get("args"),
+        action.inputs.get("argsExpression"),
+    ) {
+        (Some(_), Some(_)) => {
+            Err("script: set either \"args\" or \"argsExpression\", not both".to_string())
+        }
+        (Some(args), None) => Ok(Some(args.clone())),
+        (None, Some(expression)) => ctx
+            .evaluate(expression)
+            .map(Some)
+            .map_err(|e| format!("script: \"argsExpression\" failed: {e}")),
+        (None, None) => Ok(None),
+    }
+}
+
 /// `DOCS/forge-workflow-engine-design.md` §4's already-locked contract:
-/// `inputs.args` (if present) is serialized JSON piped to the process's
+/// `inputs.args` or the result of `inputs.argsExpression` (if present) is
+/// serialized JSON piped to the process's
 /// **stdin**; the script's **last line of stdout** must be a JSON object,
 /// which becomes `outputs`; a non-zero exit is `Failed`. Spawns an
 /// independent process per node — deliberately **not** routed through
@@ -177,6 +362,7 @@ async fn execute_transform(
 /// exists to let run in parallel.
 async fn execute_script(
     action: &Action,
+    ctx: &RunContext,
     solution_root: &Path,
 ) -> Result<Map<String, Value>, String> {
     let source_value = action
@@ -185,14 +371,55 @@ async fn execute_script(
         .ok_or_else(|| "script: missing \"source\" input".to_string())?;
     let source: ScriptSource = serde_json::from_value(source_value.clone())
         .map_err(|e| format!("script: invalid \"source\": {e}"))?;
-    let stdin_args = action.inputs.get("args").cloned();
+    let stdin_args = script_stdin(action, ctx)?;
+    let context = ctx.script_context(stdin_args.as_ref());
     let solution_root = solution_root.to_path_buf();
 
     on_tokio(async move {
         let (program, args, _temp_guard) = resolve_script_invocation(&source, &solution_root)?;
-        run_script_process(&program, &args, stdin_args).await
+        // One context file per launch, named to this process alone. A shared
+        // file would be rewritten by the next iteration of a loop while this
+        // one's script was still reading it. Dropped, and so deleted, once
+        // the process has exited.
+        let context_file = write_script_context(&context)?;
+        run_script_process(
+            &program,
+            &args,
+            stdin_args,
+            Some(&*context_file),
+            working_dir(&solution_root),
+        )
+        .await
     })
     .await
+}
+
+/// The directory a script or started process runs in when the flow doesn't
+/// name one: the project root, so a relative path in a script means the
+/// same thing however the app itself was launched. `None`, which leaves the
+/// app's own working directory in place, when there is no such directory
+/// (a flow opened from outside any project).
+fn working_dir(solution_root: &Path) -> Option<&Path> {
+    solution_root.is_dir().then_some(solution_root)
+}
+
+/// Environment variable holding the path of the launched script's context
+/// file: the JSON from [`RunContext::script_context`]. It carries a path and
+/// not the data because a single environment variable is capped (about 32,000
+/// characters on Windows), which a list of any size would overrun.
+pub const SCRIPT_CONTEXT_ENV: &str = "FORGE_CONTEXT";
+
+fn write_script_context(context: &Value) -> Result<tempfile::TempPath, String> {
+    let mut file = tempfile::Builder::new()
+        .prefix("forge-context-")
+        .suffix(".json")
+        .tempfile()
+        .map_err(|e| format!("script: failed to create the context file: {e}"))?;
+    let json = serde_json::to_vec(context)
+        .map_err(|e| format!("script: failed to serialize the run context: {e}"))?;
+    std::io::Write::write_all(&mut file, &json)
+        .map_err(|e| format!("script: failed to write the context file: {e}"))?;
+    Ok(file.into_temp_path())
 }
 
 /// Resolves what to actually spawn. For `Inline` mode, spills `code` to a
@@ -307,8 +534,16 @@ async fn run_script_process(
     program: &str,
     args: &[String],
     stdin_json: Option<Value>,
+    context_file: Option<&Path>,
+    working_dir: Option<&Path>,
 ) -> Result<Map<String, Value>, String> {
     let mut cmd = TokioCommand::new(program);
+    if let Some(context_file) = context_file {
+        cmd.env(SCRIPT_CONTEXT_ENV, context_file);
+    }
+    if let Some(working_dir) = working_dir {
+        cmd.current_dir(working_dir);
+    }
     cmd.args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -439,22 +674,30 @@ async fn execute_log(action: &Action, ctx: &RunContext) -> Result<Map<String, Va
         "debug" => log::debug!("[workflow] {message}"),
         _ => log::info!("[workflow] {message}"),
     }
-    Ok(Map::new())
+    // The message is also the action's output. The app's log file is the
+    // wrong place to go looking for what a flow said: a run reports each
+    // action's outputs, so this is how the text reaches the run log.
+    let mut outputs = Map::new();
+    outputs.insert("level".to_string(), Value::String(level.to_string()));
+    outputs.insert("message".to_string(), Value::String(message));
+    Ok(outputs)
 }
 
-/// Stubbed as log-only (design doc §4, decided 2026-09-10) — Forge has no
-/// existing SMTP/email-sending infrastructure. Real delivery is separate
-/// follow-up work once there's an actual transport to use.
-async fn execute_send_email(
-    action: &Action,
-    ctx: &RunContext,
-) -> Result<Map<String, Value>, String> {
-    let to = resolve_string_field(action, "to", ctx)?;
-    let subject = resolve_string_field(action, "subject", ctx)?;
-    let body = resolve_string_field(action, "body", ctx)?;
-    log::info!("[workflow sendEmail] would send to={to:?} subject={subject:?}: {body}");
-    Ok(Map::new())
-}
+// FUTURE FEATURE — `sendEmail` is parked (see `registry::REGISTRY`). This was
+// only ever a log-only stand-in (design doc §4, decided 2026-09-10): there is
+// no SMTP or mail-API transport in this tree. The field resolution below is
+// the part worth keeping; the `log::info!` is where a real send goes.
+//
+// async fn execute_send_email(
+//     action: &Action,
+//     ctx: &RunContext,
+// ) -> Result<Map<String, Value>, String> {
+//     let to = resolve_string_field(action, "to", ctx)?;
+//     let subject = resolve_string_field(action, "subject", ctx)?;
+//     let body = resolve_string_field(action, "body", ctx)?;
+//     log::info!("[workflow sendEmail] would send to={to:?} subject={subject:?}: {body}");
+//     Ok(Map::new())
+// }
 
 /// Direct port of the old `chain.rs`'s `execute_wait_for_port_step` — polls
 /// a local TCP connect on an interval until it succeeds or `timeout_ms`
@@ -541,11 +784,14 @@ async fn execute_start_process(
         })
         .transpose()?
         .unwrap_or_default();
+    // Without a `cwd` the process starts in the project root, as the input's
+    // help text says, not wherever the app happened to be launched from.
     let cwd = action
         .inputs
         .get("cwd")
         .and_then(Value::as_str)
-        .map(|c| solution_root.join(c));
+        .map(|c| solution_root.join(c))
+        .or_else(|| working_dir(solution_root).map(Path::to_path_buf));
     let url = action
         .inputs
         .get("url")
@@ -692,7 +938,7 @@ mod tests {
             "http",
             vec![("method", Value::from("GET")), ("url", Value::from(url))],
         );
-        let outputs = execute_http(&action).await.unwrap();
+        let outputs = execute_http(&action, &RunContext::new()).await.unwrap();
         assert_eq!(outputs.get("status"), Some(&Value::from(200)));
         assert_eq!(outputs.get("body"), Some(&serde_json::json!({"total": 42})));
     }
@@ -700,8 +946,102 @@ mod tests {
     #[tokio::test]
     async fn http_rejects_a_missing_url() {
         let action = action_with_inputs("http", vec![("method", Value::from("GET"))]);
-        let err = execute_http(&action).await.unwrap_err();
+        let err = execute_http(&action, &RunContext::new())
+            .await
+            .unwrap_err();
         assert!(err.contains("url"));
+    }
+
+    #[tokio::test]
+    async fn http_fails_on_a_non_2xx_response() {
+        let received = Arc::new(Mutex::new(None));
+        let url = mock_webhook_server(500, received).await;
+        let action = action_with_inputs(
+            "http",
+            vec![("method", Value::from("GET")), ("url", Value::from(url))],
+        );
+        let err = execute_http(&action, &RunContext::new())
+            .await
+            .unwrap_err();
+        assert!(err.contains("returned 500"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn http_uppercases_the_method_and_sends_the_evaluated_body_expression() {
+        let ctx = RunContext::new();
+        ctx.record_outputs(
+            "normalize",
+            serde_json::json!({"result": {"sku": "ITEM-1"}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let received = Arc::new(Mutex::new(None));
+        let url = mock_webhook_server(200, received.clone()).await;
+        let action = action_with_inputs(
+            "http",
+            vec![
+                ("method", Value::from("post")),
+                ("url", Value::from(url)),
+                (
+                    "bodyExpression",
+                    serde_json::json!({"var": "normalize.outputs.result"}),
+                ),
+            ],
+        );
+        execute_http(&action, &ctx).await.unwrap();
+
+        let (method, _, body) = received.lock().unwrap().clone().unwrap();
+        assert_eq!(method, "POST");
+        let parsed: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed, serde_json::json!({"sku": "ITEM-1"}));
+    }
+
+    #[tokio::test]
+    async fn http_rejects_body_and_body_expression_together() {
+        let action = action_with_inputs(
+            "http",
+            vec![
+                ("method", Value::from("POST")),
+                ("url", Value::from("http://127.0.0.1:1/")),
+                ("body", serde_json::json!({"a": 1})),
+                ("bodyExpression", serde_json::json!({"var": "x"})),
+            ],
+        );
+        let err = execute_http(&action, &RunContext::new())
+            .await
+            .unwrap_err();
+        assert!(err.contains("not both"), "{err}");
+    }
+
+    #[test]
+    fn http_headers_are_literal_or_evaluated() {
+        let ctx = RunContext::new();
+        ctx.record_outputs(
+            "login",
+            serde_json::json!({"token": "abc"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let action = action_with_inputs(
+            "http",
+            vec![(
+                "headers",
+                serde_json::json!({
+                    "Accept": "application/json",
+                    "X-Token": {"var": "login.outputs.token"},
+                    "X-Retry": 3,
+                }),
+            )],
+        );
+        let headers = http_headers(&action, &ctx).unwrap();
+        assert!(headers.contains(&("Accept".to_string(), "application/json".to_string())));
+        assert!(headers.contains(&("X-Token".to_string(), "abc".to_string())));
+        assert!(headers.contains(&("X-Retry".to_string(), "3".to_string())));
+
+        let bad = action_with_inputs("http", vec![("headers", Value::from("nope"))]);
+        assert!(http_headers(&bad, &ctx).unwrap_err().contains("JSON object"));
     }
 
     #[tokio::test]
@@ -858,7 +1198,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn log_and_send_email_succeed_with_no_outputs() {
+    async fn log_outputs_what_it_logged() {
         let ctx = RunContext::new();
         let log_action = action_with_inputs(
             "log",
@@ -867,22 +1207,28 @@ mod tests {
                 ("message", Value::from("hi")),
             ],
         );
-        assert!(execute_log(&log_action, &ctx).await.unwrap().is_empty());
+        // What it logged is its output, which is how the text reaches a run's
+        // own log and not only the app's.
+        let outputs = execute_log(&log_action, &ctx).await.unwrap();
+        assert_eq!(outputs.get("message"), Some(&Value::from("hi")));
+        assert_eq!(outputs.get("level"), Some(&Value::from("info")));
 
-        let email_action = action_with_inputs(
-            "sendEmail",
-            vec![
-                ("to", Value::from("a@b.com")),
-                ("subject", Value::from("subj")),
-                ("body", Value::from("body")),
-            ],
-        );
-        assert!(
-            execute_send_email(&email_action, &ctx)
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        // FUTURE FEATURE — restore with `execute_send_email`.
+        //
+        // let email_action = action_with_inputs(
+        //     "sendEmail",
+        //     vec![
+        //         ("to", Value::from("a@b.com")),
+        //         ("subject", Value::from("subj")),
+        //         ("body", Value::from("body")),
+        //     ],
+        // );
+        // assert!(
+        //     execute_send_email(&email_action, &ctx)
+        //         .await
+        //         .unwrap()
+        //         .is_empty()
+        // );
     }
 
     /// Spawns a one-shot raw HTTP mock server that records the request it
@@ -1005,7 +1351,9 @@ mod tests {
                 ),
             ],
         );
-        assert!(execute_log(&log_action, &ctx).await.unwrap().is_empty());
+        // The output carries the evaluated text, not the expression.
+        let outputs = execute_log(&log_action, &ctx).await.unwrap();
+        assert_eq!(outputs.get("message"), Some(&Value::from("boom")));
     }
 
     #[tokio::test]
@@ -1037,23 +1385,25 @@ mod tests {
         let parsed: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed.get("channel"), Some(&Value::from("ops")));
 
-        let email_action = action_with_inputs(
-            "sendEmail",
-            vec![
-                (
-                    "to",
-                    serde_json::json!({"var": "fetchCustomer.outputs.email"}),
-                ),
-                ("subject", Value::from("subj")),
-                ("body", Value::from("body")),
-            ],
-        );
-        assert!(
-            execute_send_email(&email_action, &ctx)
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        // FUTURE FEATURE — restore with `execute_send_email`.
+        //
+        // let email_action = action_with_inputs(
+        //     "sendEmail",
+        //     vec![
+        //         (
+        //             "to",
+        //             serde_json::json!({"var": "fetchCustomer.outputs.email"}),
+        //         ),
+        //         ("subject", Value::from("subj")),
+        //         ("body", Value::from("body")),
+        //     ],
+        // );
+        // assert!(
+        //     execute_send_email(&email_action, &ctx)
+        //         .await
+        //         .unwrap()
+        //         .is_empty()
+        // );
     }
 
     #[tokio::test]
@@ -1067,11 +1417,15 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("script"));
 
+        // FUTURE FEATURE — `DbMigration` is parked, so it is reported as an
+        // unknown type like any other unregistered id, not as "not
+        // implemented". Restore the stricter assertion with its dispatch arm.
         let db_action = Action::new("DbMigration");
         let err = execute_leaf("d1", &db_action, &ctx, root)
             .await
             .unwrap_err();
-        assert!(err.contains("not implemented"));
+        assert!(err.contains("unknown action type"));
+        // assert!(err.contains("not implemented"));
 
         let unknown = Action::new("TotallyMadeUp");
         let err = execute_leaf("u1", &unknown, &ctx, root).await.unwrap_err();
@@ -1170,7 +1524,7 @@ mod tests {
             "source".to_string(),
             serde_json::json!({"kind": "inline", "runtime": "dotnet", "code": "// n/a"}),
         );
-        let err = execute_script(&action, Path::new(".")).await.unwrap_err();
+        let err = execute_script(&action, &RunContext::new(), Path::new(".")).await.unwrap_err();
         assert!(err.contains("dotnet"));
     }
 
@@ -1183,7 +1537,7 @@ mod tests {
             "source".to_string(),
             serde_json::json!({"kind": "file", "path": "thing.xyz"}),
         );
-        let err = execute_script(&action, dir.path()).await.unwrap_err();
+        let err = execute_script(&action, &RunContext::new(), dir.path()).await.unwrap_err();
         assert!(err.contains("infer"));
     }
 
@@ -1203,8 +1557,102 @@ mod tests {
             .inputs
             .insert("args".to_string(), serde_json::json!({"n": 21}));
 
-        let outputs = execute_script(&action, Path::new(".")).await.unwrap();
+        let outputs = execute_script(&action, &RunContext::new(), Path::new(".")).await.unwrap();
         assert_eq!(outputs.get("doubled"), Some(&Value::from(42)));
+    }
+
+    /// A script is handed the run's variables, loop item and earlier outputs
+    /// through the context file, without the flow passing any of them.
+    #[tokio::test]
+    async fn script_reads_the_run_context_from_its_context_file() {
+        if !python_available() {
+            eprintln!("skipping: python not on PATH");
+            return;
+        }
+        let ctx = RunContext::new();
+        ctx.init_variable("ids", VariableType::Array, serde_json::json!([1, 2]))
+            .unwrap();
+        ctx.record_outputs(
+            "fetch",
+            serde_json::json!({"status": 200})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let ctx = ctx.with_item(serde_json::json!({"id": 7}));
+
+        let code = "import json, os\n\
+                    context = json.load(open(os.environ['FORGE_CONTEXT'], encoding='utf-8'))\n\
+                    print(json.dumps({\n\
+                    \x20   'ids': context['variables']['ids'],\n\
+                    \x20   'item': context['item']['id'],\n\
+                    \x20   'status': context['actions']['fetch']['status'],\n\
+                    }))\n";
+        let mut action = Action::new("script");
+        action.inputs.insert(
+            "source".to_string(),
+            serde_json::json!({"kind": "inline", "runtime": "python", "code": code}),
+        );
+
+        let outputs = execute_script(&action, &ctx, Path::new(".")).await.unwrap();
+        assert_eq!(outputs.get("ids"), Some(&serde_json::json!([1, 2])));
+        assert_eq!(outputs.get("item"), Some(&Value::from(7)));
+        assert_eq!(outputs.get("status"), Some(&Value::from(200)));
+    }
+
+    /// `argsExpression` is how live values reach a script: a variable, the
+    /// loop item, an earlier result.
+    #[test]
+    fn script_stdin_is_the_literal_args_or_the_evaluated_expression() {
+        let ctx = RunContext::new();
+        ctx.init_variable(
+            "ids",
+            VariableType::Array,
+            serde_json::json!([1, 2]),
+        )
+        .unwrap();
+        let ctx = ctx.with_item(serde_json::json!({"id": 7}));
+
+        let action = |inputs: Vec<(&str, Value)>| action_with_inputs("script", inputs);
+        assert_eq!(script_stdin(&action(vec![]), &ctx), Ok(None));
+        // `args` is sent as written, even when it looks like an expression.
+        assert_eq!(
+            script_stdin(
+                &action(vec![("args", serde_json::json!({"var": "variables.ids"}))]),
+                &ctx
+            ),
+            Ok(Some(serde_json::json!({"var": "variables.ids"})))
+        );
+        assert_eq!(
+            script_stdin(
+                &action(vec![(
+                    "argsExpression",
+                    serde_json::json!({"var": "variables.ids"})
+                )]),
+                &ctx
+            ),
+            Ok(Some(serde_json::json!([1, 2])))
+        );
+        // Every variable at once, and the loop item.
+        assert_eq!(
+            script_stdin(
+                &action(vec![("argsExpression", serde_json::json!({"var": "variables"}))]),
+                &ctx
+            ),
+            Ok(Some(serde_json::json!({"ids": [1, 2]})))
+        );
+        assert_eq!(
+            script_stdin(
+                &action(vec![("argsExpression", serde_json::json!({"var": "$item.id"}))]),
+                &ctx
+            ),
+            Ok(Some(Value::from(7)))
+        );
+        let both = action(vec![
+            ("args", Value::from(1)),
+            ("argsExpression", serde_json::json!({"var": "$item"})),
+        ]);
+        assert!(script_stdin(&both, &ctx).unwrap_err().contains("not both"));
     }
 
     #[tokio::test]
@@ -1218,7 +1666,7 @@ mod tests {
             "source".to_string(),
             serde_json::json!({"kind": "inline", "runtime": "python", "code": "import sys\nsys.exit(3)\n"}),
         );
-        let err = execute_script(&action, Path::new(".")).await.unwrap_err();
+        let err = execute_script(&action, &RunContext::new(), Path::new(".")).await.unwrap_err();
         assert!(err.contains("exited with"));
     }
 
@@ -1233,7 +1681,7 @@ mod tests {
             "source".to_string(),
             serde_json::json!({"kind": "inline", "runtime": "python", "code": "print('not json')\n"}),
         );
-        let err = execute_script(&action, Path::new(".")).await.unwrap_err();
+        let err = execute_script(&action, &RunContext::new(), Path::new(".")).await.unwrap_err();
         assert!(err.contains("JSON"));
     }
 
@@ -1251,7 +1699,7 @@ mod tests {
             serde_json::json!({"kind": "file", "path": "calc.py"}),
         );
 
-        let outputs = execute_script(&action, dir.path()).await.unwrap();
+        let outputs = execute_script(&action, &RunContext::new(), dir.path()).await.unwrap();
         assert_eq!(outputs.get("ok"), Some(&Value::Bool(true)));
     }
 
@@ -1279,7 +1727,7 @@ mod tests {
             .inputs
             .insert("args".to_string(), serde_json::json!({"n": 21}));
 
-        let outputs = execute_script(&action, dir.path()).await.unwrap();
+        let outputs = execute_script(&action, &RunContext::new(), dir.path()).await.unwrap();
         assert_eq!(outputs.get("doubled"), Some(&Value::from(42)));
     }
 
@@ -1297,7 +1745,7 @@ mod tests {
             serde_json::json!({"kind": "file", "path": "runnable", "runtime": "bash"}),
         );
 
-        let outputs = execute_script(&action, dir.path()).await.unwrap();
+        let outputs = execute_script(&action, &RunContext::new(), dir.path()).await.unwrap();
         assert_eq!(outputs.get("ok"), Some(&Value::Bool(true)));
     }
 }

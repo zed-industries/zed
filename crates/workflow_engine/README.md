@@ -57,11 +57,12 @@ Complete examples: `DOCS/workflow-schema/example-flow.json` and
 | --- | --- | --- |
 | `http` | HTTP Request | Leaf |
 | `transform` | Transform | Leaf |
+| `InitVariable` | Initialize Variable | Leaf |
+| `SetVariable` | Set Variable | Leaf |
 | `script` | Script | Leaf |
 | `StartProcess` | Start Process | Leaf |
 | `WaitForPort` | Wait For Port | Leaf |
 | `notify` | Notify | Leaf |
-| `sendEmail` | Send Email | Leaf |
 | `delay` | Delay | Leaf |
 | `log` | Log | Leaf |
 | `SetEnv` | Set Environment Variable | Leaf |
@@ -69,12 +70,87 @@ Complete examples: `DOCS/workflow-schema/example-flow.json` and
 | `Until` | Until | Container |
 | `If` | If | Container |
 | `Try` | Try/Catch | Container |
-| `DbMigration` | DB Migration | Leaf — **not runnable yet** |
-| `AiCheck` | AI Check | Leaf — **not runnable yet** |
 
-Containers hold their own nested `actions` map. The two stubs are registered
-so they appear in the catalog, but have no executor; validation blocks a run
-that contains them.
+Containers hold their own nested `actions` map.
+
+#### Variables
+
+`InitVariable` creates a variable and `SetVariable` changes it. A variable
+belongs to the whole run: any later expression reads it as
+`{"var": "variables.<name>"}`, and a value set inside a loop body is still
+set after the loop, which an action's own outputs are not.
+
+| Action | Input | Notes |
+| --- | --- | --- |
+| `InitVariable` | `name` | No `.`, since it is read as a path segment |
+| | `type` | `object`, `string`, `integer` or `array`; fixed from here on |
+| | `value` | Optional starting value. Defaults to `{}`, `""`, `0` or `[]` |
+| `SetVariable` | `name` | Must already be initialized |
+| | `value` | The new value as written |
+| | `valueExpression` | Or a JSONLogic expression for it. Use one, not both |
+
+A value has to fit the variable's type. Scalars convert where that is
+unambiguous (`5` for a string becomes `"5"`, `"5"` for an integer becomes
+`5`); anything else fails the action. Both actions output `name` and `value`.
+
+A `Foreach` runs its iterations concurrently, so iterations that all set the
+same variable race: the variable ends up holding whichever wrote last.
+`variables` can't be used as an action id.
+
+#### `script`
+
+A script gets its input as JSON on standard input, and returns its result by
+printing a JSON object as its last line of output, which becomes the action's
+outputs. `args` is piped as written; `argsExpression` is evaluated first, so
+it is how a variable (`{"var": "variables.ids"}`), every variable
+(`{"var": "variables"}`), the loop item (`{"var": "$item"}`) or an earlier
+result reaches a script. Use one, not both. A script can't set a variable
+itself: follow it with a `SetVariable` that reads its output.
+
+Every script is also launched with the environment variable `FORGE_CONTEXT`
+set to the path of a JSON file written for that one launch and deleted when
+it exits:
+
+```json
+{ "variables": {}, "item": null, "args": null, "actions": { "fetch": { "status": 200 } } }
+```
+
+`variables` is every flow variable, `item` the enclosing `Foreach`'s current
+item, `args` what is also on standard input, and `actions` each finished
+action's outputs by id. It is a file per launch, not one shared file,
+because a loop's iterations run at the same time. The Designer writes small
+helpers that read it (see `designer_panel`'s README).
+
+#### `http`
+
+| Input | Notes |
+| --- | --- |
+| `method` | One of `GET`, `POST`, `PUT`, `PATCH`, `MERGE`, `DELETE`; case is ignored |
+| `url` | A string, or a JSONLogic object that evaluates to one |
+| `headers` | Optional object. A string value is sent as written; an object value is evaluated as JSONLogic |
+| `body` | Optional, sent exactly as written. A string is sent as text, anything else as JSON |
+| `bodyExpression` | Optional JSONLogic expression whose result is the body. Use it instead of `body`, not with it |
+
+A response outside 2xx fails the action. To carry on after one, give the
+next action a `["Failed"]` `runAfter` or wrap the request in a `Try`.
+`Content-Type` defaults to `application/json` (`text/plain` for a string
+body) unless `headers` sets it.
+
+#### Future features
+
+Three action types are commented out in `src/registry.rs` until the work
+behind them exists. A flow that uses one fails validation as an unknown
+action type.
+
+| `type` | What it would do | What it needs first |
+| --- | --- | --- |
+| `sendEmail` | Send an email | A mail transport (SMTP or a provider API) and somewhere to keep its credentials. The old executor only logged "would send" |
+| `DbMigration` | Run a `.sql` file against a Database panel connection | A way for this headless crate to reach a live connection, and a decision on transactions |
+| `AiCheck` | Send a prompt to a language model and use the answer | A model backend reachable from this crate, and a defined result shape |
+
+The `runnable: false` flag on `ActionDef` is still supported: an entry that
+has it is listed in the catalog but disabled, and validation blocks a run
+that contains it.
 
 Expressions that refer to other actions' outputs are JSONLogic, evaluated
 against the run's `RunContext`.
