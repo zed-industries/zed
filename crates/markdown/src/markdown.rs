@@ -692,7 +692,7 @@ impl Markdown {
         } else {
             None
         };
-        let deferred = options.defer_parsing && !source.is_empty();
+        let deferred = options.defer_parsing;
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -962,7 +962,7 @@ impl Markdown {
     }
 
     pub fn scroll_to_heading_when_parsed(&mut self, slug: SharedString, cx: &mut Context<Self>) {
-        if self.pending_parse.is_some() || self.source.is_empty() {
+        if self.pending_parse.is_some() || self.deferred || self.source.is_empty() {
             self.pending_heading_scroll = Some(slug);
         } else {
             self.scroll_to_heading(&slug, cx);
@@ -1016,7 +1016,10 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_parse.is_some() {
+        // While parsing is in flight *or still deferred* the text has not
+        // been laid out yet, so queue the request; parse completion forwards
+        // it once text positions exist.
+        if self.pending_parse.is_some() || self.deferred {
             self.pending_autoscroll = Some(source_index);
         } else {
             self.autoscroll_request = Some(source_index);
@@ -1048,7 +1051,7 @@ impl Markdown {
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if &source == self.source() {
-            if self.pending_parse.is_none() {
+            if self.pending_parse.is_none() && !self.deferred {
                 if let Some(slug) = self.pending_heading_scroll.take() {
                     self.pending_autoscroll = None;
                     self.scroll_to_heading(&slug, cx);
@@ -5278,6 +5281,69 @@ mod tests {
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+
+    #[gpui::test]
+    fn test_deferred_parsing_waits_for_layout_even_when_created_empty(
+        cx: &mut TestAppContext,
+    ) {
+        // A deferred markdown created empty must stay deferred: text appended
+        // before the first layout is parsed on layout, not on append.
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "".into(),
+                None,
+                None,
+                MarkdownOptions {
+                    defer_parsing: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.append("hello **world**", cx);
+            assert!(markdown.deferred, "empty-source deferred markdown stays deferred");
+            assert!(
+                markdown.parsed_markdown.events.is_empty(),
+                "nothing is parsed before first layout"
+            );
+            markdown.ensure_parsed(cx);
+        });
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            assert!(!markdown.parsed_markdown.events.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn test_autoscroll_before_first_layout_is_queued_as_pending(cx: &mut TestAppContext) {
+        // Searching a deferred block before it is ever laid out must not drop
+        // the reveal request: it has to be queued as pending so parse
+        // completion forwards it once text positions exist.
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "hello".into(),
+                None,
+                None,
+                MarkdownOptions {
+                    defer_parsing: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.request_autoscroll_to_source_index(3, cx);
+            assert_eq!(markdown.pending_autoscroll, Some(3));
+            assert_eq!(
+                markdown.autoscroll_request, None,
+                "request must not be consumed before layout"
+            );
+        });
+    }
 
     #[gpui::test]
     fn test_code_block_controls_are_unique_across_markdown_entities(cx: &mut TestAppContext) {
