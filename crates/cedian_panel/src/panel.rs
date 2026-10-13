@@ -30,6 +30,7 @@ use cedian_agent::{Thread, ThreadEvent};
 use cedian_agent_ui::{SubagentRow, SubagentTree, ToolCard};
 use cedian_omp::{RouterEvent, SubagentStatus, TextBefore, UserAnswer};
 use cedian_review::{AttachedFinding, FindingSeverity, HunkKey, HunkStatus};
+use cedian_worker::{Brief, Registry, WorkerScope, WorkerStatus};
 use cedian_workflow::{
     CurrentState, Evidence, EvidenceKind, Gate, GateResult, Provenance, WorkflowChannel,
     WorkflowStatus,
@@ -1045,11 +1046,20 @@ impl CedianPanel {
         self.accept_all_answered(false, cx);
     }
 
-    /// Yes: the STALE hunks too. No: only the others.
+    /// Yes: the STALE hunks too. No: only the others. OutOfScope hunks are
+    /// never taken and the notice says how many were skipped (ADR-0033
+    /// decision 3).
     pub fn accept_all_answered(&mut self, include_stale: bool, cx: &mut Context<Self>) {
         self.confirm_accept_all = false;
+        let skipped = self.review.out_of_scope_count();
         let result = self.review.accept_all(include_stale, cx).map(|accepted| {
-            self.notice = Some(format!("accepted {} hunk(s)", accepted.len()));
+            self.notice = Some(match skipped {
+                0 => format!("accepted {} hunk(s)", accepted.len()),
+                n => format!(
+                    "accepted {} hunk(s); {n} out-of-scope hunk(s) skipped, each needs a decision",
+                    accepted.len()
+                ),
+            });
         });
         self.report_review(result, cx);
     }
@@ -1745,6 +1755,49 @@ impl CedianPanel {
         Some((self.workspace_root(cx)?, self.state_dir(cx).ok()?))
     }
 
+    /// The turn's scope: the union of the running workers' briefs at this
+    /// import (ADR-0063 decision 1). No running worker, or a registry or
+    /// brief that will not read, is no scope — nothing is classified and
+    /// nothing changes.
+    fn turn_scope(&mut self, cx: &App) -> Option<Arc<WorkerScope>> {
+        let (_, state) = self.worker_paths(cx)?;
+        let (registry, _) = Registry::open(&state).ok()?;
+        let mut briefs = Vec::new();
+        for head in registry.all().filter(|h| h.status == WorkerStatus::Running) {
+            let path = state.join("briefs").join(format!("{}.1.json", head.id));
+            briefs.push((head.id.clone(), Brief::from_file(&path).ok()?));
+        }
+        if briefs.is_empty() {
+            return None;
+        }
+        WorkerScope::new(briefs.iter().map(|(id, b)| (id.as_str(), b)))
+            .ok()
+            .map(Arc::new)
+    }
+
+    /// One audit row for one out-of-scope file (ADR-0063 decision 4), through
+    /// the link that owns the log. In scope, no link, or a row that will not
+    /// write changes nothing here.
+    fn audit_import(
+        &self,
+        tool_call_id: &str,
+        buffer: &Entity<Buffer>,
+        scope: Option<&WorkerScope>,
+        cx: &App,
+    ) {
+        let Some(scope) = scope else { return };
+        let Some(path) = crate::review::scope_path(&buffer.read(cx)) else {
+            return;
+        };
+        if scope.covers(&path) {
+            return;
+        }
+        let Some(link) = &self.link else { return };
+        let shown = crate::review::review_key(&buffer.read(cx)).unwrap_or(path);
+        let workers: Vec<String> = scope.workers().map(str::to_string).collect();
+        link.out_of_scope(tool_call_id.to_string(), shown, workers);
+    }
+
     /// Read the worktrees again, off the UI thread (it shells out to `git`):
     /// the first read is what builds the surface.
     fn refresh_worker_trees(&mut self, cx: &mut Context<Self>) {
@@ -1807,8 +1860,19 @@ impl CedianPanel {
     }
 
     /// Merge a worker's branch back into the checked-out base, on one click;
-    /// a STALE refusal is the notice, and nothing else changes.
+    /// a STALE refusal is the notice, and nothing else changes. Refused
+    /// while an out-of-scope change is unresolved (ADR-0033 decision 3):
+    /// a person must accept or reject it first.
     pub fn merge_worker(&mut self, id: &str, cx: &mut Context<Self>) {
+        let unresolved = self.review.out_of_scope_count();
+        if unresolved > 0 {
+            self.notice = Some(format!(
+                "merge refused: {unresolved} out-of-scope change(s) need a decision \
+                 (accept each in Review Changes; Accept all skips them)"
+            ));
+            cx.notify();
+            return;
+        }
         let (id, said) = (id.to_string(), id.to_string());
         self.worker_action(cx, move |repo, state| {
             worker_trees::merge_back(&repo, &state, &id, WORKER_BASE)
@@ -3913,6 +3977,9 @@ impl CedianPanel {
         if call.ended == Some(true) && call.bash.is_none() {
             return self.release(&tool_call_id, call, cx);
         }
+        // The running workers' briefs at this import (ADR-0063 decision 1):
+        // read once, applied to every file the call wrote.
+        let scope = self.turn_scope(cx);
         // ADR-0055 decision 6: a buffer two calls wrote while one was a
         // `bash` call is imported by neither.
         for (other_id, other) in &mut self.calls {
@@ -4120,12 +4187,14 @@ impl CedianPanel {
                     match outcome {
                         Ok(ImportOutcome::Imported(transaction)) => {
                             let models = this.answered_models();
+                            this.audit_import(&tool_call_id, &buffer, scope.as_deref(), cx);
                             this.review.agent_edited(
                                 &buffer,
                                 &tool_call_id,
                                 transaction,
                                 mark.start().clone(),
                                 models,
+                                scope.clone(),
                                 cx,
                             )
                         }
@@ -4439,8 +4508,13 @@ impl CedianPanel {
                     }));
                 let accept = matches!(
                     hunk.status,
-                    HunkStatus::Pending | HunkStatus::Unattributed | HunkStatus::Stale
+                    HunkStatus::Pending
+                        | HunkStatus::Unattributed
+                        | HunkStatus::Stale
+                        | HunkStatus::OutOfScope
                 );
+                // Reject refuses OutOfScope like Stale, so its button is absent
+                // for both (ADR-0033 decision 3).
                 let reject = matches!(hunk.status, HunkStatus::Pending | HunkStatus::Unattributed);
                 let mut buttons = h_flex().gap_1();
                 if accept {
@@ -4834,6 +4908,7 @@ mod tests {
     //! undo. Needs OMP auth:
     //! `cargo test -p cedian_panel -- --ignored --nocapture live_`
     use super::*;
+    use cedian_worker::WorkerHead;
     use fs::Fs as _;
     use gpui::{Modifiers, TestAppContext, VisualTestContext};
     use settings::SettingsStore;
@@ -5175,6 +5250,186 @@ mod tests {
                     .collect()
             })
             .unwrap()
+    }
+
+    /// A running worker and its stored brief, as the panel reads them at
+    /// import time (ADR-0063 decision 1): only `write` is in scope.
+    fn running_worker(state: &std::path::Path, write: &[&str]) {
+        let brief = Brief::from_json(
+            &serde_json::json!({
+                "goal": "g", "scope": {"write": write},
+                "acceptance": ["a"], "verify": ["v"], "timebox_min": 15,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        brief.store(state, "w1", 1).unwrap();
+        let mut registry = Registry::default();
+        registry
+            .insert(WorkerHead {
+                id: "w1".into(),
+                branch: "cedian/w1".into(),
+                worktree: ".worktrees/w1".into(),
+                task_title: "t".into(),
+                kind: "task".into(),
+                status: WorkerStatus::Running,
+                note: String::new(),
+                timebox_min: 15.0,
+                last_progress: None,
+            })
+            .unwrap();
+        registry.save(state).unwrap();
+    }
+
+    /// OMP writes `other.txt` under a running worker whose brief allows only
+    /// `notes.txt`.
+    async fn out_of_scope_hunk(f: &Fixture, cx: &mut TestAppContext) {
+        tool_start(f, cx, "o1", &["other.txt"]);
+        cx.run_until_parked();
+        omp_writes(f, "/ws/other.txt", "ONE\ntwo\n").await;
+        tool_end(f, cx, "o1");
+    }
+
+    /// With a running worker covering only `notes.txt`, an edit to another
+    /// file is OutOfScope and one to `notes.txt` is Pending (ADR-0063
+    /// decision 1).
+    #[gpui::test]
+    async fn a_covered_file_is_pending_and_another_is_out_of_scope(cx: &mut TestAppContext) {
+        let (f, _buffer) = fixture(cx).await;
+        let state = state_dir("scope-import");
+        running_worker(&state, &["notes.txt"]);
+        f.window
+            .update(cx, |panel, _, _| panel.set_state_dir(state.clone()))
+            .unwrap();
+
+        agent_hunk(&f, cx, "n1", "alpha\nBETA\ngamma\n").await;
+        out_of_scope_hunk(&f, cx).await;
+
+        let got = hunks(&f, cx);
+        assert!(
+            got.iter()
+                .any(|(p, s, _)| p.ends_with("notes.txt") && *s == HunkStatus::Pending),
+            "{got:?}"
+        );
+        assert!(
+            got.iter()
+                .any(|(p, s, _)| p.ends_with("other.txt") && *s == HunkStatus::OutOfScope),
+            "{got:?}"
+        );
+    }
+
+    /// With no running worker the same edit stays Pending, exactly as before
+    /// ADR-0063.
+    #[gpui::test]
+    async fn with_no_running_worker_the_same_edit_stays_pending(cx: &mut TestAppContext) {
+        let (f, _buffer) = fixture(cx).await;
+        let state = state_dir("scope-none");
+        f.window
+            .update(cx, |panel, _, _| panel.set_state_dir(state.clone()))
+            .unwrap();
+        out_of_scope_hunk(&f, cx).await;
+        let got = hunks(&f, cx);
+        assert!(
+            got.iter()
+                .any(|(p, s, _)| p.ends_with("other.txt") && *s == HunkStatus::Pending),
+            "{got:?}"
+        );
+    }
+
+    /// Accept all never takes an OutOfScope hunk, and says how many it
+    /// skipped (ADR-0033 decision 3).
+    #[gpui::test]
+    async fn accept_all_skips_an_out_of_scope_hunk_and_says_how_many(cx: &mut TestAppContext) {
+        let (f, _buffer) = fixture(cx).await;
+        let state = state_dir("scope-accept-all");
+        running_worker(&state, &["notes.txt"]);
+        f.window
+            .update(cx, |panel, _, _| panel.set_state_dir(state.clone()))
+            .unwrap();
+
+        agent_hunk(&f, cx, "n1", "alpha\nBETA\ngamma\n").await;
+        out_of_scope_hunk(&f, cx).await;
+
+        f.window
+            .update(cx, |panel, _, cx| panel.accept_all(cx))
+            .unwrap();
+        let said = notice(&f, cx).unwrap();
+        assert!(said.contains("accepted 1 hunk(s)"), "{said}");
+        assert!(said.contains("1 out-of-scope hunk(s) skipped"), "{said}");
+        let got = hunks(&f, cx);
+        assert!(
+            got.iter()
+                .any(|(p, s, _)| p.ends_with("notes.txt") && *s == HunkStatus::Accepted),
+            "{got:?}"
+        );
+        assert!(
+            got.iter()
+                .any(|(p, s, _)| p.ends_with("other.txt") && *s == HunkStatus::OutOfScope),
+            "{got:?}"
+        );
+    }
+
+    /// Merge is refused while an out-of-scope change is unresolved
+    /// (ADR-0033 decision 3), and a resolved review lets the action through.
+    #[gpui::test]
+    async fn merge_is_refused_while_a_change_is_out_of_scope(cx: &mut TestAppContext) {
+        let (f, _buffer) = fixture(cx).await;
+        let state = state_dir("scope-merge");
+        running_worker(&state, &["notes.txt"]);
+        f.window
+            .update(cx, |panel, _, _| panel.set_state_dir(state.clone()))
+            .unwrap();
+        out_of_scope_hunk(&f, cx).await;
+
+        f.window
+            .update(cx, |panel, _, cx| {
+                panel.notice = None;
+                panel.merge_worker("w1", cx);
+                let refused = panel.notice.clone().expect("a refusal notice");
+                assert!(refused.contains("merge refused"), "{refused}");
+                assert!(refused.contains("1 out-of-scope change(s)"), "{refused}");
+                // A person resolves it: the merge is no longer refused.
+                panel.notice = None;
+                let path = panel.review.path(&panel.review.files()[0], cx);
+                let key = panel.review.files()[0].hunks()[0].key.clone();
+                panel.review.accept(&path, &key, cx).unwrap();
+                panel.merge_worker("w1", cx);
+                assert!(
+                    panel.notice.is_none(),
+                    "resolved, so nothing refuses the merge: {:?}",
+                    panel.notice
+                );
+            })
+            .unwrap();
+    }
+
+    /// Revert turn keeps an OutOfScope change and says so (ADR-0033
+    /// decision 3).
+    #[gpui::test]
+    async fn revert_turn_keeps_an_out_of_scope_change(cx: &mut TestAppContext) {
+        let (f, _buffer) = fixture(cx).await;
+        let state = state_dir("scope-revert");
+        running_worker(&state, &["notes.txt"]);
+        f.window
+            .update(cx, |panel, _, _| panel.set_state_dir(state.clone()))
+            .unwrap();
+        out_of_scope_hunk(&f, cx).await;
+
+        f.window
+            .update(cx, |panel, _, cx| {
+                panel.review.end_turn();
+                panel.notice = None;
+                panel.revert_turn(1, cx);
+            })
+            .unwrap();
+        let said = notice(&f, cx).unwrap();
+        assert!(said.contains("kept out-of-scope"), "{said}");
+        let got = hunks(&f, cx);
+        assert!(
+            got.iter()
+                .any(|(p, s, _)| p.ends_with("other.txt") && *s == HunkStatus::OutOfScope),
+            "the change stays: {got:?}"
+        );
     }
 
     #[gpui::test]

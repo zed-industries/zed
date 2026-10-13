@@ -1168,6 +1168,19 @@ impl OmpLink {
         });
     }
 
+    /// A changed file outside the running workers' briefs (ADR-0033
+    /// decision 3, ADR-0063 decision 4): its audit row, through the link
+    /// that owns the log. An unwritable row is the usual audit failure.
+    pub fn out_of_scope(&self, tool_call_id: String, path: String, workers: Vec<String>) {
+        let recorded = match &mut self.gate.state.lock().audit {
+            Some(audit) => audit.out_of_scope(&tool_call_id, &path, &workers),
+            None => Err("the audit log is not open".to_string()),
+        };
+        if let Err(e) = recorded {
+            let _ = self.gate.events.unbounded_send(LinkEvent::AuditFailed(e));
+        }
+    }
+
     /// Read the picker's state off the UI thread: the session's model and
     /// level, and what OMP offers.
     pub fn refresh_picker(&self) {

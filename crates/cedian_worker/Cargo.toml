@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 # Blocking/sync API; CLI binds in cedian_cli, S9 later.
 
 [dependencies]
+globset = { workspace = true }
 omp-rpc = { path = "../../vendor/omp-rpc" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

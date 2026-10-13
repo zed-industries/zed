@@ -2925,6 +2925,7 @@ dependencies = [
 name = "cedian_worker"
 version = "0.1.0"
 dependencies = [
+ "globset",
  "omp-rpc",
  "serde",
  "serde_json",

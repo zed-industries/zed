@@ -172,6 +172,23 @@ impl AuditLog {
         self.append(item, None)
     }
 
+    /// A changed file outside the running workers' briefs (ADR-0033
+    /// decision 3, ADR-0063 decision 4): the call that wrote it, the
+    /// worktree-relative path, and the workers the turn's scope was built
+    /// from (the interim names all of them, not the one it belongs to).
+    pub fn out_of_scope(
+        &mut self,
+        tool_call_id: &str,
+        path: &str,
+        workers: &[String],
+    ) -> Result<(), String> {
+        let item = json!({
+            "kind": "scope", "event": "out_of_scope", "tool_call_id": tool_call_id,
+            "path": path, "workers": workers,
+        });
+        self.append(item, None)
+    }
+
     fn append(&mut self, mut item: Value, at_ms: Option<u64>) -> Result<(), String> {
         item["decision_source"] = json!(self.source);
         if self.reviewer {
@@ -369,5 +386,23 @@ mod tests {
             (&json!("allow"), &json!("user")),
             "the person approved it in the app"
         );
+    }
+
+    /// ADR-0063 decision 4: an out-of-scope write is one row naming the call,
+    /// the path, and the worker(s) the turn's scope was built from.
+    #[test]
+    fn an_out_of_scope_write_is_one_row() {
+        let dir = TestDir::new("audit-scope");
+        let mut log = AuditLog::open(&dir, Approvals::Omp).unwrap();
+        log.out_of_scope("c7", "/src/main.rs", &["w1".to_string()])
+            .unwrap();
+        drop(log);
+        let rows = replay(&dir);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["item"]["kind"], "scope");
+        assert_eq!(rows[0]["item"]["event"], "out_of_scope");
+        assert_eq!(rows[0]["item"]["tool_call_id"], "c7");
+        assert_eq!(rows[0]["item"]["path"], "/src/main.rs");
+        assert_eq!(rows[0]["item"]["workers"], json!(["w1"]));
     }
 }

@@ -18,7 +18,9 @@ pub struct Hunk {
 }
 
 /// Review state of one hunk (§18 R3 precedence: Interrupted > Unattributed >
-/// Stale; accepted/rejected are terminal user resolutions).
+/// Stale; accepted/rejected are terminal user resolutions). `OutOfScope` is a
+/// scope fact (ADR-0033 decision 3), not part of that precedence: it wins over
+/// Stale, Pending and Unattributed, and is resolved like Stale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HunkStatus {
@@ -31,6 +33,10 @@ pub enum HunkStatus {
     Unattributed,
     /// User edited after the agent — compare/restore manually, never auto-reject.
     Stale,
+    /// Changed outside the running workers' briefs (ADR-0033 decision 3):
+    /// never auto-resolved — a person resolves it, and merge-back is refused
+    /// while one is open.
+    OutOfScope,
     /// User accepted (keep-buffer — already in the buffer, just marked).
     Accepted,
     /// User rejected (inverse patch applied).

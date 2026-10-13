@@ -17,11 +17,13 @@
 
 use cedian_review::{HunkKey, HunkStatus, StatusRecord};
 use cedian_shell::corrections::{CorrectionKind, Event as Correction};
+use cedian_worker::WorkerScope;
 use collections::HashMap;
 use gpui::{App, Entity};
 use language::Buffer;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use text::{Anchor, ToOffset, TransactionId};
 
 /// Review failures (caller-visible).
@@ -113,6 +115,9 @@ pub enum ReviewEvent {
         reverted: usize,
         /// Each STALE change kept, as `<path> line <n>`.
         stale: Vec<String>,
+        /// Each OutOfScope change kept, as `<path> line <n>` — a person's
+        /// decision, so a revert never puts it back (ADR-0033 decision 3).
+        out_of_scope: Vec<String>,
         /// Changes a later turn wrote over; they stay (revert that turn first).
         overwritten: usize,
         /// Changes the person accepted; they stay.
@@ -127,13 +132,17 @@ impl std::fmt::Display for ReviewEvent {
                 turn,
                 reverted: 0,
                 stale,
+                out_of_scope,
                 overwritten: 0,
                 accepted: 0,
-            } if stale.is_empty() => write!(f, "turn {turn}: nothing to do"),
+            } if stale.is_empty() && out_of_scope.is_empty() => {
+                write!(f, "turn {turn}: nothing to do")
+            }
             Self::TurnReverted {
                 turn,
                 reverted,
                 stale,
+                out_of_scope,
                 overwritten,
                 accepted,
             } => {
@@ -149,6 +158,14 @@ impl std::fmt::Display for ReviewEvent {
                         "; kept as STALE, edited after the agent wrote it (an undo then \
                          redo counts as an edit): {}",
                         stale.join(", ")
+                    )?;
+                }
+                if !out_of_scope.is_empty() {
+                    write!(
+                        f,
+                        "; kept out-of-scope, outside the running workers' briefs (needs a \
+                         decision): {}",
+                        out_of_scope.join(", ")
                     )?;
                 }
                 Ok(())
@@ -258,6 +275,9 @@ struct TurnRevert {
     edits: Vec<(Range<usize>, String)>,
     /// The first line (1-based) of each STALE change kept.
     stale: Vec<u32>,
+    /// The first line (1-based) of each OutOfScope change kept (ADR-0033
+    /// decision 3): a person decides it, never an automatic revert.
+    out_of_scope: Vec<u32>,
     overwritten: usize,
     accepted: usize,
 }
@@ -306,6 +326,9 @@ pub struct FileReview {
     reported_stale: collections::HashSet<HunkKey>,
     hunks: Vec<ReviewHunk>,
     built_at: clock::Global,
+    /// The running workers' briefs this file was imported under (ADR-0063
+    /// decision 1); `None` means no running worker, so no scope is checked.
+    scope: Option<Arc<WorkerScope>>,
     /// The buffer at each turn's first agent edit to it, so a turn reverts
     /// to its own start, not to the task baseline.
     turn_starts: Vec<(u32, text::BufferSnapshot)>,
@@ -327,6 +350,7 @@ impl FileReview {
             reported_stale: collections::HashSet::default(),
             hunks: Vec::new(),
             built_at: clock::Global::new(),
+            scope: None,
             turn_starts: Vec::new(),
         }
     }
@@ -385,6 +409,12 @@ impl FileReview {
 
     fn rebuild(&mut self, buffer: &Buffer) -> Vec<HunkKey> {
         let snapshot = buffer.text_snapshot();
+        // Every hunk of a file outside the running workers' briefs is
+        // OutOfScope (ADR-0033 decision 3, ADR-0063 decision 1).
+        let out_of_scope = match (&self.scope, scope_path(buffer)) {
+            (Some(scope), Some(path)) => !scope.covers(&path),
+            _ => false,
+        };
         let edits: Vec<text::Edit<usize>> = snapshot
             .edits_since::<usize>(self.baseline.version())
             .collect();
@@ -445,6 +475,8 @@ impl FileReview {
                 }
                 let status = if accepted {
                     HunkStatus::Accepted
+                } else if out_of_scope {
+                    HunkStatus::OutOfScope
                 } else if user.iter().any(|r| touches(&new, r)) {
                     HunkStatus::Stale
                 } else if calls.is_empty() {
@@ -528,6 +560,14 @@ impl FileReview {
             .filter(|h| h.status == HunkStatus::Accepted)
             .map(|h| h.new.clone())
             .collect();
+        // OutOfScope hunks are a person's to decide, so a revert keeps them
+        // (ADR-0033 decision 3).
+        let out_of_scope: Vec<Range<usize>> = self
+            .hunks
+            .iter()
+            .filter(|h| h.status == HunkStatus::OutOfScope)
+            .map(|h| h.new.clone())
+            .collect();
         for (old, new) in line_hunks(start, &end, &turn_edits) {
             let old_text: String = start.text_for_range(old.clone()).collect();
             let new_text: String = end.text_for_range(new.clone()).collect();
@@ -549,6 +589,11 @@ impl FileReview {
             let now = (new.start as i64 + delta) as usize..(new.end as i64 + delta) as usize;
             if user.iter().any(|r| touches(&now, r)) {
                 plan.stale.push(snapshot.offset_to_point(now.start).row + 1);
+                continue;
+            }
+            if out_of_scope.iter().any(|r| touches(&now, r)) {
+                plan.out_of_scope
+                    .push(snapshot.offset_to_point(now.start).row + 1);
                 continue;
             }
             if accepted.iter().any(|r| touches(&now, r)) {
@@ -807,6 +852,8 @@ impl TaskReview {
 
     /// An imported agent transaction. `baseline` is the buffer as it was when
     /// the tool started; it becomes the file's baseline on the first edit.
+    /// `scope` is the running workers' briefs at this import (ADR-0063
+    /// decision 1); `None` means no running worker, so nothing is classified.
     pub fn agent_edited(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -814,6 +861,7 @@ impl TaskReview {
         transaction: TransactionId,
         baseline: text::BufferSnapshot,
         models: Vec<String>,
+        scope: Option<Arc<WorkerScope>>,
         cx: &App,
     ) {
         let turn = self.current_turn();
@@ -826,6 +874,7 @@ impl TaskReview {
             }
         };
         let file = &mut self.files[i];
+        file.scope = scope;
         if file.agent_txns.is_empty() {
             // The file was only ever refused: the task's first edit to it
             // is this one, and edits before it are never hunks.
@@ -925,7 +974,8 @@ impl TaskReview {
             })
     }
 
-    /// Accept one hunk: mark only, the code is already in the buffer.
+    /// Accept one hunk: mark only, the code is already in the buffer. An
+    /// `OutOfScope` hunk is the person's to resolve, like `Stale`.
     pub fn accept(
         &mut self,
         path: &std::path::Path,
@@ -937,7 +987,10 @@ impl TaskReview {
         let index = file.hunk_index(key, path)?;
         let hunk = &file.hunks[index];
         match hunk.status {
-            HunkStatus::Pending | HunkStatus::Unattributed | HunkStatus::Stale => {
+            HunkStatus::Pending
+            | HunkStatus::Unattributed
+            | HunkStatus::Stale
+            | HunkStatus::OutOfScope => {
                 let txns = file.txns_of(hunk);
                 file.resolved.insert(hunk.key.clone(), Some(txns));
                 file.hunks[index].status = HunkStatus::Accepted;
@@ -951,8 +1004,8 @@ impl TaskReview {
     }
 
     /// Reject one hunk: put the baseline lines back as one finalized
-    /// transaction. Refuses `Stale` and `Interrupted`, and a buffer that
-    /// moved since the hunks were built.
+    /// transaction. Refuses `Stale`, `OutOfScope` and `Interrupted`, and a
+    /// buffer that moved since the hunks were built.
     pub fn reject(
         &mut self,
         path: &std::path::Path,
@@ -970,6 +1023,7 @@ impl TaskReview {
         if matches!(
             hunk.status,
             HunkStatus::Stale
+                | HunkStatus::OutOfScope
                 | HunkStatus::Interrupted
                 | HunkStatus::Accepted
                 | HunkStatus::Rejected
@@ -1010,17 +1064,37 @@ impl TaskReview {
             .count()
     }
 
+    /// How many hunks are `OutOfScope` — a changed file outside the running
+    /// workers' briefs (ADR-0033 decision 3). Merge-back is refused while any
+    /// is unresolved, and they are never auto-accepted.
+    pub fn out_of_scope_count(&self) -> usize {
+        self.files
+            .iter()
+            .flat_map(|f| &f.hunks)
+            .filter(|h| h.status == HunkStatus::OutOfScope)
+            .count()
+    }
+
     /// Accept every `Pending` hunk, and every `Stale` one too when
     /// `include_stale` (the person was asked; owner ruling 2026-10-08).
-    /// Skips `Unattributed` and `Interrupted` (§17 R2). Refused while a
+    /// Skips `Unattributed`, `Interrupted` (§17 R2) and `OutOfScope`
+    /// (never auto-resolved, ADR-0033 decision 3). Refused while a
     /// call is writing a file with a hunk it would take.
     pub fn accept_all(
         &mut self,
         include_stale: bool,
         cx: &App,
     ) -> Result<Vec<(PathBuf, usize)>, ReviewError> {
-        let takes = |status: HunkStatus| {
-            status == HunkStatus::Pending || (include_stale && status == HunkStatus::Stale)
+        // Exhaustive on purpose: a new status must decide here, and every
+        // status that is not named is skipped (ADR-0033 decision 3).
+        let takes = |status: HunkStatus| match status {
+            HunkStatus::Pending => true,
+            HunkStatus::Stale => include_stale,
+            HunkStatus::OutOfScope
+            | HunkStatus::Unattributed
+            | HunkStatus::Interrupted
+            | HunkStatus::Accepted
+            | HunkStatus::Rejected => false,
         };
         self.refuse_importing(cx, |file| file.hunks.iter().any(|h| takes(h.status)))?;
         let mut accepted = Vec::new();
@@ -1070,7 +1144,7 @@ impl TaskReview {
             .map(|(_, k)| k.clone())
             .ok_or(ReviewError::NoTurn { turn: n })?;
         let next = self.turns.last().map_or(1, |(n, _)| n + 1);
-        let (reverted, stale, overwritten, accepted, transactions) = match kind {
+        let (reverted, stale, out_of_scope, overwritten, accepted, transactions) = match kind {
             TurnKind::Revert { transactions, .. } => {
                 let mut undone = 0;
                 for (buffer, txn) in &transactions {
@@ -1082,12 +1156,13 @@ impl TaskReview {
                     }
                 }
                 self.rebuild(cx);
-                (undone, Vec::new(), 0, 0, Vec::new())
+                (undone, Vec::new(), Vec::new(), 0, 0, Vec::new())
             }
             TurnKind::Prompt | TurnKind::Edit { .. } => {
                 self.rebuild(cx);
                 let mut reverted = 0;
                 let mut stale = Vec::new();
+                let mut out_of_scope = Vec::new();
                 let mut overwritten = 0;
                 let mut accepted = 0;
                 let mut transactions = Vec::new();
@@ -1095,6 +1170,11 @@ impl TaskReview {
                     let plan = file.turn_revert(n, cx);
                     let path = review_key(file.buffer.read(cx)).unwrap_or_default();
                     stale.extend(plan.stale.iter().map(|line| format!("{path} line {line}")));
+                    out_of_scope.extend(
+                        plan.out_of_scope
+                            .iter()
+                            .map(|line| format!("{path} line {line}")),
+                    );
                     overwritten += plan.overwritten;
                     accepted += plan.accepted;
                     if plan.edits.is_empty() {
@@ -1149,7 +1229,14 @@ impl TaskReview {
                     transactions.push((file.buffer.clone(), txn));
                 }
                 self.rebuild(cx);
-                (reverted, stale, overwritten, accepted, transactions)
+                (
+                    reverted,
+                    stale,
+                    out_of_scope,
+                    overwritten,
+                    accepted,
+                    transactions,
+                )
             }
         };
         self.turns.push((
@@ -1163,6 +1250,7 @@ impl TaskReview {
             turn: n,
             reverted,
             stale,
+            out_of_scope,
             overwritten,
             accepted,
         };
@@ -1291,6 +1379,12 @@ pub fn review_key(buffer: &Buffer) -> Option<String> {
         .map(|f| format!("/{}", f.path().as_unix_str()))
 }
 
+/// A reviewed file's path as a brief's globs match it: worktree-relative with
+/// `/` separators (ADR-0063 decision 2), or `None` for a buffer with no file.
+pub fn scope_path(buffer: &Buffer) -> Option<String> {
+    buffer.file().map(|f| f.path().as_unix_str().to_string())
+}
+
 fn path_of(buffer: &Buffer, cx: &App) -> PathBuf {
     buffer.file().map(|f| f.full_path(cx)).unwrap_or_default()
 }
@@ -1299,6 +1393,7 @@ fn path_of(buffer: &Buffer, cx: &App) -> PathBuf {
 mod tests {
     use super::*;
     use crate::import::{self, ImportOutcome};
+    use cedian_worker::Brief;
     use fs::{FakeFs, Fs};
     use gpui::TestAppContext;
     use project::Project;
@@ -1316,6 +1411,9 @@ mod tests {
         project: Entity<Project>,
         buffer: Entity<Buffer>,
         review: TaskReview,
+        /// The scope `agent_writes` imports under (ADR-0063); `None` is the
+        /// no-running-worker case.
+        scope: Option<Arc<WorkerScope>>,
     }
 
     async fn setup(cx: &mut TestAppContext) -> Fixture {
@@ -1342,6 +1440,7 @@ mod tests {
             project,
             buffer,
             review,
+            scope: None,
         }
     }
 
@@ -1372,8 +1471,9 @@ mod tests {
         cx.run_until_parked();
         match outcome {
             ImportOutcome::Imported(txn) => cx.update(|cx| {
+                let scope = f.scope.clone();
                 f.review
-                    .agent_edited(&f.buffer, call, txn, baseline, models, cx)
+                    .agent_edited(&f.buffer, call, txn, baseline, models, scope, cx)
             }),
             ImportOutcome::Stale => cx.update(|cx| f.review.import_refused(&f.buffer, call, cx)),
             ImportOutcome::Unchanged => panic!("the write changed nothing"),
@@ -1400,6 +1500,105 @@ mod tests {
             .iter()
             .map(|h| h.status)
             .collect()
+    }
+
+    /// One running worker's brief, compiled to a scope (ADR-0063).
+    fn scope(write: &str) -> Arc<WorkerScope> {
+        let brief = Brief::from_json(
+            &json!({
+                "goal": "g", "scope": {"write": [write]},
+                "acceptance": ["a"], "verify": ["v"], "timebox_min": 1,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        Arc::new(WorkerScope::new([("w1", &brief)]).unwrap())
+    }
+
+    /// ADR-0063 decision 1: a file the running worker's brief does not cover
+    /// is OutOfScope on every hunk; a covered file is classified as usual.
+    #[gpui::test]
+    async fn a_file_outside_the_running_workers_scope_is_out_of_scope(cx: &mut TestAppContext) {
+        let mut f = setup(cx).await;
+        f.scope = Some(scope("docs/**"));
+        agent_writes(&mut f, "c1", "alpha\nBETA\ngamma\n", cx).await;
+        assert_eq!(statuses(&f), vec![HunkStatus::OutOfScope]);
+        assert_eq!(f.review.out_of_scope_count(), 1);
+
+        let mut covered = setup(cx).await;
+        covered.scope = Some(scope("notes.txt"));
+        agent_writes(&mut covered, "c1", "alpha\nBETA\ngamma\n", cx).await;
+        assert_eq!(statuses(&covered), vec![HunkStatus::Pending]);
+        assert_eq!(covered.review.out_of_scope_count(), 0);
+    }
+
+    /// No running worker is no scope: the same edit stays Pending, exactly
+    /// as before ADR-0063 (decision 1).
+    #[gpui::test]
+    async fn with_no_running_worker_nothing_is_out_of_scope(cx: &mut TestAppContext) {
+        let mut f = setup(cx).await;
+        assert!(f.scope.is_none());
+        agent_writes(&mut f, "c1", "alpha\nBETA\ngamma\n", cx).await;
+        assert_eq!(statuses(&f), vec![HunkStatus::Pending]);
+        assert_eq!(f.review.out_of_scope_count(), 0);
+    }
+
+    /// An OutOfScope hunk is the person's to resolve like Stale: accept takes
+    /// it, reject refuses it (ADR-0033 decision 3).
+    #[gpui::test]
+    async fn out_of_scope_accepts_but_is_never_rejected(cx: &mut TestAppContext) {
+        let mut f = setup(cx).await;
+        f.scope = Some(scope("docs/**"));
+        agent_writes(&mut f, "c1", "alpha\nBETA\ngamma\n", cx).await;
+        let path = cx.update(|cx| f.review.path(&f.review.files()[0], cx));
+        let k = key(&f, 0);
+        let refused = cx.update(|cx| f.review.reject(&path, &k, cx)).unwrap_err();
+        assert_eq!(
+            refused,
+            ReviewError::BadTransition {
+                status: HunkStatus::OutOfScope
+            }
+        );
+        cx.update(|cx| f.review.accept(&path, &k, cx)).unwrap();
+        assert_eq!(statuses(&f), vec![HunkStatus::Accepted]);
+    }
+
+    /// Accept all never takes an OutOfScope hunk, with or without stale
+    /// (ADR-0033 decision 3); the count is how many it skipped.
+    #[gpui::test]
+    async fn accept_all_skips_out_of_scope(cx: &mut TestAppContext) {
+        let mut f = setup(cx).await;
+        f.scope = Some(scope("docs/**"));
+        agent_writes(&mut f, "c1", "alpha\nBETA\ngamma\n", cx).await;
+        let accepted = cx.update(|cx| f.review.accept_all(true, cx)).unwrap();
+        assert!(accepted.is_empty(), "{accepted:?}");
+        assert_eq!(statuses(&f), vec![HunkStatus::OutOfScope]);
+        assert_eq!(f.review.out_of_scope_count(), 1);
+    }
+
+    /// Revert turn keeps an OutOfScope change and says so (ADR-0033
+    /// decision 3): it is a person's decision, never reverted.
+    #[gpui::test]
+    async fn revert_turn_keeps_out_of_scope(cx: &mut TestAppContext) {
+        let mut f = setup(cx).await;
+        f.scope = Some(scope("docs/**"));
+        agent_writes(&mut f, "c1", "alpha\nBETA\ngamma\n", cx).await;
+        f.review.end_turn();
+        let event = cx.update(|cx| f.review.revert_turn(1, cx)).unwrap();
+        assert_eq!(
+            event,
+            ReviewEvent::TurnReverted {
+                turn: 1,
+                reverted: 0,
+                stale: vec![],
+                out_of_scope: vec!["/notes.txt line 2".to_string()],
+                overwritten: 0,
+                accepted: 0,
+            }
+        );
+        assert!(event.to_string().contains("kept out-of-scope"), "{event}");
+        assert_eq!(text(&f, cx), "alpha\nBETA\ngamma\n", "the change stays");
+        assert_eq!(statuses(&f), vec![HunkStatus::OutOfScope]);
     }
 
     /// ADR-0039 across an OMP restart: every model that wrote a hunk under
@@ -1578,6 +1777,7 @@ mod tests {
                 turn: 2,
                 reverted: 1,
                 stale: vec![],
+                out_of_scope: vec![],
                 overwritten: 0,
                 accepted: 0,
             }
@@ -1623,6 +1823,7 @@ mod tests {
                 turn: 1,
                 reverted: 0,
                 stale: vec![],
+                out_of_scope: vec![],
                 overwritten: 1,
                 accepted: 0,
             }
@@ -1654,6 +1855,7 @@ mod tests {
                 turn: 2,
                 reverted: 1,
                 stale: vec![],
+                out_of_scope: vec![],
                 overwritten: 0,
                 accepted: 0,
             }
@@ -1678,6 +1880,7 @@ mod tests {
                 turn: 1,
                 reverted: 0,
                 stale: vec![],
+                out_of_scope: vec![],
                 overwritten: 0,
                 accepted: 0,
             }
@@ -1721,6 +1924,7 @@ mod tests {
                 turn: 1,
                 reverted: 1,
                 stale: vec![],
+                out_of_scope: vec![],
                 overwritten: 0,
                 accepted: 1,
             }
@@ -1825,6 +2029,7 @@ mod tests {
                 txn,
                 baseline,
                 vec!["test/model".to_string()],
+                None,
                 cx,
             );
             fresh.restore_statuses(records, cx);
@@ -1905,6 +2110,7 @@ mod tests {
                 turn: 2,
                 reverted: 1,
                 stale: vec!["/notes.txt line 4".to_string()],
+                out_of_scope: vec![],
                 overwritten: 0,
                 accepted: 0,
             }
@@ -1962,6 +2168,7 @@ mod tests {
                 turn: 1,
                 reverted: 0,
                 stale: vec!["/notes.txt line 2".to_string()],
+                out_of_scope: vec![],
                 overwritten: 0,
                 accepted: 0,
             }
@@ -2016,6 +2223,7 @@ mod tests {
                 txn,
                 baseline,
                 vec!["test/model".to_string()],
+                None,
                 cx,
             );
         });
