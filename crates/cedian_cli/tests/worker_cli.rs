@@ -151,6 +151,46 @@ fn a_kind_flag_names_the_row_kind() {
 }
 
 #[test]
+fn cleanup_keeps_a_wip_tree_until_it_is_decided() {
+    let root = Root::new("cleanup");
+    let brief = root.brief("b.json", WHOLE_BRIEF);
+    let out = root.run(&["worker", "spawn", "w1", "--brief", brief.to_str().unwrap()]);
+    assert!(out.status.success(), "{}", text(&out));
+
+    // An uncommitted edit to a tracked file: the tree is wip, not scratch.
+    std::fs::write(root.ws().join(".worktrees/w1/notes.txt"), "changed\n").unwrap();
+
+    let out = root.run(&["worker", "cleanup"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let listed = text(&out);
+    assert!(listed.contains("wip"), "{listed}");
+    assert!(listed.contains("w1"), "{listed}");
+    assert!(
+        listed.contains("decision"),
+        "a wip names the per-tree decision: {listed}"
+    );
+    assert!(
+        root.ws().join(".worktrees/w1").exists(),
+        "an undecided wip is never deleted"
+    );
+
+    // An explicit decision removes it.
+    let out = root.run(&["worker", "cleanup", "--decide", "w1"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(text(&out).contains("removed"), "{}", text(&out));
+    assert!(!root.ws().join(".worktrees/w1").exists());
+
+    // The row goes with the tree: a row naming a tree that is gone would make
+    // the app show a worker that is not there.
+    let reg: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.registry()).unwrap()).unwrap();
+    assert!(
+        reg["workers"].get("w1").is_none(),
+        "the removed tree's row is dropped: {reg}"
+    );
+}
+
+#[test]
 fn a_brief_without_verify_is_refused_and_creates_nothing() {
     let root = Root::new("nov");
     let brief = root.brief(

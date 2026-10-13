@@ -874,6 +874,7 @@ fn worker_base(args: &[String], from: usize) -> Result<String, String> {
 /// cedian worker preview <id> [--base <branch>]
 /// cedian worker merge-back <id> [--base <branch>]
 /// cedian worker remove <id>
+/// cedian worker cleanup [--base <branch>] [--decide <id>]...
 /// ```
 ///
 /// `CEDIAN_WORKDIR` must be the repo root: the registry lives at
@@ -999,7 +1000,59 @@ fn cmd_worker(workdir: &Path, args: &[String]) -> Result<(), String> {
             println!("removed {id}");
             Ok(())
         }
-        _ => Err("usage: cedian worker <spawn|preview|merge-back|remove> …".into()),
+        Some("cleanup") => {
+            let usage = "usage: cedian worker cleanup [--base <branch>] [--decide <id>]…";
+            let mut base = "HEAD".to_string();
+            // `--decide` may repeat: one explicit decision per wip tree.
+            let mut decided: Vec<String> = Vec::new();
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--base" => {
+                        base = args.get(i + 1).cloned().ok_or(usage)?;
+                        i += 2;
+                    }
+                    "--decide" => {
+                        decided.push(args.get(i + 1).cloned().ok_or(usage)?);
+                        i += 2;
+                    }
+                    flag => return Err(format!("unknown flag {flag:?}")),
+                }
+            }
+            let outcomes =
+                cedian_worker::cleanup(workdir, &base, &decided).map_err(|e| e.to_string())?;
+            // A removed tree whose registry row stayed would name a tree that is
+            // gone (the S5 exit reads `git worktree list`, not the registry).
+            let gone: Vec<&str> = outcomes
+                .iter()
+                .filter(|out| out.removed)
+                .map(|out| out.id.as_str())
+                .collect();
+            if !gone.is_empty() {
+                let _lock = cedian_worker::Registry::lock(&state).map_err(|e| e.to_string())?;
+                let (mut reg, _) =
+                    cedian_worker::Registry::open(&state).map_err(|e| e.to_string())?;
+                let mut dropped = false;
+                for id in gone {
+                    dropped |= reg.remove(id).is_some();
+                }
+                if dropped {
+                    reg.save(&state).map_err(|e| e.to_string())?;
+                }
+            }
+            // One line per tree; skipped trees still exit 0 (a wip needs a
+            // human decision, which is not a command failure).
+            for out in outcomes {
+                let why = if out.removed {
+                    "removed".to_string()
+                } else {
+                    out.reason
+                };
+                println!("{} {} {} {why}", out.class, out.id, out.path.display());
+            }
+            Ok(())
+        }
+        _ => Err("usage: cedian worker <spawn|preview|merge-back|remove|cleanup> …".into()),
     }
 }
 

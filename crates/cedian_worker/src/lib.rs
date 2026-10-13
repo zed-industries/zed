@@ -20,11 +20,13 @@
 )]
 
 pub mod brief;
+pub mod cleanup;
 pub mod host_tool;
 pub mod registry;
 pub mod worktree;
 
 pub use brief::{Brief, BriefError, Scope};
+pub use cleanup::{CleanupOutcome, TreeClass, TreeState, cleanup, trees};
 pub use host_tool::{WORKTREE_REQUEST_TOOL, request_worktree, worktree_request_tool};
 pub use registry::{Registry, WorkerError, WorkerHead, WorkerStatus};
 pub use worktree::{

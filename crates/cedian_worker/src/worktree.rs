@@ -41,7 +41,7 @@ pub(crate) fn git_command(dir: &Path) -> Command {
 
 /// Run `git -C dir args`, returning trimmed stdout; failures become
 /// `WorkerError::Git` carrying trimmed stderr.
-fn git(dir: &Path, args: &[&str]) -> Result<String, WorkerError> {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, WorkerError> {
     let out = git_command(dir)
         .args(args)
         .output()
@@ -143,8 +143,19 @@ pub fn remove(repo: &Path, head: &WorkerHead) -> Result<(), WorkerError> {
 /// Throw away a tree [`spawn`] just made and its branch, which hold no work
 /// yet; used when the request it was made for fails after it.
 pub(crate) fn discard(repo: &Path, head: &WorkerHead) -> Result<(), WorkerError> {
-    git(repo, &["worktree", "remove", "--force", &head.worktree])?;
-    git(repo, &["branch", "-D", &head.branch])?;
+    force_remove(repo, Path::new(&head.worktree), &head.branch)
+}
+
+/// Drop a worktree and its branch unconditionally: `--force`/`-D` are right
+/// for trees that are meant to be thrown away (a decided `Wip`, a `Scratch`,
+/// or a just-spawned tree). Unlike [`remove`] this never refuses over
+/// uncommitted or unmerged work — the caller owns that decision.
+pub(crate) fn force_remove(repo: &Path, worktree: &Path, branch: &str) -> Result<(), WorkerError> {
+    git(
+        repo,
+        &["worktree", "remove", "--force", &worktree.to_string_lossy()],
+    )?;
+    git(repo, &["branch", "-D", branch])?;
     Ok(())
 }
 
