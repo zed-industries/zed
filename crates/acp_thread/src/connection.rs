@@ -351,11 +351,11 @@ pub trait AgentTelemetry {
 }
 
 pub trait AgentSessionModes {
-    fn current_mode(&self) -> acp_v1::SessionModeId;
+    fn current_mode(&self) -> acp_v2::SessionConfigValueId;
 
-    fn all_modes(&self) -> Vec<acp_v1::SessionMode>;
+    fn all_modes(&self) -> Vec<acp_v2::SessionConfigSelectOption>;
 
-    fn set_mode(&self, mode: acp_v1::SessionModeId, cx: &mut App) -> Task<Result<()>>;
+    fn set_mode(&self, mode: acp_v2::SessionConfigValueId, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentSessionConfigOptions {
@@ -382,14 +382,14 @@ pub trait AgentSessionConfigOptions {
 pub struct AgentSessionListRequest {
     pub cwd: Option<PathBuf>,
     pub cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentSessionListResponse {
     pub sessions: Vec<AgentSessionInfo>,
     pub next_cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 impl AgentSessionListResponse {

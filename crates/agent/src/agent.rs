@@ -31,7 +31,8 @@ pub use tools::*;
 
 use acp_thread::{
     AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
-    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
+    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, ProcessOutput,
+    TokenUsageRatio,
 };
 use agent_client_protocol::schema::v1 as acp_v1;
 use agent_client_protocol::schema::v2 as acp_v2;
@@ -3391,7 +3392,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
-        extra_env: Vec<acp_v1::EnvVariable>,
+        extra_env: Vec<(String, String)>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<acp_thread::SandboxWrap>,
@@ -3440,9 +3441,9 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                     let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
                     let temp_dir_string = temp_dir.to_string_lossy().into_owned();
                     extra_env.extend([
-                        acp_v1::EnvVariable::new("TMPDIR", &temp_dir_string),
-                        acp_v1::EnvVariable::new("TMP", &temp_dir_string),
-                        acp_v1::EnvVariable::new("TEMP", &temp_dir_string),
+                        ("TMPDIR".into(), temp_dir_string.clone()),
+                        ("TMP".into(), temp_dir_string.clone()),
+                        ("TEMP".into(), temp_dir_string),
                     ]);
                     // The command's `$TMPDIR` must live inside the sandbox's
                     // writable scope. The per-thread temp directory is owned
@@ -3700,12 +3701,12 @@ impl TerminalHandle for AcpTerminalHandle {
         Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
     }
 
-    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp_v1::TerminalExitStatus>>> {
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp_v2::TerminalExitStatus>>> {
         self.terminal
             .read_with(cx, |term, _cx| term.wait_for_exit())
     }
 
-    fn current_output(&self, cx: &AsyncApp) -> Result<acp_v1::TerminalOutputResponse> {
+    fn current_output(&self, cx: &AsyncApp) -> Result<ProcessOutput> {
         Ok(self
             .terminal
             .read_with(cx, |term, cx| term.current_output(cx)))
