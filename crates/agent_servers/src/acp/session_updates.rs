@@ -27,6 +27,8 @@ pub enum InboundSessionUpdate {
         update_meta: Option<acp_v2::Meta>,
     },
     Terminal(DecodedTerminalUpdate),
+    SessionInfo(acp_v2::SessionInfoUpdate),
+    AvailableCommands(acp_v2::AvailableCommandsUpdate),
     Notice(acp_v2::Notice),
     Compaction(acp_v2::CompactionUpdate),
     CompactionSummary(acp_v2::CompactionSummaryChunk),
@@ -84,6 +86,12 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
                     plan,
                     update_meta: update.meta,
                 }
+            }
+            acp_v2::SessionUpdate::SessionInfoUpdate(update) => {
+                InboundSessionUpdate::SessionInfo(update)
+            }
+            acp_v2::SessionUpdate::AvailableCommandsUpdate(update) => {
+                InboundSessionUpdate::AvailableCommands(update)
             }
             acp_v2::SessionUpdate::Notice(notice) => InboundSessionUpdate::Notice(notice),
             acp_v2::SessionUpdate::CompactionUpdate(update) => {
@@ -148,6 +156,14 @@ impl InboundSessionNotification {
                 update,
             }
             .apply(thread, cx),
+            InboundSessionUpdate::SessionInfo(update) => {
+                thread.update_session_info(update, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::AvailableCommands(update) => {
+                thread.update_available_commands(update.available_commands, cx);
+                Ok(())
+            }
             InboundSessionUpdate::Notice(notice) => {
                 thread.push_notice(notice, cx);
                 Ok(())

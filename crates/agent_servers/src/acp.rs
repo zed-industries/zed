@@ -5,7 +5,7 @@ mod transport;
 
 use debug_log::AcpDebugLog;
 pub use debug_log::{AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection};
-use session_updates::InboundSessionNotification;
+use session_updates::{InboundSessionNotification, InboundSessionUpdate};
 pub use terminal_updates::{DecodedTerminalNotification, DecodedTerminalUpdate};
 
 use acp_thread::{
@@ -498,12 +498,9 @@ impl AcpSessionList {
             .log_err();
     }
 
-    fn send_info_update(&self, session_id: acp_v2::SessionId, update: acp::SessionInfoUpdate) {
+    fn send_info_update(&self, session_id: acp_v2::SessionId, update: acp_v2::SessionInfoUpdate) {
         self.updates_tx
-            .try_send(acp_thread::SessionListUpdate::SessionInfo {
-                session_id,
-                update: acp_thread::session_info_update_from_v1(update),
-            })
+            .try_send(acp_thread::SessionListUpdate::SessionInfo { session_id, update })
             .log_err();
     }
 }
@@ -3287,6 +3284,182 @@ mod tests {
                     .expect("display terminal")
             })
         }
+
+        async fn session_list_updates(
+            &self,
+        ) -> async_channel::Receiver<acp_thread::SessionListUpdate> {
+            fn install(
+                (connection, sender): (
+                    ConnectionTo<Agent>,
+                    futures::channel::oneshot::Sender<
+                        async_channel::Receiver<acp_thread::SessionListUpdate>,
+                    >,
+                ),
+                cx: &mut AsyncApp,
+                context: &ClientContext,
+            ) {
+                let list = Rc::new(AcpSessionList::new(connection, false));
+                let updates = cx.update(|cx| list.watch(cx).expect("list updates"));
+                *context.session_list.borrow_mut() = Some(list);
+                assert!(sender.send(updates).is_ok(), "list update receiver");
+            }
+            let (sender, receiver) = futures::channel::oneshot::channel();
+            enqueue_notification(
+                &self.connection.dispatch_tx,
+                (self.connection.connection.clone(), sender),
+                install,
+            );
+            receiver.await.expect("installed session list")
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_session_info_sdk_updates_thread_and_list_projection(cx: &mut gpui::TestAppContext) {
+        use acp_thread::{AcpThreadEvent, AgentSessionInfo, SessionListUpdate};
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let updates = harness.session_list_updates().await;
+        let session_id = harness
+            .thread
+            .read_with(cx, |thread, _| thread.session_id().clone());
+        let mut listed = AgentSessionInfo::new(session_id.clone());
+        listed.title = Some("Saved list title".into());
+        harness.thread.update(cx, |thread, cx| {
+            thread.set_provisional_title("Preview".into(), cx);
+        });
+        let titles = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&harness.thread, {
+                let titles = titles.clone();
+                move |thread, event, cx| {
+                    if matches!(event, AcpThreadEvent::TitleUpdated) {
+                        titles.borrow_mut().push(thread.read(cx).title());
+                    }
+                }
+            })
+        });
+        for (patch, expected_title, expected_list_title, expected_meta, expected_timestamp) in [
+            (
+                json!({"updatedAt": "2026-10-01T10:20:30Z", "_meta": {"scope": "session"}}),
+                Some("Preview"),
+                Some("Saved list title"),
+                Some(v2_terminal_meta("session")),
+                Some("2026-10-01T10:20:30+00:00"),
+            ),
+            (
+                json!({"title": "Agent title"}),
+                Some("Agent title"),
+                Some("Agent title"),
+                Some(v2_terminal_meta("session")),
+                Some("2026-10-01T10:20:30+00:00"),
+            ),
+            (
+                json!({"updatedAt": null, "_meta": {}}),
+                Some("Agent title"),
+                Some("Agent title"),
+                Some(acp_v2::Meta::new()),
+                None,
+            ),
+            (
+                json!({"title": null, "_meta": null}),
+                None,
+                None,
+                None,
+                None,
+            ),
+        ] {
+            let expected_update: acp_v2::SessionInfoUpdate =
+                serde_json::from_value(patch.clone()).expect("session-info patch");
+            let mut update = patch;
+            update
+                .as_object_mut()
+                .expect("update object")
+                .insert("sessionUpdate".into(), json!("session_info_update"));
+            harness.send(update, Some(v2_terminal_meta("delivery")));
+            harness.drain(cx).await;
+            let SessionListUpdate::SessionInfo {
+                session_id: updated_id,
+                update,
+            } = updates.try_recv().expect("list projection update")
+            else {
+                panic!("session-info list update");
+            };
+            assert_eq!(updated_id, session_id);
+            assert_eq!(update, expected_update);
+            listed.apply_update(update);
+            assert_eq!(listed.title.as_deref(), expected_list_title);
+            assert_eq!(listed.meta, expected_meta);
+            assert_eq!(
+                listed.updated_at.map(|time| time.to_rfc3339()).as_deref(),
+                expected_timestamp
+            );
+            harness.thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.title().as_deref(), expected_title);
+                assert_eq!(thread.session_info().meta, listed.meta);
+                assert_eq!(thread.session_info().updated_at, listed.updated_at);
+                assert!(thread.entries().is_empty());
+            });
+        }
+        cx.run_until_parked();
+        assert_eq!(
+            titles
+                .borrow()
+                .iter()
+                .map(|title| title.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("Agent title"), None]
+        );
+        assert!(updates.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    async fn v2_commands_sdk_preserves_source_and_replaces_the_list(cx: &mut gpui::TestAppContext) {
+        use acp_thread::AcpThreadEvent;
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&harness.thread, {
+                let events = events.clone();
+                move |_, event, _| {
+                    if let AcpThreadEvent::AvailableCommandsUpdated(commands) = event {
+                        events.borrow_mut().push(commands.clone());
+                    }
+                }
+            })
+        });
+        let first = json!([
+            {"name": "opaque/手動", "description": "First command",
+                "input": {"type": "text", "hint": "Describe the task", "_meta": {"scope": "input"}},
+                "_meta": {"scope": "command", "retain": [null, 7]}},
+            {"name": "future", "description": "Unknown input",
+                "input": {"type": "_future", "payload": {"retain": [false, null]}}}
+        ]);
+        let mut expected_events = Vec::new();
+        for commands in [
+            first,
+            json!([{"name": "only", "description": "Replacement command"}]),
+            json!([]),
+        ] {
+            let expected: Vec<acp_v2::AvailableCommand> =
+                serde_json::from_value(commands.clone()).expect("command source");
+            harness.send(
+                json!({"sessionUpdate": "available_commands_update", "availableCommands": commands,
+                    "_meta": {"scope": "update"}}),
+                Some(v2_terminal_meta("delivery")),
+            );
+            harness.drain(cx).await;
+            harness.thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.available_commands(), expected);
+                assert!(thread.entries().is_empty());
+            });
+            expected_events.push(expected);
+        }
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), expected_events);
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
     }
 
     #[gpui::test]
@@ -4296,7 +4469,7 @@ mod tests {
                 "sessionId": "v2-terminal-session", "_meta": {"scope": "known envelope"},
                 "futureOuter": {"preserve": [1, null, true]},
                 "update": {
-                    "sessionUpdate": "available_commands_update", "availableCommands": [],
+                    "sessionUpdate": "config_option_update", "configOptions": [],
                     "_meta": {"scope": "known update"}, "futureKnownField": {"nested": "keep"}
                 }
             }),
@@ -8459,6 +8632,11 @@ fn handle_v2_session_notification(
             return;
         }
     };
+    if let InboundSessionUpdate::SessionInfo(update) = &notification.update
+        && let Some(session_list) = context.session_list.borrow().as_ref()
+    {
+        session_list.send_info_update(notification.session_id.clone(), update.clone());
+    }
     thread
         .update(cx, |thread, cx| notification.apply(thread, cx))
         .and_then(|result| result)
@@ -8833,7 +9011,10 @@ fn handle_session_notification(
     if let acp::SessionUpdate::SessionInfoUpdate(info_update) = &notification.update
         && let Some(session_list) = ctx.session_list.borrow().as_ref()
     {
-        session_list.send_info_update(session_id.clone(), info_update.clone());
+        session_list.send_info_update(
+            session_id.clone(),
+            acp_thread::session_info_update_from_v1(info_update.clone()),
+        );
     }
 
     // Abandoned loads can keep replaying until their wire operation settles.
