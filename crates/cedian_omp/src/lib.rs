@@ -14,6 +14,7 @@ pub mod driver;
 pub mod errors;
 pub mod event_router;
 pub mod omp_config;
+pub mod protected;
 pub mod runtime;
 pub mod sandbox;
 pub mod session;
@@ -29,6 +30,10 @@ pub use event_router::{
     TextBefore, Toast, ToastLevel, texts_before,
 };
 pub use omp_config::{Layer, OmpConfig, Setting, WriteOutcome};
+pub use protected::{
+    METADATA_DIR_NAMES, ProtectedKind, ProtectedRoots, approval_targets_protected,
+    default_protected_bash_rules,
+};
 pub use runtime::{
     NewSession, OmpBinary, OmpRuntime, RuntimeConfig, RuntimeControl, RuntimeState, image_content,
     last_text,

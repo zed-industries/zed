@@ -41,6 +41,7 @@ use cedian_workspace::{capture_ambient, render_snapshot};
 use collections::{HashMap, HashSet, IndexMap};
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId};
 use editor::{Editor, RowHighlightOptions, actions::Paste};
+use fs::RemoveOptions;
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClipboardEntry, Context, ElementId, Entity,
@@ -229,6 +230,11 @@ struct CallMarks {
     /// two was a `bash` call, with that call's id: which call wrote what is
     /// unknown, so neither imports them.
     overlapped: Vec<(Entity<Buffer>, String)>,
+    /// Named edit/write paths under protected metadata: prior disk bytes
+    /// (`None` = missing) restored on ToolEnd (ADR-0012).
+    protected: Vec<(PathBuf, Option<Vec<u8>>)>,
+    /// Tool name for the protected-path Deny audit row.
+    protected_tool: Option<String>,
 }
 
 /// The tool whose writes cedian learns only from the files it changed.
@@ -2928,7 +2934,7 @@ impl CedianPanel {
                 paths,
                 ..
             } if EDIT_TOOLS.contains(&tool_name.as_str()) => {
-                self.mark_before_write(tool_call_id.clone(), paths, cx);
+                self.mark_before_write(tool_call_id.clone(), tool_name, paths, cx);
             }
             RouterEvent::ToolStart {
                 tool_call_id,
@@ -2960,7 +2966,7 @@ impl CedianPanel {
                             Some((path, text.clone()))
                         })
                         .collect();
-                    self.import_when_ready(tool_call_id.clone(), cx);
+                    self.finish_protected_and_import(tool_call_id.clone(), cx);
                 }
             }
             // OMP started a run of its own (a queued steer it drains): it
@@ -3963,6 +3969,7 @@ impl CedianPanel {
     fn mark_before_write(
         &mut self,
         tool_call_id: String,
+        tool_name: &str,
         paths: &[String],
         cx: &mut Context<Self>,
     ) {
@@ -3978,7 +3985,108 @@ impl CedianPanel {
                 }
             })
             .collect();
-        self.mark_files(tool_call_id, named, false, cx);
+        let roots = self.protected_roots(cx);
+        let mut protected_paths = Vec::new();
+        let mut reviewable = Vec::new();
+        for path in named {
+            if roots.as_ref().is_some_and(|r| r.classify(&path).is_some()) {
+                protected_paths.push(path);
+            } else {
+                reviewable.push(path);
+            }
+        }
+        if reviewable.is_empty() {
+            self.calls.insert(
+                tool_call_id.clone(),
+                CallMarks {
+                    marks: Vec::new(),
+                    unopened: Vec::new(),
+                    reading: protected_paths.len(),
+                    ended: None,
+                    before: Vec::new(),
+                    bash: None,
+                    overlapped: Vec::new(),
+                    protected: Vec::new(),
+                    protected_tool: Some(tool_name.to_string()),
+                },
+            );
+        } else {
+            self.mark_files(tool_call_id.clone(), reviewable, false, cx);
+            if let Some(call) = self.calls.get_mut(&tool_call_id) {
+                call.reading += protected_paths.len();
+                call.protected_tool = Some(tool_name.to_string());
+            }
+        }
+        let fs = self.project.read(cx).fs().clone();
+        for path in protected_paths {
+            let fs = fs.clone();
+            let id = tool_call_id.clone();
+            cx.spawn(async move |this, cx| {
+                let prior = fs.load_bytes(&path).await.ok();
+                this.update(cx, |this, cx| {
+                    let Some(call) = this.calls.get_mut(&id) else {
+                        return;
+                    };
+                    call.protected.push((path, prior));
+                    call.reading = call.reading.saturating_sub(1);
+                    this.finish_protected_and_import(id, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    fn protected_roots(&mut self, cx: &App) -> Option<cedian_omp::ProtectedRoots> {
+        let workspace = self.workspace_root(cx)?;
+        let state_dir = self.state_dir(cx).ok()?;
+        Some(cedian_omp::ProtectedRoots::for_launch(
+            workspace, &state_dir, None,
+        ))
+    }
+
+    /// Once every protected snapshot is in and ToolEnd has arrived, restore
+    /// prior bytes, audit Deny, then import any reviewable files.
+    fn finish_protected_and_import(&mut self, tool_call_id: String, cx: &mut Context<Self>) {
+        let restore = self
+            .calls
+            .get(&tool_call_id)
+            .is_some_and(|c| c.reading == 0 && c.ended.is_some() && !c.protected.is_empty());
+        if restore {
+            let call = self.calls.get_mut(&tool_call_id).expect("checked");
+            let protected = std::mem::take(&mut call.protected);
+            let tool = call
+                .protected_tool
+                .clone()
+                .unwrap_or_else(|| "write".into());
+            self.restore_protected(&tool, protected, cx);
+        }
+        self.import_when_ready(tool_call_id, cx);
+    }
+
+    /// Restore prior bytes for protected paths the call named, and audit Deny.
+    fn restore_protected(
+        &mut self,
+        tool_name: &str,
+        protected: Vec<(PathBuf, Option<Vec<u8>>)>,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.project.read(cx).fs().clone();
+        for (path, prior) in protected {
+            if let Some(link) = &self.link {
+                link.protected_deny(tool_name, &path.display().to_string());
+            }
+            let fs = fs.clone();
+            cx.spawn(async move |_, _| match prior {
+                Some(bytes) => {
+                    let _ = fs.write(&path, &bytes).await;
+                }
+                None => {
+                    let _ = fs.remove_file(&path, RemoveOptions::default()).await;
+                }
+            })
+            .detach();
+        }
     }
 
     fn mark_files(
@@ -4033,6 +4141,8 @@ impl CedianPanel {
                 before: Vec::new(),
                 bash: bash.then(Vec::new),
                 overlapped: Vec::new(),
+                protected: Vec::new(),
+                protected_tool: None,
             },
         );
         let fs = self.project.read(cx).fs().clone();
@@ -5346,6 +5456,28 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+    /// A named edit into `.git/` is restored after ToolEnd (ADR-0012).
+    #[gpui::test]
+    async fn a_protected_git_edit_is_restored(cx: &mut TestAppContext) {
+        let (f, _) = fixture(cx).await;
+        f.fs.insert_tree("/ws/.git", serde_json::json!({"hooks": {"h": "PRIOR\n"}}))
+            .await;
+        cx.run_until_parked();
+        tool_start_named(&f, cx, "p1", "write", &["/ws/.git/hooks/h"]);
+        cx.run_until_parked();
+        omp_writes(&f, "/ws/.git/hooks/h", "TAMPERED\n").await;
+        tool_end_named(&f, cx, "p1", "write", Vec::new());
+        cx.run_until_parked();
+        let text =
+            f.fs.load(std::path::Path::new("/ws/.git/hooks/h"))
+                .await
+                .unwrap();
+        assert_eq!(text, "PRIOR\n");
+        assert!(
+            hunks(&f, cx).is_empty(),
+            "protected path is not a review import"
+        );
     }
 
     /// `(path, status, tool calls)` per hunk, files in review order.

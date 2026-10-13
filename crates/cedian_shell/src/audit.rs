@@ -172,6 +172,16 @@ impl AuditLog {
         self.append(item, None)
     }
 
+    /// An implementer write into a protected metadata path (ADR-0012):
+    /// cedian denied it and restored prior bytes when the path was named.
+    pub fn protected_deny(&mut self, tool: &str, path: &str) -> Result<(), String> {
+        let item = json!({
+            "kind": "gate", "tool": tool, "command": path,
+            "decision": "deny", "scope": "once", "answered_by": "cedian",
+        });
+        self.append(item, None)
+    }
+
     /// A changed file outside the running workers' briefs (ADR-0033
     /// decision 3, ADR-0063 decision 4): the call that wrote it, the
     /// worktree-relative path, and the workers the turn's scope was built

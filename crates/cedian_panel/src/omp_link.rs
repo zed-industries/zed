@@ -1004,6 +1004,8 @@ struct GateState {
     audit: Option<AuditLog>,
     /// Dialogs OMP is waiting on, by request id.
     open: HashMap<String, ExtensionUiRequest>,
+    /// Workspace + session dirs for ADR-0012 protected-path Deny.
+    protected: Option<cedian_omp::ProtectedRoots>,
 }
 
 impl GateState {
@@ -1044,6 +1046,28 @@ impl GateState {
                 None => Ok(()),
             },
         }
+    }
+
+    /// When a new approval select names a protected path, take it from
+    /// `open` and return the headless Deny reply + record.
+    fn take_protected_deny(
+        &mut self,
+        event: &RouterEvent,
+    ) -> Option<(ExtensionUiResponse, cedian_omp::DialogRecord)> {
+        let RouterEvent::UiRequest(request) = event else {
+            return None;
+        };
+        let ExtensionUiRequest::Select(_) = request else {
+            return None;
+        };
+        let roots = self.protected.as_ref()?;
+        let (id, title) = cedian_omp::dialog::dialog(request)?;
+        if !cedian_omp::approval_targets_protected(title, roots) {
+            return None;
+        }
+        let (reply, record) = cedian_omp::headless_answer(request)?;
+        self.open.remove(id);
+        Some((reply, record))
     }
 
     fn answer(
@@ -1208,6 +1232,7 @@ impl OmpLink {
             state: Mutex::new(GateState {
                 audit: Some(AuditLog::open(state_dir, approvals)?),
                 open: HashMap::default(),
+                protected: None,
             }),
             queue: Mutex::default(),
             sending: Mutex::default(),
@@ -1308,6 +1333,18 @@ impl OmpLink {
                 .events
                 .unbounded_send(LinkEvent::SubagentCancelled { id, result });
         });
+    }
+
+    /// An implementer write into a protected path (ADR-0012): its gate Deny
+    /// row, through the link that owns the log.
+    pub fn protected_deny(&self, tool: &str, path: &str) {
+        let recorded = match &mut self.gate.state.lock().audit {
+            Some(audit) => audit.protected_deny(tool, path),
+            None => Err("the audit log is not open".to_string()),
+        };
+        if let Err(e) = recorded {
+            let _ = self.gate.events.unbounded_send(LinkEvent::AuditFailed(e));
+        }
     }
 
     /// A changed file outside the running workers' briefs (ADR-0033
@@ -1573,7 +1610,15 @@ fn run(
         let _ = events.unbounded_send(LinkEvent::OmpPolicy(badge.clone()));
     }
     match AuditLog::open(&spec.state_dir, spec.policy.approvals) {
-        Ok(audit) => gate.state.lock().audit = Some(audit),
+        Ok(audit) => {
+            let mut state = gate.state.lock();
+            state.audit = Some(audit);
+            state.protected = Some(cedian_omp::ProtectedRoots::for_launch(
+                spec.workdir.clone(),
+                &spec.state_dir,
+                spec.omp_state.clone(),
+            ));
+        }
         Err(e) => {
             let _ = events.unbounded_send(LinkEvent::Failed(format!(
                 "OMP not started, nothing could be audited: {e}"
@@ -1634,8 +1679,22 @@ fn run(
     std::thread::spawn(move || {
         for event in router_events {
             forward_gate.observe_run(&event);
-            if let Err(e) = forward_gate.state.lock().observe(&event) {
-                let _ = forward.unbounded_send(LinkEvent::AuditFailed(e));
+            let auto_deny = {
+                let mut state = forward_gate.state.lock();
+                if let Err(e) = state.observe(&event) {
+                    let _ = forward.unbounded_send(LinkEvent::AuditFailed(e));
+                }
+                state.take_protected_deny(&event)
+            };
+            if let Some((reply, record)) = auto_deny {
+                if let Err(e) = forward_gate.send(reply) {
+                    let _ = forward.unbounded_send(LinkEvent::AuditFailed(e));
+                }
+                if let Err(e) = forward_gate.state.lock().record(record) {
+                    let _ = forward.unbounded_send(LinkEvent::AuditFailed(e));
+                }
+                // Do not surface the approval: cedian already denied it.
+                continue;
             }
             if forward.unbounded_send(LinkEvent::Event(event)).is_err() {
                 break;
@@ -1851,7 +1910,14 @@ mod tests {
         GateState {
             audit: Some(AuditLog::open(dir, SpawnPolicy::default().approvals).unwrap()),
             open: HashMap::default(),
+            protected: None,
         }
+    }
+
+    fn gate_with_roots(dir: &Path, roots: cedian_omp::ProtectedRoots) -> GateState {
+        let mut g = gate(dir);
+        g.protected = Some(roots);
+        g
     }
 
     fn rows(dir: &Path) -> Vec<(String, String)> {
@@ -1963,6 +2029,39 @@ mod tests {
         gate.observe(&cancel).unwrap();
         assert!(gate.open.is_empty());
         assert_eq!(rows(&dir), [abstain()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn protected_approval_is_auto_denied_as_cedian() {
+        let dir = temp("protected-deny");
+        let ws = dir.join("ws");
+        std::fs::create_dir_all(ws.join(".git/hooks")).unwrap();
+        let roots = cedian_omp::ProtectedRoots {
+            workspace: ws.clone(),
+            session_dirs: vec![dir.join("omp")],
+        };
+        let mut gate = gate_with_roots(&dir, roots);
+        let title = format!("Allow tool: write\nPath: {}/.git/hooks/x", ws.display());
+        let event = RouterEvent::UiRequest(
+            ExtensionUiRequest::from_value(serde_json::json!({
+                "type": "extension_ui_request", "method": "select", "id": "d1",
+                "title": title, "options": ["Approve", "Deny"]
+            }))
+            .unwrap(),
+        );
+        gate.observe(&event).unwrap();
+        let (reply, record) = gate.take_protected_deny(&event).expect("auto-deny");
+        assert!(matches!(
+            reply,
+            ExtensionUiResponse::ValueUiResponse(omp_rpc::wire::ValueUiResponse { ref value, .. })
+                if value.eq_ignore_ascii_case("deny")
+        ));
+        assert_eq!(record.decision, GateDecision::Deny);
+        assert_eq!(record.answered_by, Answerer::Cedian);
+        assert!(!gate.open.contains_key("d1"));
+        gate.record(record).unwrap();
+        assert_eq!(rows(&dir), [("deny".to_string(), "cedian".to_string())]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

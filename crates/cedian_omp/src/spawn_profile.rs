@@ -178,7 +178,7 @@ impl Default for SpawnPolicy {
         Self {
             approvals: Approvals::Cedian(ApprovalMode::Write),
             tool_policies: BTreeMap::new(),
-            bash_patterns: Vec::new(),
+            bash_patterns: crate::protected::default_protected_bash_rules(),
             host_tools: BTreeSet::new(),
             config_allows: BTreeSet::new(),
             model: None,
@@ -727,24 +727,29 @@ mod tests {
             pattern: "cargo test*".to_string(),
             approval: ToolPolicy::Allow,
         });
+        let overlay = policy.overlay().unwrap();
+        assert_eq!(overlay["computer"]["enabled"], false);
+        assert_eq!(overlay["task"]["isolation"]["enabled"], false);
+        assert_eq!(overlay["tools"]["approvalMode"], "write");
         assert_eq!(
-            policy.overlay().unwrap(),
+            overlay["tools"]["approval"],
             json!({
-                "computer": {"enabled": false},
-                "task": {"isolation": {"enabled": false}},
-                "tools": {
-                    "approvalMode": "write",
-                    "approval": {
-                        "bash": "prompt", "eval": "prompt", "browser": "prompt",
-                        "task": "prompt", "vibe_spawn": "prompt", "vibe_send": "prompt",
-                    },
-                },
-                "bash": {
-                    "patterns": [{"match": "cargo test*", "approval": "allow"}],
-                    "allowCompoundCommands": false,
-                },
+                "bash": "prompt", "eval": "prompt", "browser": "prompt",
+                "task": "prompt", "vibe_spawn": "prompt", "vibe_send": "prompt",
             })
         );
+        let patterns = overlay["bash"]["patterns"].as_array().unwrap();
+        assert!(
+            patterns.iter().any(|p| {
+                p["approval"] == "deny" && p["match"].as_str().unwrap().contains(".git")
+            }),
+            "default policy denies bash writes into .git: {patterns:?}"
+        );
+        assert_eq!(
+            patterns.last().unwrap(),
+            &json!({"match": "cargo test*", "approval": "allow"})
+        );
+        assert_eq!(overlay["bash"]["allowCompoundCommands"], false);
     }
 
     #[test]
@@ -961,7 +966,19 @@ mod tests {
             approval["some_mcp_tool"], "deny",
             "unnamed config allow pinned to deny"
         );
-        assert_eq!(overlay["bash"]["patterns"][0]["match"], "git diff*");
+        let patterns = overlay["bash"]["patterns"].as_array().unwrap();
+        assert!(
+            patterns
+                .iter()
+                .any(|p| { p["match"] == "git diff*" && p["approval"] == "allow" }),
+            "reviewer allow pattern present: {patterns:?}"
+        );
+        assert!(
+            patterns.iter().any(|p| {
+                p["approval"] == "deny" && p["match"].as_str().unwrap().contains(".git")
+            }),
+            "protected .git deny still applies under reviewer: {patterns:?}"
+        );
     }
 
     #[test]
