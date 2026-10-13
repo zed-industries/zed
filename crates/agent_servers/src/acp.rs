@@ -772,42 +772,17 @@ fn with_v2_message_notifications<Handler: HandleDispatchFrom<Agent>>(
     + 'static,
 ) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
     builder.on_receive_notification(
-        async move |message: UntypedMessage, connection: V2ConnectionTo<Agent>| {
-            let kind = message
-                .params()
-                .get("update")
-                .and_then(|update| update.get("sessionUpdate"))
-                .and_then(serde_json::Value::as_str);
-            if !acp_v2::UpdateSessionNotification::matches_method(message.method())
-                || !matches!(
-                    kind,
-                    Some(
-                        "user_message"
-                            | "agent_message"
-                            | "agent_thought"
-                            | "user_message_chunk"
-                            | "agent_message_chunk"
-                            | "agent_thought_chunk"
-                    )
-                )
-            {
-                return Ok(Handled::No {
-                    message: (message, connection),
-                    retry: false,
-                });
-            }
-            let notification = acp_v2::UpdateSessionNotification::parse_message(
-                message.method(),
-                message.params(),
-            )
-            .map_err(|_| {
-                agent_client_protocol::Error::invalid_params()
-                    .data("Malformed ACP v2 message notification")
-            })?;
-            let notification = MessageNotification::try_from(notification).map_err(|_| {
-                agent_client_protocol::Error::internal_error()
-                    .data("Message notification was not decoded")
-            })?;
+        async move |notification: acp_v2::UpdateSessionNotification,
+                    connection: V2ConnectionTo<Agent>| {
+            let notification = match MessageNotification::try_from(notification) {
+                Ok(notification) => notification,
+                Err(notification) => {
+                    return Ok(Handled::No {
+                        message: (notification, connection),
+                        retry: false,
+                    });
+                }
+            };
             dispatch(notification)?;
             Ok(Handled::Yes)
         },
@@ -3375,6 +3350,36 @@ mod tests {
             };
             assert_eq!(user.content.to_markdown(cx), "child");
         });
+
+        let V2SessionHarness {
+            connection,
+            thread,
+            _client_task,
+            _agent_task,
+            _legacy_agent_task,
+            ..
+        } = harness;
+        let _transport_tasks = (_client_task, _agent_task, _legacy_agent_task);
+        let weak_thread = thread.downgrade();
+        let notification = MessageNotification::try_from(acp_v2::UpdateSessionNotification::new(
+            thread.read_with(cx, |thread, _| thread.session_id().clone()),
+            acp_v2::SessionUpdate::AgentMessage(
+                acp_v2::AgentMessage::new("queued-before-drop").content(vec!["queued".into()]),
+            ),
+        ))
+        .expect("message notification");
+        cx.update(|_| {
+            enqueue_notification(
+                &connection.dispatch_tx,
+                notification,
+                handle_v2_message_notification,
+            );
+            drop(thread);
+        });
+        drain_foreground_queue(&connection.dispatch_tx)
+            .await
+            .expect("apply queued work after owner drop");
+        assert!(weak_thread.upgrade().is_none());
     }
 
     #[gpui::test]
@@ -3662,9 +3667,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn v2_terminal_sdk_falls_through_without_losing_unknown_fields(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn v2_session_sdk_falls_through_unhandled_updates(cx: &mut gpui::TestAppContext) {
         let harness = V2SessionHarness::new(cx).await;
         let params = [
             serde_json::json!({
@@ -3692,14 +3695,24 @@ mod tests {
                 "update": {"sessionUpdate": "state_update", "state": "running"}
             }),
         ];
-        let mut expected = params
+        let sent = params
             .iter()
             .map(|params| {
                 agent_client_protocol::UntypedMessage::new("session/update", params)
                     .expect("raw SDK notification")
             })
             .collect::<Vec<_>>();
-        for message in &expected {
+        let mut expected = params
+            .iter()
+            .map(|params| {
+                let notification: acp_v2::UpdateSessionNotification =
+                    serde_json::from_value(params.clone()).expect("typed SDK notification");
+                notification
+                    .to_untyped_message()
+                    .expect("SDK typed fallthrough")
+            })
+            .collect::<Vec<_>>();
+        for message in &sent {
             harness
                 .agent
                 .send_notification(message.clone())
