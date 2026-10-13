@@ -9,6 +9,11 @@ use crate::edges;
 use crate::store::FlowState;
 use crate::types::*;
 
+/// Diameter, in flow units, of the "+" button shown on a hovered edge. Also
+/// how far from the edge's midpoint the cursor can be and still count as on
+/// the button.
+const EDGE_INSERT_BUTTON_SIZE: f32 = 18.0;
+
 type NodeRendererFn = Box<dyn Fn(&FlowNode, &mut Window, &mut App) -> AnyElement>;
 
 /// Convert a window-absolute mouse position into **flow-space units**.
@@ -95,6 +100,12 @@ pub struct FlowGraph {
     /// attach a per-edge handler to the way a node does (edges are painted,
     /// not laid out as divs).
     on_edge_context_menu: Option<std::rc::Rc<dyn Fn(EdgeId, Point<Pixels>, &mut Window, &mut App)>>,
+    /// Fired when the "+" button on a hovered edge is clicked, with the
+    /// edge and the click's window position. Setting it is what turns the
+    /// button on: without a consumer to act on the click, hovering an edge
+    /// shows nothing. This crate only reports the gesture; what gets
+    /// inserted, and how the user picks it, is the consumer's business.
+    on_edge_insert: Option<std::rc::Rc<dyn Fn(EdgeId, Point<Pixels>, &mut Window, &mut App)>>,
     /// Fired on right-click anywhere in the canvas. The callback receives
     /// both the window point and the corresponding canvas flow coordinate.
     on_canvas_context_menu: Option<
@@ -148,6 +159,7 @@ impl FlowGraph {
 
             on_node_context_menu: None,
             on_edge_context_menu: None,
+            on_edge_insert: None,
             on_canvas_context_menu: None,
             canvas_origin: Rc::new(Cell::new(Point::default())),
             panel_bounds: Rc::new(Cell::new(Bounds::default())),
@@ -200,6 +212,17 @@ impl FlowGraph {
         callback: impl Fn(EdgeId, Point<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_edge_context_menu = Some(std::rc::Rc::new(callback));
+        self
+    }
+
+    /// Show a "+" button on whichever edge the cursor is over, and call
+    /// `callback` with that edge when it is clicked — the "insert a node
+    /// here" gesture. See the field doc comment.
+    pub fn on_edge_insert(
+        mut self,
+        callback: impl Fn(EdgeId, Point<Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_edge_insert = Some(std::rc::Rc::new(callback));
         self
     }
 
@@ -569,13 +592,19 @@ impl FlowGraph {
             .when(is_container, |el| el.w(px(footprint_w)).h(px(footprint_h)))
             // Node box styling on the wrapper so handles align to visual edges
             .when(show_chrome, |el: Stateful<Div>| {
-                el.bg(gpui::rgb(node_bg))
+                // A container is only tinted, never filled. Edges, and the
+                // line drawn while dragging a new connection, are painted on
+                // one layer underneath every node, so an opaque container box
+                // would hide every edge between the nodes inside it. The same
+                // goes for a shadow, which is drawn across the whole box.
+                el.when(!is_container, |el| el.bg(gpui::rgb(node_bg)).shadow_sm())
+                    .when(is_container, |el| {
+                        el.bg(gpui::rgba((node_bg << 8) | 0x33)).border_dashed()
+                    })
                     .when(has_accent_border, |el| el.border_2())
                     .when(!has_accent_border, |el| el.border_1())
-                    .when(is_container, |el| el.border_dashed())
                     .border_color(gpui::rgb(node_border))
                     .rounded_lg()
-                    .shadow_sm()
                     .px_4()
                     .py_2()
             })
@@ -1297,6 +1326,43 @@ impl Render for FlowGraph {
             ));
         }
 
+        // The insert button for the hovered edge, laid out in flow units like
+        // the edge labels it sits among. Pressing it must not reach the
+        // canvas underneath, which would start a pan or select the edge.
+        let insert_button: Option<AnyElement> = self.on_edge_insert.clone().and_then(|callback| {
+            let state = self.state.read(cx);
+            let edge_id = state.hovered_edge.clone()?;
+            let edge = state.edges.iter().find(|edge| edge.id == edge_id)?;
+            let (x, y) = edges::compute_edge_label_position(state, edge)?;
+            let half = EDGE_INSERT_BUTTON_SIZE / 2.0;
+            Some(
+                div()
+                    .id("flow-edge-insert")
+                    .absolute()
+                    .left(px(x - half))
+                    .top(px(y - half))
+                    .w(px(EDGE_INSERT_BUTTON_SIZE))
+                    .h(px(EDGE_INSERT_BUTTON_SIZE))
+                    .rounded_full()
+                    .bg(gpui::rgb(self.accent_color))
+                    .border_1()
+                    .border_color(gpui::rgb(self.node_bg_color))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(14.0))
+                    .line_height(px(EDGE_INSERT_BUTTON_SIZE - 2.0))
+                    .text_color(gpui::rgb(self.node_bg_color))
+                    .cursor(CursorStyle::PointingHand)
+                    .child("+")
+                    .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                        cx.stop_propagation();
+                        callback(edge_id.clone(), event.position, window, cx);
+                    })
+                    .into_any_element(),
+            )
+        });
+
         let state_for_canvas = self.state.clone();
         let viewport_for_world = viewport;
         let bg_color = self.bg_color;
@@ -1434,7 +1500,10 @@ impl Render for FlowGraph {
                     // Node layer
                     .children(node_elements)
                     // Edge labels
-                    .children(edge_label_elements),
+                    .children(edge_label_elements)
+                    // The "+" on the hovered edge, above everything else in
+                    // the world so a node near the midpoint can't cover it.
+                    .children(insert_button),
             )
             // Mouse down on empty space → start panning, deselect, or edge selection
             .on_mouse_down(MouseButton::Left, {
@@ -1550,6 +1619,7 @@ impl Render for FlowGraph {
             .on_mouse_move({
                 let entity_id = entity_id;
                 let canvas_origin_for_mouse_move = self.canvas_origin.clone();
+                let hover_edges = self.on_edge_insert.is_some();
                 move |event, _window, cx| {
                     let mouse_pos = event.position;
                     let mx = mouse_pos.x.as_f32();
@@ -1652,6 +1722,33 @@ impl Render for FlowGraph {
                             state.viewport.x = pan.start_viewport.0 + (mx - pan.start_mouse.0);
                             state.viewport.y = pan.start_viewport.1 + (my - pan.start_mouse.1);
                             changed = true;
+                        }
+                        // Idle: track the edge under the cursor for the
+                        // insert button. The button sits on the edge's
+                        // midpoint and is wider than the line, so the edge
+                        // stays hovered while the cursor is on the button
+                        // even where that is off the line itself.
+                        else if hover_edges {
+                            let on_button = state.hovered_edge.clone().filter(|id| {
+                                state
+                                    .edges
+                                    .iter()
+                                    .find(|edge| edge.id == *id)
+                                    .and_then(|edge| {
+                                        edges::compute_edge_label_position(state, edge)
+                                    })
+                                    .is_some_and(|(x, y)| {
+                                        let reach = EDGE_INSERT_BUTTON_SIZE;
+                                        (flow_mouse.0 - x).abs() <= reach
+                                            && (flow_mouse.1 - y).abs() <= reach
+                                    })
+                            });
+                            let hovered = on_button
+                                .or_else(|| edges::hit_test_edges(state, flow_mouse, 10.0));
+                            if hovered != state.hovered_edge {
+                                state.hovered_edge = hovered;
+                                changed = true;
+                            }
                         }
                     });
 

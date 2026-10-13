@@ -59,6 +59,10 @@ pub struct FlowState {
     pub pan_drag: Option<PanDragState>,
     pub connecting: Option<ConnectionDraft>,
     pub selection_box: Option<SelectionBox>,
+    /// The edge the cursor is on, when the graph offers inserting a node
+    /// into an edge (`FlowGraph::on_edge_insert`). Drives the "+" button
+    /// drawn at that edge's midpoint.
+    pub hovered_edge: Option<EdgeId>,
     // Undo/redo
     undo_stack: Vec<HistoryEntry>,
     redo_stack: Vec<HistoryEntry>,
@@ -88,6 +92,7 @@ impl FlowState {
             pan_drag: None,
             connecting: None,
             selection_box: None,
+            hovered_edge: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             min_zoom: 0.8,
