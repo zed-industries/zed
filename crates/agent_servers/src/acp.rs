@@ -1,9 +1,11 @@
 mod debug_log;
+mod message_updates;
 mod terminal_updates;
 mod transport;
 
 use debug_log::AcpDebugLog;
 pub use debug_log::{AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection};
+use message_updates::MessageNotification;
 pub use terminal_updates::{DecodedTerminalNotification, DecodedTerminalUpdate};
 
 use acp_thread::{
@@ -763,6 +765,56 @@ pub fn v2_terminal_client_builder(
     )
 }
 
+fn with_v2_message_notifications<Handler: HandleDispatchFrom<Agent>>(
+    builder: V2Builder<Client, Handler>,
+    mut dispatch: impl FnMut(MessageNotification) -> Result<(), agent_client_protocol::Error>
+    + Send
+    + 'static,
+) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
+    builder.on_receive_notification(
+        async move |message: UntypedMessage, connection: V2ConnectionTo<Agent>| {
+            let kind = message
+                .params()
+                .get("update")
+                .and_then(|update| update.get("sessionUpdate"))
+                .and_then(serde_json::Value::as_str);
+            if !acp_v2::UpdateSessionNotification::matches_method(message.method())
+                || !matches!(
+                    kind,
+                    Some(
+                        "user_message"
+                            | "agent_message"
+                            | "agent_thought"
+                            | "user_message_chunk"
+                            | "agent_message_chunk"
+                            | "agent_thought_chunk"
+                    )
+                )
+            {
+                return Ok(Handled::No {
+                    message: (message, connection),
+                    retry: false,
+                });
+            }
+            let notification = acp_v2::UpdateSessionNotification::parse_message(
+                message.method(),
+                message.params(),
+            )
+            .map_err(|_| {
+                agent_client_protocol::Error::invalid_params()
+                    .data("Malformed ACP v2 message notification")
+            })?;
+            let notification = MessageNotification::try_from(notification).map_err(|_| {
+                agent_client_protocol::Error::internal_error()
+                    .data("Message notification was not decoded")
+            })?;
+            dispatch(notification)?;
+            Ok(Handled::Yes)
+        },
+        agent_client_protocol::on_receive_notification!(),
+    )
+}
+
 fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities {
     let mut meta = acp::Meta::from_iter([
         ("terminal_output".into(), true.into()),
@@ -797,6 +849,23 @@ fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities 
 }
 
 impl AcpConnection {
+    /// Binds v2 message ingress to the existing foreground session registry.
+    /// This does not change the protocol used by the connection's transport.
+    pub fn with_v2_message_ingress<Handler: HandleDispatchFrom<Agent>>(
+        &self,
+        builder: V2Builder<Client, Handler>,
+    ) -> V2Builder<Client, impl HandleDispatchFrom<Agent> + use<Handler>> {
+        let dispatch_sender = self.dispatch_tx.clone();
+        with_v2_message_notifications(builder, move |notification| {
+            enqueue_notification(
+                &dispatch_sender,
+                notification,
+                handle_v2_message_notification,
+            );
+            Ok(())
+        })
+    }
+
     pub fn subscribe_debug_messages(
         &self,
     ) -> (
@@ -2896,7 +2965,7 @@ mod tests {
         bytes: Option<Vec<u8>>,
     }
 
-    struct V2TerminalHarness {
+    struct V2SessionHarness {
         connection: Rc<AcpConnection>,
         thread: Entity<AcpThread>,
         agent: V2ConnectionTo<Client>,
@@ -2924,7 +2993,7 @@ mod tests {
         acp_v2::Meta::from_iter([("scope".to_owned(), serde_json::json!(scope))])
     }
 
-    impl V2TerminalHarness {
+    impl V2SessionHarness {
         async fn new(cx: &mut gpui::TestAppContext) -> Self {
             let (connection, project, _, _, _, _, legacy_agent_task) =
                 connect_fake_agent(None, cx).await;
@@ -2947,7 +3016,7 @@ mod tests {
                 Arc::new(Mutex::new(None::<futures::channel::oneshot::Sender<()>>));
             let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
             let (client_sender, client_receiver) = futures::channel::oneshot::channel();
-            let client_builder = v2_terminal_client_builder({
+            let terminal_builder = v2_terminal_client_builder({
                 let dispatch_sender = connection.dispatch_tx.clone();
                 let received = received.clone();
                 let acknowledgment = acknowledgment.clone();
@@ -2989,18 +3058,20 @@ mod tests {
                     }
                     Ok(())
                 }
-            })
-            .on_receive_notification(
-                {
-                    let fallback = fallback.clone();
-                    async move |message: agent_client_protocol::UntypedMessage,
-                                _connection: V2ConnectionTo<Agent>| {
-                        fallback.lock().expect("fallback mutex").push(message);
-                        Ok(())
-                    }
-                },
-                agent_client_protocol::on_receive_notification!(),
-            );
+            });
+            let client_builder = connection
+                .with_v2_message_ingress(terminal_builder)
+                .on_receive_notification(
+                    {
+                        let fallback = fallback.clone();
+                        async move |message: agent_client_protocol::UntypedMessage,
+                                    _connection: V2ConnectionTo<Agent>| {
+                            fallback.lock().expect("fallback mutex").push(message);
+                            Ok(())
+                        }
+                    },
+                    agent_client_protocol::on_receive_notification!(),
+                );
             let client_task = cx.background_spawn(client_builder.connect_with(
                 client_transport,
                 async move |client| {
@@ -3053,14 +3124,22 @@ mod tests {
         }
 
         fn send(&self, update: serde_json::Value, envelope_meta: Option<acp_v2::Meta>) {
+            self.send_to("v2-terminal-session", update, envelope_meta);
+        }
+
+        fn send_to(
+            &self,
+            session_id: &str,
+            update: serde_json::Value,
+            envelope_meta: Option<acp_v2::Meta>,
+        ) {
             let update: acp_v2::SessionUpdate =
                 serde_json::from_value(update).expect("valid SDK session update fixture");
             self.agent
                 .send_notification(
-                    acp_v2::UpdateSessionNotification::new("v2-terminal-session", update)
-                        .meta(envelope_meta),
+                    acp_v2::UpdateSessionNotification::new(session_id, update).meta(envelope_meta),
                 )
-                .expect("send SDK v2 terminal notification");
+                .expect("send SDK v2 session notification");
         }
 
         async fn drain(&self, cx: &mut gpui::TestAppContext) {
@@ -3112,8 +3191,195 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_message_sdk_snapshots_chunks_and_historical_updates(cx: &mut gpui::TestAppContext) {
+        use acp_thread::{AgentThreadEntry, AssistantMessageChunk, MessageIdentity};
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let user_content = json!([
+            {"type": "text", "text": "question", "_meta": {"scope": "item"}},
+            {"type": "_future", "payload": {"retain": [null, 7]}, "_meta": {"scope": "unknown"}}
+        ]);
+        for update in [
+            json!({"sessionUpdate": "user_message", "messageId": "shared",
+                "content": user_content, "_meta": {"scope": "user"}}),
+            json!({"sessionUpdate": "agent_message_chunk", "messageId": "shared",
+                "content": {"type": "text", "text": "answer"}, "_meta": {"scope": "chunk"}}),
+            json!({"sessionUpdate": "agent_thought", "messageId": "shared",
+                "content": [{"type": "text", "text": "thought"}], "_meta": {"scope": "thought"}}),
+            json!({"sessionUpdate": "user_message_chunk", "messageId": "shared",
+                "content": {"type": "text", "text": " tail"}, "_meta": {"scope": "chunk"}}),
+            json!({"sessionUpdate": "agent_message", "messageId": "shared",
+                "content": [{"type": "text", "text": "replacement"}], "_meta": {"scope": "assistant"}}),
+            json!({"sessionUpdate": "agent_thought_chunk", "messageId": "shared",
+                "content": {"type": "text", "text": " tail"}, "_meta": {"scope": "chunk"}}),
+        ] {
+            harness.send(update, Some(v2_terminal_meta("delivery")));
+        }
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, cx| {
+            let [
+                AgentThreadEntry::UserMessage(user),
+                AgentThreadEntry::AssistantMessage(assistant),
+            ] = thread.entries()
+            else {
+                panic!("user and assistant rows");
+            };
+            let mut expected: Vec<acp_v2::ContentBlock> =
+                serde_json::from_value(user_content).expect("source content");
+            expected.push(" tail".into());
+            assert_eq!(user.content.source_blocks(), expected);
+            assert_eq!(user.meta, Some(v2_terminal_meta("user")));
+            let [
+                AssistantMessageChunk::Message {
+                    identity,
+                    block,
+                    meta,
+                },
+                AssistantMessageChunk::Thought {
+                    identity: thought_id,
+                    block: thought,
+                    meta: thought_meta,
+                },
+            ] = assistant.chunks.as_slice()
+            else {
+                panic!("same-ID message and thought chunks");
+            };
+            assert_eq!(identity, &MessageIdentity::Keyed("shared".into()));
+            assert_eq!(thought_id, identity);
+            assert_eq!(block.to_markdown(cx), "replacement");
+            assert_eq!(meta, &Some(v2_terminal_meta("assistant")));
+            assert_eq!(thought.source_blocks(), &["thought".into(), " tail".into()]);
+            assert_eq!(thought_meta, &Some(v2_terminal_meta("thought")));
+        });
+
+        for update in [
+            json!({"sessionUpdate": "user_message", "messageId": "later",
+                "content": [{"type": "text", "text": "later"}]}),
+            json!({"sessionUpdate": "agent_message_chunk", "messageId": "shared",
+                "content": {"type": "text", "text": " historical"}}),
+            json!({"sessionUpdate": "agent_thought", "messageId": "shared",
+                "content": null, "_meta": null}),
+            json!({"sessionUpdate": "user_message", "messageId": "shared", "_meta": {}}),
+        ] {
+            harness.send(update, Some(v2_terminal_meta("later delivery")));
+        }
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, cx| {
+            let [
+                AgentThreadEntry::UserMessage(user),
+                AgentThreadEntry::AssistantMessage(assistant),
+                AgentThreadEntry::UserMessage(later),
+            ] = thread.entries()
+            else {
+                panic!("historical updates retain first-seen rows");
+            };
+            assert_eq!(user.content.source_blocks().len(), 3);
+            assert_eq!(user.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(later.content.to_markdown(cx), "later");
+            let [
+                AssistantMessageChunk::Message { block, meta, .. },
+                AssistantMessageChunk::Thought {
+                    block: thought,
+                    meta: thought_meta,
+                    ..
+                },
+            ] = assistant.chunks.as_slice()
+            else {
+                panic!("historical chunks retain their positions");
+            };
+            assert_eq!(
+                block.source_blocks(),
+                &["replacement".into(), " historical".into()]
+            );
+            assert_eq!(meta, &Some(v2_terminal_meta("assistant")));
+            assert!(thought.source_blocks().is_empty());
+            assert_eq!(thought_meta, &None);
+        });
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_message_sdk_routes_sessions_and_ignores_released_owners(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use acp_thread::AgentThreadEntry;
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let project = harness
+            .thread
+            .read_with(cx, |thread, _| thread.project().clone());
+        let child_id = acp_v2::SessionId::new("child-session");
+        let child = cx
+            .update(|cx| {
+                harness.connection.clone().load_session(
+                    child_id.clone(),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("register another session");
+        for (session_id, text) in [
+            ("v2-terminal-session", "main"),
+            ("child-session", "child"),
+            ("unknown-session", "ignored"),
+        ] {
+            harness.send_to(
+                session_id,
+                json!({"sessionUpdate": "user_message", "messageId": "shared",
+                    "content": [{"type": "text", "text": text}]}),
+                None,
+            );
+        }
+        harness.drain(cx).await;
+        for (thread, expected) in [(&harness.thread, "main"), (&child, "child")] {
+            thread.read_with(cx, |thread, cx| {
+                let [AgentThreadEntry::UserMessage(user)] = thread.entries() else {
+                    panic!("one message in the routed session");
+                };
+                assert_eq!(user.content.to_markdown(cx), expected);
+            });
+        }
+        assert_eq!(harness.connection.sessions.borrow().len(), 2);
+        let released = cx.update(|cx| {
+            harness
+                .connection
+                .release_session(child_id.clone(), child.downgrade(), cx);
+            harness
+                .connection
+                .pending_sessions
+                .borrow()
+                .get(&child_id)
+                .expect("closing session")
+                .task
+                .clone()
+        });
+        released
+            .await
+            .expect("close and drain the released session");
+        harness.send_to(
+            "child-session",
+            json!({"sessionUpdate": "user_message", "messageId": "shared",
+                "content": [{"type": "text", "text": "late replacement"}]}),
+            None,
+        );
+        harness.drain(cx).await;
+        assert!(!harness.connection.sessions.borrow().contains_key(&child_id));
+        child.read_with(cx, |thread, cx| {
+            let [AgentThreadEntry::UserMessage(user)] = thread.entries() else {
+                panic!("released owner's retained message");
+            };
+            assert_eq!(user.content.to_markdown(cx), "child");
+        });
+    }
+
+    #[gpui::test]
     async fn v2_terminal_sdk_snapshots_chunks_and_metadata(cx: &mut gpui::TestAppContext) {
-        let harness = V2TerminalHarness::new(cx).await;
+        let harness = V2SessionHarness::new(cx).await;
         harness
             .thread
             .update(cx, |thread, cx| {
@@ -3281,7 +3547,7 @@ mod tests {
 
     #[gpui::test]
     async fn v2_terminal_sdk_invalid_base64_is_atomic(cx: &mut gpui::TestAppContext) {
-        let harness = V2TerminalHarness::new(cx).await;
+        let harness = V2SessionHarness::new(cx).await;
         harness.send(
             serde_json::json!({
                 "sessionUpdate": "terminal_update", "terminalId": "terminal-1",
@@ -3399,14 +3665,16 @@ mod tests {
     async fn v2_terminal_sdk_falls_through_without_losing_unknown_fields(
         cx: &mut gpui::TestAppContext,
     ) {
-        let harness = V2TerminalHarness::new(cx).await;
+        let harness = V2SessionHarness::new(cx).await;
         let params = [
             serde_json::json!({
                 "sessionId": "v2-terminal-session", "_meta": {"scope": "known envelope"},
                 "futureOuter": {"preserve": [1, null, true]},
                 "update": {
-                    "sessionUpdate": "agent_message_chunk", "messageId": "message-1",
-                    "content": {"type": "text", "text": "not a terminal", "futureContent": 42},
+                    "sessionUpdate": "tool_call_update", "toolCallId": "tool-1",
+                    "content": [{"type": "content", "content": {
+                        "type": "text", "text": "not a terminal", "futureContent": 42
+                    }}],
                     "_meta": {"scope": "known update"}, "futureKnownField": {"nested": "keep"}
                 }
             }),
@@ -3418,6 +3686,10 @@ mod tests {
                     "payload": {"bytes": ["not", "base64!"], "nested": {"unknown": null}},
                     "_meta": {"scope": "other update"}
                 }
+            }),
+            serde_json::json!({
+                "sessionId": "v2-terminal-session",
+                "update": {"sessionUpdate": "state_update", "state": "running"}
             }),
         ];
         let mut expected = params
@@ -3450,6 +3722,12 @@ mod tests {
         let fallback = harness.fallback.lock().expect("fallback mutex");
         assert_eq!(*fallback, expected);
         assert!(harness.received.lock().expect("receive mutex").is_empty());
+        harness.thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.foreground_activity(),
+                acp_thread::ForegroundActivity::Idle
+            );
+        });
     }
 
     fn init_settings_test(cx: &mut gpui::TestAppContext) {
@@ -7512,6 +7790,24 @@ fn session_thread(
         .get(session_id)
         .map(|session| session.thread.clone())
         .ok_or_else(|| acp::Error::internal_error().data(format!("unknown session: {session_id}")))
+}
+
+fn handle_v2_message_notification(
+    notification: MessageNotification,
+    cx: &mut AsyncApp,
+    context: &ClientContext,
+) {
+    let thread = match session_thread(context, &notification.session_id) {
+        Ok(thread) => thread,
+        Err(error) => {
+            log::warn!("Received ACP v2 message for an unknown session: {error}");
+            return;
+        }
+    };
+    thread
+        .update(cx, |thread, cx| notification.apply(thread, cx))
+        .and_then(|result| result)
+        .log_err();
 }
 
 fn respond_err<T: JsonRpcResponse>(responder: Responder<T>, err: acp::Error) {
