@@ -4939,9 +4939,6 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     );
 }
 
-// A context server marked `remote` runs on the remote host, so Zed spawns it
-// through the transport's launcher. Consumers that already execute on that host
-// (ACP agents) need the command as the host runs it, without the launcher.
 #[gpui::test]
 async fn test_remote_context_server_spawns_wrapped_but_reports_native_command(
     cx: &mut TestAppContext,

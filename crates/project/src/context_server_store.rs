@@ -557,8 +557,9 @@ impl ContextServerStore {
         self.servers.get(id).map(ContextServerStatus::from_state)
     }
 
-    /// For a server running on a remote host, the command is the one that host
-    /// runs, not the launcher-wrapped command Zed spawns it with.
+    /// For a server running on a remote host, `command()` on the returned
+    /// configuration is the command that host runs it with. What Zed actually
+    /// spawns (the `wsl.exe`/`ssh`) is kept separately in `launcher`.
     pub fn configuration_for_server(
         &self,
         id: &ContextServerId,

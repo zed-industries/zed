@@ -725,8 +725,6 @@ pub(crate) struct McpServerForm {
     transport: McpTransport,
     /// `Some` when editing an existing server (used to remove the old entry on rename).
     original_id: Option<ContextServerId>,
-    /// Carried through from the existing settings entry. The form has no control
-    /// for it, so it is preserved rather than reset when the user saves.
     remote: bool,
     name: Entity<Editor>,
     command: Entity<Editor>,

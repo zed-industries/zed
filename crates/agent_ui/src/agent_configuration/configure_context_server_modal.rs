@@ -593,6 +593,21 @@ impl ConfigureContextServerModal {
         cx.notify();
     }
 
+    /// The store's merged view picks up servers configured in a worktree's
+    /// `.zed/settings.json`, but it is empty when no worktree is open. Falling
+    /// back to the global settings keeps a save from an empty window from
+    /// treating an existing user-settings entry as missing.
+    fn configured_settings<'a>(
+        &self,
+        id: &ContextServerId,
+        cx: &'a App,
+    ) -> Option<&'a ContextServerSettings> {
+        self.context_server_store
+            .read(cx)
+            .settings_for_server(id)
+            .or_else(|| ProjectSettings::get_global(cx).context_servers.get(&id.0))
+    }
+
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut Context<Self>) {
         if matches!(self.state, State::Waiting | State::Authenticating { .. }) {
             return;
@@ -613,18 +628,12 @@ impl ConfigureContextServerModal {
             }
         };
 
-        // Resolved settings, not `ProjectSettings::get_global`: a server can be
-        // configured in a worktree's `.zed/settings.json`, which only the store's
-        // merged view knows about.
-        let configured_remote = {
-            let store = self.context_server_store.read(cx);
-            configured_remote(
-                store.settings_for_server(&id),
-                self.original_server_id
-                    .as_ref()
-                    .and_then(|original_id| store.settings_for_server(original_id)),
-            )
-        };
+        let configured_remote = configured_remote(
+            self.configured_settings(&id, cx),
+            self.original_server_id
+                .as_ref()
+                .and_then(|original_id| self.configured_settings(original_id, cx)),
+        );
         if let Some(remote) = configured_remote {
             settings.set_remote(remote);
         }
@@ -670,8 +679,7 @@ impl ConfigureContextServerModal {
         })
         .detach();
 
-        let settings_changed =
-            self.context_server_store.read(cx).settings_for_server(&id) != Some(&settings);
+        let settings_changed = self.configured_settings(&id, cx) != Some(&settings);
 
         if settings_changed {
             // When we write the settings to the file, the context server will be restarted.
