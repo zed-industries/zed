@@ -1324,12 +1324,23 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 let has_border =
                                     track_color.is_some_and(|track_colors| track_colors.has_border);
 
+                                let inset = match axis {
+                                    ScrollbarAxis::Horizontal => Edges {
+                                        left: -SCROLLBAR_PADDING,
+                                        right: -SCROLLBAR_PADDING,
+                                        ..Default::default()
+                                    },
+                                    ScrollbarAxis::Vertical => Edges {
+                                        top: -SCROLLBAR_PADDING,
+                                        bottom: -SCROLLBAR_PADDING,
+                                        ..Default::default()
+                                    },
+                                };
+
                                 // Rounded style needs a bit of padding, whereas for editor scrollbars,
                                 // we want the full length of the track
                                 let thumb_container_bounds = match state.style {
-                                    ScrollbarStyle::Regular => {
-                                        scroll_track_bounds.dilate(-SCROLLBAR_PADDING)
-                                    }
+                                    ScrollbarStyle::Regular => scroll_track_bounds.extend(inset),
                                     ScrollbarStyle::Editor if has_border => scroll_track_bounds
                                         .extend(match axis {
                                             ScrollbarAxis::Horizontal => Edges {
@@ -1350,6 +1361,10 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                                 let thumb_offset = thumb_range.start * available_space;
                                 let thumb_end = thumb_range.end * available_space;
+                                let thumb_padding = match state.style {
+                                    ScrollbarStyle::Regular => SCROLLBAR_PADDING,
+                                    ScrollbarStyle::Editor => Pixels::ZERO,
+                                };
                                 let thumb_bounds = Bounds::new(
                                     thumb_container_bounds
                                         .origin
@@ -1358,6 +1373,18 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                         .size
                                         .apply_along(axis, |_| thumb_end - thumb_offset),
                                 );
+                                let thumb_bounds = match axis {
+                                    ScrollbarAxis::Horizontal => thumb_bounds.extend(Edges {
+                                        top: -thumb_padding,
+                                        bottom: -thumb_padding,
+                                        ..Default::default()
+                                    }),
+                                    ScrollbarAxis::Vertical => thumb_bounds.extend(Edges {
+                                        left: -thumb_padding,
+                                        right: -thumb_padding,
+                                        ..Default::default()
+                                    }),
+                                };
 
                                 let needs_scroll_track = reserved_space.needs_scroll_track();
 
