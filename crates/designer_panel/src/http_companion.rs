@@ -262,6 +262,16 @@ fn conflict_error(path: &Path, action_path: &[String]) -> String {
     )
 }
 
+/// Whether the flow file was modified after `companion`. `false` when either
+/// time can't be read, which leaves the companion as the latest source.
+fn flow_is_newer(flow_path: &Path, companion: &Path) -> bool {
+    let modified = |path: &Path| std::fs::metadata(path).and_then(|meta| meta.modified()).ok();
+    matches!(
+        (modified(flow_path), modified(companion)),
+        (Some(flow), Some(companion)) if flow > companion
+    )
+}
+
 fn sync_action_map(
     actions: &mut ActionMap,
     flow_path: &Path,
@@ -307,9 +317,15 @@ fn sync_action_map(
                     effective = file_body.to_string();
                     Sync::Hydrated
                 }
-                // No record for this action - the flow was loaded before any
-                // edit could be tracked, so a saved companion is the latest
-                // source.
+                // No record for this action - the flow was just opened, so
+                // nothing says which side moved. The file modified last is
+                // the edit to keep: a flow changed since its companion (in
+                // the raw JSON, or by a pull) wins over a stale companion.
+                (None, Some(_)) if flow_is_newer(flow_path, &path) => {
+                    write_companion(&path, &canonical_body(&body))?;
+                    Sync::Written
+                }
+                // Otherwise a saved companion is the latest source.
                 (None, Some(file_body)) => {
                     effective = file_body.to_string();
                     Sync::Hydrated
@@ -524,6 +540,65 @@ mod tests {
         assert_eq!(
             def.actions["call"].inputs[BODY_INPUT],
             serde_json::json!({"edited": true})
+        );
+    }
+
+    /// Opening a flow whose file is newer than a differing companion (the
+    /// body was edited in the raw JSON, or arrived in a pull) keeps the
+    /// flow's body instead of reverting it to the stale companion.
+    #[test]
+    fn a_newer_flow_file_wins_over_a_stale_companion_on_open() {
+        let dir = temp_dir();
+        let companion = dir.join("checkout.flow-http/call.body.json");
+        std::fs::create_dir_all(companion.parent().unwrap()).unwrap();
+        std::fs::write(&companion, r#"{"v":1}"#).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&companion)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        std::fs::write(flow_path(&dir), "{}").unwrap();
+
+        let mut def = definition(vec![("call", http_action(Some(r#"{"v":2}"#)))]);
+        let mut state = SyncState::default();
+
+        let report = sync_inline_bodies(&mut def, &flow_path(&dir), &mut state).unwrap();
+        assert_eq!(report, vec![("call".to_string(), Sync::Written)]);
+        assert_eq!(
+            def.actions["call"].inputs[BODY_INPUT],
+            serde_json::json!({"v": 2})
+        );
+        assert!(bodies_equivalent(
+            &std::fs::read_to_string(&companion).unwrap(),
+            r#"{"v":2}"#
+        ));
+    }
+
+    /// The other way round: a companion edited after the flow was last
+    /// written is the newer work, so it still hydrates.
+    #[test]
+    fn a_newer_companion_still_hydrates_on_open() {
+        let dir = temp_dir();
+        std::fs::write(flow_path(&dir), "{}").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(flow_path(&dir))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        let companion = dir.join("checkout.flow-http/call.body.json");
+        std::fs::create_dir_all(companion.parent().unwrap()).unwrap();
+        std::fs::write(&companion, r#"{"v":3}"#).unwrap();
+
+        let mut def = definition(vec![("call", http_action(Some(r#"{"v":2}"#)))]);
+        let mut state = SyncState::default();
+
+        let report = sync_inline_bodies(&mut def, &flow_path(&dir), &mut state).unwrap();
+        assert_eq!(report, vec![("call".to_string(), Sync::Hydrated)]);
+        assert_eq!(
+            def.actions["call"].inputs[BODY_INPUT],
+            serde_json::json!({"v": 3})
         );
     }
 

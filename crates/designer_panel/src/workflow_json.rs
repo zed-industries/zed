@@ -28,7 +28,7 @@ use gpui_flow::{FlowEdge, FlowNode, FlowState, HandleDef, HandlePosition};
 use serde_json::Value;
 use workflow_engine::{
     Action, ActionMap, Branch, FieldKind, InputField, JsonLogicExpr, Limit, RunOutcome,
-    ScriptRuntime, ScriptSource, WorkflowDefinition, WorkflowLayout,
+    WorkflowDefinition, WorkflowLayout,
 };
 
 use indexmap::IndexMap;
@@ -38,23 +38,15 @@ pub const BRANCH_ELSE: &str = "__branch_else";
 pub const BRANCH_TRY: &str = "__branch_try";
 pub const BRANCH_CATCH: &str = "__branch_catch";
 
-/// The code a freshly created inline script starts with. One line on
-/// purpose: the inspector's property row is a single-line input, so a
-/// multi-line default would render as one long line of escaped `\n`s.
-/// Real editing happens in the companion file ("Open Script").
-pub const DEFAULT_SCRIPT_CODE: &str = "print(\"hello from the designer\")";
-
 /// Returns default node properties when adding a new action of `type_id`.
+///
+/// A `script` gets none here: its `source` names a file created for that
+/// node, which takes the flow's path and the node's id to work out, so the
+/// panel sets it (`DesignerPanel::push_action_node`).
 pub fn default_properties_for_type(type_id: &str) -> Vec<(gpui::SharedString, gpui::SharedString)> {
     match type_id {
-        "script" => {
-            let default_source = ScriptSource::Inline {
-                runtime: ScriptRuntime::Python,
-                code: DEFAULT_SCRIPT_CODE.to_string(),
-            };
-            let source_json = serde_json::to_string(&default_source).unwrap_or_default();
-            vec![("source".into(), source_json.into())]
-        }
+        "http" => vec![("method".into(), "GET".into())],
+        "InitVariable" => vec![("type".into(), "string".into())],
         _ => Vec::new(),
     }
 }
@@ -62,8 +54,8 @@ pub fn default_properties_for_type(type_id: &str) -> Vec<(gpui::SharedString, gp
 pub const LEAF_SIZE: (f32, f32) = (172.0, 46.0);
 const Y_STEP: f32 = 130.0;
 const ROOT_X: f32 = 60.0;
-const CHILD_X: f32 = 20.0;
-const CHILD_Y0: f32 = 20.0;
+pub(crate) const CHILD_X: f32 = 20.0;
+pub(crate) const CHILD_Y0: f32 = 20.0;
 // ── Load: WorkflowDefinition -> FlowState ──────────────────────────────
 
 /// Build a `FlowState` from a parsed `flow.json`. Every action is expected
@@ -167,26 +159,21 @@ fn walk_actions(
                     );
                 }
             }
+            // Both wrappers are always created, whether or not the file has
+            // the branch: a wrapper is the only thing on the canvas an action
+            // can be dropped into, so a missing one could never be filled.
             "If" => {
-                if let Some(body) = &action.actions {
-                    push_branch(
-                        id,
-                        BRANCH_THEN,
-                        "True",
-                        CHILD_X,
-                        body,
-                        nodes,
-                        edges,
-                        edge_color,
-                        failed_edge_color,
-                    );
-                }
-                if let Some(Branch { actions: body }) = &action.else_branch {
-                    push_branch(
-                        id,
+                let branches = [
+                    (BRANCH_THEN, action.actions.as_ref()),
+                    (
                         BRANCH_ELSE,
-                        "False",
-                        CHILD_X + 260.0,
+                        action.else_branch.as_ref().map(|branch| &branch.actions),
+                    ),
+                ];
+                for (branch_type, body) in branches {
+                    push_branch(
+                        id,
+                        branch_type,
                         body,
                         nodes,
                         edges,
@@ -196,25 +183,17 @@ fn walk_actions(
                 }
             }
             "Try" => {
-                if let Some(body) = &action.actions {
-                    push_branch(
-                        id,
-                        BRANCH_TRY,
-                        "Try",
-                        CHILD_X,
-                        body,
-                        nodes,
-                        edges,
-                        edge_color,
-                        failed_edge_color,
-                    );
-                }
-                if let Some(Branch { actions: body }) = &action.catch {
-                    push_branch(
-                        id,
+                let branches = [
+                    (BRANCH_TRY, action.actions.as_ref()),
+                    (
                         BRANCH_CATCH,
-                        "Catch",
-                        CHILD_X + 260.0,
+                        action.catch.as_ref().map(|branch| &branch.actions),
+                    ),
+                ];
+                for (branch_type, body) in branches {
+                    push_branch(
+                        id,
+                        branch_type,
                         body,
                         nodes,
                         edges,
@@ -228,24 +207,67 @@ fn walk_actions(
     }
 }
 
+/// Marks a branch wrapper whose branch exists in the flow file, as opposed to
+/// one created only to give the canvas somewhere to drop actions.
+///
+/// [`save`] needs the difference for an empty branch. An empty `catch` that
+/// was written on purpose swallows the failure, while no `catch` lets the
+/// `Try` fail, so save must not invent one or drop one.
+const BRANCH_DECLARED: &str = "__declared";
+
+/// The two branch wrapper types an `If` or `Try` owns, or `None` for any
+/// other action type. The first is the body (`actions`), the second the
+/// alternative (`else`/`catch`).
+pub fn branch_types(type_id: &str) -> Option<[&'static str; 2]> {
+    match type_id {
+        "If" => Some([BRANCH_THEN, BRANCH_ELSE]),
+        "Try" => Some([BRANCH_TRY, BRANCH_CATCH]),
+        _ => None,
+    }
+}
+
+/// The synthetic wrapper node for one branch of `owner_id`. `declared` is
+/// whether the flow file has the branch (see [`BRANCH_DECLARED`]).
+///
+/// Not deletable: it has no `Action` of its own, so removing it could only
+/// orphan the real actions inside it.
+pub fn branch_node(owner_id: &str, branch_type: &'static str, declared: bool) -> FlowNode {
+    let (label, x) = match branch_type {
+        BRANCH_THEN => ("True", CHILD_X),
+        BRANCH_ELSE => ("False", CHILD_X + 260.0),
+        BRANCH_TRY => ("Try", CHILD_X),
+        _ => ("Catch", CHILD_X + 260.0),
+    };
+    let mut node = FlowNode::new(format!("{owner_id}{branch_type}"), x, CHILD_Y0)
+        .node_type(branch_type)
+        .label(label)
+        .parent(owner_id.to_string())
+        // So Add Action from a right-click on the branch targets the branch.
+        .context_menu(true)
+        .handles(vec![HandleDef::source(HandlePosition::Bottom)]);
+    node.deletable = false;
+    if declared {
+        node.properties
+            .push((BRANCH_DECLARED.into(), "true".into()));
+    }
+    node
+}
+
 fn push_branch(
     owner_id: &str,
     branch_type: &'static str,
-    label: &'static str,
-    x: f32,
-    body: &ActionMap,
+    body: Option<&ActionMap>,
     nodes: &mut Vec<FlowNode>,
     edges: &mut Vec<FlowEdge>,
     edge_color: u32,
     failed_edge_color: u32,
 ) {
-    let branch_id = format!("{owner_id}{branch_type}");
-    let node = FlowNode::new(branch_id.clone(), x, CHILD_Y0)
-        .node_type(branch_type)
-        .label(label)
-        .parent(owner_id.to_string())
-        .handles(vec![HandleDef::source(HandlePosition::Bottom)]);
+    let node = branch_node(owner_id, branch_type, body.is_some());
+    let branch_id = node.id.to_string();
     nodes.push(node);
+    let Some(body) = body else {
+        return;
+    };
     let mut y = CHILD_Y0;
     walk_actions(
         body,
@@ -257,6 +279,20 @@ fn push_branch(
         edge_color,
         failed_edge_color,
     );
+}
+
+/// Whether the branch behind the wrapper `wrapper_id` should be written: it
+/// was in the file, or it has gained actions since.
+fn branch_is_written(state: &FlowState, wrapper_id: &str) -> bool {
+    let wrapper_id: gpui_flow::NodeId = wrapper_id.to_string().into();
+    let Some(wrapper) = state.get_node(&wrapper_id) else {
+        return false;
+    };
+    wrapper
+        .properties
+        .iter()
+        .any(|(key, _)| key.as_ref() == BRANCH_DECLARED)
+        || state.is_container(&wrapper_id)
 }
 
 /// Flatten `Action.inputs` plus the four struct-level fields that have no
@@ -493,7 +529,7 @@ fn build_actions_map(
                     &then_prefix,
                     positions,
                 ));
-                if state.get_node(&else_id.clone().into()).is_some() {
+                if branch_is_written(state, &else_id) {
                     let else_prefix = format!("{path_prefix}{id}/else/");
                     action.else_branch = Some(Branch {
                         actions: build_actions_map(state, Some(&else_id), &else_prefix, positions),
@@ -510,7 +546,7 @@ fn build_actions_map(
                     &try_prefix,
                     positions,
                 ));
-                if state.get_node(&catch_id.clone().into()).is_some() {
+                if branch_is_written(state, &catch_id) {
                     let catch_prefix = format!("{path_prefix}{id}/catch/");
                     action.catch = Some(Branch {
                         actions: build_actions_map(
@@ -593,6 +629,14 @@ fn unflatten_action_meta(
             "__limit_timeout" => limit_timeout = Some(v.to_string()),
             "__expression" => expression = Some(meta_to_value(type_id, k.as_ref(), v)),
             key => {
+                // A declared optional input left blank means "not used". The
+                // inspector can hold an empty row for one, and writing it out
+                // would send it: an empty `body` goes over the wire as `""`.
+                if v.trim().is_empty()
+                    && declared_field(type_id, key).is_some_and(|field| !field.required)
+                {
+                    continue;
+                }
                 inputs.insert(key.to_string(), input_to_value(type_id, key, v));
             }
         }
@@ -897,6 +941,19 @@ mod tests {
     /// best-effort JSON-or-text basis. Pinned so the fallback is a deliberate
     /// choice rather than drift.
     #[test]
+    fn a_blank_optional_input_is_not_written() {
+        let props: Vec<(gpui::SharedString, gpui::SharedString)> = vec![
+            ("method".into(), "GET".into()),
+            ("url".into(), "".into()),
+            ("body".into(), "  ".into()),
+        ];
+        let (inputs, ..) = unflatten_action_meta("http", &props);
+        assert!(!inputs.contains_key("body"), "blank optional is omitted");
+        // A blank *required* input stays, so validation can report it.
+        assert!(inputs.contains_key("url"));
+    }
+
+    #[test]
     fn undeclared_input_keys_round_trip() {
         let def: WorkflowDefinition = serde_json::from_str(
             r#"{
@@ -974,6 +1031,70 @@ mod tests {
         // No wrapper leaked into the saved actions map at any nesting level.
         assert!(!saved.actions.contains_key(BRANCH_THEN));
         assert_eq!(saved.actions.len(), 1);
+    }
+
+    /// A branch the file doesn't have still gets a wrapper to drop actions
+    /// into, but saving it empty must not invent the branch: an empty `catch`
+    /// would turn a `Try` that fails into one that swallows the failure.
+    #[test]
+    fn an_absent_branch_gets_a_wrapper_but_is_not_written_while_empty() {
+        let def: WorkflowDefinition = serde_json::from_str(
+            r#"{
+              "id": "f", "name": "F",
+              "actions": {
+                "cond": { "type": "If", "expression": {"var": "x"}, "actions": {} },
+                "guard": { "type": "Try", "actions": {} }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let mut state = load(&def, 0x808080, 0xff0000);
+        for wrapper in [
+            format!("cond{BRANCH_ELSE}"),
+            format!("guard{BRANCH_CATCH}"),
+        ] {
+            let node = state.get_node(&wrapper.clone().into()).expect("wrapper");
+            assert!(!node.deletable, "{wrapper} must not be deletable");
+        }
+
+        let (saved, _) = save(&state, "f", "F", &FlowPreserved::default());
+        assert!(saved.actions["cond"].else_branch.is_none());
+        assert!(saved.actions["guard"].catch.is_none());
+
+        // Dropping an action into the wrapper is what creates the branch.
+        state.nodes.push(
+            FlowNode::new("recover", 0.0, 0.0)
+                .node_type("log")
+                .parent(format!("guard{BRANCH_CATCH}")),
+        );
+        state.rebuild_lookup();
+        let (saved, _) = save(&state, "f", "F", &FlowPreserved::default());
+        assert!(
+            saved.actions["guard"]
+                .catch
+                .as_ref()
+                .unwrap()
+                .actions
+                .contains_key("recover")
+        );
+    }
+
+    /// An empty branch that *is* in the file stays in the file.
+    #[test]
+    fn a_declared_empty_branch_round_trips() {
+        let def: WorkflowDefinition = serde_json::from_str(
+            r#"{
+              "id": "f", "name": "F",
+              "actions": {
+                "guard": { "type": "Try", "actions": {}, "catch": { "actions": {} } }
+              }
+            }"#,
+        )
+        .unwrap();
+        let state = load(&def, 0x808080, 0xff0000);
+        let (saved, _) = save(&state, "f", "F", &FlowPreserved::default());
+        assert!(saved.actions["guard"].catch.as_ref().unwrap().actions.is_empty());
     }
 
     #[test]

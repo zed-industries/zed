@@ -35,13 +35,29 @@ banner inside it.
 
 Three ways, all drawing on the same registry:
 
-- Click a catalog row (or press Enter on it) — the action is added near the
-  selected node, or near the centre of the canvas.
-- Drag a catalog row onto the canvas to place it exactly.
-- Right-click the canvas and choose **Add Action**.
+- Click a catalog row (or press Enter on it) — the action is added as the
+  next step after the selected action, or near the centre of the canvas when
+  nothing is selected. With a loop, a branch, or an If/Try selected, it goes
+  inside it, after the body's last action.
+- Drag a catalog row onto the canvas to place it exactly. Dropping onto a
+  loop or a branch puts the action inside it; dropping onto an If or Try
+  puts it in the True or Try branch.
+- Right-click the canvas and choose **Add Action**. On an action it adds the
+  next step; on a container or branch it adds inside it.
 
-Actions that have no executor yet (DB Migration, AI Check) are listed but
-disabled.
+To put an action between two that are already connected, hover the
+connection: a **+** appears at its middle. Click it and pick an action. The
+new action takes over the connection, and the one below it moves down, with
+everything after it, to make room.
+
+A connection means "run this after that succeeded". To change that, click
+the connection: the inspector offers **Succeeded**, **Failed** (an error
+path) and **Either**, and can delete it.
+
+An action registered without an executor is listed but disabled. None are
+right now: Send Email, DB Migration and AI Check are parked as future
+features and do not appear in the catalog (see
+[`workflow_engine`](../workflow_engine/README.md#future-features)).
 
 ### Toolbar
 
@@ -55,29 +71,93 @@ disabled.
 | Clear results | Clear run results and status colours from the canvas |
 | Issues badge | Show what is blocking Run |
 
+A flow with unsaved edits shows the usual unsaved marker on its tab, saves
+with the workspace save keybinding as well as the Save button, and asks
+before closing. If the file changes on disk while there are unsaved edits,
+the change is not loaded over them: a banner offers **Reload from disk**, and
+saving keeps your edits instead.
+
 Incomplete flows can be saved as drafts. Validation problems are shown on the
 affected nodes and in the inspector, and only Run is blocked.
 
 ### Editing an action
 
 Select a node to edit its properties in the inspector. **Delete Node**
-removes it. Two input kinds get a real editor rather than a text field:
+removes it.
 
-- **Scripts** — choose **Inline** or **File**.
-  - Inline code is kept in a companion file at
-    `<flow>.flow-scripts/<action-id>.<ext>`, so it gets full language-server
-    support. **Open Script** opens it.
-  - File mode runs an existing workspace file directly.
+Required inputs always have a row. Optional ones are listed under **Add an
+optional input** until you add them, and each has a remove button once
+added. An optional input left blank is not written to the file. An input
+with a fixed set of values, such as an HTTP method, is a dropdown.
+
+Under an expression field, **Insert a reference** lists the outputs of the
+actions that run before the selected one. After a run, **From the last run**
+adds what those actions actually returned, to any depth: the fields inside an
+HTTP response, the keys a script printed, and inside a Foreach the fields of
+one `$item`. They are observations of one run, so a different response can
+be shaped differently, and editing an action drops the samples for it and
+everything after it until the next run.
+
+Two input kinds get a real editor rather than a text field:
+
+- **Scripts** — a script action runs a file.
+  - Adding a Script creates one for it at
+    `<flow>.flow-scripts/<action-id>.py`, from a template that already reads
+    its input and prints a result. **Create a script file** does the same
+    for Python, Node (`.mjs`), PowerShell or Bash; a file that is already
+    there is reused, never overwritten.
+  - **File Path** can point at any other file in the project instead. The
+    runtime comes from the extension, or from the **Runtime** override.
+  - **Open Script** opens the file in an editor tab, with full
+    language-server support.
+  - A script reads the run through a small helper in the same folder, and
+    ends by handing back its result:
+
+    ```js
+    import { variables, item, args, actions, output } from "./forge.mjs";
+    output({ count: variables.ids.length });
+    ```
+
+    | Language | Helper | Use |
+    | --- | --- | --- |
+    | Node (modules) | `forge.mjs` | `import { variables } from "./forge.mjs"` |
+    | Node (`require`) | `forge.cjs` | `const { variables } = require("./forge.cjs")` |
+    | Python | `forge.py` | `from forge import variables` |
+    | PowerShell | `forge.ps1` | `. "$PSScriptRoot/forge.ps1"`, then `$Variables` |
+
+    `variables` is the flow's variables, `item` the current Foreach item,
+    `args` this action's `args` (or `argsExpression` result), and `actions`
+    the outputs of the actions that have finished, by id. The helpers and
+    the type declarations beside them (`forge.d.mts`, `forge.d.cts`) are
+    generated: they are written when a script is created and refreshed on
+    save and run, and the types follow the flow's variables and its last
+    run. Don't edit them. Bash has no helper.
+  - Without the helper, `args` also still arrives as JSON on standard input,
+    and the JSON object a script prints last becomes its outputs.
+  - Inline code is no longer created or edited. A flow that still has some
+    is converted when it is opened: each inline script's code is written to
+    its file and the action refers to that file from then on. The flow file
+    itself changes on the next save.
 - **HTTP bodies** — **Edit Body** opens the request body as a JSON file at
-  `<flow>.flow-http/<action-id>.body.json`, with JSON validation.
+  `<flow>.flow-http/<action-id>.body.json`, with JSON validation. A request
+  with no body yet gets an empty `{}` one.
 
-Both companions are synchronised with the flow in both directions, and are
-ordinary files you can commit.
+A request body is synchronised with the flow in both directions. Script
+files and body files are ordinary files you can commit, and a flow needs its
+`.flow-scripts` folder alongside it to run.
 
 ### Running
 
 While a flow runs, nodes are coloured by status and a log pane shows
-progress. **Results** opens a read-only Run Results tab for the most recent
+progress. Selecting a node shows its result in the inspector.
+
+A Foreach body runs once per item, so an action inside one has a result per
+iteration. The inspector shows a pager for the loop, `For each · <loop>
+‹ 2 / 12 ›`, with the item that iteration ran for, and the result shown
+below is that iteration's. Stepping the pager changes the iteration for
+every action in the loop's body. On the canvas, a body action's colour is
+its most recent iteration's, and the log marks each line with its iteration
+(`Charge [2/12]`). **Results** opens a read-only Run Results tab for the most recent
 run. It keeps updating even if the Designer tab that started the run is
 closed.
 
@@ -87,7 +167,7 @@ closed.
 | --- | --- |
 | `<name>.flow.json` | The workflow itself |
 | `<name>.flow.layout.json` | Node positions |
-| `<name>.flow-scripts/` | Inline script companions |
+| `<name>.flow-scripts/` | Script files |
 | `<name>.flow-http/` | HTTP body companions |
 
 Node positions never go into `.flow.json`, so moving a node does not show up
@@ -144,7 +224,13 @@ canvas.
   on one action in JSON, but need two container nodes on the canvas.
   `workflow_json::load` synthesises wrapper nodes with reserved types
   (`__branch_then`, `__branch_else`, `__branch_try`, `__branch_catch`) and
-  `save` unwraps them again. They are never written to the file.
+  `save` unwraps them again. They are never written to the file. Both
+  wrappers always exist, so there is somewhere to drop an action into a
+  branch the file doesn't have yet; an empty one is only written back if the
+  file already had it, because an empty `catch` changes what a `Try` does.
+- **Deleting a container deletes its body.** The canvas's Delete key removes
+  only the selected node, so the Designer removes whatever that leaves
+  without a parent. Undo restores all of it.
 - **Run status crosses threads.** The engine's status callback fires off the
   UI thread, so it fills an `Arc<Mutex<RunState>>` that the Designer and Run
   Results tabs poll about ten times a second.

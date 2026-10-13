@@ -37,6 +37,195 @@ pub fn companion_path(
     Ok(directory.join(format!("{}.{extension}", companion_component(action_id))))
 }
 
+/// `path` as a script action stores it: relative to the project `root` with
+/// forward slashes, which is how the executor resolves a `File` source. A
+/// path outside `root` is kept absolute, which the executor also accepts.
+pub fn root_relative(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// The extension a new script file for `runtime` is created with.
+///
+/// The same as [`ScriptRuntime::extension`] except for Node, which gets
+/// `.mjs`: a module file runs the same on every Node version without a
+/// `package.json`, where `import` in a plain `.js` file depends on both.
+pub fn new_file_extension(runtime: ScriptRuntime) -> &'static str {
+    match runtime {
+        ScriptRuntime::Node => "mjs",
+        other => other.extension(),
+    }
+}
+
+/// What a newly created script file for `runtime` starts with: a script that
+/// reads its input and ends by printing a JSON object, which is the contract
+/// the executor holds every script to. A file that only printed a greeting
+/// would fail its first run.
+pub fn script_template(runtime: ScriptRuntime) -> &'static str {
+    match runtime {
+        // These three read the run through the helper beside them (see
+        // `script_helpers`), which is why a new script file is only ever
+        // created in the flow's scripts folder, where the helpers are.
+        ScriptRuntime::Python => {
+            "from forge import variables, item, args, actions, output\n\n\
+             # variables: the flow's variables      item: the current Foreach item\n\
+             # args: this action's args             actions: earlier actions' outputs, by id\n\n\
+             # Call output() once, last: what it prints becomes this action's outputs.\n\
+             output({\"ok\": True})\n"
+        }
+        ScriptRuntime::Node => {
+            "import { variables, item, args, actions, output } from \"./forge.mjs\";\n\n\
+             // variables: the flow's variables      item: the current Foreach item\n\
+             // args: this action's args             actions: earlier actions' outputs, by id\n\n\
+             // Call output() once, last: what it prints becomes this action's outputs.\n\
+             output({ ok: true });\n"
+        }
+        ScriptRuntime::Powershell => {
+            ". \"$PSScriptRoot/forge.ps1\"\n\n\
+             # $Variables: the flow's variables      $Item: the current Foreach item\n\
+             # $InputArgs: this action's args        $Actions: earlier actions' outputs, by id\n\n\
+             # Call Write-ForgeOutput once, last: what it prints becomes this action's outputs.\n\
+             Write-ForgeOutput @{ ok = $true }\n"
+        }
+        ScriptRuntime::Bash => {
+            "#!/usr/bin/env bash\n\
+             # The action's args (or argsExpression result) arrive as JSON on stdin.\n\
+             data=\"$(cat)\"\n\n\
+             # The last line printed must be a JSON object: it becomes the action's outputs.\n\
+             echo '{\"ok\": true}'\n"
+        }
+        // A .NET script is a project, not a file this can write a body for.
+        ScriptRuntime::Dotnet => "",
+    }
+}
+
+/// Where a new script file for the canvas node `node_id` goes: straight
+/// inside the flow's `.flow-scripts` folder. Node ids are unique across the
+/// canvas, so no scope folders are needed to keep two apart.
+pub fn new_script_path(
+    flow_path: &Path,
+    node_id: &str,
+    runtime: ScriptRuntime,
+) -> Result<PathBuf, String> {
+    let mut path = companion_path(flow_path, &[node_id.to_string()], runtime)?;
+    path.set_extension(new_file_extension(runtime));
+    Ok(path)
+}
+
+/// The flow's scripts folder: `<flow>.flow-scripts`, beside the flow file.
+pub fn scripts_dir(flow_path: &Path) -> Result<PathBuf, String> {
+    let any_script = new_script_path(flow_path, "script", ScriptRuntime::Python)?;
+    any_script
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("{} has no parent directory", any_script.display()))
+}
+
+/// Creates the script file at `path` from `runtime`'s template unless a file
+/// is already there, which is left exactly as it is.
+pub fn ensure_script_file(path: &Path, runtime: ScriptRuntime) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    write_companion(path, script_template(runtime))
+}
+
+/// Turns every inline script in `definition` into a `File` source pointing
+/// at its companion, and returns how many it changed.
+///
+/// Scripts are edited and run as files; inline code is only still read so
+/// that a flow written before that can be opened. Call this after
+/// [`sync_inline_scripts`], which is what guarantees each companion exists
+/// and holds the script's latest code. An inline script whose companion is
+/// missing is left alone rather than pointed at a file that isn't there.
+pub fn convert_inline_to_file(
+    definition: &mut WorkflowDefinition,
+    flow_path: &Path,
+    root: &Path,
+) -> Result<usize, String> {
+    let mut converted = 0;
+    convert_action_map(
+        &mut definition.actions,
+        flow_path,
+        root,
+        &mut Vec::new(),
+        &mut converted,
+    )?;
+    Ok(converted)
+}
+
+fn convert_action_map(
+    actions: &mut ActionMap,
+    flow_path: &Path,
+    root: &Path,
+    action_path: &mut Vec<String>,
+    converted: &mut usize,
+) -> Result<(), String> {
+    for (id, action) in actions {
+        action_path.push(id.clone());
+        if action.type_id == "script"
+            && let Some(source_value) = action.inputs.get_mut("source")
+            && let Ok(ScriptSource::Inline { runtime, .. }) =
+                serde_json::from_value::<ScriptSource>(source_value.clone())
+            // Inline .NET was never runnable, so there is no file to point at.
+            && runtime != ScriptRuntime::Dotnet
+        {
+            let path = companion_path(flow_path, action_path, runtime)?;
+            if path.is_file() {
+                *source_value = serde_json::to_value(ScriptSource::File {
+                    path: root_relative(&path, root),
+                    // The companion's extension is the runtime's own, so the
+                    // executor infers the same runtime the inline code named.
+                    runtime: None,
+                })
+                .map_err(|error| format!("couldn't serialize script source: {error}"))?;
+                *converted += 1;
+            }
+        }
+
+        // The same scope names `sync_action_map` gives each nested body, so
+        // the companion path computed here is the one it wrote.
+        let mut scopes: Vec<(Option<&str>, &mut ActionMap)> = Vec::new();
+        match action.type_id.as_str() {
+            "Foreach" | "Until" => {
+                if let Some(body) = &mut action.actions {
+                    scopes.push((None, body));
+                }
+            }
+            "If" => {
+                if let Some(body) = &mut action.actions {
+                    scopes.push((Some("then"), body));
+                }
+                if let Some(branch) = &mut action.else_branch {
+                    scopes.push((Some("else"), &mut branch.actions));
+                }
+            }
+            "Try" => {
+                if let Some(body) = &mut action.actions {
+                    scopes.push((Some("try"), body));
+                }
+                if let Some(branch) = &mut action.catch {
+                    scopes.push((Some("catch"), &mut branch.actions));
+                }
+            }
+            _ => {}
+        }
+        for (scope, body) in scopes {
+            if let Some(scope) = scope {
+                action_path.push(scope.to_string());
+            }
+            convert_action_map(body, flow_path, root, action_path, converted)?;
+            if scope.is_some() {
+                action_path.pop();
+            }
+        }
+        action_path.pop();
+    }
+    Ok(())
+}
+
 pub fn action_path_for_node(
     definition: &WorkflowDefinition,
     state: &FlowState,
@@ -108,7 +297,7 @@ pub fn action_key(action_path: &[String]) -> String {
 /// winner unconditionally and one of the two edits dies. With it, the only
 /// ambiguous case is *both* sides changing, which [`sync_inline_scripts`]
 /// refuses instead of guessing.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SyncState {
     last_synced: HashMap<String, String>,
 }
@@ -567,6 +756,108 @@ mod tests {
             name: "Sample".to_string(),
             actions,
             outputs: Default::default(),
+        }
+    }
+
+    fn file_source(action: &Action) -> Option<(String, Option<ScriptRuntime>)> {
+        match serde_json::from_value(action.inputs["source"].clone()).unwrap() {
+            ScriptSource::File { path, runtime } => Some((path, runtime)),
+            ScriptSource::Inline { .. } => None,
+        }
+    }
+
+    /// Opening an older flow moves every inline script to a file reference:
+    /// the companion the sync wrote, by a project-relative path, at every
+    /// nesting level, with the code intact.
+    #[test]
+    fn inline_scripts_become_references_to_their_companions() {
+        let root = temp_dir();
+        let flow = root.join("flows").join("sample.flow.json");
+        let mut definition = definition();
+        sync_inline_scripts(&mut definition, &flow, &mut SyncState::default()).unwrap();
+
+        let converted = convert_inline_to_file(&mut definition, &flow, &root).unwrap();
+        assert_eq!(converted, 3);
+
+        let (path, runtime) = file_source(&definition.actions["same-id"]).unwrap();
+        assert_eq!(path, "flows/sample.flow-scripts/same-id.py");
+        // The `.py` companion already says which runtime it is.
+        assert_eq!(runtime, None);
+        assert_eq!(
+            std::fs::read_to_string(root.join(&path)).unwrap(),
+            "root original"
+        );
+
+        let condition = &definition.actions["condition"];
+        let (then_path, _) =
+            file_source(&condition.actions.as_ref().unwrap()["same-id"]).unwrap();
+        let (else_path, _) =
+            file_source(&condition.else_branch.as_ref().unwrap().actions["same-id"]).unwrap();
+        assert_eq!(
+            then_path,
+            "flows/sample.flow-scripts/condition/then/same-id.py"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(&else_path)).unwrap(),
+            "else original"
+        );
+
+        // Nothing left to convert, and a second pass changes nothing.
+        assert_eq!(
+            convert_inline_to_file(&mut definition, &flow, &root).unwrap(),
+            0
+        );
+    }
+
+    /// An inline script with no companion on disk keeps its code rather than
+    /// being pointed at a file that isn't there.
+    #[test]
+    fn an_inline_script_without_a_companion_is_left_alone() {
+        let root = temp_dir();
+        let flow = root.join("sample.flow.json");
+        let mut definition = definition();
+        assert_eq!(
+            convert_inline_to_file(&mut definition, &flow, &root).unwrap(),
+            0
+        );
+        assert!(file_source(&definition.actions["same-id"]).is_none());
+    }
+
+    /// A new script file runs as created: every template ends by printing a
+    /// JSON object, and an existing file is never overwritten.
+    #[test]
+    fn a_new_script_file_starts_from_a_template_and_is_never_overwritten() {
+        let root = temp_dir();
+        let flow = root.join("sample.flow.json");
+
+        let python = new_script_path(&flow, "script-1", ScriptRuntime::Python).unwrap();
+        assert_eq!(python, root.join("sample.flow-scripts").join("script-1.py"));
+        // Node scripts are module files, which the executor still reads as Node.
+        let node = new_script_path(&flow, "script-1", ScriptRuntime::Node).unwrap();
+        assert_eq!(node, root.join("sample.flow-scripts").join("script-1.mjs"));
+        assert_eq!(ScriptRuntime::from_path(&node), Some(ScriptRuntime::Node));
+
+        ensure_script_file(&python, ScriptRuntime::Python).unwrap();
+        let created = std::fs::read_to_string(&python).unwrap();
+        assert_eq!(created, script_template(ScriptRuntime::Python));
+
+        std::fs::write(&python, "print('mine')").unwrap();
+        ensure_script_file(&python, ScriptRuntime::Python).unwrap();
+        assert_eq!(std::fs::read_to_string(&python).unwrap(), "print('mine')");
+
+        for runtime in [
+            ScriptRuntime::Python,
+            ScriptRuntime::Node,
+            ScriptRuntime::Powershell,
+            ScriptRuntime::Bash,
+        ] {
+            let template = script_template(runtime);
+            assert!(template.contains("ok"), "{runtime:?} prints an object");
+            assert!(template.ends_with('\n'));
+            // Bash has no helper; the rest read the run through theirs.
+            if runtime != ScriptRuntime::Bash {
+                assert!(template.contains("forge"), "{runtime:?} uses its helper");
+            }
         }
     }
 

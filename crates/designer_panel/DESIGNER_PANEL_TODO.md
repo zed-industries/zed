@@ -42,6 +42,23 @@ complete until its acceptance criteria are met.
   runtime/path, `runAfter` references, and actions without executors. Save is
   still allowed for drafts; Run is blocked until blocking errors are fixed.
 
+### Changed since: scripts are file-only
+
+The Inline/File requirements above are superseded. A script action runs a
+file; the Designer no longer creates or edits inline code, and has no
+Inline/File switch. Keeping the code in two places (the flow and a companion)
+needed a two-way sync with conflict rules, and inline code ran from a
+temporary copy, where relative imports and installed packages can't be found.
+
+- A new Script gets its own file in `<flow>.flow-scripts/`, from a template.
+- A flow that still has inline code is converted when opened: the code goes
+  to its companion file and the action refers to that file.
+- The engine still runs inline code, so a flow that hasn't been opened in the
+  Designer, or is run from the Flows panel, keeps working. That support can
+  be removed in a later version.
+- Script paths are relative to the project root, as before. Moving a flow
+  means moving its `.flow-scripts` folder and updating those paths.
+
 ## Phases
 
 ### Phase 1 findings
@@ -130,6 +147,9 @@ Initial source trace:
 - [x] Support drag-and-drop from the catalog to a canvas position.
 - [x] Preserve right-click quick-add and keep it consistent with the catalog.
 - [x] Show DB Migration and AI Check as disabled with a not-ready explanation.
+  - **Changed since:** both, and Send Email, are now parked as future
+    features — commented out of the registry, so they are not listed at all.
+    The disabled-row behaviour remains for any `runnable: false` entry.
 - [x] Check narrow-window behavior, pane resizing, keyboard navigation, and
   accessibility.
   - Code-level only: panes use the standard `resizable_panel` sizing (which

@@ -54,6 +54,10 @@ pub const GROUP_ORDER: [CatalogGroup; 5] = [
 /// explanation for the same action.
 pub fn not_ready_reason(type_id: &str) -> String {
     match type_id {
+        // FUTURE FEATURE — neither type is registered right now (see
+        // `workflow_engine::registry::REGISTRY`), so these two arms are
+        // unreachable. They are kept for when the entries come back as
+        // `runnable: false`.
         "DbMigration" => {
             "DB Migration isn't wired to an executor yet — the action is registered and \
              validated, but running it is blocked until a database executor lands."
@@ -592,43 +596,65 @@ mod tests {
                 }
             }
         }
-        // Guard against the test passing vacuously if the registry ever loses
-        // its stubs, or gains them back.
-        assert!(not_ready > 0, "expected some not-ready rows");
+        // FUTURE FEATURE — the registry has no stubs while `DbMigration` and
+        // `AiCheck` are parked, so the not-ready half of this test is
+        // vacuous. Restore the guard when a `runnable: false` entry returns.
+        //
+        // assert!(not_ready > 0, "expected some not-ready rows");
+        let _ = not_ready;
         assert!(runnable > 0, "expected some runnable rows");
     }
 
-    /// The two actions Phase 3 calls out by name are the ones that must stay
-    /// visible-and-disabled, so pin them explicitly rather than relying on
-    /// "some stub exists".
+    // FUTURE FEATURE — `DbMigration` and `AiCheck` are parked in
+    // `workflow_engine::registry::REGISTRY`, so they are no longer listed at
+    // all. Restore this test with the entries.
+    //
+    // /// The two actions Phase 3 calls out by name are the ones that must stay
+    // /// visible-and-disabled, so pin them explicitly rather than relying on
+    // /// "some stub exists".
+    // #[test]
+    // fn db_migration_and_ai_check_are_listed_but_not_addable() {
+    //     for (type_id, label) in [("DbMigration", "DB Migration"), ("AiCheck", "AI Check")] {
+    //         let delegate = CatalogDelegate::new();
+    //         let (section_ix, row_ix) = delegate
+    //             .shown
+    //             .iter()
+    //             .enumerate()
+    //             .find_map(|(section_ix, section)| {
+    //                 section
+    //                     .entries
+    //                     .iter()
+    //                     .position(|entry| entry.type_id == type_id)
+    //                     .map(|row_ix| (section_ix, row_ix))
+    //             })
+    //             .unwrap_or_else(|| panic!("{type_id} should be listed in the catalog"));
+    //         let ix = IndexPath::new(row_ix).section(section_ix);
+    //         let entry = delegate.entry_at(ix).expect("listed");
+    //         // Pin the display name too: the requirement names the actions by
+    //         // their labels, and a label drift should fail here rather than
+    //         // silently make this test vacuous.
+    //         assert_eq!(entry.label.as_ref(), label);
+    //         assert_eq!(
+    //             delegate.addable_type_id(ix),
+    //             None,
+    //             "{type_id} is not addable"
+    //         );
+    //         assert!(!not_ready_reason(type_id).is_empty());
+    //     }
+    // }
+
     #[test]
-    fn db_migration_and_ai_check_are_listed_but_not_addable() {
-        for (type_id, label) in [("DbMigration", "DB Migration"), ("AiCheck", "AI Check")] {
-            let delegate = CatalogDelegate::new();
-            let (section_ix, row_ix) = delegate
-                .shown
-                .iter()
-                .enumerate()
-                .find_map(|(section_ix, section)| {
-                    section
-                        .entries
-                        .iter()
-                        .position(|entry| entry.type_id == type_id)
-                        .map(|row_ix| (section_ix, row_ix))
-                })
-                .unwrap_or_else(|| panic!("{type_id} should be listed in the catalog"));
-            let ix = IndexPath::new(row_ix).section(section_ix);
-            let entry = delegate.entry_at(ix).expect("listed");
-            // Pin the display name too: the requirement names the actions by
-            // their labels, and a label drift should fail here rather than
-            // silently make this test vacuous.
-            assert_eq!(entry.label.as_ref(), label);
-            assert_eq!(
-                delegate.addable_type_id(ix),
-                None,
-                "{type_id} is not addable"
+    fn parked_future_actions_are_not_listed() {
+        let delegate = CatalogDelegate::new();
+        for type_id in ["sendEmail", "DbMigration", "AiCheck"] {
+            assert!(
+                delegate
+                    .shown
+                    .iter()
+                    .flat_map(|section| section.entries.iter())
+                    .all(|entry| entry.type_id != type_id),
+                "{type_id} is parked and should not be in the catalog"
             );
-            assert!(!not_ready_reason(type_id).is_empty());
         }
     }
 
@@ -637,7 +663,7 @@ mod tests {
     #[test]
     fn indices_are_resolved_against_the_filtered_view_not_the_registry() {
         let mut delegate = CatalogDelegate::new();
-        delegate.apply_query("email");
+        delegate.apply_query("http");
         assert!(delegate.shown_count() < delegate.total_count());
         for (section_ix, section) in delegate.shown.iter().enumerate() {
             for (row_ix, entry) in section.entries.iter().enumerate() {
@@ -689,10 +715,10 @@ mod tests {
     #[test]
     fn filtering_narrows_sections_and_drops_empties() {
         let mut delegate = CatalogDelegate::new();
-        delegate.apply_query("email");
+        delegate.apply_query("http");
         assert!(delegate.shown_count() < delegate.total_count());
         assert!(delegate.shown_count() > 0);
-        // "sendEmail" lives in Integrations, and nothing matches elsewhere, so
+        // "http" lives in Integrations, and nothing matches elsewhere, so
         // exactly one section survives.
         assert_eq!(delegate.shown.len(), 1);
         assert_eq!(delegate.shown[0].title.as_ref(), "Integrations");
@@ -704,7 +730,9 @@ mod tests {
         delegate.apply_query("utilities");
         assert_eq!(delegate.shown.len(), 1);
         assert_eq!(delegate.shown[0].title.as_ref(), "Utilities");
-        assert_eq!(delegate.shown[0].entries.len(), 5);
+        // delay, log, SetEnv. It was 5 while `DbMigration` and `AiCheck` were
+        // registered; they are parked as future features.
+        assert_eq!(delegate.shown[0].entries.len(), 3);
     }
 
     #[test]

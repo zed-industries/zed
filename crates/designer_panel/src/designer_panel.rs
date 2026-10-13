@@ -27,6 +27,7 @@ mod project_item;
 mod run_results;
 mod run_state;
 mod script_companion;
+mod script_helpers;
 mod workflow_json;
 
 use std::cell::RefCell;
@@ -39,13 +40,13 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use editor::Editor;
 use gpui::{
-    Action, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, ParentElement as _, Point, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, TaskExt as _,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Action, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Point, Render,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    TaskExt as _, WeakEntity, Window, anchored, deferred, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, Size, Theme,
+    ActiveTheme as _, Disableable as _, Icon, IconName, IndexPath, Sizable as _, Size, Theme,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState, NumberInput, Textarea, TextareaState},
@@ -54,6 +55,7 @@ use gpui_component::{
     popover::Popover,
     resizable::{h_resizable, resizable_panel},
     scroll::Scrollbar,
+    select::{Select, SelectEvent, SelectState},
     spinner::Spinner,
     switch::Switch,
     tag::Tag,
@@ -71,12 +73,19 @@ use workflow_engine::{
     ScriptRuntime, ScriptSource, StatusSink, ValidationIssue, ValidationSeverity,
     WorkflowDefinition, registry::REGISTRY, run_workflow, validate_definition,
 };
-use workspace::{ItemId, Pane, ProjectItem, SerializableItem, Workspace, WorkspaceId, item::Item};
+use workspace::{
+    ItemId, Pane, ProjectItem, SerializableItem, Workspace, WorkspaceId,
+    item::{Item, ItemEvent, SaveOptions},
+};
 
 pub use project_item::FlowFile;
 pub use workflow_json::{apply_saved_layout, auto_layout, load, save};
 
 const CANVAS_SIZE: (f32, f32) = (1200.0, 800.0);
+
+/// How far an action moves down when another is inserted above it: a leaf's
+/// height plus the gap `below_node` leaves between consecutive steps.
+const INSERT_SHIFT: f32 = workflow_json::LEAF_SIZE.1 + 30.0;
 
 #[derive(Clone)]
 struct ContextTarget {
@@ -97,6 +106,11 @@ struct ActionAnchor {
     /// Node to draw the new node's incoming edge from. Absent for an
     /// explicitly placed node — a deliberate drop has no "previous step".
     source_id: Option<NodeId>,
+    /// Position inside `parent_id`, in the parent's own frame, used instead
+    /// of converting `position`. Set when the spot is known relative to the
+    /// container: below a nested sibling, or the next free slot of a body the
+    /// cursor wasn't actually over.
+    local_position: Option<FlowPoint>,
 }
 
 /// `FlowGraph`'s `bg_color`/`grid_color`/`node_bg_color`/`node_border_color`
@@ -312,7 +326,8 @@ fn inferred_runtime(
         None => ScriptRuntime::from_path(absolute).ok_or_else(|| {
             format!(
                 "Couldn't infer a runtime from {} - give the script an explicit \"runtime\" \
-                 override, or use a known extension (py, js, ts, ps1, sh, bash, csproj)",
+                 override, or use a known extension (py, js, mjs, cjs, ts, mts, cts, ps1, sh, \
+                 bash, csproj)",
                 absolute.display()
             )
         }),
@@ -439,6 +454,9 @@ struct PropertyRow {
     /// fields. `None` renders the single-line `value` input instead. Both are
     /// always kept in sync, so either can be read back.
     textarea: Option<Entity<TextareaState>>,
+    /// Dropdown for a field the registry restricts to a closed value set
+    /// (`InputField::options`). `None` for free input.
+    select: Option<Entity<SelectState<Vec<SharedString>>>>,
     /// Declared `FieldKind`, or `None` for an undeclared extra.
     kind: Option<FieldKind>,
     required: bool,
@@ -456,6 +474,111 @@ struct PropertyRow {
     /// a save would then persist the old value.
     commit: Commit,
     _sub: Subscription,
+}
+
+/// The action menu shown after clicking the "+" on a connection.
+struct InsertMenu {
+    menu: Entity<PopupMenu>,
+    /// Window position of the click, where the menu opens.
+    position: Point<gpui::Pixels>,
+    _dismissed: Subscription,
+}
+
+/// Fills `menu` with every addable action type, grouped the way the catalog
+/// groups them, calling `on_pick` with the chosen type.
+fn action_type_menu(
+    mut menu: PopupMenu,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+    on_pick: Rc<dyn Fn(&'static str, &mut App)>,
+) -> PopupMenu {
+    for section in catalog::build_sections() {
+        let on_pick = on_pick.clone();
+        let group = PopupMenu::build(window, cx, move |mut group, _window, _cx| {
+            for entry in section.entries.iter().filter(|entry| entry.runnable) {
+                let type_id = entry.type_id;
+                let on_pick = on_pick.clone();
+                group = group.item(
+                    PopupMenuItem::new(entry.label.clone())
+                        .on_click(move |_, _, cx| on_pick(type_id, cx)),
+                );
+            }
+            group
+        });
+        menu = menu.item(PopupMenuItem::submenu(section.title.clone(), group));
+    }
+    menu
+}
+
+/// What an expression on one node can refer to. Built by
+/// `DesignerPanel::reference_scope`.
+#[derive(Default)]
+struct ReferenceScope {
+    /// Actions whose outputs are recorded by the time the expression runs.
+    actions: Vec<NodeId>,
+    /// `Try` actions whose catch branch the node sits in; their `error`
+    /// output is set there.
+    catch_owners: Vec<NodeId>,
+    /// Enclosing `Foreach` actions, innermost first. Non-empty means `$item`
+    /// is bound.
+    loops: Vec<NodeId>,
+}
+
+/// A reference found in what an action returned on the last run.
+#[derive(Debug, Clone, PartialEq)]
+struct SampledRef {
+    /// The JSONLogic `var` path, e.g. `fetch.outputs.body.customer.id`.
+    path: String,
+    /// `value`, `object` or `list`.
+    kind: &'static str,
+    /// The sampled value, shortened, for the chip's tooltip.
+    preview: String,
+}
+
+/// How far into a sampled output [`sample_paths`] descends.
+const MAX_SAMPLE_DEPTH: usize = 4;
+
+/// How many sampled references one picker lists, so a large response can't
+/// bury the field under chips.
+const MAX_SAMPLED_REFS: usize = 60;
+
+/// Lists the `var` paths under `value`, an object reached at `prefix`.
+///
+/// A list is offered as a whole and not descended into: an element has no
+/// name to put in the path, and which index is wanted isn't something a
+/// sample can say. A key containing a `.` is skipped, since `var` would read
+/// it as two path segments.
+fn sample_paths(prefix: &str, value: &serde_json::Value, depth: usize, out: &mut Vec<SampledRef>) {
+    let Some(object) = value.as_object() else {
+        return;
+    };
+    for (key, value) in object {
+        if key.is_empty() || key.contains('.') {
+            continue;
+        }
+        let path = format!("{prefix}.{key}");
+        let (kind, preview) = match value {
+            serde_json::Value::Object(_) => ("object", "an object".to_string()),
+            serde_json::Value::Array(items) => ("list", format!("a list of {}", items.len())),
+            scalar => {
+                let text = scalar.to_string();
+                let preview = if text.chars().count() > 40 {
+                    format!("{}…", text.chars().take(40).collect::<String>())
+                } else {
+                    text
+                };
+                ("value", preview)
+            }
+        };
+        out.push(SampledRef {
+            path: path.clone(),
+            kind,
+            preview,
+        });
+        if depth < MAX_SAMPLE_DEPTH {
+            sample_paths(&path, value, depth + 1, out);
+        }
+    }
 }
 
 /// Short label for a declared `FieldKind`, for the inspector's type badge.
@@ -489,11 +612,18 @@ fn field_kind_badge(kind: FieldKind) -> &'static str {
 /// `Textarea`) so a toggle and a typed edit are indistinguishable downstream.
 type Commit = Rc<dyn Fn(&mut DesignerPanel, String, &mut Context<DesignerPanel>)>;
 
-fn meta_property(
-    properties: &[(SharedString, SharedString)],
-    name: &str,
-) -> Option<(SharedString, SharedString)> {
-    let storage_key = match name {
+/// The `FlowNode::properties` key a registry input of `type_id` is stored
+/// under.
+///
+/// A container's own fields (`foreach`/`until`/`limit`/`expression`) live on
+/// the `Action` struct rather than in `inputs`, so `workflow_json` keeps them
+/// under reserved `__` keys. Only containers get that mapping: `transform`
+/// also declares an `expression`, and that one is an ordinary input.
+fn storage_key<'a>(type_id: &str, name: &'a str) -> &'a str {
+    if !workflow_engine::registry::is_container(type_id) {
+        return name;
+    }
+    match name {
         "expression" => "__expression",
         "foreach" => "__foreach",
         "until" => "__until",
@@ -501,7 +631,15 @@ fn meta_property(
         // count row is the one that carries the field's presence.
         "limit" => "__limit_count",
         _ => name,
-    };
+    }
+}
+
+fn meta_property(
+    type_id: &str,
+    properties: &[(SharedString, SharedString)],
+    name: &str,
+) -> Option<(SharedString, SharedString)> {
+    let storage_key = storage_key(type_id, name);
     properties
         .iter()
         .find(|(k, _)| k.as_ref() == storage_key)
@@ -614,6 +752,18 @@ pub struct DesignerPanel {
     /// property edit. A node with no entry has no known issues. The full
     /// list drives the toolbar error badge and the per-node inspector hints.
     validation_issues: Vec<ValidationIssue>,
+    /// [`Self::structure_fingerprint`] of the graph as of the last
+    /// [`Self::on_state_changed`], so a change to which nodes and edges exist
+    /// can be told from a drag or a selection.
+    structure: u64,
+    /// [`Self::content_fingerprint`] of the canvas as last loaded or saved.
+    saved_content: u64,
+    /// Whether the canvas differs from `saved_content`: what the tab's
+    /// unsaved marker and the close prompt go by.
+    dirty: bool,
+    /// Whether the file changed on disk while `dirty`. The change is not
+    /// loaded over the unsaved edits; the user picks which to keep.
+    conflict: bool,
     /// Whether the toolbar error badge's issues popover is open. A plain
     /// bool rather than a `Popover` handle: the badge only needs "is it
     /// showing", and `Popover::on_open_change` keeps the two in sync for
@@ -633,6 +783,18 @@ pub struct DesignerPanel {
     /// Whether the under-canvas run transcript is expanded.
     show_log: bool,
     log_scroll: ScrollHandle,
+    /// Scroll position of the inspector pane, whose rows and reference chips
+    /// routinely run past the bottom of the tab.
+    inspector_scroll: ScrollHandle,
+    /// The action menu opened from the "+" on a connection, while it is up.
+    insert_menu: Option<InsertMenu>,
+    /// Which iteration of each `Foreach` (by node id) the inspector is
+    /// showing. A loop with no entry shows its first.
+    loop_view: HashMap<String, usize>,
+    /// Ids of actions whose last-run outputs no longer describe the flow,
+    /// because they or something upstream of them was edited since. The
+    /// expression picker doesn't sample these. Cleared by the next run.
+    stale_samples: std::collections::HashSet<String>,
     _state_sub: Subscription,
     _theme_sub: Subscription,
 }
@@ -672,7 +834,14 @@ impl DesignerPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (last_raw, loaded) = Self::load_from_raw(&path, window, cx);
+        let (last_raw, loaded) = Self::load_from_raw(
+            &path,
+            &root,
+            script_companion::SyncState::default(),
+            script_companion::SyncState::default(),
+            window,
+            cx,
+        );
 
         if loaded.error.is_some() {
             window.dispatch_action(Box::new(ShowInvalidFlowToast(loaded.flow_name.clone())), cx);
@@ -743,16 +912,25 @@ impl DesignerPanel {
             status: None,
             error: loaded.error,
             validation_issues: Vec::new(),
+            structure: 0,
+            saved_content: 0,
+            dirty: false,
+            conflict: false,
             show_issues: false,
             run_state,
             run_snapshot: RunState::default(),
             run_revision: 0,
             show_log: false,
             log_scroll: ScrollHandle::default(),
+            inspector_scroll: ScrollHandle::default(),
+            insert_menu: None,
+            loop_view: HashMap::new(),
+            stale_samples: Default::default(),
             _state_sub: loaded.state_sub,
             _theme_sub,
         };
         this.watch_file(window, cx);
+        this.saved_content = Self::content_fingerprint(this.state.read(cx));
         this.revalidate(cx);
         this
     }
@@ -765,8 +943,17 @@ impl DesignerPanel {
     /// (empty canvas, `error` set), never a `Result` the caller has to
     /// unwind through. Returns the exact raw file content alongside it (or
     /// `""` if the file couldn't be read) so callers can track `last_raw`.
+    ///
+    /// `script_baseline`/`body_baseline` are the companion sync baselines to
+    /// reconcile against: empty for a tab being opened, the panel's own for a
+    /// reload. Carrying them across a reload is what lets a body or script
+    /// edited in the raw JSON win over its unchanged companion, where an
+    /// empty baseline would hand the edit back to the companion.
     fn load_from_raw(
         path: &Path,
+        root: &Path,
+        script_baseline: script_companion::SyncState,
+        body_baseline: script_companion::SyncState,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (String, LoadedFlow) {
@@ -809,7 +996,7 @@ impl DesignerPanel {
         // blamed on scripts.
         let mut loaded_body_sync = script_companion::SyncState::default();
         if error.is_none() {
-            let mut script_sync = script_companion::SyncState::default();
+            let mut script_sync = script_baseline;
             if let Err(sync_error) =
                 script_companion::sync_inline_scripts(&mut def, path, &mut script_sync)
             {
@@ -817,8 +1004,20 @@ impl DesignerPanel {
             }
             loaded_sync = script_sync;
         }
+        // Scripts are files. The sync above has just written each inline
+        // script's code to its companion, so the canvas refers to that file
+        // from here on, and the next save writes the flow that way. The flow
+        // file itself is untouched until then.
+        if error.is_none()
+            && let Err(convert_error) =
+                script_companion::convert_inline_to_file(&mut def, path, root)
+        {
+            error = Some(format!(
+                "Couldn't move inline scripts to files: {convert_error}"
+            ));
+        }
         if error.is_none() {
-            let mut body_sync = script_companion::SyncState::default();
+            let mut body_sync = body_baseline;
             if let Err(sync_error) =
                 http_companion::sync_inline_bodies(&mut def, path, &mut body_sync)
             {
@@ -857,6 +1056,7 @@ impl DesignerPanel {
             position: FlowPoint::new(60.0, 60.0),
         }));
 
+        let panel = cx.weak_entity();
         let flow = cx.new(|cx| {
             let mut graph = FlowGraph::new(state.clone(), cx)
                 // `sidebar`/`popover` rather than `background`/`secondary`:
@@ -880,6 +1080,16 @@ impl DesignerPanel {
             graph = graph.on_node_context_menu(move |node_id, _, _, _| {
                 context_target_for_node.borrow_mut().node_id = Some(node_id);
             });
+            // The "+" on a hovered connection: the canvas reports the click,
+            // the panel asks which action to put there.
+            let panel = panel.clone();
+            graph = graph.on_edge_insert(move |edge_id, position, window, cx| {
+                panel
+                    .update(cx, |panel, cx| {
+                        panel.open_insert_menu(edge_id, position, window, cx)
+                    })
+                    .ok();
+            });
             for (type_id, title) in CONTAINER_TYPES {
                 graph = graph
                     .node_renderer(*type_id, move |n, w, cx| {
@@ -898,7 +1108,7 @@ impl DesignerPanel {
 
         let flow_id = def.id.clone();
         let flow_name = def.name.clone();
-        let state_sub = cx.observe(&state, |_this, _state, cx| cx.notify());
+        let state_sub = cx.observe(&state, |this, state, cx| this.on_state_changed(&state, cx));
 
         (
             raw,
@@ -919,6 +1129,88 @@ impl DesignerPanel {
         )
     }
 
+    /// Runs whenever the canvas state changes. The canvas edits the graph on
+    /// its own (Delete, undo, dragging a new edge), so this is where the panel
+    /// catches up: when the set of nodes and edges is different from last
+    /// time, it removes anything left without a parent and revalidates.
+    fn on_state_changed(&mut self, state: &Entity<FlowState>, cx: &mut Context<Self>) {
+        // A reload swaps the state; ignore one this panel no longer shows.
+        if *state == self.state {
+            let structure = Self::structure_fingerprint(state.read(cx));
+            if structure != self.structure {
+                if state.update(cx, |state, _| Self::prune_orphans(state)) {
+                    self.structure = Self::structure_fingerprint(state.read(cx));
+                } else {
+                    self.structure = structure;
+                }
+                self.revalidate(cx);
+            }
+            let dirty = Self::content_fingerprint(state.read(cx)) != self.saved_content;
+            if dirty != self.dirty {
+                self.dirty = dirty;
+                // The tab's unsaved marker follows this.
+                cx.emit(());
+            }
+        }
+        cx.notify();
+    }
+
+    /// A hash of what the graph is made of (which nodes, nested where, joined
+    /// by which edges), ignoring positions, selection and property values.
+    fn structure_fingerprint(state: &FlowState) -> u64 {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for node in &state.nodes {
+            node.id.hash(&mut hasher);
+            node.parent_id.hash(&mut hasher);
+        }
+        for edge in &state.edges {
+            edge.source.hash(&mut hasher);
+            edge.target.hash(&mut hasher);
+            edge.label.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Removes every node whose container is gone, with its edges, and
+    /// returns whether anything was removed.
+    ///
+    /// The canvas's own Delete key removes only the selected node. Left
+    /// alone, a deleted container's body would stay in the state pointing at
+    /// a parent that no longer exists, where save never reaches it: the
+    /// actions would vanish from the file without ever leaving the screen.
+    /// Removing them here makes Delete on a container take its body with it,
+    /// the same as the inspector's Delete Node, and the canvas has already
+    /// pushed the undo entry that brings all of it back.
+    fn prune_orphans(state: &mut FlowState) -> bool {
+        let mut removed = false;
+        loop {
+            let orphans: Vec<NodeId> = state
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.parent_id
+                        .as_ref()
+                        .is_some_and(|parent| !state.nodes.iter().any(|n| n.id == *parent))
+                })
+                .map(|node| node.id.clone())
+                .collect();
+            if orphans.is_empty() {
+                break;
+            }
+            state.nodes.retain(|node| !orphans.contains(&node.id));
+            state
+                .edges
+                .retain(|edge| !orphans.contains(&edge.source) && !orphans.contains(&edge.target));
+            removed = true;
+        }
+        if removed {
+            state.rebuild_lookup();
+            state.refit_all_containers();
+        }
+        removed
+    }
+
     /// Re-reads `self.path` and, if its content genuinely differs from
     /// `self.last_raw`, replaces the content-dependent half of this panel's
     /// state with a freshly parsed/laid-out one. Called by `watch_file`'s
@@ -927,11 +1219,39 @@ impl DesignerPanel {
     /// updates `last_raw` immediately after writing, before the filesystem
     /// event even arrives) or on duplicate events for one logical write —
     /// see `LoadedFlow`'s doc comment.
-    fn reload_from_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (raw, loaded) = Self::load_from_raw(&self.path, window, cx);
-        if raw == self.last_raw {
+    ///
+    /// A flow with unsaved edits is not reloaded over: the change is recorded
+    /// as a conflict instead, for the user to settle by saving or reloading.
+    /// `discard_edits` is that explicit reload.
+    fn reload_from_disk(
+        &mut self,
+        discard_edits: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Compare before loading: a load reconciles the companions, which
+        // writes files and moves the baselines, and none of that should
+        // happen for this panel's own save or a duplicate event.
+        let unchanged = std::fs::read_to_string(&self.path).unwrap_or_default() == self.last_raw;
+        if unchanged && !discard_edits {
             return;
         }
+        if self.dirty && !discard_edits {
+            if !self.conflict {
+                self.conflict = true;
+                cx.emit(());
+                cx.notify();
+            }
+            return;
+        }
+        let (raw, loaded) = Self::load_from_raw(
+            &self.path,
+            &self.root,
+            self.script_sync.clone(),
+            self.body_sync.clone(),
+            window,
+            cx,
+        );
         self.last_raw = raw;
         self.error = loaded.error;
         self.flow_id = loaded.flow_id;
@@ -942,16 +1262,56 @@ impl DesignerPanel {
         self.minimap = loaded.minimap;
         self.controls = loaded.controls;
         self._state_sub = loaded.state_sub;
-        // The reloaded state is what the old baseline described, so it goes
-        // with it - otherwise the next sync pass would compare a fresh
-        // canvas against companion content recorded for a canvas that's gone.
-        self.script_sync = loaded.script_sync;
-        self.body_sync = loaded.body_sync;
+        // The baselines the load reconciled against, moved on by whatever it
+        // synced. A flow that failed to load synced nothing and comes back
+        // with empty ones, so the panel's own are kept for the next good load.
+        if self.error.is_none() {
+            self.script_sync = loaded.script_sync;
+            self.body_sync = loaded.body_sync;
+        }
         self.flow_preserved = loaded.preserved;
         if self.error.is_some() {
             window.dispatch_action(Box::new(ShowInvalidFlowToast(self.flow_name.clone())), cx);
         }
+        self.stale_samples.clear();
+        self.mark_saved(cx);
         self.revalidate(cx);
+    }
+
+    /// A hash of everything Save writes: each node's identity, nesting,
+    /// label, properties and position, and each edge. Run status, validation
+    /// rings, selection and the viewport are left out, so running a flow or
+    /// panning the canvas doesn't count as an edit.
+    fn content_fingerprint(state: &FlowState) -> u64 {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for node in &state.nodes {
+            node.id.hash(&mut hasher);
+            node.parent_id.hash(&mut hasher);
+            node.node_type.hash(&mut hasher);
+            node.label.hash(&mut hasher);
+            node.properties.hash(&mut hasher);
+            node.position.x.to_bits().hash(&mut hasher);
+            node.position.y.to_bits().hash(&mut hasher);
+        }
+        for edge in &state.edges {
+            edge.source.hash(&mut hasher);
+            edge.target.hash(&mut hasher);
+            edge.label.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Records the canvas as it stands as what is on disk: called after a
+    /// load and after a successful save.
+    fn mark_saved(&mut self, cx: &mut Context<Self>) {
+        self.saved_content = Self::content_fingerprint(self.state.read(cx));
+        if self.dirty || self.conflict {
+            self.dirty = false;
+            self.conflict = false;
+            cx.emit(());
+        }
+        cx.notify();
     }
 
     /// Subscribes to this flow's worktree so external edits (the "Raw" tab,
@@ -991,8 +1351,10 @@ impl DesignerPanel {
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(150))
                         .await;
-                    this.update_in(cx, |this, window, cx| this.reload_from_disk(window, cx))
-                        .ok();
+                    this.update_in(cx, |this, window, cx| {
+                        this.reload_from_disk(false, window, cx)
+                    })
+                    .ok();
                 });
             }
         }));
@@ -1127,6 +1489,7 @@ impl DesignerPanel {
                                 }
                                 cx.notify();
                             });
+                            this.revalidate(cx);
                         }
                     });
                     self.script_file_input = Some(file_input);
@@ -1145,20 +1508,23 @@ impl DesignerPanel {
         let mut emitted: Vec<SharedString> = Vec::new();
         if let Some(def) = workflow_engine::registry::find(&node_type) {
             for field in def.inputs {
-                let Some((key, value)) = meta_property(&node.properties, field.name) else {
+                // A script's `source` is edited through the script section
+                // (file path, runtime), not as a row of raw JSON.
+                if is_script && field.name == "source" {
+                    emitted.push("source".into());
+                    continue;
+                }
+                let Some((key, value)) = meta_property(&node_type, &node.properties, field.name)
+                else {
                     // Not set. Show the editor anyway when it's required, so
                     // there's somewhere to enter a value; otherwise stay quiet
                     // rather than showing a row for something the flow doesn't
-                    // use.
+                    // use. The row is keyed by the storage key, so the first
+                    // edit creates the property where save looks for it.
                     if field.required {
-                        self.push_property_row(
-                            field.name.into(),
-                            "".into(),
-                            Some(*field),
-                            window,
-                            cx,
-                        );
-                        emitted.push(field.name.into());
+                        let key: SharedString = storage_key(&node_type, field.name).into();
+                        self.push_property_row(key.clone(), "".into(), Some(*field), window, cx);
+                        emitted.push(key);
                     }
                     continue;
                 };
@@ -1229,8 +1595,11 @@ impl DesignerPanel {
                 this.clear_run_marker(&node_id, cx);
                 state.update(cx, |state, cx| {
                     if let Some(n) = state.get_node_mut(&node_id) {
-                        if let Some(prop) = n.properties.iter_mut().find(|(k, _)| *k == row_key) {
-                            prop.1 = value.into();
+                        match n.properties.iter().position(|(k, _)| *k == row_key) {
+                            Some(ix) => n.properties[ix].1 = value.into(),
+                            // A row for a missing required field has no
+                            // property behind it until the first edit.
+                            None => n.properties.push((row_key, value.into())),
                         }
                     }
                     cx.notify();
@@ -1247,6 +1616,44 @@ impl DesignerPanel {
         });
 
         let mut subs = vec![sub];
+
+        // A field with a closed value set gets a dropdown over it. A saved
+        // value outside the set is appended rather than dropped, so the row
+        // still shows what the file holds while validation flags it.
+        let options = field.map(|f| f.options).unwrap_or_default();
+        let select = (!options.is_empty()).then(|| {
+            let mut items: Vec<SharedString> = options.iter().map(|o| (*o).into()).collect();
+            let current = value.trim();
+            let selected = items
+                .iter()
+                .position(|item| item.eq_ignore_ascii_case(current))
+                .or_else(|| {
+                    (!current.is_empty()).then(|| {
+                        items.push(current.to_string().into());
+                        items.len() - 1
+                    })
+                });
+            cx.new(|cx| SelectState::new(items, selected.map(IndexPath::new), window, cx))
+        });
+        if let Some(select) = &select {
+            let commit = commit.clone();
+            let input = input.clone();
+            subs.push(cx.subscribe_in(
+                select,
+                window,
+                move |this, _, event: &SelectEvent<Vec<SharedString>>, window, cx| {
+                    let SelectEvent::Confirm(Some(choice)) = event else {
+                        return;
+                    };
+                    // Keep the backing input in step, as the `Switch` does.
+                    input.update(cx, |input, cx| {
+                        input.set_value(choice.clone(), window, cx);
+                    });
+                    commit(this, choice.to_string(), cx);
+                },
+            ));
+        }
+
         if let Some(area) = &textarea {
             let commit = commit.clone();
             subs.push(cx.subscribe(area, move |this, area, event, cx| {
@@ -1261,6 +1668,7 @@ impl DesignerPanel {
             key,
             value: input,
             textarea,
+            select,
             kind,
             required: field.is_some_and(|f| f.required),
             help: field.map(|f| f.help).unwrap_or_default().into(),
@@ -1311,6 +1719,51 @@ impl DesignerPanel {
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.new_prop_value
             .update(cx, |input, cx| input.set_value("", window, cx));
+        self.revalidate(cx);
+    }
+
+    /// Gives the selected node an empty `name` input, so the inspector shows
+    /// a row for an optional field the action didn't use yet. A blank
+    /// optional input isn't written to the file (see
+    /// `workflow_json::unflatten_action_meta`), so adding one and leaving it
+    /// empty changes nothing on save.
+    fn on_add_optional_field_click(&mut self, name: &'static str, cx: &mut Context<Self>) {
+        let Some(node_id) = self.selected_node_id.clone() else {
+            return;
+        };
+        self.state.update(cx, |state, cx| {
+            if let Some(n) = state.get_node_mut(&node_id) {
+                let key = storage_key(n.node_type.as_deref().unwrap_or_default(), name);
+                if !n.properties.iter().any(|(k, _)| k.as_ref() == key) {
+                    n.properties.push((key.into(), "".into()));
+                }
+            }
+            cx.notify();
+        });
+        self.rebuild_property_rows(cx);
+    }
+
+    /// Takes `key` out of the selected node's properties altogether.
+    fn on_remove_property_click(&mut self, key: SharedString, cx: &mut Context<Self>) {
+        let Some(node_id) = self.selected_node_id.clone() else {
+            return;
+        };
+        self.clear_run_marker(&node_id, cx);
+        self.state.update(cx, |state, cx| {
+            if let Some(n) = state.get_node_mut(&node_id) {
+                n.properties.retain(|(k, _)| *k != key);
+            }
+            cx.notify();
+        });
+        self.rebuild_property_rows(cx);
+    }
+
+    /// Rebuilds the inspector's rows from the node's properties after one was
+    /// added or removed. `sync_selection` regenerates them on the next render
+    /// when the tracked id differs from the canvas selection, which is the
+    /// same route [`Self::select_node`] takes.
+    fn rebuild_property_rows(&mut self, cx: &mut Context<Self>) {
+        self.selected_node_id = None;
         self.revalidate(cx);
     }
 
@@ -1485,7 +1938,7 @@ impl DesignerPanel {
         // Read the current values out and drop the state borrow before
         // touching the input entities: `InputState::update` needs `&mut cx`,
         // which a live `state.read(cx)` guard would still be holding.
-        let values: Vec<(Entity<InputState>, String)> = {
+        let values: Vec<(Entity<InputState>, Option<Entity<TextareaState>>, String)> = {
             let state = self.state.read(cx);
             let Some(node) = state.nodes.iter().find(|node| node.id == node_id) else {
                 return;
@@ -1499,11 +1952,16 @@ impl DesignerPanel {
                         .find(|(name, _)| *name == row.key)
                         .map(|(_, value)| value.to_string())
                         .unwrap_or_default();
-                    (row.value.clone(), value)
+                    (row.value.clone(), row.textarea.clone(), value)
                 })
                 .collect()
         };
-        for (input, value) in values {
+        for (input, textarea, value) in values {
+            // A `Json`/`Expression` row shows its textarea, so that is the
+            // editor that must not be left holding the old text.
+            if let Some(textarea) = textarea {
+                textarea.update(cx, |area, cx| area.set_value(value.clone(), window, cx));
+            }
             input.update(cx, |input, cx| input.set_value(value, window, cx));
         }
         if let Some(file_input) = &self.script_file_input {
@@ -1653,9 +2111,33 @@ impl DesignerPanel {
     /// edited out of band since the last sync is reported as a conflict rather
     /// than silently overwritten.
     fn on_edit_body_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(node_id) = self.selected_node_id.as_ref().map(|id| id.to_string()) else {
+        let Some(selected) = self.selected_node_id.clone() else {
             return;
         };
+        let node_id = selected.to_string();
+
+        // `body` is optional (it's meaningless for GET/DELETE), so a request
+        // may not have one yet, and a blank one isn't saved. Asking to edit
+        // the body is asking for one, so start it as an empty object rather
+        // than refusing.
+        let has_body = self.state.read(cx).get_node(&selected).is_some_and(|n| {
+            n.properties
+                .iter()
+                .any(|(k, v)| k.as_ref() == "body" && !v.trim().is_empty())
+        });
+        if !has_body {
+            self.state.update(cx, |state, cx| {
+                if let Some(n) = state.get_node_mut(&selected) {
+                    match n.properties.iter().position(|(k, _)| k.as_ref() == "body") {
+                        Some(ix) => n.properties[ix].1 = "{}".into(),
+                        None => n.properties.push(("body".into(), "{}".into())),
+                    }
+                }
+                cx.notify();
+            });
+            self.rebuild_property_rows(cx);
+        }
+
         let action_path = {
             let state = self.state.read(cx);
             let (definition, _) = workflow_json::save(
@@ -1671,14 +2153,6 @@ impl DesignerPanel {
                 cx.notify();
                 return;
             };
-            // `body` is a plain `FieldKind::Json` input, so it holds no
-            // canonical form to compare — but its presence is what makes this
-            // action body-bearing at all (it's optional for GET/DELETE).
-            if http_companion::body_text_for_action_path(&definition, &action_path).is_none() {
-                self.error = Some(format!("HTTP action {node_id} has no body input"));
-                cx.notify();
-                return;
-            }
             action_path
         };
 
@@ -1819,6 +2293,17 @@ impl DesignerPanel {
         issue_path.split('/').any(|segment| segment == node_id)
     }
 
+    /// The canvas node an issue at `issue_path` is reported on, or `None`
+    /// for a flow-level issue.
+    ///
+    /// The path carries the ancestor chain (`foreach-1/if-1/then/a1`) while a
+    /// node's id is bare, so the node is the last segment, not the whole
+    /// path. See [`Self::issue_targets_node`] for the same distinction.
+    fn issue_node_id(issue_path: &str) -> Option<NodeId> {
+        let id = issue_path.rsplit('/').next()?;
+        (!id.is_empty()).then(|| id.to_string().into())
+    }
+
     fn on_save_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (mut def, layout) = {
             let state = self.state.read(cx);
@@ -1864,6 +2349,8 @@ impl DesignerPanel {
         }
         self.error = None;
         self.status = Some("Saved".to_string());
+        self.write_script_support(cx);
+        self.mark_saved(cx);
         self.revalidate(cx);
     }
 
@@ -1891,6 +2378,9 @@ impl DesignerPanel {
             return;
         }
 
+        // A script written against the helpers needs them there to start.
+        self.write_script_support(cx);
+
         let mut action_meta = HashMap::new();
         collect_action_meta(&def.actions, &mut action_meta);
 
@@ -1905,6 +2395,8 @@ impl DesignerPanel {
         }
         self.run_snapshot = RunState::default();
         self.run_revision = 0;
+        // A new run replaces every sample, so nothing is stale any more.
+        self.stale_samples.clear();
         self.state.update(cx, |state, cx| {
             for node in &mut state.nodes {
                 node.accent_border = None;
@@ -1920,7 +2412,7 @@ impl DesignerPanel {
         let records_for_sink = records.clone();
         let sink_state = run_state.clone();
         let sink_meta = action_meta.clone();
-        let status = StatusSink::new(move |action_id, status, detail| {
+        let status = StatusSink::with_scope(move |scope, action_id, status, detail| {
             let phase = match status {
                 RunStatus::Running => RunPhase::Running,
                 RunStatus::Succeeded => RunPhase::Succeeded,
@@ -1933,6 +2425,7 @@ impl DesignerPanel {
                 .unwrap_or_else(|| (action_id.to_string(), "unknown".to_string()));
             sink_state.lock().unwrap().record(
                 started_at,
+                scope,
                 action_id,
                 phase,
                 detail.clone(),
@@ -2001,6 +2494,9 @@ impl DesignerPanel {
                     Err(e) => format!("Run failed: {e}"),
                 });
                 this.sync_run(cx);
+                // The run's results are what the type declarations for the
+                // scripts are drawn from.
+                this.write_script_support(cx);
                 cx.notify();
             });
         })
@@ -2099,11 +2595,19 @@ impl DesignerPanel {
     /// phase colors "until you edit", so an edited node drops its marker
     /// (and its accent border) rather than showing stale result data.
     fn clear_run_marker(&mut self, node_id: &NodeId, cx: &mut Context<Self>) {
+        self.mark_samples_stale(node_id, cx);
         let id = node_id.to_string();
         if self.run_state.lock().unwrap().nodes.remove(&id).is_none() {
             return;
         }
-        self.run_state.lock().unwrap().revision += 1;
+        {
+            let mut run_state = self.run_state.lock().unwrap();
+            // Its per-iteration results describe the old version too.
+            for results in run_state.iterations.values_mut() {
+                results.remove(&id);
+            }
+            run_state.revision += 1;
+        }
         self.state.update(cx, |state, cx| {
             if let Some(node) = state.get_node_mut(node_id) {
                 node.accent_border = None;
@@ -2118,6 +2622,7 @@ impl DesignerPanel {
         *self.run_state.lock().unwrap() = RunState::default();
         self.run_snapshot = RunState::default();
         self.run_revision = 0;
+        self.stale_samples.clear();
         self.status = None;
         self.state.update(cx, |state, cx| {
             for node in &mut state.nodes {
@@ -2199,13 +2704,18 @@ impl DesignerPanel {
                 .node_id
                 .as_ref()
                 .and_then(|id| state.get_node(id))
-                .map(|source| Self::below_node(state, source))
+                .map(|source| Self::beside_node(state, source))
         };
-        let anchor = anchor.unwrap_or(ActionAnchor {
-            position: context.position,
-            parent_id: None,
-            source_id: None,
-        });
+        // No node was reported for the click: it may still have landed inside
+        // a container's box, in which case the action belongs in that body.
+        let anchor = anchor
+            .or_else(|| self.container_at(context.position, cx))
+            .unwrap_or(ActionAnchor {
+                position: context.position,
+                parent_id: None,
+                source_id: None,
+                local_position: None,
+            });
         self.push_action_node(type_id, anchor, cx);
     }
 
@@ -2231,6 +2741,7 @@ impl DesignerPanel {
                 position,
                 parent_id: None,
                 source_id: None,
+                local_position: None,
             }),
             None => {
                 let below_selection = {
@@ -2239,12 +2750,13 @@ impl DesignerPanel {
                         .nodes
                         .iter()
                         .find(|node| node.selected)
-                        .map(|source| Self::below_node(state, source))
+                        .map(|source| Self::beside_node(state, source))
                 };
                 below_selection.unwrap_or(ActionAnchor {
                     position: self.canvas_center(cx),
                     parent_id: None,
                     source_id: None,
+                    local_position: None,
                 })
             }
         };
@@ -2263,11 +2775,81 @@ impl DesignerPanel {
         } else {
             workflow_json::LEAF_SIZE.1
         };
+        // `source.position` is in its parent's frame when it is nested, so the
+        // spot below it is too.
+        let below = FlowPoint::new(source.position.x, source.position.y + height + 30.0);
         ActionAnchor {
-            position: FlowPoint::new(source.position.x, source.position.y + height + 30.0),
+            position: below,
             parent_id: source.parent_id.clone(),
             source_id: Some(source.id.clone()),
+            local_position: source.parent_id.is_some().then_some(below),
         }
+    }
+
+    /// Where an action added "at" `source` goes when there is no cursor
+    /// position to place it by: a catalog click with `source` selected, or
+    /// Add Action from `source`'s right-click menu.
+    ///
+    /// For a loop, a branch, or an `If`/`Try`, that is inside it, since
+    /// filling the body is what selecting a container is for and a branch has
+    /// no "below" at all. For an ordinary action it is the next step after
+    /// it.
+    fn beside_node(state: &FlowState, source: &FlowNode) -> ActionAnchor {
+        Self::inside_node(state, source).unwrap_or_else(|| Self::below_node(state, source))
+    }
+
+    /// The end of `node`'s body, or `None` when `node` has no body.
+    ///
+    /// The new action is chained after the body's last one when there is
+    /// exactly one action nothing else follows. Otherwise it is left
+    /// unconnected, because there is no single "previous step" to pick.
+    fn inside_node(state: &FlowState, node: &FlowNode) -> Option<ActionAnchor> {
+        let body = Self::body_container(state, node)?;
+        let children = state.children_of(&body.id);
+        let mut tails = children.iter().filter(|child| {
+            !state.edges.iter().any(|edge| edge.source == child.id)
+        });
+        let source_id = match (tails.next(), tails.next()) {
+            (Some(tail), None) => Some(tail.id.clone()),
+            _ => None,
+        };
+        Some(ActionAnchor {
+            position: FlowPoint::default(),
+            parent_id: Some(body.id.clone()),
+            source_id,
+            local_position: Some(Self::next_slot(state, &body.id)),
+        })
+    }
+
+    /// The node whose children are `node`'s body: the node itself for a loop
+    /// or a branch wrapper, the True/Try wrapper for an `If`/`Try`, and `None`
+    /// for a leaf. Decided by type, not by whether the node has children yet,
+    /// so an empty container can take its first action.
+    fn body_container<'a>(state: &'a FlowState, node: &'a FlowNode) -> Option<&'a FlowNode> {
+        let node_type = node.node_type.as_deref()?;
+        if matches!(node_type, "Foreach" | "Until") || is_branch_wrapper_type(node_type) {
+            return Some(node);
+        }
+        let [body, _] = workflow_json::branch_types(node_type)?;
+        state.get_node(&format!("{}{body}", node.id).into())
+    }
+
+    /// Where the next action goes inside `container` when the cursor isn't a
+    /// usable position: under its lowest child, or at the body's first slot.
+    fn next_slot(state: &FlowState, container: &NodeId) -> FlowPoint {
+        let lowest = state
+            .children_of(container)
+            .iter()
+            .map(|child| child.position.y)
+            .fold(None, |lowest: Option<f32>, y| {
+                Some(lowest.map_or(y, |lowest| lowest.max(y)))
+            });
+        FlowPoint::new(
+            workflow_json::CHILD_X,
+            lowest.map_or(workflow_json::CHILD_Y0, |y| {
+                y + workflow_json::LEAF_SIZE.1 + 30.0
+            }),
+        )
     }
 
     /// The flow-space center of the visible canvas, the default insertion
@@ -2301,16 +2883,151 @@ impl DesignerPanel {
         let under = state.node_at_flow((position.x, position.y))?;
         let mut current = state.get_node(&under);
         while let Some(node) = current {
-            if state.is_container(&node.id) {
+            if let Some(body) = Self::body_container(state, node) {
+                // The cursor is a real position inside the body only when it
+                // was over that body and the body already has a drawn box.
+                // An empty one is drawn as a small node, and an `If`/`Try`
+                // hands the drop on to its first branch.
+                let over_body = body.id == node.id && state.is_container(&body.id);
                 return Some(ActionAnchor {
                     position,
-                    parent_id: Some(node.id.clone()),
+                    parent_id: Some(body.id.clone()),
                     source_id: None,
+                    local_position: (!over_body).then(|| Self::next_slot(state, &body.id)),
                 });
             }
             current = node.parent_id.as_ref().and_then(|id| state.get_node(id));
         }
         None
+    }
+
+    /// Opens the action menu for the "+" on the connection `edge_id`, at the
+    /// click. Picking an action puts it on that connection.
+    fn open_insert_menu(
+        &mut self,
+        edge_id: gpui_flow::EdgeId,
+        position: Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panel = cx.weak_entity();
+        let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
+            action_type_menu(
+                menu.label("Insert action"),
+                window,
+                cx,
+                Rc::new(move |type_id, cx| {
+                    panel
+                        .update(cx, |panel, cx| panel.insert_on_edge(type_id, &edge_id, cx))
+                        .ok();
+                }),
+            )
+        });
+        let _dismissed = cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
+            this.insert_menu = None;
+            cx.notify();
+        });
+        // Focused so it takes the keyboard and closes on Escape.
+        menu.focus_handle(cx).focus(window, cx);
+        self.insert_menu = Some(InsertMenu {
+            menu,
+            position,
+            _dismissed,
+        });
+        cx.notify();
+    }
+
+    /// Puts a new `type_id` action on the connection `edge_id`: the
+    /// connection is replaced by one into the new action and one out of it,
+    /// and the action it used to lead to moves down, with everything after
+    /// it, to make room.
+    ///
+    /// The connection into the new action keeps the old one's label, since
+    /// "run after this failed" is a statement about the action upstream. The
+    /// one out of it is plain: the action below now waits on the new one.
+    fn insert_on_edge(
+        &mut self,
+        type_id: &'static str,
+        edge_id: &gpui_flow::EdgeId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((edge, slot, parent_id)) = ({
+            let state = self.state.read(cx);
+            state
+                .edges
+                .iter()
+                .find(|edge| edge.id == *edge_id)
+                .and_then(|edge| {
+                    let target = state.get_node(&edge.target)?;
+                    Some((edge.clone(), target.position, target.parent_id.clone()))
+                })
+        }) else {
+            return;
+        };
+
+        // Created where the downstream action sits, in the same body.
+        let node_id = self.push_action_node(
+            type_id,
+            ActionAnchor {
+                position: slot,
+                local_position: parent_id.is_some().then_some(slot),
+                parent_id,
+                source_id: None,
+            },
+            cx,
+        );
+        self.state.update(cx, |state, cx| {
+            for id in Self::shifted_by_insert(state, &edge.target) {
+                if let Some(node) = state.get_node_mut(&id) {
+                    node.position.y += INSERT_SHIFT;
+                }
+            }
+            state.edges.retain(|existing| existing.id != edge.id);
+            let mut into = FlowEdge::new(
+                format!("e_{}_{node_id}", edge.source),
+                edge.source.clone(),
+                node_id.clone(),
+            );
+            into.label = edge.label.clone();
+            into.color = edge.color;
+            let mut out_of = FlowEdge::new(
+                format!("e_{node_id}_{}", edge.target),
+                node_id.clone(),
+                edge.target.clone(),
+            );
+            // The theme's ordinary edge colour, not the "Failed" one the
+            // replaced connection may have carried.
+            out_of.color = state
+                .edges
+                .iter()
+                .find(|other| other.label.is_none())
+                .and_then(|other| other.color)
+                .or(edge.color.filter(|_| edge.label.is_none()));
+            state.edges.push(into);
+            state.edges.push(out_of);
+            state.refit_all_containers();
+            cx.notify();
+        });
+    }
+
+    /// The action an insert displaces and everything that runs after it in
+    /// the same body: what has to move down to make room.
+    fn shifted_by_insert(state: &FlowState, target: &NodeId) -> Vec<NodeId> {
+        let parent = state.get_node(target).and_then(|n| n.parent_id.clone());
+        let mut shifted = vec![target.clone()];
+        let mut frontier = vec![target.clone()];
+        while let Some(id) = frontier.pop() {
+            for edge in state.edges.iter().filter(|edge| edge.source == id) {
+                let same_body = state
+                    .get_node(&edge.target)
+                    .is_some_and(|node| node.parent_id == parent);
+                if same_body && !shifted.contains(&edge.target) {
+                    shifted.push(edge.target.clone());
+                    frontier.push(edge.target.clone());
+                }
+            }
+        }
+        shifted
     }
 
     /// The single place a node is actually created, shared by right-click
@@ -2326,6 +3043,7 @@ impl DesignerPanel {
             position,
             parent_id,
             source_id,
+            local_position,
         } = anchor;
         let id = {
             let state = self.state.read(cx);
@@ -2355,6 +3073,33 @@ impl DesignerPanel {
             node = node.size(workflow_json::LEAF_SIZE.0, workflow_json::LEAF_SIZE.1);
         }
         node.properties = workflow_json::default_properties_for_type(type_id);
+        if type_id == "script" {
+            // A script is a file from the start: its own, in the flow's
+            // scripts folder, holding a template that already runs.
+            let runtime = ScriptRuntime::Python;
+            let created = script_companion::new_script_path(&self.path, &id, runtime).and_then(
+                |path| {
+                    script_companion::ensure_script_file(&path, runtime)?;
+                    Ok(path)
+                },
+            );
+            match created {
+                Ok(path) => {
+                    let source = ScriptSource::File {
+                        path: script_companion::root_relative(&path, &self.root),
+                        runtime: None,
+                    };
+                    if let Ok(source) = serde_json::to_string(&source) {
+                        node.properties.push(("source".into(), source.into()));
+                    }
+                }
+                // The node is still added; validation reports the missing
+                // source, and the script section can create the file later.
+                Err(error) => {
+                    self.error = Some(format!("Couldn't create the script file: {error}"));
+                }
+            }
+        }
         let node_id: NodeId = id.clone().into();
         self.state.update(cx, |state, cx| {
             state.push_undo();
@@ -2366,19 +3111,37 @@ impl DesignerPanel {
                     id.clone(),
                 ));
             }
+            // An `If`/`Try` is nothing but its two branches on the canvas, so
+            // it is created with both: they are what actions get dropped into.
+            for branch_type in workflow_json::branch_types(type_id).into_iter().flatten() {
+                state
+                    .nodes
+                    .push(workflow_json::branch_node(&id, branch_type, false));
+            }
+            // `set_parent` resolves nodes through the lookup, which doesn't
+            // know the nodes pushed above until it is rebuilt.
+            state.rebuild_lookup();
             // Nest *after* insertion, via `set_parent`, rather than building
             // the node with a parent: `position` was computed in absolute
-            // flow space (it's a cursor position, or sits below a node that
-            // may itself be nested), and `set_parent` is what re-expresses it
-            // relative to the new parent. Building the node pre-parented
-            // would misplace it by the container's own origin — the same
-            // jump `set_parent`'s doc comment exists to prevent.
+            // flow space (a cursor position), and `set_parent` is what
+            // re-expresses it relative to the new parent. Building the node
+            // pre-parented would misplace it by the container's own origin —
+            // the same jump `set_parent`'s doc comment exists to prevent.
             if let Some(parent_id) = parent_id {
                 state.set_parent(&node_id, Some(parent_id));
+                if let Some(local) = local_position
+                    && let Some(node) = state.get_node_mut(&node_id)
+                {
+                    node.position = local;
+                }
             }
-            state.rebuild_lookup();
+            state.refit_all_containers();
             cx.notify();
         });
+        if type_id == "script" {
+            // Its template reads the run through the helper beside it.
+            self.write_script_support(cx);
+        }
         self.select_node(node_id.clone(), cx);
         node_id
     }
@@ -2634,11 +3397,7 @@ impl DesignerPanel {
                 // A flow-level issue has no node to jump to, so its row is
                 // rendered flat rather than clickable — an affordance that
                 // silently does nothing is worse than no affordance.
-                let target: Option<NodeId> = if issue.node_path.is_empty() {
-                    None
-                } else {
-                    Some(issue.node_path.as_str().into())
-                };
+                let target = Self::issue_node_id(&issue.node_path);
                 let row_target = target.clone();
                 // The row id has to be a 2-tuple at most (`ElementId` has no
                 // 3-tuple impl), so the field is folded into the string key
@@ -2695,11 +3454,21 @@ impl DesignerPanel {
 
     fn render_properties(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(node_id) = &self.selected_node_id else {
+            let selected_edge = self
+                .state
+                .read(cx)
+                .edges
+                .iter()
+                .find(|edge| edge.selected)
+                .cloned();
+            if let Some(edge) = selected_edge {
+                return self.render_edge_properties(&edge, cx).into_any_element();
+            }
             return div()
                 .p_4()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child("Select a node to edit its properties.")
+                .child("Select a node or a connection to edit it.")
                 .into_any_element();
         };
         let type_id = self
@@ -2725,6 +3494,28 @@ impl DesignerPanel {
             .copied()
             .filter(|i| i.field.is_none())
             .collect();
+
+        let loop_pages = self.loop_pages(node_id, cx);
+        let is_loop = type_id == "Foreach";
+
+        // Registry-declared optional inputs with no property behind them.
+        let unset_optional: Vec<InputField> = {
+            let state = self.state.read(cx);
+            let properties = state
+                .get_node(node_id)
+                .map(|n| n.properties.as_slice())
+                .unwrap_or_default();
+            workflow_engine::registry::find(type_id.as_ref())
+                .map(|def| def.inputs)
+                .unwrap_or_default()
+                .iter()
+                .filter(|field| {
+                    !field.required
+                        && meta_property(type_id.as_ref(), properties, field.name).is_none()
+                })
+                .copied()
+                .collect()
+        };
 
         // Synthetic branch node: no editable properties, no Delete. Resolve the
         // owning action's label so the explanation names something the user
@@ -2752,8 +3543,10 @@ impl DesignerPanel {
             ("", String::new(), 0)
         };
 
+        // Full width but natural height: the pane around it scrolls, and a
+        // height pinned to the pane would clip the rows instead.
         v_flex()
-            .size_full()
+            .w_full()
             .gap_2()
             .p_3()
             .child(
@@ -2780,9 +3573,27 @@ impl DesignerPanel {
                         })),
                 )
             })
-            .when_some(
-                self.run_snapshot.nodes.get(node_id.as_ref()).cloned(),
-                |el, run| el.child(self.render_run_result(&run, cx).into_any_element()),
+            // Inside a loop the body ran once per item, so say which run of
+            // it is being shown and let the user step through them.
+            .children(
+                loop_pages
+                    .iter()
+                    .map(|page| self.render_loop_page(page, cx).into_any_element())
+                    .collect::<Vec<_>>(),
+            )
+            .when_some(self.run_result_for(node_id, cx), |el, run| {
+                el.child(self.render_run_result(&run, cx).into_any_element())
+            })
+            .when(
+                !loop_pages.is_empty() && !is_loop && self.run_result_for(node_id, cx).is_none(),
+                |el| {
+                    el.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("This action didn't run in this iteration."),
+                    )
+                },
             )
             .when_some(self.label_input.clone(), |el, input| {
                 el.child(labeled_field(
@@ -2867,8 +3678,14 @@ impl DesignerPanel {
                     // A required field left empty is a field-level error in its
                     // own right, so the user gets it next to the input rather
                     // than only in the toolbar popover.
+                    // Read the editor the user actually types into: a
+                    // `Json`/`Expression` row edits its textarea, which the
+                    // single-line input doesn't follow.
                     let missing_required = row.required
-                        && row.value.read(cx).value().trim().is_empty();
+                        && match &row.textarea {
+                            Some(area) => area.read(cx).value().trim().is_empty(),
+                            None => row.value.read(cx).value().trim().is_empty(),
+                        };
                     let field_el = v_flex()
                         .gap_0p5()
                         .child(self.render_property_label(row, muted, cx))
@@ -2909,6 +3726,36 @@ impl DesignerPanel {
                     field_el.into_any_element()
                 }))
             })
+            // Optional inputs the action doesn't use yet. They get no row until
+            // asked for, so this is where they are discoverable.
+            .when(!unset_optional.is_empty(), |el| {
+                el.child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Add an optional input:"),
+                        )
+                        .child(div().flex().flex_wrap().gap_1().children(
+                            unset_optional.iter().map(|field| {
+                                let name = field.name;
+                                Button::new(SharedString::from(format!(
+                                    "designer-add-optional-{name}"
+                                )))
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Plus)
+                                .label(name)
+                                .tooltip(field.help)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.on_add_optional_field_click(name, cx)
+                                }))
+                            }),
+                        )),
+                )
+            })
             .when(!is_branch_wrapper, |el| {
                 el.child(
                     h_flex()
@@ -2943,15 +3790,132 @@ impl DesignerPanel {
             .into_any_element()
     }
 
+    /// Sets when the action a connection leads to runs: after the one above
+    /// it succeeded (`None`), failed (`"Failed"`), or either (`"Always"`).
+    ///
+    /// The condition is kept as the edge's label, which is what
+    /// `workflow_json` reads back into `runAfter` on save, and the edge is
+    /// recoloured to match the way a loaded one is.
+    fn on_edge_condition_click(
+        &mut self,
+        edge_id: gpui_flow::EdgeId,
+        condition: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) {
+        let normal = hex(cx.theme().muted_foreground);
+        let failed = hex(cx.theme().danger);
+        self.state.update(cx, |state, cx| {
+            state.push_undo();
+            if let Some(edge) = state.edges.iter_mut().find(|edge| edge.id == edge_id) {
+                edge.label = condition.map(Into::into);
+                edge.color = Some(if condition == Some("Failed") {
+                    failed
+                } else {
+                    normal
+                });
+            }
+            cx.notify();
+        });
+    }
+
+    fn on_delete_edge_click(&mut self, edge_id: gpui_flow::EdgeId, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| {
+            state.push_undo();
+            state.edges.retain(|edge| edge.id != edge_id);
+            cx.notify();
+        });
+    }
+
+    /// The inspector for a selected connection: what it joins, and when the
+    /// action it leads to runs.
+    fn render_edge_properties(&self, edge: &FlowEdge, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let (source, target) = {
+            let state = self.state.read(cx);
+            let label = |id: &NodeId| {
+                state
+                    .get_node(id)
+                    .map(node_label)
+                    .unwrap_or_else(|| id.to_string())
+            };
+            (label(&edge.source), label(&edge.target))
+        };
+        let current = edge.label.as_deref();
+        let conditions: [(Option<&'static str>, &'static str, &'static str); 3] = [
+            (None, "Succeeded", "Run only if the action above succeeded."),
+            (
+                Some("Failed"),
+                "Failed",
+                "Run only if the action above failed: an error path.",
+            ),
+            (
+                Some("Always"),
+                "Either",
+                "Run whether the action above succeeded or failed.",
+            ),
+        ];
+
+        v_flex()
+            .w_full()
+            .gap_2()
+            .p_3()
+            .child(div().text_xs().text_color(muted).child("Connection"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().foreground)
+                    .child(format!("{source} \u{2192} {target}")),
+            )
+            .child(div().h(gpui::px(1.0)).w_full().bg(cx.theme().border))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(format!("Run {target} when {source} has:")),
+            )
+            .child(h_flex().gap_1().flex_wrap().children(
+                conditions.into_iter().map(|(condition, label, tooltip)| {
+                    let is_active = current == condition;
+                    let edge_id = edge.id.clone();
+                    Button::new(format!("designer-edge-{}", label.to_ascii_lowercase()))
+                        .xsmall()
+                        .when(!is_active, |button| button.ghost())
+                        .when(is_active, |button| button.outline())
+                        .label(label)
+                        .tooltip(tooltip)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.on_edge_condition_click(edge_id.clone(), condition, cx);
+                        }))
+                        .into_any_element()
+                }),
+            ))
+            .child({
+                let edge_id = edge.id.clone();
+                Button::new("designer-delete-edge")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Delete)
+                    .label("Delete Connection")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.on_delete_edge_click(edge_id.clone(), cx);
+                    }))
+            })
+    }
+
     /// A property row's label: the field name, a `*` when the registry marks
     /// it required, and a muted type badge so the expected shape is legible
     /// before the user starts typing.
+    ///
+    /// A row that isn't required also gets a remove button, which takes the
+    /// input out of the action altogether rather than leaving it blank.
     fn render_property_label(
         &self,
         row: &PropertyRow,
         muted: gpui::Hsla,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let danger = cx.theme().danger;
+        let key = row.key.clone();
         h_flex()
             .gap_1()
             .items_center()
@@ -2961,11 +3925,26 @@ impl DesignerPanel {
                     .text_color(muted)
                     .child(row.key.to_string())
                     .when(row.required, |el| {
-                        el.child(div().text_xs().text_color(cx.theme().danger).child("*"))
+                        el.child(div().text_xs().text_color(danger).child("*"))
                     }),
             )
             .when_some(row.type_badge, |el, badge| {
                 el.child(div().text_xs().text_color(muted).opacity(0.7).child(badge))
+            })
+            .when(!row.required, |el| {
+                el.child(div().flex_1()).child(
+                    Button::new(SharedString::from(format!(
+                        "designer-remove-prop-{}",
+                        row.key
+                    )))
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Close)
+                    .tooltip("Remove this input from the action")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.on_remove_property_click(key.clone(), cx)
+                    })),
+                )
             })
     }
 
@@ -2982,6 +3961,9 @@ impl DesignerPanel {
         row: &PropertyRow,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        if let Some(select) = &row.select {
+            return Select::new(select).small().into_any_element();
+        }
         match row.kind {
             Some(FieldKind::Bool) => {
                 let checked = row.value.read(cx).value().trim() == "true";
@@ -3015,87 +3997,335 @@ impl DesignerPanel {
         }
     }
 
-    /// Collects the `<action_id>.<output>` paths an expression on `node_id`
-    /// could legally reference: every output of every action that is
-    /// guaranteed to have run first.
+    /// Collects the JSONLogic `var` paths an expression on `node_id` can
+    /// reference: `<action_id>.outputs.<output>` for every action that has
+    /// run by the time the expression is evaluated, in the shape
+    /// `RunContext::record_outputs` stores them.
     ///
-    /// "Guaranteed to have run first" is the real constraint — a JSONLogic
-    /// `var` against an action that may not have run yet resolves to null and
-    /// silently changes behavior, so offering only level-ordered predecessors
-    /// keeps the picker honest. Ordering comes from `compute_levels` over the
-    /// node's own scope's `runAfter` graph, and the output names from each
-    /// action's `ActionDef::outputs` — the same metadata the runtime fills
-    /// them from.
+    /// A `var` against an action that hasn't run resolves to null and
+    /// silently changes behavior, so only these are offered:
     ///
-    /// Actions with no declared outputs (the four container types) contribute
-    /// nothing, which is correct: they set no state for a sibling to read.
-    fn expression_references(&self, node_id: &NodeId, cx: &App) -> Vec<String> {
-        let state = self.state.read(cx);
-        let node_type = state
-            .get_node(node_id)
-            .and_then(|n| n.node_type.clone())
-            .unwrap_or_default();
-        if node_type.is_empty() || is_branch_wrapper_type(node_type.as_ref()) {
-            return Vec::new();
+    /// - the node's predecessors, followed back through its incoming edges
+    ///   (the canvas draws `runAfter` as an arrow into the dependent node);
+    /// - the same for every container the node sits inside, since a body
+    ///   reads its enclosing scopes' results;
+    /// - `$item` inside a `Foreach`, and the owning `Try`'s `error` inside
+    ///   its catch branch;
+    /// - for an `Until`, its own body, which runs before `until` is checked.
+    ///
+    /// An action reached only over a "Failed" edge is followed but not
+    /// offered: it failed, so it recorded no outputs.
+    fn expression_references(state: &FlowState, node_id: &NodeId) -> Vec<String> {
+        let scope = Self::reference_scope(state, node_id);
+        let mut refs = Vec::new();
+        for id in scope.actions.iter().chain(&scope.catch_owners) {
+            let outputs = state
+                .get_node(id)
+                .and_then(|n| n.node_type.as_deref())
+                .and_then(workflow_engine::registry::find)
+                .map(|def| def.outputs)
+                .unwrap_or_default();
+            for output in outputs {
+                refs.push(format!("{id}.outputs.{}", output.name));
+            }
         }
-        // The canvas draws `runAfter` as incoming arrows, so a node's
-        // dependencies are its incoming edge sources.
-        let incoming: Vec<String> = state
-            .edges
-            .iter()
-            .filter(|e| e.target == *node_id)
-            .map(|e| e.source.to_string())
-            .collect();
-
-        // Rebuild the scope's action map to hand the scheduler. Only top-level
-        // nodes: `runAfter` never crosses a nesting level (see `Action`'s doc
-        // comment), so a nested node's scope is the container body it sits in,
-        // which this pass deliberately doesn't model.
-        let mut scope: workflow_engine::ActionMap = Default::default();
-        for node in state
-            .nodes
-            .iter()
-            .filter(|n| n.parent_id.is_none() && n.id != *node_id)
-        {
-            let Some(node_type) = node.node_type.as_deref() else {
+        // A variable is read by its own name, whichever action set it last.
+        for id in &scope.actions {
+            let Some(node) = state.get_node(id) else {
                 continue;
             };
-            if is_branch_wrapper_type(node_type) {
+            if node.node_type.as_deref() != Some("InitVariable") {
                 continue;
             }
-            let mut action = workflow_engine::Action::new(node_type);
-            action.run_after = incoming
+            let name = node
+                .properties
                 .iter()
-                .filter(|dep| *dep == &node.id)
-                .map(|dep| (dep.clone(), vec![workflow_engine::RunOutcome::Succeeded]))
-                .collect();
-            scope.insert(node.id.to_string(), action);
-        }
-
-        let Ok(levels) = workflow_engine::scheduler::compute_levels(&scope) else {
-            return Vec::new();
-        };
-        // Everything in the scope that isn't the node itself is a candidate
-        // predecessor; the level structure only tells us it terminates, which
-        // is what we need to avoid offering a cycle participant.
-        let mut refs = Vec::new();
-        for level in &levels {
-            for id in level {
-                let Some(action) = scope.get(id) else {
-                    continue;
-                };
-                let Some(def) = workflow_engine::registry::find(&action.type_id) else {
-                    continue;
-                };
-                for output in def.outputs {
-                    refs.push(format!("{id}.{}", output.name));
-                }
+                .find(|(key, _)| key.as_ref() == "name")
+                .map(|(_, name)| name.trim())
+                .filter(|name| !name.is_empty() && !name.contains('.'));
+            if let Some(name) = name {
+                refs.push(format!("variables.{name}"));
             }
         }
+        if !scope.loops.is_empty() {
+            refs.push("$item".to_string());
+        }
+
         // Stable order, no duplicates.
         refs.sort();
         refs.dedup();
         refs
+    }
+
+    /// What an expression on `node_id` can see, by the rules
+    /// [`Self::expression_references`] documents.
+    fn reference_scope(state: &FlowState, node_id: &NodeId) -> ReferenceScope {
+        let mut scope = ReferenceScope::default();
+        let Some(node) = state.get_node(node_id) else {
+            return scope;
+        };
+        let node_type = node.node_type.as_deref().unwrap_or_default();
+        if node_type.is_empty() || is_branch_wrapper_type(node_type) {
+            return scope;
+        }
+
+        if node_type == "Until" {
+            for child in state.children_of(node_id) {
+                scope.actions.push(child.id.clone());
+            }
+        }
+
+        // Walk outward one scope at a time: the node, then the container it
+        // sits in, then that container's own container.
+        let mut current = node;
+        loop {
+            let mut seen: Vec<NodeId> = vec![current.id.clone()];
+            let mut frontier = vec![current.id.clone()];
+            while let Some(id) = frontier.pop() {
+                for edge in state.edges.iter().filter(|edge| edge.target == id) {
+                    if seen.contains(&edge.source) {
+                        continue;
+                    }
+                    seen.push(edge.source.clone());
+                    frontier.push(edge.source.clone());
+                    if edge.label.as_deref() != Some("Failed") {
+                        scope.actions.push(edge.source.clone());
+                    }
+                }
+            }
+
+            let Some(parent) = current.parent_id.as_ref().and_then(|id| state.get_node(id)) else {
+                break;
+            };
+            // A branch wrapper is canvas scaffolding; the action that owns
+            // the scope is the wrapper's own parent.
+            let owner = match parent.node_type.as_deref() {
+                Some(wrapper) if is_branch_wrapper_type(wrapper) => {
+                    let owner = parent.parent_id.as_ref().and_then(|id| state.get_node(id));
+                    if wrapper == workflow_json::BRANCH_CATCH
+                        && let Some(owner) = owner
+                    {
+                        scope.catch_owners.push(owner.id.clone());
+                    }
+                    owner
+                }
+                _ => Some(parent),
+            };
+            let Some(owner) = owner else {
+                break;
+            };
+            if owner.node_type.as_deref() == Some("Foreach") {
+                scope.loops.push(owner.id.clone());
+            }
+            current = owner;
+        }
+        scope
+    }
+
+    /// References read off what the visible actions actually returned on the
+    /// last run, which is how the picker can offer what is *inside* an output
+    /// (`fetch.outputs.body.customer.id`) when the registry only knows the
+    /// output's name.
+    ///
+    /// `samples` maps an action id to the outputs it last produced. `known`
+    /// is what [`Self::expression_references`] already offers, so nothing is
+    /// listed twice.
+    ///
+    /// Inside a `Foreach` that loops over a plain reference to a sampled
+    /// list, the list's first element stands in for `$item`.
+    fn sampled_references(
+        state: &FlowState,
+        samples: &HashMap<String, serde_json::Value>,
+        known: &[String],
+        node_id: &NodeId,
+    ) -> Vec<SampledRef> {
+        let scope = Self::reference_scope(state, node_id);
+        let mut refs = Vec::new();
+        for id in &scope.actions {
+            if let Some(outputs) = samples.get::<str>(id.as_ref()) {
+                sample_paths(&format!("{id}.outputs"), outputs, 1, &mut refs);
+            }
+        }
+        if let Some(item) = scope
+            .loops
+            .first()
+            .and_then(|foreach| Self::sampled_item(state, samples, foreach))
+        {
+            sample_paths("$item", &item, 1, &mut refs);
+        }
+        refs.retain(|sampled| !known.contains(&sampled.path));
+        refs.sort_by(|a, b| a.path.cmp(&b.path));
+        refs.dedup_by(|a, b| a.path == b.path);
+        refs.truncate(MAX_SAMPLED_REFS);
+        refs
+    }
+
+    /// One element of the list `foreach` loops over, when its expression is
+    /// a plain `{"var": "<id>.outputs.<path>"}` whose target was sampled. A
+    /// computed expression has no list to look up, so it yields nothing.
+    fn sampled_item(
+        state: &FlowState,
+        samples: &HashMap<String, serde_json::Value>,
+        foreach: &NodeId,
+    ) -> Option<serde_json::Value> {
+        let expression = state
+            .get_node(foreach)?
+            .properties
+            .iter()
+            .find(|(key, _)| key.as_ref() == "__foreach")
+            .map(|(_, value)| value.to_string())?;
+        let expression: serde_json::Value = serde_json::from_str(&expression).ok()?;
+        let path = expression.as_object()?.get("var")?.as_str()?;
+        let mut segments = path.split('.');
+        let outputs = samples.get(segments.next()?)?;
+        if segments.next()? != "outputs" {
+            return None;
+        }
+        let list = segments.try_fold(outputs, |value, key| value.get(key))?;
+        list.as_array()?.first().cloned()
+    }
+
+    /// The last run's outputs per action, minus any whose inputs have been
+    /// edited since (see [`Self::mark_samples_stale`]).
+    fn run_samples(&self) -> HashMap<String, serde_json::Value> {
+        self.run_snapshot
+            .nodes
+            .iter()
+            .filter(|(id, run)| {
+                run.phase == RunPhase::Succeeded && !self.stale_samples.contains(id.as_str())
+            })
+            .filter_map(|(id, run)| {
+                let outputs: serde_json::Value = serde_json::from_str(run.detail.as_deref()?).ok()?;
+                outputs.is_object().then(|| (id.clone(), outputs))
+            })
+            .collect()
+    }
+
+    /// Writes what this flow's scripts read the run through: the helper per
+    /// language, and type declarations for the JavaScript ones. A flow with
+    /// no script action gets neither.
+    ///
+    /// A failure here is logged, not shown: the helpers are a convenience,
+    /// and a script that reads the context file itself runs without them.
+    fn write_script_support(&self, cx: &App) {
+        let state = self.state.read(cx);
+        let has_script = state
+            .nodes
+            .iter()
+            .any(|node| node.node_type.as_deref() == Some("script"));
+        if !has_script {
+            return;
+        }
+        let result = script_companion::scripts_dir(&self.path).and_then(|dir| {
+            script_helpers::ensure_helpers(&dir)?;
+            let samples = self.run_samples();
+            let (variables, actions) = Self::script_types(state, &samples);
+            script_helpers::write_declarations(&dir, &variables, &actions)
+        });
+        if let Err(error) = result {
+            log::warn!("Designer: couldn't write the script helpers: {error}");
+        }
+    }
+
+    /// The TypeScript types for the flow's variables and its actions'
+    /// outputs, as `(name, type)`.
+    ///
+    /// A variable starts from the type its `InitVariable` declares. Where
+    /// the last run recorded a value for it, the value's own shape is used
+    /// instead, with a `SetVariable`'s taking precedence, since that is what
+    /// the variable went on to hold (a list that started empty has elements
+    /// by then). An action is typed from its sampled outputs.
+    fn script_types(
+        state: &FlowState,
+        samples: &HashMap<String, serde_json::Value>,
+    ) -> (Vec<(String, String)>, Vec<(String, String)>) {
+        let property = |node: &FlowNode, key: &str| {
+            node.properties
+                .iter()
+                .find(|(name, _)| name.as_ref() == key)
+                .map(|(_, value)| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        };
+        let mut variables: HashMap<String, String> = HashMap::new();
+        for kind in ["InitVariable", "SetVariable"] {
+            for node in state
+                .nodes
+                .iter()
+                .filter(|node| node.node_type.as_deref() == Some(kind))
+            {
+                let Some(name) = property(node, "name") else {
+                    continue;
+                };
+                if kind == "InitVariable" {
+                    let declared = property(node, "type").unwrap_or_default();
+                    variables.insert(
+                        name.clone(),
+                        script_helpers::declared_ts_type(&declared).to_string(),
+                    );
+                }
+                let sampled = samples
+                    .get::<str>(node.id.as_ref())
+                    .and_then(|outputs| outputs.get("value"))
+                    .map(script_helpers::ts_type)
+                    // A null or an empty list says less than the declaration.
+                    .filter(|ty| !ty.starts_with("unknown"));
+                if let Some(sampled) = sampled
+                    && variables.contains_key(&name)
+                {
+                    variables.insert(name, sampled);
+                }
+            }
+        }
+        let actions = samples
+            .iter()
+            .map(|(id, outputs)| (id.clone(), script_helpers::ts_type(outputs)))
+            .collect();
+        (variables.into_iter().collect(), actions)
+    }
+
+    /// Every node whose result can change when `node_id` does: what runs
+    /// after it, what runs after each container it sits in, and everything
+    /// inside any of those.
+    fn downstream_of(state: &FlowState, node_id: &NodeId) -> Vec<NodeId> {
+        // The flag is whether a node's own body is affected too. It isn't
+        // for a container the edited node merely sits in: the siblings that
+        // ran before the edit are unchanged.
+        let mut affected: Vec<NodeId> = vec![node_id.clone()];
+        let mut frontier: Vec<(NodeId, bool)> = vec![(node_id.clone(), true)];
+        let mut ancestor = state.get_node(node_id).and_then(|n| n.parent_id.clone());
+        while let Some(id) = ancestor {
+            ancestor = state.get_node(&id).and_then(|n| n.parent_id.clone());
+            affected.push(id.clone());
+            frontier.push((id, false));
+        }
+        while let Some((id, with_body)) = frontier.pop() {
+            let after = state
+                .edges
+                .iter()
+                .filter(|edge| edge.source == id)
+                .map(|edge| &edge.target);
+            let inside = state
+                .nodes
+                .iter()
+                .filter(|node| with_body && node.parent_id.as_ref() == Some(&id))
+                .map(|node| &node.id);
+            for next in after.chain(inside) {
+                if !affected.contains(next) {
+                    affected.push(next.clone());
+                    frontier.push((next.clone(), true));
+                }
+            }
+        }
+        affected
+    }
+
+    /// Stops offering last-run samples for `node_id` and everything
+    /// downstream of it. An edit there means those results describe a flow
+    /// that no longer exists; the run's status colors are left alone.
+    fn mark_samples_stale(&mut self, node_id: &NodeId, cx: &App) {
+        let affected = Self::downstream_of(self.state.read(cx), node_id);
+        self.stale_samples
+            .extend(affected.into_iter().map(|id| id.to_string()));
     }
 
     /// A row of clickable `{"var": "..."}` snippets for an `Expression`
@@ -3118,72 +4348,115 @@ impl DesignerPanel {
         let Some(node_id) = self.selected_node_id.clone() else {
             return div().into_any_element();
         };
-        let refs = self.expression_references(&node_id, cx);
-        if refs.is_empty() {
+        let refs = Self::expression_references(self.state.read(cx), &node_id);
+        let sampled = Self::sampled_references(
+            self.state.read(cx),
+            &self.run_samples(),
+            &refs,
+            &node_id,
+        );
+        if refs.is_empty() && sampled.is_empty() {
             return v_flex()
                 .gap_0p5()
                 .child(
                     div()
                         .text_xs()
                         .text_color(muted)
-                        .child("No earlier action produces an output to reference here."),
+                        .child(
+                            "Nothing to reference yet. Connect this action after one that \
+                             produces an output.",
+                        ),
                 )
                 .into_any_element();
         }
 
+        v_flex()
+            .gap_1()
+            .when(!refs.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child("Insert a reference:"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .children(refs.iter().map(|reference| {
+                            let snippet = format!("{{\"var\": \"{reference}\"}}");
+                            self.reference_chip(row, reference, snippet, cx)
+                        })),
+                )
+            })
+            // What the actions before this one actually returned last time.
+            // These are observations, not guarantees: the next response may
+            // be shaped differently, and a path that isn't there reads null.
+            .when(!sampled.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child("From the last run:"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .children(sampled.iter().map(|sampled| {
+                            let tooltip = format!(
+                                "{{\"var\": \"{}\"}} — {}, last seen as {}",
+                                sampled.path, sampled.kind, sampled.preview
+                            );
+                            self.reference_chip(row, &sampled.path, tooltip, cx)
+                        })),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// One clickable reference for `row`'s expression. The chip names the
+    /// action and output; `tooltip` says what is inserted.
+    fn reference_chip(
+        &self,
+        row: &PropertyRow,
+        path: &str,
+        tooltip: String,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let snippet = format!("{{\"var\": \"{path}\"}}");
         let input = row.value.clone();
         let textarea = row.textarea.clone();
         let commit = row.commit.clone();
-        v_flex()
-            .gap_1()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child("Insert a reference:"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .children(refs.into_iter().map(|reference| {
-                        let snippet = format!("{{\"var\": \"{reference}\"}}");
-                        let input = input.clone();
-                        let textarea = textarea.clone();
-                        let commit = commit.clone();
-                        Button::new(SharedString::from(format!(
-                            "designer-var-{}-{reference}",
-                            row.key
-                        )))
-                        .ghost()
-                        .xsmall()
-                        .label(reference)
-                        .tooltip(snippet.clone())
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                // Insert into whichever editor is live, then mirror
-                                // into the other so a later read agrees.
-                                if let Some(area) = &textarea {
-                                    area.update(cx, |area, cx| {
-                                        area.insert(snippet.clone(), window, cx);
-                                    });
-                                }
-                                input.update(cx, |input, cx| {
-                                    input.insert(snippet.clone(), window, cx);
-                                });
-                                // `insert` doesn't emit, so persist explicitly from
-                                // the resulting text.
-                                let new_text = match &textarea {
-                                    Some(area) => area.read(cx).value().to_string(),
-                                    None => input.read(cx).value().to_string(),
-                                };
-                                commit(this, new_text, cx);
-                            },
-                        ))
-                    })),
-            )
-            .into_any_element()
+        Button::new(SharedString::from(format!(
+            "designer-var-{}-{path}",
+            row.key
+        )))
+        .ghost()
+        .xsmall()
+        .label(path.replace(".outputs.", "."))
+        .tooltip(tooltip)
+        .on_click(cx.listener(move |this, _, window, cx| {
+            // Insert into whichever editor is live, then mirror into the
+            // other so a later read agrees.
+            if let Some(area) = &textarea {
+                area.update(cx, |area, cx| {
+                    area.insert(snippet.clone(), window, cx);
+                });
+            }
+            input.update(cx, |input, cx| {
+                input.insert(snippet.clone(), window, cx);
+            });
+            // `insert` doesn't emit, so persist explicitly from the
+            // resulting text.
+            let new_text = match &textarea {
+                Some(area) => area.read(cx).value().to_string(),
+                None => input.read(cx).value().to_string(),
+            };
+            commit(this, new_text, cx);
+        }))
     }
 
     fn get_selected_script_source(&self, cx: &App) -> Option<ScriptSource> {
@@ -3268,6 +4541,7 @@ impl DesignerPanel {
                             }
                             cx.notify();
                         });
+                        this.revalidate(cx);
                     }
                 });
                 self.script_file_input = Some(file_input);
@@ -3278,122 +4552,70 @@ impl DesignerPanel {
                 self._script_file_sub = None;
             }
         }
-        cx.notify();
+        // Which file, and which runtime, is what the script checks look at.
+        self.revalidate(cx);
     }
 
-    fn on_script_mode_change(
+    /// Points the selected script at a file of its own for `runtime`, in the
+    /// flow's `.flow-scripts` folder, creating it from a template if it
+    /// isn't there yet. An existing file is reused untouched, and whatever
+    /// the script pointed at before is left on disk.
+    fn on_create_script_file(
         &mut self,
-        to_file: bool,
+        runtime: ScriptRuntime,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(current_source) = self.get_selected_script_source(cx) else {
-            return;
-        };
         let Some(node_id) = self.selected_node_id.as_ref().map(|id| id.to_string()) else {
             return;
         };
-
-        if to_file {
-            match current_source {
-                ScriptSource::Inline { runtime, code } => {
-                    let ext = runtime.extension();
-                    let relative_path = format!("scripts/{node_id}.{ext}");
-                    let target_path = self.root.join(&relative_path);
-                    if !target_path.exists() {
-                        if let Some(parent) = target_path.parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        let _ = std::fs::write(&target_path, &code);
-                    }
-                    self.error = None;
-                    self.set_selected_script_source(
-                        ScriptSource::File {
-                            path: relative_path,
-                            runtime: None,
-                        },
-                        window,
-                        cx,
-                    );
-                }
-                ScriptSource::File { .. } => {}
+        let created = script_companion::new_script_path(&self.path, &node_id, runtime)
+            .and_then(|path| {
+                script_companion::ensure_script_file(&path, runtime)?;
+                Ok(path)
+            });
+        match created {
+            Ok(path) => {
+                self.error = None;
+                self.status = Some(format!("Script file: {}", path.display()));
+                self.set_selected_script_source(
+                    ScriptSource::File {
+                        path: script_companion::root_relative(&path, &self.root),
+                        runtime: None,
+                    },
+                    window,
+                    cx,
+                );
+                self.write_script_support(cx);
             }
-        } else {
-            match current_source {
-                ScriptSource::File { path, runtime } => {
-                    let target_path = self.root.join(&path);
-                    let inferred = match inferred_runtime(&target_path, runtime) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            self.error = Some(e);
-                            cx.notify();
-                            return;
-                        }
-                    };
-                    if inferred == ScriptRuntime::Dotnet {
-                        self.error = Some(
-                            "Inline mode does not support .NET scripts; .NET is file-only"
-                                .to_string(),
-                        );
-                        cx.notify();
-                        return;
-                    }
-                    let code = std::fs::read_to_string(&target_path)
-                        .unwrap_or_else(|_| workflow_json::DEFAULT_SCRIPT_CODE.to_string());
-                    self.error = None;
-                    self.set_selected_script_source(
-                        ScriptSource::Inline {
-                            runtime: inferred,
-                            code,
-                        },
-                        window,
-                        cx,
-                    );
-                }
-                ScriptSource::Inline { .. } => {}
+            Err(error) => {
+                self.error = Some(format!("Couldn't create the script file: {error}"));
+                cx.notify();
             }
         }
     }
 
+    /// Sets the runtime override on the selected script's file. An inline
+    /// source has no file to override the runtime of; it is replaced by
+    /// creating a script file instead.
     fn on_script_runtime_change(
         &mut self,
         new_runtime: ScriptRuntime,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(current_source) = self.get_selected_script_source(cx) else {
+        let Some(ScriptSource::File { path, .. }) = self.get_selected_script_source(cx) else {
             return;
         };
-        match current_source {
-            ScriptSource::Inline { code, .. } => {
-                if new_runtime == ScriptRuntime::Dotnet {
-                    self.error =
-                        Some("Inline .NET scripts aren't supported; use File mode".to_string());
-                    cx.notify();
-                    return;
-                }
-                self.error = None;
-                self.set_selected_script_source(
-                    ScriptSource::Inline {
-                        runtime: new_runtime,
-                        code,
-                    },
-                    window,
-                    cx,
-                );
-            }
-            ScriptSource::File { path, .. } => {
-                self.error = None;
-                self.set_selected_script_source(
-                    ScriptSource::File {
-                        path,
-                        runtime: Some(new_runtime),
-                    },
-                    window,
-                    cx,
-                );
-            }
-        }
+        self.error = None;
+        self.set_selected_script_source(
+            ScriptSource::File {
+                path,
+                runtime: Some(new_runtime),
+            },
+            window,
+            cx,
+        );
     }
 
     fn on_script_runtime_override_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3420,74 +4642,51 @@ impl DesignerPanel {
     ) -> impl IntoElement {
         let is_inline = matches!(source, ScriptSource::Inline { .. });
         let muted = cx.theme().muted_foreground;
+        let languages = [
+            (ScriptRuntime::Python, "Python"),
+            (ScriptRuntime::Node, "Node"),
+            (ScriptRuntime::Powershell, "PowerShell"),
+            (ScriptRuntime::Bash, "Bash"),
+        ];
 
         v_flex()
             .gap_2()
+            // A script is a file. Inline code is only still here when a flow
+            // written before that couldn't be moved to one when it was
+            // opened, and the way forward is the same: give it a file.
+            .when(is_inline, |el| {
+                el.child(div().text_xs().text_color(cx.theme().warning).child(
+                    "This script holds inline code, which is no longer edited or \
+                     created here. Create a script file below to replace it.",
+                ))
+            })
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().text_color(muted).child("Mode"))
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Button::new("script-mode-inline")
-                                    .xsmall()
-                                    .when(!is_inline, |btn| btn.ghost())
-                                    .when(is_inline, |btn| btn.outline())
-                                    .label("Inline")
-                                    .tooltip("Edit inline code with a workflow companion file")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.on_script_mode_change(false, window, cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("script-mode-file")
-                                    .xsmall()
-                                    .when(is_inline, |btn| btn.ghost())
-                                    .when(!is_inline, |btn| btn.outline())
-                                    .label("File")
-                                    .tooltip("Execute a workspace file directly")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.on_script_mode_change(true, window, cx)
-                                    })),
-                            ),
-                    ),
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child("Create a script file"),
+                    )
+                    .child(h_flex().gap_1().flex_wrap().children(
+                        languages.into_iter().map(|(runtime, label)| {
+                            Button::new(format!("script-new-{}", label.to_ascii_lowercase()))
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Plus)
+                                .label(label)
+                                .tooltip(
+                                    "Point this action at its own script file for this \
+                                     language, creating it from a template if needed.",
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.on_create_script_file(runtime, window, cx);
+                                }))
+                                .into_any_element()
+                        }),
+                    )),
             )
-            .when(is_inline, |el| {
-                let current_runtime = match source {
-                    ScriptSource::Inline { runtime, .. } => *runtime,
-                    _ => ScriptRuntime::Python,
-                };
-                let runtimes = [
-                    (ScriptRuntime::Python, "Python"),
-                    (ScriptRuntime::Node, "Node"),
-                    (ScriptRuntime::Powershell, "PowerShell"),
-                    (ScriptRuntime::Bash, "Bash"),
-                ];
-
-                el.child(
-                    v_flex()
-                        .gap_1()
-                        .child(div().text_xs().text_color(muted).child("Language"))
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .children(runtimes.into_iter().map(|(rt, label)| {
-                                    let is_active = current_runtime == rt;
-                                    Button::new(format!("script-rt-{}", label.to_ascii_lowercase()))
-                                        .xsmall()
-                                        .when(!is_active, |btn| btn.ghost())
-                                        .when(is_active, |btn| btn.outline())
-                                        .label(label)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.on_script_runtime_change(rt, window, cx);
-                                        }))
-                                        .into_any_element()
-                                })),
-                        ),
-                )
-            })
             .when(!is_inline, |el| {
                 let (path_str, override_rt) = match source {
                     ScriptSource::File { path, runtime } => (path.as_str(), *runtime),
@@ -3558,7 +4757,7 @@ impl DesignerPanel {
                     .ghost()
                     .xsmall()
                     .label("Open Script")
-                    .tooltip("Edit this script in a workspace file: the companion for an Inline script, or the file itself for a File script.")
+                    .tooltip("Open this action's script file in an editor tab.")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.on_open_script_click(window, cx)
                     })),
@@ -3694,6 +4893,53 @@ impl Item for DesignerPanel {
     ) -> Vec<(SharedString, Box<dyn Action>)> {
         vec![("View Raw".into(), Box::new(ViewRaw(self.path.clone())))]
     }
+
+    /// The panel emits `()` when its unsaved or conflict state flips, which
+    /// is when the tab needs redrawing.
+    fn to_item_events(_event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
+        f(ItemEvent::UpdateTab);
+        f(ItemEvent::Edit);
+    }
+
+    fn is_dirty(&self, _cx: &App) -> bool {
+        self.dirty
+    }
+
+    fn has_conflict(&self, _cx: &App) -> bool {
+        self.conflict
+    }
+
+    fn can_save(&self, _cx: &App) -> bool {
+        true
+    }
+
+    /// The workspace's own save (the keybinding, and "Save" in the prompt
+    /// shown when closing a tab with unsaved edits), routed to the same code
+    /// as the toolbar button.
+    fn save(
+        &mut self,
+        _options: SaveOptions,
+        _project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<anyhow::Result<()>> {
+        self.on_save_click(window, cx);
+        gpui::Task::ready(match &self.error {
+            Some(error) => Err(anyhow::anyhow!("{error}")),
+            None => Ok(()),
+        })
+    }
+
+    /// Discards unsaved edits and loads the file as it is on disk.
+    fn reload(
+        &mut self,
+        _project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<anyhow::Result<()>> {
+        self.reload_from_disk(true, window, cx);
+        gpui::Task::ready(Ok(()))
+    }
 }
 
 impl ProjectItem for DesignerPanel {
@@ -3810,6 +5056,46 @@ impl Render for DesignerPanel {
                         .child(error),
                 )
             })
+            // The action menu for the "+" on a connection, drawn over the
+            // whole tab at the point that was clicked.
+            .when_some(self.insert_menu.as_ref(), |el, insert| {
+                el.child(
+                    deferred(
+                        anchored()
+                            .position(insert.position)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(insert.menu.clone()),
+                    )
+                    .with_priority(1),
+                )
+            })
+            .when(self.conflict, |el| {
+                el.child(
+                    h_flex()
+                        .px_3()
+                        .py_1()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().warning)
+                                .child(
+                                    "This flow changed on disk while it has unsaved edits. \
+                                     Save to keep your edits, or reload to discard them.",
+                                ),
+                        )
+                        .child(
+                            Button::new("designer-reload-from-disk")
+                                .ghost()
+                                .xsmall()
+                                .label("Reload from disk")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.reload_from_disk(true, window, cx)
+                                })),
+                        ),
+                )
+            })
             .child(
                 v_flex()
                     .flex_1()
@@ -3842,11 +5128,26 @@ impl Render for DesignerPanel {
                                         .size_range(px(220.0)..px(420.0))
                                         .flex_none()
                                         .child(
+                                            // Scrolls on its own: the rows,
+                                            // the optional-input list and the
+                                            // reference chips easily outgrow
+                                            // the pane.
                                             div()
+                                                .relative()
                                                 .size_full()
                                                 .border_l_1()
                                                 .border_color(cx.theme().border)
-                                                .child(self.render_properties(cx)),
+                                                .child(
+                                                    div()
+                                                        .id("designer-inspector-scroll")
+                                                        .size_full()
+                                                        .overflow_y_scroll()
+                                                        .track_scroll(&self.inspector_scroll)
+                                                        .child(self.render_properties(cx)),
+                                                )
+                                                .child(Scrollbar::vertical(
+                                                    &self.inspector_scroll,
+                                                )),
                                         ),
                                 ),
                         ),
@@ -4006,7 +5307,184 @@ impl DesignerPanel {
     }
 }
 
+/// One `Foreach` pager in the inspector: which loop, which of its iterations
+/// is being looked at, and what the run recorded for it.
+struct LoopPage {
+    loop_id: NodeId,
+    label: String,
+    /// Zero-based iteration shown.
+    index: usize,
+    total: usize,
+    /// The item that iteration was bound to, when the run reached it.
+    item: Option<serde_json::Value>,
+}
+
 impl DesignerPanel {
+    /// The `Foreach` actions `node_id` runs inside, outermost first, each
+    /// with the iteration the inspector is showing for it.
+    fn loop_path(&self, node_id: &NodeId, cx: &App) -> Vec<(String, usize)> {
+        let mut loops = Self::reference_scope(self.state.read(cx), node_id).loops;
+        loops.reverse();
+        let mut path = Vec::new();
+        for id in loops {
+            let index = self.loop_index(&path, &id);
+            path.push((id.to_string(), index));
+        }
+        path
+    }
+
+    /// The iteration being shown for `loop_id`, which runs inside `path`.
+    /// Held to the loop's size on the last run, so a selection made against
+    /// a longer list doesn't point past the end of a shorter one.
+    fn loop_index(&self, path: &[(String, usize)], loop_id: &NodeId) -> usize {
+        let wanted = self
+            .loop_view
+            .get::<str>(loop_id.as_ref())
+            .copied()
+            .unwrap_or(0);
+        let key = format!("{}/{loop_id}", run_state::scope_key(path));
+        match self.run_snapshot.loops.get(&key) {
+            Some(run) if run.total > 0 => wanted.min(run.total - 1),
+            _ => wanted,
+        }
+    }
+
+    /// The pagers to show for `node_id`: one per `Foreach` it runs inside,
+    /// and one for itself when it is a `Foreach`. Loops the last run never
+    /// entered (no run yet, or an empty list) get none.
+    fn loop_pages(&self, node_id: &NodeId, cx: &App) -> Vec<LoopPage> {
+        let state = self.state.read(cx);
+        let mut path = self.loop_path(node_id, cx);
+        let is_loop = state
+            .get_node(node_id)
+            .is_some_and(|node| node.node_type.as_deref() == Some("Foreach"));
+        if is_loop {
+            let index = self.loop_index(&path, node_id);
+            path.push((node_id.to_string(), index));
+        }
+
+        let mut pages = Vec::new();
+        for (depth, (loop_id, index)) in path.iter().enumerate() {
+            let key = format!("{}/{loop_id}", run_state::scope_key(&path[..depth]));
+            let Some(run) = self.run_snapshot.loops.get(&key).filter(|run| run.total > 0) else {
+                // Without this loop's items the inner ones can't be placed.
+                break;
+            };
+            let index = (*index).min(run.total - 1);
+            let loop_id: NodeId = loop_id.clone().into();
+            pages.push(LoopPage {
+                label: state
+                    .get_node(&loop_id)
+                    .map(node_label)
+                    .unwrap_or_else(|| loop_id.to_string()),
+                loop_id,
+                index,
+                total: run.total,
+                item: run.items.get(&index).cloned(),
+            });
+        }
+        pages
+    }
+
+    /// What the last run recorded for `node_id`: for a loop body, the
+    /// iteration the pagers are on; otherwise its one result.
+    fn run_result_for(&self, node_id: &NodeId, cx: &App) -> Option<ActionRun> {
+        let path = self.loop_path(node_id, cx);
+        if path.is_empty() {
+            return self.run_snapshot.nodes.get(node_id.as_ref()).cloned();
+        }
+        self.run_snapshot
+            .iterations
+            .get(&run_state::scope_key(&path))
+            .and_then(|results| results.get(node_id.as_ref()))
+            .cloned()
+    }
+
+    fn on_loop_page_click(&mut self, loop_id: &NodeId, index: usize, cx: &mut Context<Self>) {
+        self.loop_view.insert(loop_id.to_string(), index);
+        cx.notify();
+    }
+
+    /// `For each · <loop>   ‹ 2 / 12 ›`, and under it the item that
+    /// iteration ran for. Stepping it changes which iteration's results the
+    /// inspector shows for every action in that loop's body.
+    fn render_loop_page(&self, page: &LoopPage, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let step = |id: &'static str, icon: IconName, target: Option<usize>| {
+            let loop_id = page.loop_id.clone();
+            Button::new(SharedString::from(format!("{id}-{}", page.loop_id)))
+                .ghost()
+                .xsmall()
+                .icon(icon)
+                .disabled(target.is_none())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(target) = target {
+                        this.on_loop_page_click(&loop_id, target, cx);
+                    }
+                }))
+        };
+        let previous = step(
+            "designer-loop-prev",
+            IconName::ChevronLeft,
+            page.index.checked_sub(1),
+        );
+        let next = step(
+            "designer-loop-next",
+            IconName::ChevronRight,
+            (page.index + 1 < page.total).then_some(page.index + 1),
+        );
+
+        v_flex()
+            .gap_1()
+            .p_2()
+            .rounded_sm()
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(format!("For each \u{00b7} {}", page.label)),
+                    )
+                    .child(previous)
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(cx.theme().foreground)
+                            .child(format!("{} / {}", page.index + 1, page.total)),
+                    )
+                    .child(next),
+            )
+            .child(match &page.item {
+                Some(item) => div()
+                    .id(SharedString::from(format!(
+                        "designer-loop-item-{}",
+                        page.loop_id
+                    )))
+                    .max_h(gpui::px(120.0))
+                    .overflow_y_scroll()
+                    .text_xs()
+                    .font_family("monospace")
+                    .text_color(cx.theme().foreground)
+                    .child(
+                        serde_json::to_string_pretty(item).unwrap_or_else(|_| item.to_string()),
+                    )
+                    .into_any_element(),
+                None => div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("This iteration hasn't started.")
+                    .into_any_element(),
+            })
+    }
+
     fn render_run_result(&self, run: &ActionRun, cx: &mut Context<Self>) -> impl IntoElement {
         let tag = match run.phase {
             RunPhase::Running => Tag::primary().outline(),
@@ -4234,6 +5712,522 @@ mod tests {
         }
     }
 
+    fn typed(id: &'static str, node_type: &'static str) -> FlowNode {
+        FlowNode::new(id, 0.0, 0.0).node_type(node_type)
+    }
+
+    fn edge(source: &'static str, target: &'static str) -> FlowEdge {
+        FlowEdge::new(format!("e_{source}_{target}"), source, target)
+    }
+
+    fn references(state: &FlowState, node_id: &'static str) -> Vec<String> {
+        DesignerPanel::expression_references(state, &node_id.into())
+    }
+
+    /// The paths are the ones `RunContext::record_outputs` stores, and they
+    /// follow the chain back rather than stopping at the direct dependency.
+    #[test]
+    fn references_follow_predecessors_and_use_the_outputs_path() {
+        let state = FlowState::new(
+            vec![
+                typed("fetch", "http"),
+                typed("shape", "transform"),
+                typed("gate", "If"),
+                typed("later", "http"),
+                typed("unrelated", "http"),
+            ],
+            vec![
+                edge("fetch", "shape"),
+                edge("shape", "gate"),
+                edge("gate", "later"),
+            ],
+        );
+        assert_eq!(
+            references(&state, "gate"),
+            vec![
+                "fetch.outputs.body".to_string(),
+                "fetch.outputs.status".to_string(),
+                "shape.outputs.result".to_string(),
+            ]
+        );
+        // Nothing upstream, nothing to offer: not a successor, not a sibling.
+        assert!(references(&state, "fetch").is_empty());
+    }
+
+    /// An initialized variable upstream is offered by its own name.
+    #[test]
+    fn an_upstream_variable_is_offered_by_name() {
+        let mut declare = typed("declare", "InitVariable");
+        declare.properties.push(("name".into(), "count".into()));
+        let state = FlowState::new(
+            vec![declare, typed("use", "transform")],
+            vec![edge("declare", "use")],
+        );
+        assert_eq!(
+            references(&state, "use"),
+            vec![
+                "declare.outputs.name".to_string(),
+                "declare.outputs.value".to_string(),
+                "variables.count".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_predecessor_is_followed_but_not_offered() {
+        let state = FlowState::new(
+            vec![
+                typed("fetch", "http"),
+                typed("charge", "http"),
+                typed("report", "transform"),
+            ],
+            vec![
+                edge("fetch", "charge"),
+                edge("charge", "report").label("Failed"),
+            ],
+        );
+        assert_eq!(
+            references(&state, "report"),
+            vec![
+                "fetch.outputs.body".to_string(),
+                "fetch.outputs.status".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_nested_action_sees_its_enclosing_scopes() {
+        let catch = format!("guard{}", workflow_json::BRANCH_CATCH);
+        let state = FlowState::new(
+            vec![
+                typed("fetch", "http"),
+                typed("each", "Foreach"),
+                typed("guard", "Try").parent("each"),
+                FlowNode::new(catch.clone(), 0.0, 0.0)
+                    .node_type(workflow_json::BRANCH_CATCH)
+                    .parent("guard"),
+                typed("recover", "transform").parent(catch),
+            ],
+            vec![edge("fetch", "each")],
+        );
+        assert_eq!(
+            references(&state, "recover"),
+            vec![
+                "$item".to_string(),
+                "fetch.outputs.body".to_string(),
+                "fetch.outputs.status".to_string(),
+                "guard.outputs.error".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_until_condition_sees_its_own_body() {
+        let state = FlowState::new(
+            vec![
+                typed("poll", "Until"),
+                typed("status", "http").parent("poll"),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(
+            references(&state, "poll"),
+            vec![
+                "status.outputs.body".to_string(),
+                "status.outputs.status".to_string(),
+            ]
+        );
+    }
+
+    /// Deleting a container from the keyboard removes just that node; its
+    /// body, and the body of anything nested in it, has to go with it.
+    #[test]
+    fn pruning_removes_a_deleted_containers_whole_body() {
+        let then = format!("cond{}", workflow_json::BRANCH_THEN);
+        let mut state = FlowState::new(
+            vec![
+                typed("keep", "http"),
+                typed("each", "Foreach"),
+                typed("cond", "If").parent("each"),
+                FlowNode::new(then.clone(), 0.0, 0.0)
+                    .node_type(workflow_json::BRANCH_THEN)
+                    .parent("cond"),
+                typed("inner", "log").parent(then),
+            ],
+            vec![edge("keep", "each"), edge("keep", "inner")],
+        );
+        assert!(!DesignerPanel::prune_orphans(&mut state), "nothing orphaned yet");
+
+        // What the canvas's Delete key does to a selected container.
+        state.nodes.retain(|node| node.id.as_ref() != "each");
+        state.edges.retain(|edge| edge.target.as_ref() != "each");
+        state.rebuild_lookup();
+
+        assert!(DesignerPanel::prune_orphans(&mut state));
+        let left: Vec<&str> = state.nodes.iter().map(|node| node.id.as_ref()).collect();
+        assert_eq!(left, vec!["keep"]);
+        assert!(state.edges.is_empty());
+    }
+
+    fn sample_map(entries: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
+        entries
+            .iter()
+            .map(|(id, outputs)| (id.to_string(), outputs.clone()))
+            .collect()
+    }
+
+    fn sampled_paths(
+        state: &FlowState,
+        samples: &HashMap<String, serde_json::Value>,
+        node_id: &'static str,
+    ) -> Vec<String> {
+        let known = references(state, node_id);
+        DesignerPanel::sampled_references(state, samples, &known, &node_id.into())
+            .into_iter()
+            .map(|sampled| sampled.path)
+            .collect()
+    }
+
+    /// A sampled result is walked into, a list is offered whole, and what
+    /// the registry already offers isn't repeated.
+    #[test]
+    fn sampled_references_walk_what_an_action_returned() {
+        let state = FlowState::new(
+            vec![typed("a", "script"), typed("use", "transform")],
+            vec![edge("a", "use")],
+        );
+        let samples = sample_map(&[(
+            "a",
+            serde_json::json!({
+                "id": 7,
+                "title": "T",
+                "object": {"id": 1, "title": "O"},
+                "items": [{"id": 1, "title": "x"}, {"id": 2, "title": "y"}],
+            }),
+        )]);
+        assert_eq!(
+            sampled_paths(&state, &samples, "use"),
+            vec![
+                "a.outputs.id",
+                "a.outputs.items",
+                "a.outputs.object",
+                "a.outputs.object.id",
+                "a.outputs.object.title",
+                "a.outputs.title",
+            ]
+        );
+
+        let sampled =
+            DesignerPanel::sampled_references(&state, &samples, &[], &NodeId::from("use"));
+        let items = sampled.iter().find(|s| s.path == "a.outputs.items").unwrap();
+        assert_eq!((items.kind, items.preview.as_str()), ("list", "a list of 2"));
+
+        // An `http` response sits under the declared `body` output, which the
+        // registry chip already covers, so only what is inside it is new.
+        let state = FlowState::new(
+            vec![typed("fetch", "http"), typed("use", "transform")],
+            vec![edge("fetch", "use")],
+        );
+        let samples = sample_map(&[(
+            "fetch",
+            serde_json::json!({"status": 200, "body": {"customer": {"id": 3}}}),
+        )]);
+        assert_eq!(
+            sampled_paths(&state, &samples, "use"),
+            vec![
+                "fetch.outputs.body.customer",
+                "fetch.outputs.body.customer.id",
+            ]
+        );
+        // Nothing sampled for an action that isn't upstream.
+        assert!(sampled_paths(&state, &samples, "fetch").is_empty());
+    }
+
+    /// Inside a `Foreach` over a plain reference, the sampled list's first
+    /// element describes `$item`.
+    #[test]
+    fn a_foreach_body_gets_the_shape_of_its_item() {
+        let mut each = typed("each", "Foreach");
+        each.properties
+            .push(("__foreach".into(), r#"{"var": "a.outputs.items"}"#.into()));
+        let state = FlowState::new(
+            vec![
+                typed("a", "script"),
+                each,
+                typed("body", "transform").parent("each"),
+            ],
+            vec![edge("a", "each")],
+        );
+        let samples = sample_map(&[(
+            "a",
+            serde_json::json!({"items": [{"id": 1, "title": "x"}]}),
+        )]);
+        assert_eq!(
+            sampled_paths(&state, &samples, "body"),
+            vec!["$item.id", "$item.title", "a.outputs.items"]
+        );
+
+        // A computed list has nothing to look up, so `$item` stays bare.
+        let mut each = typed("each", "Foreach");
+        each.properties.push((
+            "__foreach".into(),
+            r#"{"filter": [{"var": "a.outputs.items"}, true]}"#.into(),
+        ));
+        let state = FlowState::new(
+            vec![
+                typed("a", "script"),
+                each,
+                typed("body", "transform").parent("each"),
+            ],
+            vec![edge("a", "each")],
+        );
+        assert_eq!(
+            sampled_paths(&state, &samples, "body"),
+            vec!["a.outputs.items"]
+        );
+    }
+
+    /// An edit makes its own result and everything after it stale, but not
+    /// what ran before it, including earlier steps of the same loop body.
+    #[test]
+    fn an_edit_is_downstream_of_itself_and_what_follows() {
+        let state = FlowState::new(
+            vec![
+                typed("first", "http"),
+                typed("each", "Foreach"),
+                typed("early", "http").parent("each"),
+                typed("edited", "transform").parent("each"),
+                typed("late", "http").parent("each"),
+                typed("after", "Until"),
+                typed("inner", "http").parent("after"),
+            ],
+            vec![
+                edge("first", "each"),
+                edge("early", "edited"),
+                edge("edited", "late"),
+                edge("each", "after"),
+            ],
+        );
+        let mut affected: Vec<String> =
+            DesignerPanel::downstream_of(&state, &NodeId::from("edited"))
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect();
+        affected.sort();
+        assert_eq!(affected, vec!["after", "each", "edited", "inner", "late"]);
+    }
+
+    /// Clicking an issue selects the node it is on, which for a nested action
+    /// is the last path segment rather than the path.
+    #[test]
+    fn an_issue_resolves_to_the_node_it_is_on() {
+        assert_eq!(
+            DesignerPanel::issue_node_id("a1"),
+            Some(NodeId::from("a1"))
+        );
+        assert_eq!(
+            DesignerPanel::issue_node_id("foreach-1/if-1/then/a1"),
+            Some(NodeId::from("a1"))
+        );
+        assert_eq!(DesignerPanel::issue_node_id(""), None);
+    }
+
+    /// A catalog click or a right-click Add Action on a container fills its
+    /// body; on an ordinary action it adds the next step.
+    #[test]
+    fn adding_at_a_container_goes_inside_it() {
+        let then = format!("cond{}", workflow_json::BRANCH_THEN);
+        let state = FlowState::new(
+            vec![
+                typed("each", "Foreach"),
+                typed("one", "http").parent("each"),
+                typed("two", "transform").parent("each"),
+                typed("empty", "Until"),
+                typed("cond", "If"),
+                workflow_json::branch_node("cond", workflow_json::BRANCH_THEN, false),
+                workflow_json::branch_node("cond", workflow_json::BRANCH_ELSE, false),
+            ],
+            vec![edge("one", "two")],
+        );
+        let at = |id: &'static str| {
+            DesignerPanel::beside_node(&state, state.get_node(&id.into()).unwrap())
+        };
+
+        // A body with one last action: inside, chained after it.
+        let anchor = at("each");
+        assert_eq!(anchor.parent_id, Some(NodeId::from("each")));
+        assert_eq!(anchor.source_id, Some(NodeId::from("two")));
+        assert!(anchor.local_position.is_some());
+
+        // An empty body: inside, with nothing to chain from.
+        let anchor = at("empty");
+        assert_eq!(anchor.parent_id, Some(NodeId::from("empty")));
+        assert_eq!(anchor.source_id, None);
+
+        // An If hands it to its True branch.
+        assert_eq!(at("cond").parent_id, Some(NodeId::from(then)));
+
+        // An ordinary action: the next step, in the same body.
+        let anchor = at("two");
+        assert_eq!(anchor.parent_id, Some(NodeId::from("each")));
+        assert_eq!(anchor.source_id, Some(NodeId::from("two")));
+    }
+
+    /// A variable is typed by its declaration until a run shows what it
+    /// holds; what a Set Variable left in it wins over where it started.
+    #[test]
+    fn script_types_start_declared_and_follow_the_last_run() {
+        let variable = |id: &'static str, kind: &'static str, name: &str, ty: Option<&str>| {
+            let mut node = typed(id, kind);
+            node.properties.push(("name".into(), name.to_string().into()));
+            if let Some(ty) = ty {
+                node.properties.push(("type".into(), ty.to_string().into()));
+            }
+            node
+        };
+        let state = FlowState::new(
+            vec![
+                variable("init-ids", "InitVariable", "ids", Some("array")),
+                variable("init-name", "InitVariable", "name", Some("string")),
+                variable("set-ids", "SetVariable", "ids", None),
+                // Sets a variable nothing declares: not a variable to type.
+                variable("set-stray", "SetVariable", "stray", None),
+                typed("fetch", "http"),
+            ],
+            Vec::new(),
+        );
+
+        let sorted = |mut entries: Vec<(String, String)>| {
+            entries.sort();
+            entries
+        };
+        let (variables, actions) = DesignerPanel::script_types(&state, &HashMap::new());
+        assert_eq!(
+            sorted(variables),
+            vec![
+                ("ids".to_string(), "unknown[]".to_string()),
+                ("name".to_string(), "string".to_string()),
+            ]
+        );
+        assert!(actions.is_empty());
+
+        let samples = sample_map(&[
+            ("init-ids", serde_json::json!({"name": "ids", "value": []})),
+            ("set-ids", serde_json::json!({"name": "ids", "value": [4, 5]})),
+            ("set-stray", serde_json::json!({"name": "stray", "value": 1})),
+            ("fetch", serde_json::json!({"status": 200})),
+        ]);
+        let (variables, actions) = DesignerPanel::script_types(&state, &samples);
+        assert_eq!(
+            sorted(variables),
+            vec![
+                ("ids".to_string(), "number[]".to_string()),
+                ("name".to_string(), "string".to_string()),
+            ]
+        );
+        assert!(actions.contains(&("fetch".to_string(), r#"{ "status": number }"#.to_string())));
+    }
+
+    /// Inserting above an action moves it and what follows it in the same
+    /// body, and nothing else.
+    #[test]
+    fn an_insert_shifts_the_displaced_action_and_what_follows() {
+        let state = FlowState::new(
+            vec![
+                typed("first", "http"),
+                typed("second", "transform"),
+                typed("third", "log"),
+                typed("side", "log"),
+                typed("each", "Foreach"),
+                typed("inner", "log").parent("each"),
+            ],
+            vec![
+                edge("first", "second"),
+                edge("second", "third"),
+                edge("first", "side"),
+                edge("third", "each"),
+            ],
+        );
+        let mut shifted: Vec<String> =
+            DesignerPanel::shifted_by_insert(&state, &NodeId::from("second"))
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect();
+        shifted.sort();
+        // `each` moves and carries `inner` with it, since a child's position
+        // is relative to its container; `side` is a separate branch.
+        assert_eq!(shifted, vec!["each", "second", "third"]);
+    }
+
+    /// Unsaved-edit tracking counts what Save writes and nothing else.
+    #[test]
+    fn content_fingerprint_tracks_saved_content_only() {
+        let build = || {
+            FlowState::new(
+                vec![typed("fetch", "http"), typed("shape", "transform")],
+                vec![edge("fetch", "shape")],
+            )
+        };
+        let saved = DesignerPanel::content_fingerprint(&build());
+
+        // Not edits: selecting, a run's status border, a validation ring.
+        let mut state = build();
+        state.nodes[0].selected = true;
+        state.nodes[0].accent_border = Some(0x00ff00);
+        state.nodes[1].validation_error = true;
+        assert_eq!(DesignerPanel::content_fingerprint(&state), saved);
+
+        // Edits: a property, a label, a move, a new edge label.
+        let mut state = build();
+        state.nodes[0].properties.push(("url".into(), "x".into()));
+        assert_ne!(DesignerPanel::content_fingerprint(&state), saved);
+
+        let mut state = build();
+        state.nodes[0].label = "Fetch".into();
+        assert_ne!(DesignerPanel::content_fingerprint(&state), saved);
+
+        let mut state = build();
+        state.nodes[1].position.y += 10.0;
+        assert_ne!(DesignerPanel::content_fingerprint(&state), saved);
+
+        let mut state = build();
+        state.edges[0].label = Some("Failed".into());
+        assert_ne!(DesignerPanel::content_fingerprint(&state), saved);
+    }
+
+    /// An empty loop or branch is still a body, and an `If`/`Try` hands a
+    /// drop on to its first branch.
+    #[test]
+    fn body_container_is_decided_by_type_not_by_having_children() {
+        let then = format!("cond{}", workflow_json::BRANCH_THEN);
+        let state = FlowState::new(
+            vec![
+                typed("each", "Foreach"),
+                typed("cond", "If"),
+                workflow_json::branch_node("cond", workflow_json::BRANCH_THEN, false),
+                workflow_json::branch_node("cond", workflow_json::BRANCH_ELSE, false),
+                typed("leaf", "http"),
+            ],
+            Vec::new(),
+        );
+        let body = |id: &'static str| {
+            DesignerPanel::body_container(&state, state.get_node(&id.into()).unwrap())
+                .map(|node| node.id.to_string())
+        };
+        assert_eq!(body("each"), Some("each".to_string()));
+        assert_eq!(body("cond"), Some(then.clone()));
+        assert_eq!(
+            DesignerPanel::body_container(&state, state.get_node(&then.clone().into()).unwrap())
+                .map(|node| node.id.to_string()),
+            Some(then)
+        );
+        assert_eq!(body("leaf"), None);
+
+        // First slot of an empty body, then under its lowest child.
+        let first = DesignerPanel::next_slot(&state, &"each".into());
+        assert_eq!((first.x, first.y), (workflow_json::CHILD_X, workflow_json::CHILD_Y0));
+    }
+
     #[test]
     fn every_branch_wrapper_has_a_role_label() {
         assert_eq!(
@@ -4257,19 +6251,39 @@ mod tests {
             ("__limit_count".into(), "10".into()),
         ];
         assert_eq!(
-            meta_property(&props, "level").map(|(_, v)| v.to_string()),
+            meta_property("log", &props, "level").map(|(_, v)| v.to_string()),
             Some("info".to_string())
         );
         assert_eq!(
-            meta_property(&props, "foreach").map(|(_, v)| v.to_string()),
+            meta_property("Foreach", &props, "foreach").map(|(_, v)| v.to_string()),
             Some(r#"{"var": "items"}"#.to_string())
         );
         assert_eq!(
-            meta_property(&props, "limit").map(|(_, v)| v.to_string()),
+            meta_property("Until", &props, "limit").map(|(_, v)| v.to_string()),
             Some("10".to_string())
         );
         // Absent is the signal to render a row for a missing required field.
-        assert!(meta_property(&props, "message").is_none());
+        assert!(meta_property("log", &props, "message").is_none());
+    }
+
+    /// Only a container's struct-level fields move to a reserved key.
+    /// `transform` declares an `expression` too, and that one is a plain
+    /// input: mapping it would hide the saved value and show an empty row.
+    #[test]
+    fn storage_key_reserves_keys_for_containers_only() {
+        assert_eq!(storage_key("If", "expression"), "__expression");
+        assert_eq!(storage_key("Foreach", "foreach"), "__foreach");
+        assert_eq!(storage_key("Until", "until"), "__until");
+        assert_eq!(storage_key("Until", "limit"), "__limit_count");
+        assert_eq!(storage_key("transform", "expression"), "expression");
+        assert_eq!(storage_key("http", "url"), "url");
+
+        let props: Vec<(SharedString, SharedString)> =
+            vec![("expression".into(), r#"{"var": "a.outputs.b"}"#.into())];
+        assert_eq!(
+            meta_property("transform", &props, "expression").map(|(_, v)| v.to_string()),
+            Some(r#"{"var": "a.outputs.b"}"#.to_string())
+        );
     }
 
     #[test]
