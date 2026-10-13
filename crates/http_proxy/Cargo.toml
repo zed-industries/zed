@@ -27,7 +27,7 @@ base64.workspace = true
 futures.workspace = true
 httparse.workspace = true
 idna.workspace = true
-log.workspace = true
+log = { workspace = true, features = ["serde"] }
 percent-encoding.workspace = true
 proxyvars.workspace = true
 thiserror.workspace = true
