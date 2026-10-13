@@ -1110,6 +1110,7 @@ enum ScrollbarMouseEvent {
 
 struct ScrollbarLayout {
     thumb_bounds: Bounds<Pixels>,
+    thumb_hit_bounds: Bounds<Pixels>,
     track_bounds: Bounds<Pixels>,
     cursor_hitbox: Hitbox,
     reserved_space: ReservedSpace,
@@ -1181,16 +1182,14 @@ impl ScrollbarPrepaintState {
     fn thumb_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
         self.thumbs
             .iter()
-            .find(|info| info.thumb_bounds.contains(position))
+            .find(|info| info.thumb_hit_bounds.contains(position))
     }
 
     fn hit_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
         self.thumbs.iter().find(|info| {
-            if info.reserved_space.needs_scroll_track() {
-                info.track_bounds.contains(position)
-            } else {
-                info.thumb_bounds.contains(position)
-            }
+            info.thumb_hit_bounds.contains(position)
+                || (info.reserved_space.needs_scroll_track()
+                    && info.track_bounds.contains(position))
         })
     }
 
@@ -1358,19 +1357,39 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                                 let needs_scroll_track = reserved_space.needs_scroll_track();
 
+                                let padding_outside_track = if needs_scroll_track {
+                                    SCROLLBAR_PADDING
+                                } else {
+                                    Pixels::ZERO
+                                };
+                                let thumb_hit_bounds = match axis {
+                                    ScrollbarAxis::Vertical => thumb_bounds.extend(Edges {
+                                        left: padding_outside_track,
+                                        right: SCROLLBAR_PADDING,
+                                        ..Default::default()
+                                    }),
+                                    ScrollbarAxis::Horizontal => thumb_bounds.extend(Edges {
+                                        top: padding_outside_track,
+                                        bottom: SCROLLBAR_PADDING,
+                                        ..Default::default()
+                                    }),
+                                };
+
                                 ScrollbarLayout {
                                     thumb_bounds,
+                                    thumb_hit_bounds,
                                     track_bounds: thumb_container_bounds,
                                     axis,
                                     cursor_hitbox: window.insert_hitbox(
-                                        if needs_scroll_track {
-                                            if has_border && state.style == ScrollbarStyle::Editor {
-                                                scroll_track_bounds
-                                            } else {
-                                                thumb_container_bounds
-                                            }
+                                        if needs_scroll_track
+                                            && has_border
+                                            && state.style == ScrollbarStyle::Editor
+                                        {
+                                            scroll_track_bounds
+                                        } else if needs_scroll_track {
+                                            thumb_container_bounds
                                         } else {
-                                            thumb_bounds
+                                            thumb_hit_bounds
                                         },
                                         HitboxBehavior::BlockMouseExceptScroll,
                                     ),
@@ -1638,10 +1657,13 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         };
 
                         let ScrollbarLayout {
-                            thumb_bounds, axis, ..
+                            thumb_bounds,
+                            thumb_hit_bounds,
+                            axis,
+                            ..
                         } = scrollbar_layout;
 
-                        if thumb_bounds.contains(&event.position) {
+                        if thumb_hit_bounds.contains(&event.position) {
                             let offset =
                                 event.position.along(*axis) - thumb_bounds.origin.along(*axis);
                             state.set_dragging(*axis, offset, window, cx);
