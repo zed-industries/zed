@@ -29,6 +29,8 @@ pub enum InboundSessionUpdate {
     Terminal(DecodedTerminalUpdate),
     SessionInfo(acp_v2::SessionInfoUpdate),
     AvailableCommands(acp_v2::AvailableCommandsUpdate),
+    ConfigOptions(acp_v2::ConfigOptionUpdate),
+    Usage(acp_v2::UsageUpdate),
     Notice(acp_v2::Notice),
     Compaction(acp_v2::CompactionUpdate),
     CompactionSummary(acp_v2::CompactionSummaryChunk),
@@ -93,6 +95,10 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
             acp_v2::SessionUpdate::AvailableCommandsUpdate(update) => {
                 InboundSessionUpdate::AvailableCommands(update)
             }
+            acp_v2::SessionUpdate::ConfigOptionUpdate(update) => {
+                InboundSessionUpdate::ConfigOptions(update)
+            }
+            acp_v2::SessionUpdate::UsageUpdate(update) => InboundSessionUpdate::Usage(update),
             acp_v2::SessionUpdate::Notice(notice) => InboundSessionUpdate::Notice(notice),
             acp_v2::SessionUpdate::CompactionUpdate(update) => {
                 InboundSessionUpdate::Compaction(update)
@@ -162,6 +168,16 @@ impl InboundSessionNotification {
             }
             InboundSessionUpdate::AvailableCommands(update) => {
                 thread.update_available_commands(update.available_commands, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::ConfigOptions(update) => {
+                cx.emit(acp_thread::AcpThreadEvent::ConfigOptionsUpdated(
+                    update.config_options,
+                ));
+                Ok(())
+            }
+            InboundSessionUpdate::Usage(update) => {
+                thread.update_usage(update, cx);
                 Ok(())
             }
             InboundSessionUpdate::Notice(notice) => {
