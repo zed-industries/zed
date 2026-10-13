@@ -43,7 +43,7 @@ pub fn channel(
 
 /// The most recent call of `tool` (args containing `needle`) that finished
 /// without error and is not itself a channel report, with the first later
-/// call that may have changed files.
+/// successful call that may have changed files.
 pub fn bound_call(calls: &[FinishedToolCall], tool: &str, needle: &str) -> Option<BoundCall> {
     let at = calls.iter().rposition(|call| {
         !call.is_error
@@ -52,10 +52,11 @@ pub fn bound_call(calls: &[FinishedToolCall], tool: &str, needle: &str) -> Optio
             && !cedian_workflow::is_channel_call(&call.tool_name, &call.args_preview)
     })?;
     // ADR-0024: a later call that may have changed files means the
-    // workspace hashed now is not what this call saw.
+    // workspace hashed now is not what this call saw. A denied or failed
+    // call changed nothing (S2 finding: headless Deny of bash/eval).
     let mutated_after = calls[at + 1..]
         .iter()
-        .find(|c| cedian_workflow::may_mutate(&c.tool_name, &c.args_preview))
+        .find(|c| !c.is_error && cedian_workflow::may_mutate(&c.tool_name, &c.args_preview))
         .map(|c| format!("{} {}", c.tool_name, c.args_preview));
     let call = calls[at].clone();
     Some(BoundCall {
@@ -191,7 +192,49 @@ pub fn end_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cedian_omp::FinishedToolCall;
     use cedian_workflow::{TaskKind, TaskProfile, WorkflowState};
+
+    fn finished(id: &str, tool: &str, args: &str, is_error: bool) -> FinishedToolCall {
+        FinishedToolCall {
+            tool_call_id: id.into(),
+            tool_name: tool.into(),
+            args_preview: args.into(),
+            is_error,
+        }
+    }
+
+    /// S2 finding / ROADMAP: a headless-denied bash after a read must not
+    /// make the read's evidence born stale (it changed nothing).
+    #[test]
+    fn a_denied_later_call_does_not_make_evidence_born_stale() {
+        let calls = [
+            finished("1", "read", "notes.txt", false),
+            finished("2", "bash", "sh check.sh", true),
+            finished("3", "eval", "1+1", true),
+        ];
+        let bound = bound_call(&calls, "read", "notes").expect("the read binds");
+        assert_eq!(
+            bound.mutated_after, None,
+            "denied bash/eval must not stale the read: {:?}",
+            bound.mutated_after
+        );
+    }
+
+    #[test]
+    fn a_successful_later_mutator_still_stales() {
+        let calls = [
+            finished("1", "read", "notes.txt", false),
+            finished("2", "bash", "sh check.sh", true),
+            finished("3", "edit", "notes.txt", false),
+        ];
+        let bound = bound_call(&calls, "read", "notes").expect("the read binds");
+        assert_eq!(
+            bound.mutated_after.as_deref(),
+            Some("edit notes.txt"),
+            "a successful edit after the denied bash still stales"
+        );
+    }
 
     #[test]
     fn a_stopped_scan_gives_up() {
