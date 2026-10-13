@@ -1322,6 +1322,45 @@ fn test_expand_excerpts(cx: &mut App) {
     );
 }
 
+#[gpui::test]
+fn test_expand_excerpts_with_anchor_for_removed_path(cx: &mut App) {
+    let buffer_a = cx.new(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
+    let buffer_b = cx.new(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a,
+            vec![Point::new(3, 0)..Point::new(3, 3)],
+            1,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_b,
+            vec![Point::new(3, 0)..Point::new(3, 3)],
+            1,
+            cx,
+        );
+    });
+
+    let anchor_in_a = multibuffer
+        .read(cx)
+        .snapshot(cx)
+        .anchor_before(Point::new(1, 0));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(0), cx);
+    });
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "ccc\nddd\neee");
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_excerpts([anchor_in_a], 1, ExpandExcerptDirection::UpAndDown, cx);
+    });
+
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "ccc\nddd\neee");
+}
+
 #[gpui::test(iterations = 100)]
 async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
     let buffer_1 = cx.new(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
@@ -1419,6 +1458,68 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
             "mmmm",   //
         )
     );
+}
+
+#[gpui::test]
+async fn test_set_anchored_excerpts_after_edit(cx: &mut TestAppContext) {
+    for (replace_excerpt, edit, replacement, expected) in [
+        (true, 5..5, "λx", "bλxbb"),
+        (false, 5..5, "λ", "bλbb"),
+        (false, 4..7, "", ""),
+    ] {
+        let buffer = cx.new(|cx| Buffer::local("aaa\nbbb\nccc\n", cx));
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let update = multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                [Point::new(1, 0)..Point::new(1, 3)],
+                0,
+                cx,
+            );
+            let snapshot = buffer.read(cx).snapshot();
+            multibuffer.set_anchored_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![
+                    snapshot.anchor_after(Point::new(1, 0))
+                        ..snapshot.anchor_before(Point::new(1, 3)),
+                ],
+                0,
+                cx,
+            )
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(edit, replacement)], None, cx);
+        });
+        multibuffer.update(cx, |multibuffer, cx| {
+            assert_eq!(multibuffer.snapshot(cx).text(), expected);
+            if replace_excerpt {
+                let snapshot = buffer.read(cx).snapshot();
+                multibuffer.set_excerpt_ranges_for_path(
+                    PathKey::sorted(0),
+                    buffer.clone(),
+                    &snapshot,
+                    vec![ExcerptRange::new(Point::new(1, 3)..Point::new(1, 4))],
+                    cx,
+                );
+            }
+        });
+
+        let ranges = update.await;
+        multibuffer.read_with(cx, |multibuffer, cx| {
+            let snapshot = multibuffer.snapshot(cx);
+            assert_eq!(snapshot.text(), expected);
+            assert_eq!(snapshot.len(), MultiBufferOffset(expected.len()));
+            assert_eq!(
+                ranges
+                    .iter()
+                    .map(|range| range.to_point(&snapshot))
+                    .collect::<Vec<_>>(),
+                vec![Point::new(0, 0)..Point::new(0, expected.len() as u32)],
+            );
+        });
+    }
 }
 
 #[gpui::test]
@@ -6263,6 +6364,24 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
         "Should include trailing empty excerpts"
     );
     assert_eq!(ranges_half_open_max[1].1, BufferOffset(0)..BufferOffset(0));
+
+    for snapshot in [&snapshot, &snapshot_trailing] {
+        for start in 0..=snapshot.len().0 {
+            for end in start..=snapshot.len().0 {
+                let range = MultiBufferOffset(start)..MultiBufferOffset(end);
+                let expected = snapshot
+                    .range_to_buffer_ranges(range.clone())
+                    .into_iter()
+                    .map(|(buffer, range, _)| (buffer.remote_id(), range, None))
+                    .collect::<Vec<_>>();
+                let actual = snapshot
+                    .range_to_buffer_ranges_with_deleted_hunks(range.clone())
+                    .map(|(buffer, range, anchor)| (buffer.remote_id(), range, anchor))
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected, "{range:?}");
+            }
+        }
+    }
 }
 
 #[gpui::test]

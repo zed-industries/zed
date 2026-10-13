@@ -6,6 +6,9 @@ use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
+use file_content::{
+    ByteContent, DecodingReader, decode_byte_header, detect_encoding, encode_text, read_byte_header,
+};
 use fs::{
     Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashId, Watcher, copy_recursive,
     read_dir_items,
@@ -32,9 +35,7 @@ use gpui::{
     Task,
 };
 pub use ignore::{IgnoreKind, IgnoreStack};
-use language::{
-    ByteContent, DiskState, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
-};
+use language::DiskState;
 
 use async_channel::{self, Sender};
 use parking_lot::Mutex;
@@ -62,7 +63,7 @@ use std::{
     future::Future,
     io::Read,
     mem::{self},
-    ops::{Deref, DerefMut, Range},
+    ops::{Bound, Deref, DerefMut, Range},
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -76,7 +77,7 @@ use text::{LineEnding, Rope};
 use util::{
     ResultExt, maybe,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
-    rel_path::RelPath,
+    rel_path::{RelPath, RelPathBuf},
 };
 pub use worktree_settings::WorktreeSettings;
 
@@ -2959,6 +2960,28 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    /// Maps an absolute path inside a scanned external (symlinked) directory,
+    /// given by its canonical form, to its path within this worktree.
+    pub fn relative_path_for_external_abs_path(&self, abs_path: &Path) -> Option<RelPathBuf> {
+        let mut query = abs_path;
+        loop {
+            let (canonical, relative) = self
+                .external_canonical_to_relative
+                .range::<Path, _>((Bound::Unbounded, Bound::Included(query)))
+                .next_back()?;
+            if let Ok(suffix) = abs_path.strip_prefix(canonical) {
+                let suffix = RelPath::new(suffix, PathStyle::local()).ok()?;
+                return Some(relative.join(&suffix));
+            }
+            // Keys are nested, so the nearest smaller key can be under a sibling
+            // directory. No key lies between it and `query`, so no ancestor of
+            // `query` below their common ancestor is a key. Retry from there.
+            query = query
+                .ancestors()
+                .find(|ancestor| canonical.starts_with(ancestor))?;
+        }
+    }
+
     fn local_repo_for_work_directory_path(&self, path: &RelPath) -> Option<&LocalRepositoryEntry> {
         self.git_repositories
             .iter()
@@ -3822,6 +3845,10 @@ impl language::File for File {
 
     fn full_path(&self, cx: &App) -> PathBuf {
         self.worktree.read(cx).full_path(&self.path)
+    }
+
+    fn file_system_abs_path(&self, cx: &App) -> Option<PathBuf> {
+        Some(self.worktree.read(cx).absolutize(&self.path))
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
@@ -5068,24 +5095,10 @@ impl BackgroundScanner {
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
-                } else if let Some(path) = snapshot.external_canonical_to_relative.iter().find_map(
-                    |(canonical, relative)| {
-                        abs_path
-                            .as_path()
-                            .strip_prefix(canonical.as_ref())
-                            .ok()
-                            .and_then(|suffix| {
-                                RelPath::new(suffix, PathStyle::local())
-                                    .ok()
-                                    .map(|suffix_rel| {
-                                        std::borrow::Cow::Owned(
-                                            relative.join(&suffix_rel).to_rel_path_buf(),
-                                        )
-                                    })
-                            })
-                    },
-                ) {
-                    path
+                } else if let Some(path) =
+                    snapshot.relative_path_for_external_abs_path(abs_path.as_path())
+                {
+                    std::borrow::Cow::Owned(path)
                 } else {
                     skip_ix(&mut ranges_to_drop, ix);
                     continue;
@@ -5397,6 +5410,32 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
+
+        // Watch before reading so a child created after enumeration still
+        // produces an event.
+        //
+        // For external entries, watch the canonical (resolved) path so OS-level
+        // FS events on the real filesystem location are observed. The same
+        // canonical path is stored in both `external_canonical_to_relative`
+        // (for translating canonical-path FS events back to worktree-relative
+        // paths) and `watched_dir_abs_paths_by_entry_id` (used by `remove_path`
+        // to know which abs path to unwatch), so both cleanup paths agree on
+        // the path the watcher was actually registered on.
+        let watched_abs_path: Option<Arc<Path>> = if job.is_external {
+            self.fs
+                .canonicalize(job.abs_path.as_ref())
+                .await
+                .ok()
+                .map(|canonical| {
+                    let canonical: Arc<Path> = canonical.into();
+                    self.watcher.add(&canonical).log_err();
+                    canonical
+                })
+        } else {
+            self.watcher.add(job.abs_path.as_ref()).log_err();
+            Some(job.abs_path.clone())
+        };
+
         let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
@@ -5613,33 +5652,6 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
-        // For external entries, watch the canonical (resolved) path so OS-level
-        // FS events on the real filesystem location are observed. The same
-        // canonical path is stored in both `external_canonical_to_relative`
-        // (for translating canonical-path FS events back to worktree-relative
-        // paths) and `watched_dir_abs_paths_by_entry_id` (used by `remove_path`
-        // to know which abs path to unwatch), so both cleanup paths agree on
-        // the path the watcher was actually registered on.
-        //
-        // `canonicalize` is an async filesystem operation that may suspend, so
-        // the lock must not be held across the await point below.
-        drop(state);
-        let watched_abs_path: Option<Arc<Path>> = if job.is_external {
-            self.fs
-                .canonicalize(job.abs_path.as_ref())
-                .await
-                .ok()
-                .map(|canonical| {
-                    let canonical: Arc<Path> = canonical.into();
-                    self.watcher.add(&canonical).log_err();
-                    canonical
-                })
-        } else {
-            self.watcher.add(job.abs_path.as_ref()).log_err();
-            Some(job.abs_path.clone())
-        };
-
-        let mut state = self.state.lock().await;
         if let Some(watched_abs_path) = &watched_abs_path {
             if job.is_external {
                 state
@@ -6031,8 +6043,7 @@ impl BackgroundScanner {
                 ignore_stack.append(IgnoreKind::Gitignore(job.abs_path.clone()), ignore.clone());
         }
 
-        let mut entries_by_id_edits = Vec::new();
-        let mut entries_by_path_edits = Vec::new();
+        let mut ignore_changes = Vec::new();
         let Some(path) = job
             .abs_path
             .strip_prefix(snapshot.abs_path.as_path())
@@ -6063,6 +6074,24 @@ impl BackgroundScanner {
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
 
             if entry.is_dir() {
+                let state = self.state.lock().await;
+                let Some(current_entry) = state
+                    .snapshot
+                    .entry_for_id(entry.id)
+                    .filter(|current| current.path == entry.path && current.is_dir())
+                else {
+                    continue;
+                };
+                let is_ignored = entry.is_ignored;
+                entry = current_entry.clone();
+                if state
+                    .snapshot
+                    .entries_by_id
+                    .get(&entry.id, ())
+                    .is_some_and(|path_entry| path_entry.scan_id <= snapshot.scan_id)
+                {
+                    entry.is_ignored = is_ignored;
+                }
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
                 } else {
@@ -6076,7 +6105,6 @@ impl BackgroundScanner {
                     && entry.kind.is_unloaded()
                     && (was_ignored || ignore_stack.repo_root.is_some())
                 {
-                    let state = self.state.lock().await;
                     if self.should_scan_directory(&state, &entry, ignore_stack.repo_root.is_some())
                     {
                         state
@@ -6090,6 +6118,7 @@ impl BackgroundScanner {
                     }
                 }
 
+                drop(state);
                 job.ignore_queue
                     .send(UpdateIgnoreStatusJob {
                         abs_path: abs_path.clone(),
@@ -6102,21 +6131,36 @@ impl BackgroundScanner {
             }
 
             if entry.is_ignored != was_ignored {
-                let mut path_entry = snapshot.entries_by_id.get(&entry.id, ()).unwrap().clone();
-                path_entry.scan_id = snapshot.scan_id;
-                path_entry.is_ignored = entry.is_ignored;
-                entries_by_id_edits.push(Edit::Insert(path_entry));
-                entries_by_path_edits.push(Edit::Insert(entry));
+                ignore_changes.push((entry.id, entry.path, entry.is_ignored));
             }
         }
 
         let state = &mut self.state.lock().await;
-        for edit in &entries_by_path_edits {
-            if let Edit::Insert(entry) = edit
-                && let Err(ix) = state.changed_paths.binary_search(&entry.path)
-            {
-                state.changed_paths.insert(ix, entry.path.clone());
+        let mut entries_by_id_edits = Vec::new();
+        let mut entries_by_path_edits = Vec::new();
+        for (entry_id, path, is_ignored) in ignore_changes {
+            let Some(path_entry) = state.snapshot.entries_by_id.get(&entry_id, ()) else {
+                continue;
+            };
+            if path_entry.path != path || path_entry.scan_id > snapshot.scan_id {
+                continue;
             }
+            let Some(entry) = state.snapshot.entry_for_path(&path) else {
+                continue;
+            };
+            if entry.id != entry_id || entry.is_ignored == is_ignored {
+                continue;
+            }
+            let mut path_entry = path_entry.clone();
+            let mut entry = entry.clone();
+            path_entry.scan_id = state.snapshot.scan_id;
+            path_entry.is_ignored = is_ignored;
+            entry.is_ignored = is_ignored;
+            if let Err(index) = state.changed_paths.binary_search(&path) {
+                state.changed_paths.insert(index, path);
+            }
+            entries_by_id_edits.push(Edit::Insert(path_entry));
+            entries_by_path_edits.push(Edit::Insert(entry));
         }
 
         state
@@ -7217,83 +7261,7 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
-/// Reads the beginning of `file` to determine its kind and encoding, returning
-/// the bytes consumed and whether the file ended within them.
-fn read_file_header(file: &mut dyn Read, abs_path: &Path) -> Result<(Vec<u8>, bool)> {
-    let mut header = Vec::with_capacity(FILE_ANALYSIS_BYTES);
-    let mut buf = [0u8; FILE_ANALYSIS_BYTES];
-    let mut reached_eof = false;
-    while header.len() < FILE_ANALYSIS_BYTES {
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
-        if n == 0 {
-            reached_eof = true;
-            break;
-        }
-        header.extend_from_slice(&buf[..n]);
-    }
-    Ok((header, reached_eof))
-}
-
 const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
-
-async fn read_file_to_end(
-    file: &mut (dyn Read + Send),
-    content: &mut Vec<u8>,
-    abs_path: &Path,
-) -> Result<()> {
-    let mut buf = vec![0u8; STREAM_BLOCK_BYTES];
-    loop {
-        let mut block_len = 0;
-        while block_len < buf.len() {
-            let n = file
-                .read(&mut buf[block_len..])
-                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
-            if n == 0 {
-                break;
-            }
-            block_len += n;
-        }
-
-        if block_len == 0 {
-            break;
-        }
-
-        content.extend_from_slice(&buf[..block_len]);
-        if block_len < buf.len() {
-            break;
-        }
-
-        yield_now().await;
-    }
-    Ok(())
-}
-
-pub async fn decode_file_text(
-    fs: &dyn Fs,
-    abs_path: &Path,
-) -> Result<(String, &'static Encoding, bool)> {
-    let mut file = fs
-        .open_sync(&abs_path)
-        .await
-        .with_context(|| format!("opening file {abs_path:?}"))?;
-
-    let (file_first_bytes, reached_eof) = read_file_header(&mut *file, abs_path)?;
-    let (_, byte_content) = decode_byte_header(&file_first_bytes);
-    anyhow::ensure!(
-        byte_content != ByteContent::Binary,
-        "Binary files are not supported"
-    );
-
-    // If the file is eligible for opening, read the rest of the file.
-    let mut content = file_first_bytes;
-    if !reached_eof {
-        read_file_to_end(&mut *file, &mut content, abs_path).await?;
-    }
-    let decoded = decode_text(content)?;
-    Ok((decoded.text, decoded.encoding, decoded.has_bom))
-}
 
 /// Reads and decodes a file straight into a [`Rope`].
 /// The returned rope has already had its line endings normalized, the
@@ -7307,28 +7275,37 @@ pub async fn decode_file_text_to_rope(
         .await
         .with_context(|| format!("opening file {abs_path:?}"))?;
 
-    let (prefix, reached_eof) = read_file_header(&mut *file, abs_path)?;
+    let (prefix, reached_eof) = read_byte_header(&mut *file)
+        .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
     let (bom_encoding, byte_content) = decode_byte_header(&prefix);
     anyhow::ensure!(
         byte_content != ByteContent::Binary,
         "Binary files are not supported"
     );
 
-    // Only BOM-less, non-UTF-16 files are candidates for streaming: everything
-    // else needs the whole byte buffer in hand to decode or to detect encoding.
     if bom_encoding.is_none()
         && byte_content == ByteContent::Unknown
         && let Some((rope, line_ending)) =
-            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path).await?
+            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path, true).await?
     {
         return Ok((rope, line_ending, encoding_rs::UTF_8, false));
     }
 
-    // Not plain UTF-8 after all. Re-read the file and decode it all at once.
-    let (mut text, encoding, has_bom) = decode_file_text(fs, abs_path).await?;
-    let line_ending = LineEnding::detect(&text);
-    LineEnding::normalize(&mut text);
-    Ok((Rope::from(text), line_ending, encoding, has_bom))
+    file.rewind()?;
+    let encoding = match bom_encoding.or(byte_content.encoding()) {
+        Some(encoding) => encoding,
+        None => {
+            let encoding = detect_encoding(&mut *file).await?;
+            file.rewind()?;
+            encoding
+        }
+    };
+    let mut reader = DecodingReader::new(&mut *file, encoding);
+    let (rope, line_ending) =
+        stream_utf8_into_rope(&mut reader, Vec::new(), false, abs_path, false)
+            .await?
+            .with_context(|| format!("decoding the file {abs_path:?}"))?;
+    Ok((rope, line_ending, reader.encoding(), bom_encoding.is_some()))
 }
 
 /// Streams a presumed-UTF-8 file into a [`Rope`], normalizing line endings as it
@@ -7342,6 +7319,7 @@ async fn stream_utf8_into_rope(
     prefix: Vec<u8>,
     reached_eof: bool,
     abs_path: &Path,
+    reject_escape_sequences: bool,
 ) -> Result<Option<(Rope, LineEnding)>> {
     let mut rope = Rope::new();
     let mut line_ending = None;
@@ -7386,7 +7364,7 @@ async fn stream_utf8_into_rope(
 
         // ISO-2022-JP and friends are valid UTF-8 but carry escape sequences, so
         // they need the full-file encoding detector rather than this fast path.
-        if text.contains('\x1b') {
+        if reject_escape_sequences && text.contains('\x1b') {
             return Ok(None);
         }
 
@@ -7446,22 +7424,29 @@ fn push_normalized(rope: &mut Rope, text: &str, scratch: &mut String) {
     rope.push(scratch);
 }
 
-pub fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
-    if let Some((encoding, _bom_len)) = Encoding::for_bom(prefix) {
-        return (Some(encoding), ByteContent::Unknown);
-    }
-    (None, analyze_byte_content(prefix))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        BackgroundScanner, BackgroundScannerPhase, BackgroundScannerState, IgnoreStack,
+        NullWatcher, RemovedEntries, STREAM_BLOCK_BYTES, ScanRequest, UpdateIgnoreStatusJob,
+        Worktree, stream_utf8_into_rope,
+    };
+    use collections::{HashMap, HashSet};
+    use fs::{FakeFs, Fs, RemoveOptions, RenameOptions};
+    use futures::{FutureExt as _, channel::mpsc};
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::{SettingsStore, WorktreeId};
+    use smallvec::SmallVec;
+    use std::{path::Path, sync::Arc};
+    use text::LineEnding;
+    use util::{path, rel_path::rel_path};
 
     /// Streams `bytes` the way `decode_file_text_to_rope` would, returning the
     /// decoded text and detected line ending, or `None` if the fast path bailed.
     async fn stream(bytes: &[u8]) -> Option<(String, LineEnding)> {
         let mut reader = std::io::Cursor::new(bytes.to_vec());
-        stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+        stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"), true)
             .await
             .unwrap()
             .map(|(rope, line_ending)| (rope.to_string(), line_ending))
@@ -7472,25 +7457,11 @@ mod tests {
         let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
 
         assert!(
-            stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+            stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"), true)
                 .now_or_never()
                 .is_none()
         );
         assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
-    }
-
-    #[test]
-    fn test_file_reading_yields_between_blocks() {
-        let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
-        let mut content = Vec::new();
-
-        assert!(
-            read_file_to_end(&mut reader, &mut content, Path::new("test"))
-                .now_or_never()
-                .is_none()
-        );
-        assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
-        assert_eq!(content.len(), STREAM_BLOCK_BYTES);
     }
 
     #[gpui::test]
@@ -7536,206 +7507,212 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_ignore_update_preserves_refreshed_entries(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        for initially_ignored in [false, true] {
+            let fs = FakeFs::new(cx.background_executor.clone());
+            fs.insert_tree(
+                path!("/root"),
+                json!({
+                    ".gitignore": if initially_ignored { "*.txt\n" } else { "" },
+                    "gone.txt": "gone",
+                    "renamed.txt": "renamed",
+                    "modified.txt": "old",
+
+                    "directory": { "child.txt": "child" },
+                    "removed": { "child.txt": "child" },
+                    "replaced": {},
+                }),
+            )
+            .await;
+            let tree = Worktree::local(
+                Path::new(path!("/root")),
+                true,
+                fs.clone(),
+                Arc::default(),
+                true,
+                WorktreeId::from_proto(0),
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+            tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .await;
+            let (status_updates_tx, _status_updates_rx) = mpsc::unbounded();
+            let scanner = tree.update(cx, |tree, cx| {
+                let tree = tree.as_local_mut().unwrap();
+                tree._background_scanner_tasks.clear();
+                BackgroundScanner {
+                    state: async_lock::Mutex::new(BackgroundScannerState {
+                        snapshot: tree.snapshot.clone(),
+                        prev_snapshot: tree.snapshot.snapshot.clone(),
+                        symlink_paths_by_target: HashMap::default(),
+                        scanned_dirs: HashSet::default(),
+                        watched_dir_abs_paths_by_entry_id: HashMap::default(),
+                        path_prefixes_to_scan: HashSet::default(),
+                        paths_to_scan: HashSet::default(),
+                        removed_entries: RemovedEntries::default(),
+                        changed_paths: Vec::new(),
+                        scanning_enabled: true,
+                    }),
+                    fs: fs.clone(),
+                    fs_case_sensitive: tree.fs_case_sensitive,
+                    status_updates_tx,
+                    executor: cx.background_executor().clone(),
+                    scan_requests_rx: async_channel::unbounded().1,
+                    path_prefixes_to_scan_rx: async_channel::unbounded().1,
+                    next_entry_id: tree.next_entry_id.clone(),
+                    phase: BackgroundScannerPhase::Events,
+                    watcher: Arc::new(NullWatcher),
+                    settings: tree.settings.clone(),
+                    share_private_files: tree.share_private_files,
+                    track_git_repositories: true,
+                    is_single_file: false,
+                    defer_watch: false,
+                }
+            });
+            fs.insert_file(
+                path!("/root/.gitignore"),
+                if initially_ignored {
+                    Vec::new()
+                } else {
+                    b"*.txt\n".to_vec()
+                },
+            )
+            .await;
+            scanner
+                .process_scan_request(
+                    ScanRequest {
+                        relative_paths: vec![rel_path(".gitignore").into_arc()],
+                        done: SmallVec::new(),
+                    },
+                    true,
+                )
+                .await;
+            let old_snapshot = scanner.state.lock().await.snapshot.clone();
+            fs.remove_file(Path::new(path!("/root/gone.txt")), RemoveOptions::default())
+                .await
+                .unwrap();
+            fs.rename(
+                Path::new(path!("/root/renamed.txt")),
+                Path::new(path!("/root/moved.txt")),
+                RenameOptions::default(),
+            )
+            .await
+            .unwrap();
+            fs.insert_file(path!("/root/modified.txt"), b"new content".to_vec())
+                .await;
+            fs.remove_dir(
+                Path::new(path!("/root/removed")),
+                RemoveOptions {
+                    recursive: true,
+                    ..RemoveOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+            fs.remove_dir(Path::new(path!("/root/replaced")), RemoveOptions::default())
+                .await
+                .unwrap();
+            fs.insert_file(path!("/root/replaced"), b"file".to_vec())
+                .await;
+            scanner
+                .process_scan_request(
+                    ScanRequest {
+                        relative_paths: [
+                            "gone.txt",
+                            "renamed.txt",
+                            "moved.txt",
+                            "modified.txt",
+                            "directory",
+                            "removed",
+                            "replaced",
+                        ]
+                        .map(|path| rel_path(path).into_arc())
+                        .to_vec(),
+                        done: SmallVec::new(),
+                    },
+                    true,
+                )
+                .await;
+            let refreshed_snapshot = scanner.state.lock().await.snapshot.clone();
+            let expected_entries = refreshed_snapshot
+                .entries(true, 0)
+                .cloned()
+                .map(|mut entry| {
+                    if entry.path.as_ref() == rel_path("directory/child.txt") {
+                        entry.is_ignored = !initially_ignored;
+                    }
+                    entry
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                refreshed_snapshot.paths().collect::<Vec<_>>(),
+                [
+                    ".gitignore",
+                    "directory",
+                    "directory/child.txt",
+                    "modified.txt",
+                    "moved.txt",
+                    "replaced",
+                ]
+                .map(rel_path),
+            );
+            assert_eq!(
+                refreshed_snapshot
+                    .entry_for_path(rel_path("modified.txt"))
+                    .unwrap()
+                    .size,
+                11
+            );
+            let (ignore_queue, ignore_jobs) = async_channel::unbounded();
+            let (scan_queue, _scan_jobs) = async_channel::unbounded();
+            scanner
+                .update_ignore_status(
+                    UpdateIgnoreStatusJob {
+                        abs_path: Arc::from(Path::new(path!("/root"))),
+                        ignore_stack: IgnoreStack::none(),
+                        ignore_queue,
+                        scan_queue,
+                    },
+                    &old_snapshot,
+                )
+                .await;
+            let child_job = ignore_jobs.try_recv().unwrap();
+            assert_eq!(
+                child_job.abs_path.as_ref(),
+                Path::new(path!("/root/directory"))
+            );
+            scanner.update_ignore_status(child_job, &old_snapshot).await;
+            let state = scanner.state.lock().await;
+            assert_eq!(
+                state.snapshot.entries(true, 0).cloned().collect::<Vec<_>>(),
+                expected_entries
+            );
+            assert!(ignore_jobs.is_empty());
+
+            state.snapshot.check_invariants(false);
+            for entry in &expected_entries {
+                let path_entry = state.snapshot.entries_by_id.get(&entry.id, ()).unwrap();
+
+                assert_eq!(path_entry.is_ignored, entry.is_ignored);
+            }
+            assert_eq!(
+                state.changed_paths,
+                vec![rel_path("directory/child.txt").into_arc()]
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn test_stream_utf8_falls_back_on_non_utf8() {
         // Each of these must bail so the caller re-reads and decodes the slow
         // way, rather than silently mangling the file.
         assert_eq!(stream(b"hello \xff\xfeA").await, None, "invalid utf-8");
         assert_eq!(stream(b"hello \xe2\x82").await, None, "truncated at eof");
         assert_eq!(stream(b"plain \x1b$B text").await, None, "iso-2022 escape");
-    }
-
-    /// reproduction of issue #50785
-    fn build_pcm16_wav_bytes() -> Vec<u8> {
-        let header: Vec<u8> = vec![
-            /*  RIFF header  */
-            0x52, 0x49, 0x46, 0x46, // "RIFF"
-            0xc6, 0xcf, 0x00, 0x00, // file size: 8
-            0x57, 0x41, 0x56, 0x45, // "WAVE"
-            /*  fmt chunk  */
-            0x66, 0x6d, 0x74, 0x20, // "fmt "
-            0x10, 0x00, 0x00, 0x00, // chunk size: 16
-            0x01, 0x00, // format: PCM (1)
-            0x01, 0x00, // channels: 1 (mono)
-            0x80, 0x3e, 0x00, 0x00, // sample rate: 16000
-            0x00, 0x7d, 0x00, 0x00, // byte rate: 32000
-            0x02, 0x00, // block align: 2
-            0x10, 0x00, // bits per sample: 16
-            /*  LIST chunk  */
-            0x4c, 0x49, 0x53, 0x54, // "LIST"
-            0x1a, 0x00, 0x00, 0x00, // chunk size: 26
-            0x49, 0x4e, 0x46, 0x4f, // "INFO"
-            0x49, 0x53, 0x46, 0x54, // "ISFT"
-            0x0d, 0x00, 0x00, 0x00, // sub-chunk size: 13
-            0x4c, 0x61, 0x76, 0x66, 0x36, 0x32, 0x2e, 0x33, // "Lavf62.3"
-            0x2e, 0x31, 0x30, 0x30, 0x00, // ".100\0"
-            /* padding byte for word alignment */
-            0x00, // data chunk header
-            0x64, 0x61, 0x74, 0x61, // "data"
-            0x80, 0xcf, 0x00, 0x00, // chunk size
-        ];
-
-        let mut bytes = header;
-
-        // fill remaining space up to `FILE_ANALYSIS_BYTES` with synthetic PCM
-        let audio_bytes_needed = FILE_ANALYSIS_BYTES - bytes.len();
-        for i in 0..(audio_bytes_needed / 2) {
-            let sample = (i & 0xFF) as u8;
-            bytes.push(sample); // low byte: varies
-            bytes.push(0x00); // high byte: zero for small values
-        }
-
-        bytes
-    }
-
-    #[test]
-    fn test_pcm16_wav_detected_as_binary() {
-        let wav_bytes = build_pcm16_wav_bytes();
-        assert_eq!(wav_bytes.len(), FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&wav_bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "PCM 16-bit WAV should be detected as Binary via RIFF header"
-        );
-    }
-
-    #[test]
-    fn test_le16_binary_not_misdetected_as_utf16le() {
-        let mut bytes = b"FAKE".to_vec();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            let sample = (bytes.len() & 0xFF) as u8;
-            bytes.push(sample);
-            bytes.push(0x00);
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "LE 16-bit binary with control characters should be detected as Binary"
-        );
-    }
-
-    #[test]
-    fn test_be16_binary_not_misdetected_as_utf16be() {
-        let mut bytes = b"FAKE".to_vec();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.push(0x00);
-            let sample = (bytes.len() & 0xFF) as u8;
-            bytes.push(sample);
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "BE 16-bit binary with control characters should be detected as Binary"
-        );
-    }
-
-    // Mimics binary formats that interleave short ASCII fragments with small
-    // length/type fields (as seen in some game/asset binary formats, e.g.
-    // Tibia-style OTBM maps): most high bytes are zero, matching UTF-16LE's
-    // null-byte pattern for ASCII, but the low bytes are mostly non-word
-    // "tag" values rather than real letters/digits/spaces.
-    fn build_tag_interleaved_binary_bytes() -> Vec<u8> {
-        let mut bytes = Vec::new();
-        let tags: [u8; 6] = [0xFE, 0xFF, 0x25, 0x2B, 0xA3, 0xC5];
-        let mut i = 0;
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.push(tags[i % tags.len()]);
-            bytes.push(0x00);
-            i += 1;
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-        bytes
-    }
-
-    #[test]
-    fn test_tag_interleaved_binary_not_misdetected_as_utf16le() {
-        let bytes = build_tag_interleaved_binary_bytes();
-        assert_eq!(bytes.len(), FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "binary data with sparse non-word low bytes and null high bytes \
-             should not be misdetected as UTF-16LE text"
-        );
-    }
-
-    #[test]
-    fn test_utf16le_text_detected_as_utf16le() {
-        let text = "Hello, world! This is a UTF-16 test string. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
-    }
-
-    #[test]
-    fn test_utf16be_text_detected_as_utf16be() {
-        let text = "Hello, world! This is a UTF-16 test string. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
-    }
-
-    #[test]
-    fn test_utf16le_cyrillic_text_detected_as_utf16le() {
-        let text = "Привет, мир! Это тестовая строка в UTF-16. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
-    }
-
-    #[test]
-    fn test_utf16be_greek_text_detected_as_utf16be() {
-        let text = "Γεια σου κόσμε! Αυτή είναι μια δοκιμαστική συμβολοσειρά. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
-    }
-
-    #[test]
-    fn test_known_binary_headers() {
-        let cases: &[(&[u8], &str)] = &[
-            (b"RIFF\x00\x00\x00\x00WAVE", "WAV"),
-            (b"RIFF\x00\x00\x00\x00AVI ", "AVI"),
-            (b"OggS\x00\x02", "OGG"),
-            (b"fLaC\x00\x00", "FLAC"),
-            (b"ID3\x03\x00", "MP3 ID3v2"),
-            (b"\xFF\xFB\x90\x00", "MP3 MPEG1 Layer3"),
-            (b"\xFF\xF3\x90\x00", "MP3 MPEG2 Layer3"),
-        ];
-
-        for (header, label) in cases {
-            let mut bytes = header.to_vec();
-            bytes.resize(FILE_ANALYSIS_BYTES, 0x41); // pad with 'A'
-            assert_eq!(
-                analyze_byte_content(&bytes),
-                ByteContent::Binary,
-                "{label} should be detected as Binary"
-            );
-        }
     }
 }

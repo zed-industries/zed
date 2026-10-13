@@ -1,6 +1,6 @@
 use anyhow::{Context as _, anyhow};
 use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, TaskExt, Window};
-use std::{cell::OnceCell, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*, utils::platform_title_bar_height};
 use util::{ResultExt as _, command::new_command};
 use workspace::AppState;
@@ -24,29 +24,28 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         });
     });
 
-    // Project used for editor buffers with LSP support
-    let project = project::Project::local(
-        app_state.client.clone(),
-        app_state.node_runtime.clone(),
-        app_state.user_store.clone(),
-        app_state.languages.clone(),
-        app_state.fs.clone(),
-        None,
-        project::LocalProjectFlags {
-            init_worktree_trust: false,
-            ..Default::default()
-        },
-        cx,
-    );
-
-    let div_inspector = OnceCell::new();
-    cx.register_inspector_element(move |id, state: &DivInspectorState, window, cx| {
-        let div_inspector = div_inspector
-            .get_or_init(|| cx.new(|cx| DivInspector::new(project.clone(), window, cx)));
-        div_inspector.update(cx, |div_inspector, cx| {
-            div_inspector.update_inspected_element(&id, state.clone(), window, cx);
-            div_inspector.render(window, cx).into_any_element()
-        })
+    cx.register_inspector_element(move |window, cx| {
+        // Project used for editor buffers with LSP support
+        let project = project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                watch_global_configs: false,
+            },
+            cx,
+        );
+        let div_inspector = cx.new(|cx| DivInspector::new(project, window, cx));
+        move |id, state: &DivInspectorState, window: &mut Window, cx: &mut App| {
+            div_inspector.update(cx, |div_inspector, cx| {
+                div_inspector.update_inspected_element(&id, state.clone(), window, cx);
+                div_inspector.render(window, cx).into_any_element()
+            })
+        }
     });
 
     cx.set_inspector_renderer(Box::new(render_inspector));

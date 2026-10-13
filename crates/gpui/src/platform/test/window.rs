@@ -1,12 +1,11 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
-    DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TextInputConfiguration,
-    TextInputStateChange, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowInsets, WindowParams, WindowVisibility,
+    AnyWindowHandle, AtlasKey, AtlasTile, Bounds, DevicePixels, DispatchEventResult, DisplayId,
+    GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions, Scene, Size,
+    TestDisplay, TestPlatform, TextInputConfiguration, TextInputStateChange, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets, WindowParams,
+    WindowVisibility,
 };
-use collections::HashMap;
 use gpui_util::ResultExt as _;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -14,6 +13,7 @@ use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{
     cell::Cell,
+    collections::HashMap,
     path::PathBuf,
     rc::{Rc, Weak},
     sync::{self, Arc},
@@ -45,6 +45,7 @@ pub(crate) struct TestWindowState {
     virtual_keyboard_requests: usize,
     virtual_keyboard_dismissals: usize,
     moved_callback: Option<Box<dyn FnMut()>>,
+    display_changed_callback: Option<Box<dyn FnMut()>>,
     appearance_change_callback: Option<Box<dyn FnMut()>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     frame_wake_count: Rc<Cell<usize>>,
@@ -118,6 +119,7 @@ impl TestWindow {
             virtual_keyboard_requests: 0,
             virtual_keyboard_dismissals: 0,
             moved_callback: None,
+            display_changed_callback: None,
             appearance_change_callback: None,
             request_frame_callback: None,
             frame_wake_count: Rc::new(Cell::new(0)),
@@ -166,6 +168,19 @@ impl TestWindow {
         if let Some(mut callback) = callback {
             callback(visibility);
             self.0.lock().visibility_callback = Some(callback);
+        }
+    }
+
+    /// Moves the window to the display with the given ID.
+    pub fn simulate_move_to_display(&self, display_id: DisplayId) {
+        let callback = {
+            let mut state = self.0.lock();
+            state.display = Rc::new(TestDisplay::with_id(display_id));
+            state.display_changed_callback.take()
+        };
+        if let Some(mut callback) = callback {
+            callback();
+            self.0.lock().display_changed_callback = Some(callback);
         }
     }
 
@@ -512,6 +527,10 @@ impl PlatformWindow for TestWindow {
         self.0.lock().moved_callback = Some(callback)
     }
 
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().display_changed_callback = Some(callback)
+    }
+
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
         self.0.lock().should_close_handler = Some(callback);
     }
@@ -622,13 +641,13 @@ impl TestAtlas {
 impl PlatformAtlas for TestAtlas {
     fn get_or_insert_with<'a>(
         &self,
-        key: &crate::AtlasKey,
+        key: AtlasKey,
         build: &mut dyn FnMut() -> anyhow::Result<
             Option<(Size<crate::DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
         >,
     ) -> anyhow::Result<Option<crate::AtlasTile>> {
         let mut state = self.0.lock();
-        if let Some(&tile) = state.tiles.get(key) {
+        if let Some(&tile) = state.tiles.get(&key) {
             return Ok(Some(tile));
         }
         drop(state);
@@ -646,11 +665,11 @@ impl PlatformAtlas for TestAtlas {
         state.tiles.insert(
             key.clone(),
             crate::AtlasTile {
-                texture_id: AtlasTextureId {
+                texture_id: crate::AtlasTextureId {
                     index: texture_id,
                     kind: key.texture_kind(),
                 },
-                tile_id: TileId(tile_id),
+                tile_id: crate::TileId(tile_id),
                 padding: 0,
                 bounds: crate::Bounds {
                     origin: Point::default(),
@@ -659,7 +678,7 @@ impl PlatformAtlas for TestAtlas {
             },
         );
 
-        Ok(Some(state.tiles[key]))
+        Ok(Some(state.tiles[&key]))
     }
 
     fn update(
@@ -711,7 +730,7 @@ mod dynamic_texture_tests {
             height: DevicePixels(3),
         };
         let mut build = || Ok(Some((texture_size, Cow::Owned(vec![0; 48]))));
-        let tile = atlas.get_or_insert_with(&key, &mut build).unwrap().unwrap();
+        let tile = atlas.get_or_insert_with(key.clone(), &mut build).unwrap().unwrap();
         let update_bounds = Bounds {
             origin: Point {
                 x: DevicePixels(1),
