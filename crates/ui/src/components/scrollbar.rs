@@ -1816,7 +1816,7 @@ impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::point;
+    use gpui::{TestAppContext, div, point};
 
     #[test]
     fn default_reveal_policy_reveals_for_content_changes() {
@@ -1887,5 +1887,87 @@ mod tests {
         };
 
         assert!(current.changed_independently_of_content(previous, ScrollbarAxis::Vertical));
+    }
+
+    struct ScrollbarTestView {
+        handle: ScrollHandle,
+        scrollbar: Option<Entity<ScrollbarStateWrapper<ScrollHandle>>>,
+    }
+
+    impl Render for ScrollbarTestView {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let config = Scrollbars::always_visible(ScrollAxes::Vertical)
+                .tracked_scroll_handle(&self.handle)
+                .with_track_along(ScrollAxes::Vertical, Hsla::transparent_black());
+            let scrollbar = get_scrollbar_state(
+                config,
+                &StyleRefinement::default(),
+                std::panic::Location::caller(),
+                window,
+                cx,
+            );
+            let scrollbar_state = scrollbar.read(cx).0.clone();
+            self.scrollbar = Some(scrollbar);
+
+            div()
+                .relative()
+                .size(px(200.))
+                .child(
+                    div()
+                        .id("viewport")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.handle)
+                        .child(div().w_full().h(px(1000.))),
+                )
+                .child(scrollbar_state)
+        }
+    }
+
+    #[gpui::test]
+    fn thumb_hit_area_extends_into_scroll_track_padding(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, _| ScrollbarTestView {
+            handle: ScrollHandle::new(),
+            scrollbar: None,
+        });
+
+        view.read_with(cx, |view, cx| {
+            let scrollbar = view
+                .scrollbar
+                .as_ref()
+                .expect("scrollbar rendered")
+                .read(cx)
+                .0
+                .read(cx);
+            let prepaint_state = scrollbar
+                .last_prepaint_state
+                .as_ref()
+                .expect("prepaint state");
+            let thumb = prepaint_state
+                .thumbs
+                .iter()
+                .find(|thumb| thumb.axis == ScrollbarAxis::Vertical)
+                .expect("vertical thumb");
+            let ScrollbarLayout {
+                thumb_bounds,
+                thumb_hit_bounds,
+                ..
+            } = thumb;
+
+            // The padding to the right of the visible thumb should grab the thumb.
+            let right_padding_point = point(thumb_bounds.right() + px(1.), thumb_bounds.center().y);
+            assert!(!thumb_bounds.contains(&right_padding_point));
+            assert!(thumb_hit_bounds.contains(&right_padding_point));
+            assert!(
+                prepaint_state
+                    .thumb_for_position(&right_padding_point)
+                    .is_some()
+            );
+        });
     }
 }
