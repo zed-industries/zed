@@ -1,0 +1,124 @@
+use acp_thread::{AcpThread, MessageKind};
+use agent_client_protocol::schema::v2 as acp_v2;
+use anyhow::Result;
+use gpui::Context;
+
+#[derive(Debug)]
+pub struct InboundSessionNotification {
+    pub session_id: acp_v2::SessionId,
+    pub update: InboundSessionUpdate,
+    pub meta: Option<acp_v2::Meta>,
+}
+
+#[derive(Debug)]
+pub enum InboundSessionUpdate {
+    UserMessage(acp_v2::UserMessage),
+    AgentMessage(acp_v2::AgentMessage),
+    AgentThought(acp_v2::AgentThought),
+    UserMessageChunk(acp_v2::ContentChunk),
+    AgentMessageChunk(acp_v2::ContentChunk),
+    AgentThoughtChunk(acp_v2::ContentChunk),
+    ToolCallUpdate(acp_v2::ToolCallUpdate),
+    ToolCallContentChunk(acp_v2::ToolCallContentChunk),
+    PlanItems {
+        plan: acp_v2::PlanItems,
+        update_meta: Option<acp_v2::Meta>,
+    },
+}
+
+impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
+    type Error = acp_v2::UpdateSessionNotification;
+
+    fn try_from(mut notification: acp_v2::UpdateSessionNotification) -> Result<Self, Self::Error> {
+        let update = match notification.update {
+            acp_v2::SessionUpdate::UserMessage(message) => {
+                InboundSessionUpdate::UserMessage(message)
+            }
+            acp_v2::SessionUpdate::AgentMessage(message) => {
+                InboundSessionUpdate::AgentMessage(message)
+            }
+            acp_v2::SessionUpdate::AgentThought(thought) => {
+                InboundSessionUpdate::AgentThought(thought)
+            }
+            acp_v2::SessionUpdate::UserMessageChunk(chunk) => {
+                InboundSessionUpdate::UserMessageChunk(chunk)
+            }
+            acp_v2::SessionUpdate::AgentMessageChunk(chunk) => {
+                InboundSessionUpdate::AgentMessageChunk(chunk)
+            }
+            acp_v2::SessionUpdate::AgentThoughtChunk(chunk) => {
+                InboundSessionUpdate::AgentThoughtChunk(chunk)
+            }
+            acp_v2::SessionUpdate::ToolCallUpdate(update) => {
+                InboundSessionUpdate::ToolCallUpdate(update)
+            }
+            acp_v2::SessionUpdate::ToolCallContentChunk(chunk) => {
+                InboundSessionUpdate::ToolCallContentChunk(chunk)
+            }
+            acp_v2::SessionUpdate::PlanUpdate(mut update) => {
+                let plan = match update.plan {
+                    acp_v2::PlanUpdateContent::Items(plan) => plan,
+                    content => {
+                        update.plan = content;
+                        notification.update = acp_v2::SessionUpdate::PlanUpdate(update);
+                        return Err(notification);
+                    }
+                };
+                InboundSessionUpdate::PlanItems {
+                    plan,
+                    update_meta: update.meta,
+                }
+            }
+            update => {
+                notification.update = update;
+                return Err(notification);
+            }
+        };
+        Ok(Self {
+            session_id: notification.session_id,
+            update,
+            meta: notification.meta,
+        })
+    }
+}
+
+impl InboundSessionNotification {
+    pub fn apply(self, thread: &mut AcpThread, cx: &mut Context<AcpThread>) -> Result<()> {
+        let Self {
+            session_id,
+            update,
+            meta: _delivery_metadata,
+        } = self;
+        anyhow::ensure!(
+            &session_id == thread.session_id(),
+            "Session notification belongs to a different ACP session"
+        );
+        // Delivery metadata must not patch retained message, tool or plan fields.
+        match update {
+            InboundSessionUpdate::UserMessage(message) => thread.upsert_user_message(message, cx),
+            InboundSessionUpdate::AgentMessage(message) => {
+                thread.upsert_assistant_message(message, cx)
+            }
+            InboundSessionUpdate::AgentThought(thought) => thread.upsert_thought(thought, cx),
+            InboundSessionUpdate::UserMessageChunk(chunk) => {
+                thread.append_message_chunk(MessageKind::User, chunk, cx)
+            }
+            InboundSessionUpdate::AgentMessageChunk(chunk) => {
+                thread.append_message_chunk(MessageKind::Assistant, chunk, cx)
+            }
+            InboundSessionUpdate::AgentThoughtChunk(chunk) => {
+                thread.append_message_chunk(MessageKind::Thought, chunk, cx)
+            }
+            InboundSessionUpdate::ToolCallUpdate(update) => {
+                thread.upsert_wire_tool_call(update, cx)
+            }
+            InboundSessionUpdate::ToolCallContentChunk(chunk) => {
+                thread.append_tool_call_content_chunk(chunk, cx)
+            }
+            InboundSessionUpdate::PlanItems { plan, update_meta } => {
+                thread.upsert_plan_items(plan, update_meta, cx);
+                Ok(())
+            }
+        }
+    }
+}
