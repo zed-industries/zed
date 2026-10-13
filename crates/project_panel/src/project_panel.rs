@@ -1,6 +1,7 @@
 pub mod project_panel_settings;
 mod undo;
 mod utils;
+
 use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
@@ -1155,6 +1156,7 @@ impl ProjectPanel {
                     project.languages(),
                 );
             let is_svg = !is_dir && SvgPreviewView::is_svg_path(entry.path.as_std_path());
+
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
             let should_hide_rename = is_root
