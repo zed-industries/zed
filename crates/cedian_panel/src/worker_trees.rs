@@ -1,12 +1,12 @@
-//! S5 exit: the worker worktrees the panel shows, and the three things a
-//! person does with them (merge back, remove, clean up).
+//! S5 exit: the worker worktrees the panel shows, and the four things a
+//! person does with them (preview, merge back, remove, clean up).
 //!
 //! The mechanism is [`cedian_worker`]'s; this is the panel's view of it plus
 //! the registry bookkeeping `cedian worker`'s verb does, so the app never
 //! leaves a `workers.json` row naming a tree that is gone, nor one that says
 //! `done` before the merge landed.
 
-use cedian_worker::{Registry, TreeState, WorkerError, WorkerHead, WorkerStatus};
+use cedian_worker::{MergePlan, Registry, TreeState, WorkerError, WorkerHead, WorkerStatus};
 use std::path::Path;
 
 /// One live cedian worktree as the panel shows it: git's state, the registry
@@ -79,6 +79,36 @@ pub fn cleanup(repo: &Path, state: &Path, id: &str, base: &str) -> Result<String
         format!("{id}: {}", outcome.reason)
     };
     Ok(said)
+}
+
+/// What merging `id` into `base` would come to, without touching the repo:
+/// the CLI's `worker preview` (a throwaway clone does the trial merge)
+/// squeezed into one line for the notice. The row is needed for its branch,
+/// so a tree without one is refused exactly as the other actions refuse it.
+pub fn preview(repo: &Path, state: &Path, id: &str, base: &str) -> Result<String, String> {
+    let (registry, _) = Registry::open(state).map_err(|e| e.to_string())?;
+    let head = row(&registry, id)?;
+    let plan = cedian_worker::merge_preview(repo, &head, base).map_err(|e| e.to_string())?;
+    Ok(said(id, &plan))
+}
+
+/// The preview line: how many files the merge would touch, the clean ones by
+/// name, then the conflicts — the CLI's two headings ("clean",
+/// "conflicted(STALE)") said flat.
+fn said(id: &str, plan: &MergePlan) -> String {
+    let touched = plan.clean.len() + plan.conflicted.len();
+    let mut said = format!("{id}: a merge would touch {touched} file(s)");
+    if !plan.clean.is_empty() {
+        said.push_str(&format!("; clean: {}", plan.clean.join(", ")));
+    }
+    if !plan.conflicted.is_empty() {
+        said.push_str(&format!(
+            "; {} conflicted(STALE): {}",
+            plan.conflicted.len(),
+            plan.conflicted.join(", ")
+        ));
+    }
+    said
 }
 
 /// The row an action needs; a tree without one is refused naming the id, as

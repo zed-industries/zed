@@ -1876,6 +1876,16 @@ impl CedianPanel {
         self.confirm_remove.as_deref()
     }
 
+    /// Trial-merge a worker's branch into the base in a throwaway clone and
+    /// say what it would come to — the CLI's `worker preview` — without
+    /// touching the repo.
+    pub fn preview_worker(&mut self, id: &str, cx: &mut Context<Self>) {
+        let id = id.to_string();
+        self.worker_action(cx, move |repo, state| {
+            worker_trees::preview(&repo, &state, &id, WORKER_BASE)
+        });
+    }
+
     /// Merge a worker's branch back into the checked-out base, on one click;
     /// a STALE refusal is the notice, and nothing else changes. Refused
     /// while an out-of-scope change is unresolved (ADR-0033 decision 3):
@@ -1957,7 +1967,7 @@ impl CedianPanel {
     }
 
     /// One worker worktree: its class, the registry row when there is one, the
-    /// path on disk, and Merge / Remove / Cleanup.
+    /// path on disk, and Preview / Merge / Remove / Cleanup.
     fn render_worker_tree(&self, row: &WorkerTreeRow, cx: &mut Context<Self>) -> AnyElement {
         let id = row.state.id.clone();
         let selector = format!("cedian-worker-{id}");
@@ -2003,6 +2013,7 @@ impl CedianPanel {
         } else {
             h_flex()
                 .gap_2()
+                .child(button("Preview", "preview", Self::preview_worker, cx))
                 .child(button("Merge back", "merge", Self::merge_worker, cx))
                 .child(button("Remove", "remove", Self::begin_remove_worker, cx))
                 .child(button("Cleanup", "cleanup", Self::cleanup_worker, cx))

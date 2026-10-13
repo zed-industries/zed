@@ -9,16 +9,21 @@
 //! 4. a backdated commit plus a `running` registry row makes it `unmerged`
 //!    and puts the `stuck` badge on the row (`worker_trees::read` too);
 //! 5. Remove on that unmerged tree is refused, and the tree and row survive;
-//! 6. Merge back lands the branch's commit on the checked-out base and the
+//! 6. Preview runs the trial merge in a throwaway clone and says what landing
+//!    the branch would touch — the clean file, then, with the base moved on
+//!    the same file, the conflict — and touches neither repo nor row;
+//! 7. Merge back lands the branch's commit on the checked-out base and the
 //!    row's status becomes `done`;
-//! 7. Remove is two-step on a clean, merged tree: the first click arms the
+//! 8. Remove is two-step on a clean, merged tree: the first click arms the
 //!    confirm, Keep disarms it, and the confirm removes tree and row;
-//! 8. a tree with no registry row still shows, and Remove on it is refused
-//!    naming the id; a second edit plus Cleanup then removes the `wip` tree,
-//!    and — the sweep being the crate's — the clean trees beside it, each
-//!    removed row with them;
-//! 9. a remove on a gone row is harmless — its control is no longer rendered,
-//!    and the action only refuses, naming the id.
+//! 9. a tree with no registry row still shows, and Remove and Preview on it
+//!    are refused naming the id; a second edit plus Cleanup then removes the
+//!    `wip` tree, and — the sweep being the crate's — the clean trees beside
+//!    it, each removed row with them;
+//! 10. a remove on a gone row is harmless — its control is no longer
+//!     rendered, and the action only refuses, naming the id;
+//! 11. Cleanup needs no registry row either: the trees nobody recorded are
+//!     not stuck forever, and each click decides one tree.
 //!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
@@ -261,7 +266,60 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
         "a refused remove keeps the row"
     );
 
-    // 6. Merge back: the branch's commit lands on the checked-out base and
+    // 6. Preview: the trial merge runs in a throwaway clone and says what
+    // landing the branch would touch — the file, then, with the base moved
+    // on the same file, the conflict — and neither repo nor row is touched.
+    click(&mut vcx, "cedian-worker-w1-preview");
+    wait(cx, &window, "the clean preview", |p| {
+        p.notice()
+            .is_some_and(|n| n.starts_with("w1: a merge would touch 1 file(s)"))
+    });
+    let said = window
+        .update(cx, |p, _, _| p.notice().map(str::to_string))
+        .unwrap()
+        .expect("the preview lands in the notice");
+    assert_eq!(said, "w1: a merge would touch 1 file(s); clean: notes.txt");
+    assert_eq!(
+        git(&ws, &["log", "-1", "--format=%s"]),
+        "base",
+        "a preview never lands the merge"
+    );
+    assert_eq!(
+        git(&ws.join(".worktrees/w1"), &["log", "-1", "--format=%s"]),
+        "wip: casing",
+        "and never moves the branch"
+    );
+    let row = window
+        .update(cx, |p, _, _| worker(p, "w1").cloned())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.state.class,
+        TreeClass::Unmerged,
+        "so the row is unchanged"
+    );
+
+    // The base moves on under w1's feet, in the same file: the trial merge
+    // conflicts now, and the preview names what conflicts.
+    std::fs::write(ws.join("notes.txt"), "base\nbase edit\n").unwrap();
+    git(&ws, &["commit", "-q", "-am", "base: base edit"]);
+    click(&mut vcx, "cedian-worker-w1-preview");
+    wait(cx, &window, "the conflicted preview", |p| {
+        p.notice().is_some_and(|n| n.contains("conflicted(STALE)"))
+    });
+    let said = window
+        .update(cx, |p, _, _| p.notice().map(str::to_string))
+        .unwrap()
+        .expect("the preview lands in the notice");
+    assert_eq!(
+        said,
+        "w1: a merge would touch 1 file(s); 1 conflicted(STALE): notes.txt"
+    );
+    // Only the conflict needed that commit; the merge back below needs the
+    // base where it was.
+    git(&ws, &["reset", "--hard", "-q", "HEAD~1"]);
+
+    // 7. Merge back: the branch's commit lands on the checked-out base and
     // the row's status is `done`.
     click(&mut vcx, "cedian-worker-w1-merge");
     wait(cx, &window, "the merge", |p| {
@@ -284,7 +342,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     );
     assert_connected(cx, &window);
 
-    // 7. Remove through the UI: Keep disarms, the confirm removes the clean,
+    // 8. Remove through the UI: Keep disarms, the confirm removes the clean,
     // merged tree and drops its row.
     click(&mut vcx, "cedian-worker-plain-remove");
     assert!(rendered(&mut vcx, "cedian-worker-plain-remove-confirm").is_some());
@@ -317,18 +375,31 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
         "nothing else was harmed"
     );
 
-    // 8. A tree with no registry row still shows (git is the source of
+    // 9. A tree with no registry row still shows (git is the source of
     // truth), and an action on it is refused naming the id. A second edit
     // then makes w1 `wip`, and Cleanup on that row removes it and nothing
     // else: a person who clicked one row decided about that tree alone.
     spawn_tracked(&ws, &state, "scratch");
-    // The head is dropped: `cedian_worker::spawn` alone records nothing.
+    // The heads are dropped: `cedian_worker::spawn` alone records nothing.
     let _ = cedian_worker::spawn(&ws, "orphan", "HEAD").unwrap();
+    let _ = cedian_worker::spawn(&ws, "unlisted", "HEAD").unwrap();
     click(&mut vcx, "cedian-workers-refresh");
-    wait(cx, &window, "the rowless tree", |p| {
+    wait(cx, &window, "the rowless trees", |p| {
         worker(p, "orphan").is_some_and(|row| row.head.is_none())
+            && worker(p, "unlisted").is_some_and(|row| row.head.is_none())
     });
     assert!(rendered(&mut vcx, "cedian-worker-orphan").is_some());
+    // The preview needs the row for the branch, exactly as Remove does: it
+    // is refused naming the id, before any trial merge runs.
+    click(&mut vcx, "cedian-worker-unlisted-preview");
+    wait(cx, &window, "the rowless preview refusal", |p| {
+        p.notice()
+            .is_some_and(|n| n.contains("no worker \"unlisted\""))
+    });
+    assert!(
+        ws.join(".worktrees/unlisted").exists(),
+        "a refused preview keeps the rowless tree"
+    );
     click(&mut vcx, "cedian-worker-orphan-remove");
     click(&mut vcx, "cedian-worker-orphan-remove-confirm");
     wait(cx, &window, "the rowless refusal", |p| {
@@ -356,7 +427,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
         !ws.join(".worktrees/w1").exists(),
         "cleanup removed the wip tree"
     );
-    for kept in ["scratch", "orphan"] {
+    for kept in ["scratch", "orphan", "unlisted"] {
         assert!(
             ws.join(".worktrees").join(kept).exists(),
             "one row's cleanup leaves {kept} alone"
@@ -368,9 +439,13 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
         "w1's row went and the others stayed: {registry}"
     );
 
-    // 9. A remove on the gone row: no control to click, and the action only
+    // 10. A remove on the gone row: no control to click, and the action only
     // refuses, naming the id.
     assert!(rendered(&mut vcx, "cedian-worker-w1-remove").is_none());
+    assert!(
+        rendered(&mut vcx, "cedian-worker-w1-preview").is_none(),
+        "and no preview either"
+    );
     window
         .update(cx, |p, _, cx| {
             p.begin_remove_worker("w1", cx);
@@ -388,7 +463,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
         "the refusal changed nothing"
     );
 
-    // 10. Cleanup needs no registry row: it reads git, so the trees nobody
+    // 11. Cleanup needs no registry row: it reads git, so the trees nobody
     // recorded are not stuck forever. Each click decides one tree.
     click(&mut vcx, "cedian-worker-scratch-cleanup");
     wait(cx, &window, "the recorded tree to go", |p| {
@@ -398,7 +473,11 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     wait(cx, &window, "the rowless tree to go", |p| {
         worker(p, "orphan").is_none()
     });
-    for id in ["scratch", "orphan"] {
+    click(&mut vcx, "cedian-worker-unlisted-cleanup");
+    wait(cx, &window, "the second rowless tree to go", |p| {
+        worker(p, "unlisted").is_none()
+    });
+    for id in ["scratch", "orphan", "unlisted"] {
         assert!(!ws.join(".worktrees").join(id).exists(), "{id} is gone");
     }
     assert_eq!(
