@@ -130,6 +130,7 @@ pub struct MetalRenderer {
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CFRetained<CVMetalTextureCache>,
+    suppressed_surface_errors: Option<usize>,
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
@@ -404,6 +405,7 @@ impl MetalRenderer {
             instance_buffer_pool,
             sprite_atlas,
             core_video_texture_cache,
+            suppressed_surface_errors: None,
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
@@ -566,21 +568,35 @@ impl MetalRenderer {
             &mut surface_resources,
         )?;
 
+        self.retain_frame_resources(&command_buffer, writer.finish(), surface_resources);
+        Ok(command_buffer)
+    }
+
+    fn retain_frame_resources(
+        &self,
+        command_buffer: &metal::CommandBufferRef,
+        instance_buffer: InstanceBuffer,
+        surface_resources: Vec<CFRetained<CVImageBuffer>>,
+    ) {
         let instance_buffer_pool = self.instance_buffer_pool.clone();
-        let instance_buffer = Cell::new(Some(writer.finish()));
-        let surface_resources = Cell::new(Some(surface_resources));
+        let instance_buffer = Cell::new(Some(instance_buffer));
+        // Destroying the cache before its in-flight textures can leave their pool allocation pinned.
+        let core_video_texture_cache =
+            (!surface_resources.is_empty()).then(|| self.core_video_texture_cache.clone());
+        let surface_resources = Cell::new(Some((surface_resources, core_video_texture_cache)));
         let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
             if let Some(instance_buffer) = instance_buffer.take() {
                 instance_buffer_pool.lock().release(instance_buffer);
             }
-            drop(surface_resources.take());
+            if let Some((surface_resources, core_video_texture_cache)) = surface_resources.take() {
+                drop(surface_resources);
+                drop(core_video_texture_cache);
+            }
         });
         // SAFETY: Both pointee types are opaque views of the same Objective-C block pointer ABI.
         unsafe {
             command_buffer.add_completed_handler(&*RcBlock::as_ptr(&block).cast());
         }
-
-        Ok(command_buffer)
     }
 
     /// Renders the scene to a texture and returns the pixel data as an RGBA image.
@@ -1187,6 +1203,15 @@ impl MetalRenderer {
         );
     }
 
+    fn log_surface_error(&mut self, error: impl std::fmt::Display) {
+        if let Some(suppressed) = &mut self.suppressed_surface_errors {
+            *suppressed = suppressed.saturating_add(1);
+        } else {
+            log::error!("skipping surface: {error}");
+            self.suppressed_surface_errors = Some(0);
+        }
+    }
+
     fn draw_surfaces(
         &mut self,
         surfaces: &[PaintSurface],
@@ -1223,7 +1248,7 @@ impl MetalRenderer {
             // Metal abort the process, so surfaces that can't be drawn are skipped.
             let pixel_format = CVPixelBufferGetPixelFormatType(image_buffer);
             if pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
-                log::error!("skipping surface with unsupported pixel format {pixel_format:#x}");
+                self.log_surface_error(format_args!("unsupported pixel format {pixel_format:#x}"));
                 continue;
             }
 
@@ -1259,7 +1284,7 @@ impl MetalRenderer {
             ) {
                 (Ok(y_texture), Ok(cb_cr_texture)) => (y_texture, cb_cr_texture),
                 (Err(error), _) | (_, Err(error)) => {
-                    log::error!("skipping surface: {error:#}");
+                    self.log_surface_error(format_args!("{error:#}"));
                     continue;
                 }
             };
@@ -1726,12 +1751,13 @@ mod tests {
     use gpui::{Quad, white};
     use objc2_core_foundation::{CFDictionary, CFNumber, CFString, CFType};
     use objc2_core_video::{
-        CVPixelBufferCreate, CVPixelBufferGetBaseAddressOfPlane,
-        CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
-        CVPixelBufferPool, CVPixelBufferUnlockBaseAddress, kCVPixelBufferHeightKey,
-        kCVPixelBufferIOSurfacePropertiesKey, kCVPixelBufferPixelFormatTypeKey,
-        kCVPixelBufferPoolAllocationThresholdKey, kCVPixelBufferWidthKey,
-        kCVPixelFormatType_422YpCbCr8, kCVReturnWouldExceedAllocationThreshold,
+        CVMetalTextureGetTypeID, CVPixelBufferCreate, CVPixelBufferGetBaseAddressOfPlane,
+        CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetTypeID, CVPixelBufferLockBaseAddress,
+        CVPixelBufferLockFlags, CVPixelBufferPool, CVPixelBufferUnlockBaseAddress,
+        kCVPixelBufferHeightKey, kCVPixelBufferIOSurfacePropertiesKey,
+        kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferPoolAllocationThresholdKey,
+        kCVPixelBufferWidthKey, kCVPixelFormatType_422YpCbCr8,
+        kCVReturnWouldExceedAllocationThreshold,
     };
     use std::{
         thread,
@@ -1803,8 +1829,29 @@ mod tests {
         }
     }
 
-    #[test]
-    fn surface_is_not_recycled_while_the_gpu_reads_it() {
+    struct GpuGate(metal::SharedEvent);
+
+    impl GpuGate {
+        fn block(renderer: &MetalRenderer) -> Self {
+            let gate = Self(renderer.device.new_shared_event());
+            let blocker = renderer.command_queue.new_command_buffer();
+            blocker.encode_wait_for_event(&gate.0, 1);
+            blocker.commit();
+            gate
+        }
+
+        fn release(&self) {
+            self.0.set_signaled_value(1);
+        }
+    }
+
+    impl Drop for GpuGate {
+        fn drop(&mut self) {
+            self.release();
+        }
+    }
+
+    fn pixel_buffer_pool() -> CFRetained<CVPixelBufferPool> {
         let pixel_format = CFNumber::new_i32(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as i32);
         let dimension = CFNumber::new_i32(16);
         let io_surface_properties = CFDictionary::<CFType, CFType>::empty();
@@ -1837,39 +1884,47 @@ mod tests {
             },
             kCVReturnSuccess
         );
-        let pool = unsafe { CFRetained::from_raw(ptr::NonNull::new(pool).unwrap()) };
+        unsafe { CFRetained::from_raw(ptr::NonNull::new(pool).unwrap()) }
+    }
 
-        // With a threshold of one buffer, the pool can only hand out a buffer by
-        // recycling one that nothing holds anymore.
+    fn pooled_pixel_buffer(pool: &CVPixelBufferPool) -> (i32, Option<CFRetained<CVImageBuffer>>) {
         let threshold = CFNumber::new_i32(1);
-        let allocation_threshold = CFDictionary::<CFString, CFType>::from_slices(
+        let attributes = CFDictionary::<CFString, CFType>::from_slices(
             &[unsafe { kCVPixelBufferPoolAllocationThresholdKey }],
             &[&threshold],
         );
-        let create_pixel_buffer = || {
-            let mut image_buffer = ptr::null_mut();
-            let status = unsafe {
-                CVPixelBufferPool::create_pixel_buffer_with_aux_attributes(
-                    None,
-                    &pool,
-                    Some(allocation_threshold.as_opaque()),
-                    ptr::NonNull::from(&mut image_buffer),
-                )
-            };
-            let image_buffer = ptr::NonNull::new(image_buffer)
-                .map(|image_buffer| unsafe { CFRetained::from_raw(image_buffer) });
-            (status, image_buffer)
+        let mut image_buffer = ptr::null_mut();
+        let status = unsafe {
+            CVPixelBufferPool::create_pixel_buffer_with_aux_attributes(
+                None,
+                pool,
+                Some(attributes.as_opaque()),
+                ptr::NonNull::from(&mut image_buffer),
+            )
         };
-        let (status, image_buffer) = create_pixel_buffer();
-        assert_eq!(status, kCVReturnSuccess);
+        let image_buffer = ptr::NonNull::new(image_buffer)
+            .map(|image_buffer| unsafe { CFRetained::from_raw(image_buffer) });
+        (status, image_buffer)
+    }
 
-        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
-        // Stall the GPU so the frame below is still pending when the pool is queried.
-        let gate = renderer.device.new_shared_event();
-        let blocker = renderer.command_queue.new_command_buffer();
-        blocker.encode_wait_for_event(&gate, 1);
-        blocker.commit();
+    fn assert_pixel_buffer_is_recycled(
+        pool: &CVPixelBufferPool,
+        cache: Option<&CVMetalTextureCache>,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while pooled_pixel_buffer(pool).0 != kCVReturnSuccess {
+            assert!(
+                Instant::now() < deadline,
+                "the pixel buffer was not released after the command buffer completed"
+            );
+            if let Some(cache) = cache {
+                cache.flush(0);
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
 
+    fn surface_scene(image_buffer: CFRetained<CVImageBuffer>) -> Scene {
         let bounds = Bounds {
             origin: Point::default(),
             size: size(ScaledPixels(16.0), ScaledPixels(16.0)),
@@ -1879,31 +1934,137 @@ mod tests {
             order: 0,
             bounds,
             content_mask: ContentMask { bounds },
-            image_buffer: image_buffer.unwrap(),
+            image_buffer,
         });
         scene.finish();
-        renderer
-            .render_scene(&scene, size(DevicePixels(16), DevicePixels(16)))
-            .unwrap();
-        drop(scene);
-        renderer.core_video_texture_cache.flush(0);
+        scene
+    }
 
-        let (status_while_reading, _) = create_pixel_buffer();
-        gate.set_signaled_value(1);
-        assert_eq!(
-            status_while_reading, kCVReturnWouldExceedAllocationThreshold,
-            "the pool recycled a pixel buffer that a pending command buffer still samples"
-        );
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while create_pixel_buffer().0 != kCVReturnSuccess {
-            assert!(
-                Instant::now() < deadline,
-                "the pixel buffer was not released after the command buffer completed"
+    #[test]
+    fn surface_is_not_recycled_while_the_gpu_reads_it() {
+        objc2::rc::autoreleasepool(|_| {
+            let pool = pixel_buffer_pool();
+            let (status, image_buffer) = pooled_pixel_buffer(&pool);
+            assert_eq!(status, kCVReturnSuccess);
+            let scene = surface_scene(image_buffer.unwrap());
+            let mut renderer =
+                MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+            let gate = GpuGate::block(&renderer);
+            let viewport_size = size(DevicePixels(16), DevicePixels(16));
+            let descriptor = metal::TextureDescriptor::new();
+            descriptor.set_width(16);
+            descriptor.set_height(16);
+            descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            descriptor.set_usage(metal::MTLTextureUsage::RenderTarget);
+            let target = renderer.device.new_texture(&descriptor);
+            let mut writer = InstanceBufferWriter::new(
+                &renderer.device,
+                &renderer.instance_buffer_pool,
+                renderer.is_unified_memory,
             );
+            let bindings = write_instances(&scene, &mut writer).unwrap();
+            let mut surface_resources = Vec::new();
+            let command_buffer = renderer
+                .draw_primitives_to_texture(
+                    &scene,
+                    &bindings,
+                    &mut writer,
+                    &target,
+                    viewport_size,
+                    &mut surface_resources,
+                )
+                .unwrap();
+            drop(scene);
+
+            // Observe the exact Core Video objects encoded by the draw. A second cache lookup
+            // may return different wrappers, and the pool check alone passes with either owner retained.
+            let observed_resources = surface_resources.clone();
+            assert_eq!(observed_resources.len(), 3);
+            let expected_types = [
+                CVMetalTextureGetTypeID(),
+                CVMetalTextureGetTypeID(),
+                CVPixelBufferGetTypeID(),
+            ];
+            let retain_counts: Vec<_> = observed_resources
+                .iter()
+                .zip(expected_types)
+                .map(|(resource, expected_type)| {
+                    let resource = AsRef::<CFType>::as_ref(&**resource);
+                    assert_eq!(
+                        objc2_core_foundation::CFGetTypeID(Some(resource)),
+                        expected_type
+                    );
+                    resource.retain_count()
+                })
+                .collect();
+            renderer.retain_frame_resources(&command_buffer, writer.finish(), surface_resources);
+            command_buffer.commit();
+            for ((resource, retain_count), name) in observed_resources
+                .iter()
+                .zip(retain_counts)
+                .zip(["Y texture", "CbCr texture", "pixel buffer"])
+            {
+                assert_eq!(
+                    AsRef::<CFType>::as_ref(&**resource).retain_count(),
+                    retain_count,
+                    "the completed handler must retain the {name} independently"
+                );
+            }
+            // The observers must not protect the allocation during the pool assertion.
+            drop(observed_resources);
             renderer.core_video_texture_cache.flush(0);
-            thread::sleep(Duration::from_millis(1));
-        }
+            assert_eq!(
+                pooled_pixel_buffer(&pool).0,
+                kCVReturnWouldExceedAllocationThreshold,
+                "the pool recycled a pixel buffer that a pending command buffer still samples"
+            );
+            gate.release();
+            assert_pixel_buffer_is_recycled(&pool, Some(&renderer.core_video_texture_cache));
+        });
+    }
+
+    #[test]
+    fn dropping_renderer_releases_surface_after_gpu_completion() {
+        objc2::rc::autoreleasepool(|_| {
+            let pool = pixel_buffer_pool();
+            let (status, image_buffer) = pooled_pixel_buffer(&pool);
+            assert_eq!(status, kCVReturnSuccess);
+            let scene = surface_scene(image_buffer.unwrap());
+            let mut renderer =
+                MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+            let gate = GpuGate::block(&renderer);
+            renderer
+                .render_scene(&scene, size(DevicePixels(16), DevicePixels(16)))
+                .unwrap();
+            drop(scene);
+            renderer.core_video_texture_cache.flush(0);
+            let completed = renderer.command_queue.new_command_buffer().to_owned();
+            completed.commit();
+            drop(renderer);
+            assert_eq!(
+                pooled_pixel_buffer(&pool).0,
+                kCVReturnWouldExceedAllocationThreshold
+            );
+            gate.release();
+            completed.wait_until_completed();
+            assert_eq!(completed.status(), metal::MTLCommandBufferStatus::Completed);
+            assert_pixel_buffer_is_recycled(&pool, None);
+        });
+    }
+
+    #[test]
+    fn gpu_gate_is_released_when_assertions_unwind() {
+        objc2::rc::autoreleasepool(|_| {
+            let renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+            let gate = GpuGate::block(&renderer);
+            let event = gate.0.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let _gate = gate;
+                panic!("exercise the GPU gate's unwind cleanup");
+            }));
+            assert!(result.is_err());
+            assert_eq!(event.signaled_value(), 1);
+        });
     }
 
     #[test]
@@ -1969,5 +2130,178 @@ mod tests {
                     .all(|image::Rgba(pixel)| *pixel == [255, 255, 255, 255])
             );
         }
+    }
+
+    fn surface_pixel_buffer(
+        pixel_format: u32,
+        iosurface_backed: bool,
+        luma: u8,
+    ) -> CFRetained<objc2_core_video::CVPixelBuffer> {
+        let properties = CFDictionary::<CFType, CFType>::empty();
+        let attributes = CFDictionary::from_slices(
+            &[unsafe { kCVPixelBufferIOSurfacePropertiesKey }],
+            &[&*properties],
+        );
+        let mut buffer = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                CVPixelBufferCreate(
+                    None,
+                    16,
+                    16,
+                    pixel_format,
+                    iosurface_backed.then_some(attributes.as_opaque()),
+                    ptr::NonNull::from(&mut buffer),
+                )
+            },
+            kCVReturnSuccess
+        );
+        let buffer = unsafe { CFRetained::from_raw(ptr::NonNull::new(buffer).unwrap()) };
+        if pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
+            unsafe {
+                assert_eq!(
+                    CVPixelBufferLockBaseAddress(&buffer, CVPixelBufferLockFlags::empty()),
+                    kCVReturnSuccess
+                );
+                for plane in 0..2 {
+                    let bytes = CVPixelBufferGetBaseAddressOfPlane(&buffer, plane).cast::<u8>();
+                    let length = CVPixelBufferGetBytesPerRowOfPlane(&buffer, plane)
+                        * CVPixelBufferGetHeightOfPlane(&buffer, plane);
+                    slice::from_raw_parts_mut(bytes, length).fill(if plane == 0 {
+                        luma
+                    } else {
+                        128
+                    });
+                }
+                assert_eq!(
+                    CVPixelBufferUnlockBaseAddress(&buffer, CVPixelBufferLockFlags::empty()),
+                    kCVReturnSuccess
+                );
+            }
+        }
+        buffer
+    }
+
+    #[test]
+    fn mixed_surface_batch_preserves_indices_and_clip() {
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let mut scene = Scene::default();
+        for (index, buffer) in [
+            surface_pixel_buffer(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, true, 80),
+            surface_pixel_buffer(kCVPixelFormatType_422YpCbCr8, true, 0),
+            surface_pixel_buffer(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, false, 0),
+            surface_pixel_buffer(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, true, 200),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let bounds = Bounds {
+                origin: point(ScaledPixels(index as f32 * 16.0), ScaledPixels(0.0)),
+                size: size(ScaledPixels(16.0), ScaledPixels(16.0)),
+            };
+            let mut mask = bounds;
+            if index == 0 {
+                mask.size.width = ScaledPixels(8.0);
+            }
+            scene.insert_primitive(PaintSurface {
+                order: index as u32,
+                bounds,
+                content_mask: ContentMask { bounds: mask },
+                image_buffer: buffer,
+            });
+        }
+        let bounds = Bounds {
+            origin: point(ScaledPixels(16.0), ScaledPixels(0.0)),
+            size: size(ScaledPixels(8.0), ScaledPixels(16.0)),
+        };
+        scene.insert_primitive(Quad {
+            order: 4,
+            bounds,
+            content_mask: ContentMask { bounds },
+            background: white().into(),
+            ..Default::default()
+        });
+        scene.finish();
+        assert!(
+            matches!(scene.batches().next(), Some(PrimitiveBatch::Surfaces(range)) if range == (0..4))
+        );
+        let image = renderer
+            .render_scene_to_image(&scene, size(DevicePixels(64), DevicePixels(16)))
+            .unwrap();
+        for (x, y, image::Rgba([red, green, blue, alpha])) in image.enumerate_pixels() {
+            let expected = match x {
+                0..=7 => 80,
+                16..=23 => 255,
+                48..=63 => 200,
+                _ => 0,
+            };
+            assert!(
+                red.abs_diff(expected) <= 2
+                    && green.abs_diff(expected) <= 2
+                    && blue.abs_diff(expected) <= 2
+                    && *alpha == 255,
+                "wrong pixel ({x},{y}): {red},{green},{blue},{alpha}; expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn surface_errors_are_logged_once_per_renderer() {
+        use std::sync::{
+            OnceLock,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        struct ErrorLogger {
+            thread: thread::ThreadId,
+            count: AtomicUsize,
+        }
+
+        impl log::Log for ErrorLogger {
+            fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+                metadata.level() == log::Level::Error
+            }
+
+            fn log(&self, record: &log::Record<'_>) {
+                if thread::current().id() == self.thread
+                    && record.args().to_string().starts_with("skipping surface:")
+                {
+                    self.count.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+
+            fn flush(&self) {}
+        }
+
+        static LOGGER: OnceLock<ErrorLogger> = OnceLock::new();
+        let logger = LOGGER.get_or_init(|| ErrorLogger {
+            thread: thread::current().id(),
+            count: AtomicUsize::new(0),
+        });
+        log::set_logger(logger).unwrap();
+        log::set_max_level(log::LevelFilter::Error);
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        for image_buffer in [
+            surface_pixel_buffer(kCVPixelFormatType_422YpCbCr8, true, 0),
+            surface_pixel_buffer(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, false, 0),
+        ] {
+            let scene = surface_scene(image_buffer);
+            for _ in 0..120 {
+                renderer
+                    .render_scene_to_image(&scene, size(DevicePixels(16), DevicePixels(16)))
+                    .unwrap();
+            }
+        }
+        assert_eq!(logger.count.load(Ordering::Relaxed), 1);
+        assert_eq!(renderer.suppressed_surface_errors, Some(239));
+
+        let mut another_renderer =
+            MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let scene = surface_scene(surface_pixel_buffer(kCVPixelFormatType_422YpCbCr8, true, 0));
+        another_renderer
+            .render_scene_to_image(&scene, size(DevicePixels(16), DevicePixels(16)))
+            .unwrap();
+        assert_eq!(logger.count.load(Ordering::Relaxed), 2);
+        assert_eq!(another_renderer.suppressed_surface_errors, Some(0));
     }
 }
