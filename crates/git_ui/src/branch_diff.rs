@@ -646,12 +646,13 @@ impl SerializableItem for BranchDiff {
     }
 
     fn cleanup(
-        _: workspace::WorkspaceId,
-        _: Vec<workspace::ItemId>,
+        workspace_id: workspace::WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
         _: &mut Window,
-        _: &mut App,
+        cx: &mut App,
     ) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+        let db = project_diff::persistence::ProjectDiffDb::global(cx);
+        workspace::delete_unloaded_items(alive_items, workspace_id, "project_diffs", &db, cx)
     }
 
     fn deserialize(

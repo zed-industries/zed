@@ -258,7 +258,7 @@ impl WslRemoteConnection {
             let tmp_path = paths::remote_server_dir_relative().join(
                 &RelPath::from_unix_str(&format!(
                     "download-{}-{}",
-                    std::process::id(),
+                    super::staging_file_suffix(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
                 ))
                 .unwrap(),
@@ -286,7 +286,7 @@ impl WslRemoteConnection {
         let tmp_path = format!(
             "{}.{}.gz",
             dst_path.display(PathStyle::Unix),
-            std::process::id()
+            super::staging_file_suffix()
         );
         let tmp_path = RelPath::from_unix_str(&tmp_path).unwrap();
 

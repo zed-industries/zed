@@ -1035,16 +1035,7 @@ impl SshRemoteConnection {
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 
-        let binary_exists_on_server = self
-            .socket
-            .run_command(
-                self.ssh_shell_kind,
-                &dst_path.display(self.path_style()),
-                &["version"],
-                true,
-            )
-            .await
-            .is_ok();
+        let binary_exists_on_server = self.server_binary_runs(&dst_path).await;
 
         #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) = super::build_remote_server_from_source(
@@ -1058,7 +1049,7 @@ impl SshRemoteConnection {
             let tmp_path = paths::remote_server_dir_relative().join(
                 RelPath::from_unix_str(&format!(
                     "download-{}-{}",
-                    std::process::id(),
+                    super::staging_file_suffix(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
                 ))
                 .unwrap(),
@@ -1089,7 +1080,7 @@ impl SshRemoteConnection {
             RelPath::from_unix_str(&format!(
                 "{}-download-{}.{}",
                 binary_name,
-                std::process::id(),
+                super::staging_file_suffix(),
                 if self.ssh_platform.os.is_windows() {
                     "zip"
                 } else {
@@ -1113,7 +1104,7 @@ impl SshRemoteConnection {
                 .await
             {
                 Ok(_) => {
-                    self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
+                    self.install_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
                         .await
                         .context("extracting server binary")?;
                     return Ok(dst_path.into());
@@ -1138,10 +1129,43 @@ impl SshRemoteConnection {
         self.upload_local_server_binary(&src_path, &tmp_path_compressed, delegate, cx)
             .await
             .context("uploading server binary")?;
-        self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
+        self.install_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
             .await
             .context("extracting server binary")?;
         Ok(dst_path.into())
+    }
+
+    async fn server_binary_runs(&self, dst_path: &RelPath) -> bool {
+        self.socket
+            .run_command(
+                self.ssh_shell_kind,
+                &dst_path.display(self.path_style()),
+                &["version"],
+                true,
+            )
+            .await
+            .is_ok()
+    }
+
+    async fn install_server_binary(
+        &self,
+        dst_path: &RelPath,
+        tmp_path: &RelPath,
+        delegate: &Arc<dyn RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let installed = self
+            .extract_server_binary(dst_path, tmp_path, delegate, cx)
+            .await;
+        if let Err(error) = &installed
+            && self.server_binary_runs(dst_path).await
+        {
+            log::warn!(
+                "failed to install the remote server, using the one installed concurrently: {error:#}"
+            );
+            return Ok(());
+        }
+        installed
     }
 
     async fn download_binary_on_server(

@@ -3,8 +3,8 @@ use fs::Fs;
 
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, WeakEntity, Window,
-    WindowId, actions, deferred, px,
+    Global, ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, WeakEntity,
+    Window, WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
@@ -15,6 +15,7 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use ui::prelude::*;
+#[cfg(any(test, feature = "test-support"))]
 use util::ResultExt;
 use util::path_list::PathList;
 use zed_actions::agents_sidebar::ToggleThreadSwitcher;
@@ -31,6 +32,16 @@ use crate::{
     Panel, Workspace, WorkspaceId, client_side_decorations,
     persistence::model::MultiWorkspaceState,
 };
+
+pub fn last_window_close_count(cx: &App) -> usize {
+    cx.try_global::<LastWindowCloses>()
+        .map_or(0, |closes| closes.0)
+}
+
+#[derive(Default)]
+struct LastWindowCloses(usize);
+
+impl Global for LastWindowCloses {}
 
 actions!(
     multi_workspace,
@@ -303,7 +314,6 @@ struct HeldWorkspace {
 }
 
 pub struct MultiWorkspace {
-    pub(crate) is_remote_connection_placeholder: bool,
     window_id: WindowId,
     held: Vec<HeldWorkspace>,
     project_groups: Vec<ProjectGroupState>,
@@ -367,7 +377,6 @@ impl MultiWorkspace {
             workspace.set_multi_workspace(weak_self, active_workspace_id.clone(), cx);
         });
         Self {
-            is_remote_connection_placeholder: false,
             window_id: window.window_handle().window_id(),
             held: vec![HeldWorkspace {
                 workspace,
@@ -384,10 +393,6 @@ impl MultiWorkspace {
             _subscriptions: vec![release_subscription, settings_subscription],
             previous_focus_handle: None,
         }
-    }
-
-    pub fn set_remote_connection_placeholder(&mut self, is_placeholder: bool) {
-        self.is_remote_connection_placeholder = is_placeholder;
     }
 
     pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>, cx: &mut Context<Self>) {
@@ -578,6 +583,16 @@ impl MultiWorkspace {
                     window.remove_window();
                 })
                 .context("removing the closed window")?;
+
+            cx.update(|cx| {
+                if cx
+                    .windows()
+                    .iter()
+                    .all(|window| window.downcast::<MultiWorkspace>().is_none())
+                {
+                    cx.default_global::<LastWindowCloses>().0 += 1;
+                }
+            });
 
             anyhow::Ok(())
         })
@@ -1419,22 +1434,10 @@ impl MultiWorkspace {
             self.held.remove(index);
         }
         cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
-        workspace.update(cx, |workspace, _cx| {
-            workspace.session_id.take();
-            workspace._schedule_serialize_workspace.take();
-            workspace._serialize_workspace_task.take();
-        });
-
-        if let Some(workspace_id) = workspace.read(cx).database_id() {
-            let db = crate::persistence::WorkspaceDb::global(cx);
-            self.pending_removal_tasks.retain(|task| !task.is_ready());
-            self.pending_removal_tasks
-                .push(cx.background_spawn(async move {
-                    db.set_session_binding(workspace_id, None, None)
-                        .await
-                        .log_err();
-                }));
-        }
+        let clear_session_binding =
+            workspace.update(cx, |workspace, cx| workspace.clear_session_binding(cx));
+        self.pending_removal_tasks.retain(|task| !task.is_ready());
+        self.pending_removal_tasks.push(clear_session_binding);
     }
 
     fn sync_sidebar_to_workspace(&self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
@@ -1456,25 +1459,40 @@ impl MultiWorkspace {
     }
 
     fn serialize_now(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
-        let state = MultiWorkspaceState {
-            active_workspace_id: self.workspace().read(cx).database_id(),
-            project_groups: self
-                .project_groups
-                .iter()
-                .map(|group| {
-                    crate::persistence::model::SerializedProjectGroup::from_group(
-                        &group.key,
-                        group.expanded,
-                    )
-                })
-                .collect::<Vec<_>>(),
-            sidebar_open: self.sidebar_open,
-            sidebar_state: self.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
-        };
+        let active_workspace = self.workspace().read(cx);
+        let session_id = active_workspace
+            .session_id()
+            .filter(|_| !active_workspace.is_remote_connection_placeholder());
+        let state = session_id.map(|session_id| {
+            let state = MultiWorkspaceState {
+                active_workspace_id: self.workspace().read(cx).database_id(),
+                project_groups: self
+                    .project_groups
+                    .iter()
+                    .map(|group| {
+                        crate::persistence::model::SerializedProjectGroup::from_group(
+                            &group.key,
+                            group.expanded,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                sidebar_open: self.sidebar_open,
+                sidebar_state: self.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
+            };
+            (session_id, state)
+        });
         let window_id = self.window_id;
         let kvp = db::kvp::KeyValueStore::global(cx);
         async move {
-            crate::persistence::write_multi_workspace_state(&kvp, window_id, state).await;
+            if let Some((session_id, state)) = state {
+                crate::persistence::write_multi_workspace_state(
+                    &kvp,
+                    &session_id,
+                    window_id,
+                    state,
+                )
+                .await;
+            }
         }
     }
 
