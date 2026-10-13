@@ -63,8 +63,12 @@ profiles = ["release"]
 # Own non-.rs files read at build time (protobufs, bindgen headers, doc/data).
 proto = ["proto/**"]
 livekit_api = ["vendored/protocol/**"]
-media = ["src/bindings.h"]
-gpui = ["README.md"]
+gpui = [
+    "README.md",
+    "examples/image/exif-orientation-rotate-180.jpg",
+    "../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
+    "../../assets/fonts/lilex/Lilex-Regular.ttf",
+]
 git = ["src/checkpoint.gitignore"]
 git_ui = ["src/commit_message_prompt.txt"]
 editor = ["../grammars/src/**"]

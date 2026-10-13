@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
+pub use bench_metrics::{BenchMeasurement, CountingAllocator, MetricReport};
 use hdrhistogram::Histogram;
 
 use crate::{
@@ -44,7 +45,9 @@ use crate::{
 /// a headless renderer (Metal), so GPU submission is excluded from benchmark
 /// measurements on other platforms.
 pub fn bench_platform(
-    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    headless_renderer_factory: Option<
+        Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    >,
     text_system: Arc<dyn PlatformTextSystem>,
 ) -> Rc<dyn Platform> {
     thread_local! {
@@ -99,6 +102,7 @@ pub struct ForegroundWorkSummary {
 #[derive(Clone)]
 pub struct BenchReport {
     frame_snapshot: Rc<RefCell<WindowFrameSnapshot>>,
+    metrics: MetricReport,
     frame_budget_nanos: u128,
 }
 
@@ -125,8 +129,16 @@ impl BenchReport {
         );
         Self {
             frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
+            metrics: MetricReport::new(),
             frame_budget_nanos,
         }
+    }
+
+    /// Returns the per-iteration secondary metrics (retired instructions,
+    /// cycles, context switches, ...) recorded alongside Criterion's primary
+    /// measurement.
+    pub fn metrics(&self) -> &MetricReport {
+        &self.metrics
     }
 
     fn record_frame_timings<'i>(&self, events: impl IntoIterator<Item = &'i FrameEvent>) {
@@ -237,15 +249,15 @@ impl BenchReport {
     }
 
     /// Prints this report to stderr.
-    pub fn print(&self, benchmark_name: Option<&'static str>) {
+    pub fn print(&self, benchmark_name: &str) {
         let frame_snapshot = self.frame_snapshot.borrow();
-        if frame_snapshot.is_empty() {
+        if frame_snapshot.is_empty() && self.metrics.is_empty() {
             return;
         }
 
-        let benchmark_name = benchmark_name.unwrap_or("unknown benchmark");
         eprintln!("GPUI bench report (all observed iterations): {benchmark_name}");
         eprintln!("  note: includes Criterion warmup/calibration");
+        self.metrics.print("  ");
         self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
         self.print_histogram("window draw", &frame_snapshot.draw);
         self.print_histogram("window present interval", &frame_snapshot.present_interval);
@@ -486,7 +498,7 @@ pub struct BenchAppContext<'a, 'measurement> {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     benchmark_name: Option<&'static str>,
-    bencher: Rc<RefCell<Option<&'a mut criterion::Bencher<'measurement>>>>,
+    bencher: Rc<RefCell<Option<&'a mut criterion::Bencher<'measurement, BenchMeasurement>>>>,
     report: BenchReport,
 }
 
@@ -499,7 +511,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     pub fn new(
         platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
-        bencher: &'a mut criterion::Bencher<'measurement>,
+        bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
     ) -> Self {
         Self::build(platform, benchmark_name, bencher, BenchReport::default())
     }
@@ -513,7 +525,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     pub fn new_with_platform_and_report(
         platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
-        bencher: &'a mut criterion::Bencher<'measurement>,
+        bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
         report: BenchReport,
     ) -> Self {
         Self::build(platform, benchmark_name, bencher, report)
@@ -522,7 +534,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     fn build(
         platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
-        bencher: &'a mut criterion::Bencher<'measurement>,
+        bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
         report: BenchReport,
     ) -> Self {
         let background_executor = platform.background_executor();
@@ -660,12 +672,16 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let bencher = self.take_bencher("bench_iter");
         self.dispatch_pending_frames(|| true);
         let collector = TraceScope::start(self.foreground_journal_collector());
+        self.report.metrics.discard_pending();
+        let mut iterations = 0;
         let mut benchmark = || {
+            iterations += 1;
             benchmark(self);
             self.dispatch_pending_frames(|| true);
         };
         bencher.iter(&mut benchmark);
         let events = collector.finish();
+        self.report.metrics.record_sample(iterations);
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
@@ -720,6 +736,8 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let mut benchmark_context = self.clone();
         let foreground_executor = self.foreground_executor.clone();
         let report = self.report.clone();
+        report.metrics.discard_pending();
+        let iterations = std::cell::Cell::new(0);
 
         bencher.iter_batched_ref(
             || {
@@ -738,6 +756,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 }
             },
             |measured_input| {
+                iterations.set(iterations.get() + 1);
                 let task = benchmark(&mut measured_input.input, &mut benchmark_context);
                 benchmark_context.dispatch_pending_frames(|| true);
                 let output = Rc::new(RefCell::new(None));
@@ -757,6 +776,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             },
             criterion::BatchSize::PerIteration,
         );
+        report.metrics.record_sample(iterations.get());
         self.replace_bencher(bencher);
     }
 
@@ -787,7 +807,10 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let dispatcher = self.background_executor.dispatcher().clone();
         self.dispatch_pending_frames(|| true);
         let collector = TraceScope::start(self.foreground_journal_collector());
+        self.report.metrics.discard_pending();
+        let mut iterations = 0;
         let mut benchmark = || {
+            iterations += 1;
             dispatcher
                 .as_threaded()
                 .expect("validated in BenchAppContext::build")
@@ -806,6 +829,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         bencher.iter(&mut benchmark);
 
         let events = collector.finish();
+        self.report.metrics.record_sample(iterations);
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
@@ -851,6 +875,8 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             .as_threaded()
             .expect("validated in BenchAppContext::build");
         let report = self.report.clone();
+        report.metrics.discard_pending();
+        let iterations = std::cell::Cell::new(0);
 
         bencher.iter_batched_ref(
             || {
@@ -865,6 +891,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 }
             },
             |measured_input| {
+                iterations.set(iterations.get() + 1);
                 let (state, window, stopped) = &mut measured_input.input;
                 let started = Instant::now();
                 let check_deadline = || {
@@ -930,6 +957,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             },
             criterion::BatchSize::PerIteration,
         );
+        report.metrics.record_sample(iterations.get());
         self.replace_bencher(bencher);
     }
 
@@ -1007,13 +1035,16 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         }
     }
 
-    fn take_bencher(&self, benchmark_kind: &str) -> &'a mut criterion::Bencher<'measurement> {
+    fn take_bencher(
+        &self,
+        benchmark_kind: &str,
+    ) -> &'a mut criterion::Bencher<'measurement, BenchMeasurement> {
         self.bencher.borrow_mut().take().unwrap_or_else(|| {
             panic!("cannot start {benchmark_kind}: benchmark measurement is already running")
         })
     }
 
-    fn replace_bencher(&self, bencher: &'a mut criterion::Bencher<'measurement>) {
+    fn replace_bencher(&self, bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>) {
         let previous = self.bencher.borrow_mut().replace(bencher);
         assert!(
             previous.is_none(),
@@ -1321,10 +1352,95 @@ impl VisualContext for BenchWindowContext<'_, '_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{rc::Rc, sync::Arc};
+    use std::{
+        rc::Rc,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+    };
 
     use super::*;
     use crate::profiler::journal::install_test_foreground_journal;
+
+    /// Runs `benchmark` under a wall-time primary with a fake counter as the
+    /// secondary metric and returns the per-iteration values the report
+    /// recorded for it.
+    fn secondary_values_per_iteration(
+        counter: Arc<AtomicU64>,
+        benchmark: impl Fn(&mut BenchAppContext, &Arc<AtomicU64>),
+    ) -> Vec<u64> {
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::default();
+        let mut criterion = criterion::Criterion::default()
+            .with_measurement(
+                BenchMeasurement::new(criterion::measurement::WallTime).with_secondary(
+                    "fake counter",
+                    bench_metrics::FakeCounter::new(counter.clone()),
+                ),
+            )
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+
+        criterion.bench_function("secondary_values_per_iteration", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                Some("secondary_values_per_iteration"),
+                bencher,
+                report.clone(),
+            );
+            // Fixture work outside the measured loop must not be attributed
+            // to any iteration.
+            counter.fetch_add(1_000_000, Ordering::SeqCst);
+            benchmark(&mut cx, &counter);
+            cx.teardown();
+        });
+
+        report
+            .metrics()
+            .values("fake counter")
+            .expect("the fake counter was recorded")
+            .into_iter()
+            .map(|value| value as u64)
+            .collect()
+    }
+
+    #[test]
+    fn secondary_metric_is_normalized_per_iteration_for_bench_iter() {
+        let values = secondary_values_per_iteration(Arc::new(AtomicU64::new(0)), |cx, counter| {
+            cx.bench_iter(|_| {
+                counter.fetch_add(11, Ordering::SeqCst);
+            });
+        });
+        assert!(!values.is_empty());
+        assert!(
+            values.iter().all(|value| *value == 11),
+            "each sample's total should be divided by its iteration count: {values:?}"
+        );
+    }
+
+    #[test]
+    fn secondary_metric_is_accumulated_across_per_iteration_batches() {
+        let values = secondary_values_per_iteration(Arc::new(AtomicU64::new(0)), |cx, counter| {
+            cx.bench_batched_task(
+                |_| {
+                    // Setup runs outside every measured interval.
+                    counter.fetch_add(1_000, Ordering::SeqCst);
+                },
+                |(), cx| {
+                    counter.fetch_add(11, Ordering::SeqCst);
+                    cx.background_spawn(async {})
+                },
+            );
+        });
+        assert!(!values.is_empty());
+        assert!(
+            values.iter().all(|value| *value == 11),
+            "PerIteration batches should sum to one per-iteration value: {values:?}"
+        );
+    }
 
     #[test]
     fn foreground_work_reports_long_task_without_window_draw() {
@@ -1419,6 +1535,7 @@ mod tests {
         let name = "bench_task_reports_long_task_without_window";
 
         let mut criterion = criterion::Criterion::default()
+            .with_measurement(BenchMeasurement::new(criterion::measurement::WallTime))
             .without_plots()
             .sample_size(10)
             .warm_up_time(Duration::from_millis(1))

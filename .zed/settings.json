@@ -1,5 +1,8 @@
 {
   "languages": {
+    "Docker Compose": {
+      "tab_size": 2,
+    },
     "Markdown": {
       "tab_size": 2,
       "formatter": "prettier",
