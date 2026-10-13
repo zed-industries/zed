@@ -114,7 +114,9 @@ impl WgpuAtlas {
     /// Clears all cached textures and tiles, forcing them to be recreated.
     /// Use this for incremental recovery when the device is still valid.
     pub fn clear(&self) {
-        self.0.lock().clear(|textures| textures.invalidate_resources());
+        self.0
+            .lock()
+            .clear(|textures| textures.invalidate_resources());
     }
 
     /// Handles device lost by clearing all textures and cached tiles.
@@ -189,7 +191,12 @@ impl PlatformAtlas for WgpuAtlas {
 }
 
 impl AtlasBackend for WgpuAtlasTextures {
-    fn insert(&mut self, key: &AtlasKey, size: Size<DevicePixels>, bytes: &[u8]) -> Result<AtlasTile> {
+    fn insert(
+        &mut self,
+        key: &AtlasKey,
+        size: Size<DevicePixels>,
+        bytes: &[u8],
+    ) -> Result<AtlasTile> {
         let tile = if matches!(key, AtlasKey::DynamicTexture(_)) {
             self.allocate_dedicated(size, key.texture_kind())
         } else {

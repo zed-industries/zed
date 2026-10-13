@@ -1786,8 +1786,12 @@ pub trait AtlasBackend {
     /// Backends must recognize [`AtlasKey::DynamicTexture`] and allocate a
     /// dedicated, exactly-sized texture for it instead of packing it into the
     /// shared atlas, because dynamic textures are updated in place.
-    fn insert(&mut self, key: &AtlasKey, size: Size<DevicePixels>, bytes: &[u8])
-        -> Result<AtlasTile>;
+    fn insert(
+        &mut self,
+        key: &AtlasKey,
+        size: Size<DevicePixels>,
+        bytes: &[u8],
+    ) -> Result<AtlasTile>;
 
     fn remove(&mut self, tile: AtlasTile);
 }
@@ -1867,7 +1871,12 @@ pub struct HeadlessAtlasBackend {
 }
 
 impl AtlasBackend for HeadlessAtlasBackend {
-    fn insert(&mut self, key: &AtlasKey, size: Size<DevicePixels>, _bytes: &[u8]) -> Result<AtlasTile> {
+    fn insert(
+        &mut self,
+        key: &AtlasKey,
+        size: Size<DevicePixels>,
+        _bytes: &[u8],
+    ) -> Result<AtlasTile> {
         let kind = key.texture_kind();
         self.next_id += 1;
         let texture_id = self.next_id;
@@ -3514,13 +3523,21 @@ mod atlas_tests {
     }
 
     impl AtlasBackend for RecordingAtlasBackend {
-        fn insert(&mut self, key: &AtlasKey, size: Size<DevicePixels>, _bytes: &[u8]) -> Result<AtlasTile> {
+        fn insert(
+            &mut self,
+            key: &AtlasKey,
+            size: Size<DevicePixels>,
+            _bytes: &[u8],
+        ) -> Result<AtlasTile> {
             self.insert_calls += 1;
             if std::mem::take(&mut self.fail_next_insert) {
                 anyhow::bail!("backend failed");
             }
             Ok(AtlasTile {
-                texture_id: AtlasTextureId { index: 0, kind: key.texture_kind() },
+                texture_id: AtlasTextureId {
+                    index: 0,
+                    kind: key.texture_kind(),
+                },
                 tile_id: TileId(self.insert_calls),
                 padding: 0,
                 bounds: Bounds {

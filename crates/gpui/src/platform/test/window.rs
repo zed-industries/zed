@@ -730,7 +730,10 @@ mod dynamic_texture_tests {
             height: DevicePixels(3),
         };
         let mut build = || Ok(Some((texture_size, Cow::Owned(vec![0; 48]))));
-        let tile = atlas.get_or_insert_with(key.clone(), &mut build).unwrap().unwrap();
+        let tile = atlas
+            .get_or_insert_with(key.clone(), &mut build)
+            .unwrap()
+            .unwrap();
         let update_bounds = Bounds {
             origin: Point {
                 x: DevicePixels(1),

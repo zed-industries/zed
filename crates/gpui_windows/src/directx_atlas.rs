@@ -183,7 +183,12 @@ impl PlatformAtlas for DirectXAtlas {
 }
 
 impl AtlasBackend for DirectXAtlasTextures {
-    fn insert(&mut self, key: &AtlasKey, size: Size<DevicePixels>, bytes: &[u8]) -> anyhow::Result<AtlasTile> {
+    fn insert(
+        &mut self,
+        key: &AtlasKey,
+        size: Size<DevicePixels>,
+        bytes: &[u8],
+    ) -> anyhow::Result<AtlasTile> {
         let tile = if matches!(key, AtlasKey::DynamicTexture(_)) {
             self.allocate_dedicated(size, key.texture_kind())
         } else {

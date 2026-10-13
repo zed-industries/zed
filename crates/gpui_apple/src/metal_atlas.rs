@@ -28,7 +28,11 @@ const MAX_PENDING_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
 pub struct MetalAtlas(Mutex<AtlasState<MetalAtlasTextures>>);
 
 impl MetalAtlas {
-    pub(crate) fn new(device: Device, supports_shared_storage: bool, command_queue: CommandQueue) -> Self {
+    pub(crate) fn new(
+        device: Device,
+        supports_shared_storage: bool,
+        command_queue: CommandQueue,
+    ) -> Self {
         MetalAtlas(Mutex::new(AtlasState::new(MetalAtlasTextures {
             device: AssertSend(device),
             supports_shared_storage,
@@ -145,7 +149,8 @@ impl PlatformAtlas for MetalAtlas {
             },
             size: bounds.size,
         };
-        lock.backend.queue_upload(tile, upload_bounds, bytes, bytes_per_pixel);
+        lock.backend
+            .queue_upload(tile, upload_bounds, bytes, bytes_per_pixel);
         Ok(())
     }
 
@@ -163,7 +168,12 @@ impl PlatformAtlas for MetalAtlas {
 }
 
 impl AtlasBackend for MetalAtlasTextures {
-    fn insert(&mut self, key: &AtlasKey, size: Size<DevicePixels>, bytes: &[u8]) -> Result<AtlasTile> {
+    fn insert(
+        &mut self,
+        key: &AtlasKey,
+        size: Size<DevicePixels>,
+        bytes: &[u8],
+    ) -> Result<AtlasTile> {
         let tile = if matches!(key, AtlasKey::DynamicTexture(_)) {
             self.allocate_dedicated(size, key.texture_kind())
         } else {
@@ -207,7 +217,8 @@ impl AtlasBackend for MetalAtlasTextures {
         }
 
         if freed {
-            self.pending_uploads.retain(|upload| upload.texture_id != id);
+            self.pending_uploads
+                .retain(|upload| upload.texture_id != id);
             self.pending_upload_bytes = self
                 .pending_uploads
                 .iter()
