@@ -197,6 +197,7 @@ members = [
     "crates/proxy_handshake",
 "crates/node_backend",
 "crates/node_panel",
+"crates/node_versions",
 "crates/npm_backend",
 "crates/npm_bootstrap",
 "crates/npm_manager_panel",
@@ -504,6 +505,7 @@ dotnet_backend = { path = "crates/dotnet_backend" }
 dotnet_panel = { path = "crates/dotnet_panel" }
 node_backend = { path = "crates/node_backend" }
 node_panel = { path = "crates/node_panel" }
+node_versions = { path = "crates/node_versions" }
 npm_backend = { path = "crates/npm_backend" }
 npm_bootstrap = { path = "crates/npm_bootstrap" }
 npm_manager_panel = { path = "crates/npm_manager_panel" }
@@ -601,6 +603,10 @@ agent-client-protocol = { version = "=3.3.0", features = ["schemars", "unstable"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 forge-scaffold-sdk = { git = "https://github.com/mentenaz/Forge.Scaffold.SDK", tag = "v0.1.0" }
+# fnm as a library (the `library` branch of the fork adds the lib target).
+# `default-features = false` leaves out its command-line program: argument
+# completions, progress bars, shell detection and its Windows manifest.
+fnm = { git = "https://github.com/mentenaz/fnm", rev = "04adb7b8f7919e3aa0243f87e66d53f8eccb2683", default-features = false }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arc-swap = "1.9.0"

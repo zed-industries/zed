@@ -1,4 +1,4 @@
-//! Node.js panel — runtime detection, NVM management, project scanning,
+//! Node.js panel — runtime detection, Node.js version management, project scanning,
 //! script editing, and a live process list.
 //!
 //! Ported standalone (no host-app wiring yet): the source panel depended on
@@ -28,12 +28,13 @@
 //!   plain `npm install` and streams its output like any other quick
 //!   action.
 //!
-//! The actual detection/scanning/NVM logic lives in `node_backend`, ported
+//! The detection/scanning logic lives in `node_backend` and version management in `node_versions`, ported
 //! alongside this panel — see that crate's own doc comment.
 
 mod node_panel_settings;
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -58,9 +59,10 @@ use gpui_component::{
 };
 use indexmap::IndexMap;
 use node_backend::{
-    DetectedNodeProject, NvmVersion, nvm_install, nvm_list, nvm_list_available, nvm_uninstall,
-    nvm_use, query_runtime, read_text_file, reveal_in_explorer, scan_node_projects, write_file,
+    DetectedNodeProject, query_runtime, read_text_file, reveal_in_explorer, scan_node_projects,
+    write_file,
 };
+use node_versions::{NodeVersion, ProjectNode};
 use npm_backend::{
     NpmAuditVuln, NpmInstalledPkg, NpmOutdatedPkg, UpdateKind, classify_update,
     detect_package_manager, list_audit_vulns, list_installed, list_outdated,
@@ -85,40 +87,40 @@ const NODE_PROCS_TICK_INTERVAL: Duration = Duration::from_secs(2);
 // ── Types ─────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum NvmAction {
+enum VersionAction {
     Install,
     Uninstall,
 }
 
-impl NvmAction {
+impl VersionAction {
     fn title_verb(self) -> &'static str {
         match self {
-            NvmAction::Install => "Install",
-            NvmAction::Uninstall => "Uninstall",
+            VersionAction::Install => "Install",
+            VersionAction::Uninstall => "Uninstall",
         }
     }
 
     fn progressive(self) -> &'static str {
         match self {
-            NvmAction::Install => "Installing",
-            NvmAction::Uninstall => "Uninstalling",
+            VersionAction::Install => "Installing",
+            VersionAction::Uninstall => "Uninstalling",
         }
     }
 
     fn past(self) -> &'static str {
         match self {
-            NvmAction::Install => "installed",
-            NvmAction::Uninstall => "uninstalled",
+            VersionAction::Install => "installed",
+            VersionAction::Uninstall => "uninstalled",
         }
     }
 }
 
 #[derive(Clone)]
-enum NvmInstallStep {
-    Confirm(NvmAction, String),
-    Running(NvmAction, String),
-    Done(NvmAction, String, String),
-    Error(NvmAction, String, String),
+enum VersionStep {
+    Confirm(VersionAction, String),
+    Running(VersionAction, String),
+    Done(VersionAction, String, String),
+    Error(VersionAction, String, String),
 }
 
 /// One Node-related process row — a process whose name contains "node"
@@ -194,17 +196,28 @@ pub struct NodePanel {
     /// panel are loaded — see `set_flows_panel`.
     flows_panel: Option<WeakEntity<FlowsPanel>>,
 
+    /// The Node.js and npm that scripts run from this panel use: the
+    /// built-in manager's choice for the selected project, or the system
+    /// one when it has none.
     node_ver: Option<String>,
     npm_ver: Option<String>,
     not_found: bool,
+    /// The Node.js already on this machine's `PATH`, whoever put it there.
+    /// Shown as the "System" entry; `None` when there isn't one.
+    system_node_ver: Option<String>,
+    /// What the selected project asks for and whether that is installed.
+    project_node: ProjectNode,
+    /// Set while the pending install was asked for by the project line: the
+    /// folder whose version request to install from.
+    install_for_project: Option<PathBuf>,
 
-    nvm_available: Option<bool>,
-    nvm_versions: Vec<NvmVersion>,
+    versions_loaded: Option<bool>,
+    managed_versions: Vec<NodeVersion>,
     show_install: bool,
     available_versions: Vec<String>,
     available_page: usize,
     loading_available: bool,
-    nvm_install_step: Option<NvmInstallStep>,
+    version_step: Option<VersionStep>,
 
     cwd: String,
     projects: Vec<DetectedNodeProject>,
@@ -238,7 +251,7 @@ pub struct NodePanel {
     new_script_name_input: Option<Entity<InputState>>,
     new_script_cmd_input: Option<Entity<InputState>>,
 
-    /// Feedback log for NVM operations (install/switch version). Script runs
+    /// Feedback log for version operations (install/switch version). Script runs
     /// go to the Script Runner panel, not here.
     script_output: Vec<String>,
 
@@ -477,7 +490,7 @@ impl NodePanel {
 
             let mut open = HashMap::new();
             // Keep all sections open by default
-            open.insert("NVM".to_string(), true);
+            open.insert("Node Versions".to_string(), true);
             open.insert("Projects".to_string(), true);
             open.insert("Quick Actions".to_string(), true);
             open.insert("Packages".to_string(), true);
@@ -494,13 +507,16 @@ impl NodePanel {
                 node_ver: None,
                 npm_ver: None,
                 not_found: false,
-                nvm_available: None,
-                nvm_versions: Vec::new(),
+                system_node_ver: None,
+                project_node: ProjectNode::default(),
+                install_for_project: None,
+                versions_loaded: None,
+                managed_versions: Vec::new(),
                 show_install: false,
                 available_versions: Vec::new(),
                 available_page: 0,
                 loading_available: false,
-                nvm_install_step: None,
+                version_step: None,
                 cwd: cwd.clone(),
                 projects: Vec::new(),
                 selected_project: None,
@@ -700,9 +716,29 @@ impl NodePanel {
             .clone()
             .unwrap_or_else(|| self.cwd.clone());
         let command = command.to_string();
-        script_runner.update(cx, |panel, cx| {
-            panel.run_external(command, cwd, cx);
-        });
+        // Run under the Node.js this project should use: the built-in
+        // manager's pick goes first on `PATH`, so `node`, `npm` and anything
+        // they start resolve to it. With no pick the environment is left
+        // alone and the system Node.js runs, as before. Working it out reads
+        // the version store, so it happens off the main thread.
+        let project = (!cwd.is_empty()).then(|| PathBuf::from(&cwd));
+        cx.spawn(async move |_, cx: &mut AsyncApp| {
+            let path = cx
+                .background_spawn(async move {
+                    node_versions::path_env(&node_versions::store_dir(), project.as_deref())
+                })
+                .await;
+            let env: Vec<(OsString, OsString)> = path
+                .into_iter()
+                .map(|path| (OsString::from("PATH"), path))
+                .collect();
+            let _ = cx.update(|app| {
+                script_runner.update(app, |panel, cx| {
+                    panel.run_external_with_env(command, cwd, env, cx);
+                });
+            });
+        })
+        .detach();
     }
 
     fn scan_projects(&mut self, cx: &mut Context<Self>) {
@@ -961,23 +997,20 @@ impl NodePanel {
         .detach();
     }
 
-    /// Re-queries the active `node`/`npm` versions so the header runtime line
-    /// reflects an NVM switch or install. Unlike the startup probe in
-    /// `init_discovery`, this never re-scans projects or reloads the NVM list.
+    /// Re-queries the Node.js and npm the selected project runs under, so the
+    /// header line reflects a switch, an install, or a change of project.
+    /// Unlike the startup probe in `init_discovery`, this never re-scans
+    /// projects or reloads the version list.
     fn refresh_runtime_versions(&mut self, cx: &mut Context<Self>) {
+        let project = self.run_dir();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let node_ver = cx
-                .background_spawn(async { query_runtime("node".into()).ok() })
-                .await;
-            let npm_ver = cx
-                .background_spawn(async { query_runtime("npm".into()).ok() })
+            let runtimes = cx
+                .background_spawn(async move { probe_runtimes(project) })
                 .await;
             let _ = cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
                     let _ = panel.update(app, |panel, cx| {
-                        panel.not_found = node_ver.is_none();
-                        panel.node_ver = node_ver;
-                        panel.npm_ver = npm_ver;
+                        panel.apply_runtimes(runtimes);
                         cx.notify();
                     });
                 }
@@ -986,19 +1019,38 @@ impl NodePanel {
         .detach();
     }
 
-    fn load_nvm_versions(&mut self, cx: &mut Context<Self>) {
+    /// The folder scripts run in: the selected project, or the scan root.
+    fn run_dir(&self) -> Option<PathBuf> {
+        let dir = self
+            .selected_project
+            .clone()
+            .unwrap_or_else(|| self.cwd.clone());
+        (!dir.is_empty()).then(|| PathBuf::from(dir))
+    }
+
+    fn apply_runtimes(&mut self, runtimes: Runtimes) {
+        self.not_found = runtimes.node.is_none();
+        self.node_ver = runtimes.node;
+        self.npm_ver = runtimes.npm;
+        self.system_node_ver = runtimes.system_node;
+        self.project_node = runtimes.project;
+    }
+
+    fn load_managed_versions(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let result = cx.background_spawn(async { nvm_list() }).await;
+            let result = cx
+                .background_spawn(async { node_versions::list(&node_versions::store_dir()) })
+                .await;
             let _ = cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
                     let _ = panel.update(app, |panel, cx| {
                         match result {
                             Ok(versions) => {
-                                panel.nvm_available = Some(true);
-                                panel.nvm_versions = versions;
+                                panel.versions_loaded = Some(true);
+                                panel.managed_versions = versions;
                             }
                             Err(_) => {
-                                panel.nvm_available = Some(false);
+                                panel.versions_loaded = Some(false);
                             }
                         }
                         cx.notify();
@@ -1009,9 +1061,20 @@ impl NodePanel {
         .detach();
     }
 
-    fn switch_nvm_version(&mut self, version: String, cx: &mut Context<Self>) {
+    /// Makes `version` the active one, or with `None` hands the choice back
+    /// to the system Node.js. Either way this only changes what the IDE
+    /// launches: nothing else on the machine is switched.
+    fn switch_version(&mut self, version: Option<String>, cx: &mut Context<Self>) {
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let result = cx.background_spawn(async move { nvm_use(&version) }).await;
+            let result = cx
+                .background_spawn(async move {
+                    let store = node_versions::store_dir();
+                    match version {
+                        Some(version) => node_versions::use_version(&store, &version),
+                        None => node_versions::use_system(&store),
+                    }
+                })
+                .await;
             let _ = cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
                     let _ = panel.update(app, |panel, cx| {
@@ -1019,11 +1082,11 @@ impl NodePanel {
                             Ok(output) => panel.script_output.push(output),
                             Err(e) => panel.script_output.push(format!("Error: {e}")),
                         }
-                        // `nvm use` changes which Node the PATH resolves to, so
-                        // the header line ("Node.js … | npm …") is now stale —
+                        // The active version is what the header line
+                        // ("Node.js … | npm …") reports, so it is now stale —
                         // re-query it alongside the version list.
                         panel.refresh_runtime_versions(cx);
-                        panel.load_nvm_versions(cx);
+                        panel.load_managed_versions(cx);
                         cx.notify();
                     });
                 }
@@ -1032,44 +1095,56 @@ impl NodePanel {
         .detach();
     }
 
-    fn request_nvm_install(&mut self, version: String, cx: &mut Context<Self>) {
-        self.nvm_install_step = Some(NvmInstallStep::Confirm(NvmAction::Install, version));
+    fn request_install(&mut self, version: String, cx: &mut Context<Self>) {
+        self.install_for_project = None;
+        self.version_step = Some(VersionStep::Confirm(VersionAction::Install, version));
         cx.notify();
     }
 
-    fn request_nvm_uninstall(&mut self, version: String, cx: &mut Context<Self>) {
-        self.nvm_install_step = Some(NvmInstallStep::Confirm(NvmAction::Uninstall, version));
+    fn request_uninstall(&mut self, version: String, cx: &mut Context<Self>) {
+        self.install_for_project = None;
+        self.version_step = Some(VersionStep::Confirm(VersionAction::Uninstall, version));
         cx.notify();
     }
 
-    fn cancel_nvm_install(&mut self, cx: &mut Context<Self>) {
-        self.nvm_install_step = None;
+    fn cancel_version_step(&mut self, cx: &mut Context<Self>) {
+        self.install_for_project = None;
+        self.version_step = None;
         cx.notify();
     }
 
-    fn confirm_nvm_action(&mut self, cx: &mut Context<Self>) {
-        let Some(NvmInstallStep::Confirm(action, version)) = self.nvm_install_step.clone() else {
+    fn confirm_version_action(&mut self, cx: &mut Context<Self>) {
+        let Some(VersionStep::Confirm(action, version)) = self.version_step.clone() else {
             return;
         };
-        self.nvm_install_step = Some(NvmInstallStep::Running(action, version.clone()));
+        self.version_step = Some(VersionStep::Running(action, version.clone()));
         cx.notify();
 
+        let project = self.install_for_project.take();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let version_for_run = version.clone();
             let result = cx
                 .background_spawn(async move {
+                    let store = node_versions::store_dir();
                     match action {
-                        NvmAction::Install => nvm_install(&version_for_run),
-                        NvmAction::Uninstall => nvm_uninstall(&version_for_run),
+                        VersionAction::Install => match project {
+                            Some(project) => {
+                                node_versions::install_for_project(&store, &project)
+                            }
+                            None => node_versions::install(&store, &version_for_run),
+                        },
+                        VersionAction::Uninstall => {
+                            node_versions::uninstall(&store, &version_for_run)
+                        }
                     }
                 })
                 .await;
             let _ = cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
                     let _ = panel.update(app, |panel, cx| {
-                        panel.nvm_install_step = Some(match result {
-                            Ok(output) => NvmInstallStep::Done(action, version.clone(), output),
-                            Err(e) => NvmInstallStep::Error(action, version.clone(), e),
+                        panel.version_step = Some(match result {
+                            Ok(output) => VersionStep::Done(action, version.clone(), output),
+                            Err(e) => VersionStep::Error(action, version.clone(), e),
                         });
                         cx.notify();
                     });
@@ -1079,13 +1154,13 @@ impl NodePanel {
         .detach();
     }
 
-    fn finish_nvm_install(&mut self, cx: &mut Context<Self>) {
-        self.nvm_install_step = None;
+    fn finish_version_step(&mut self, cx: &mut Context<Self>) {
+        self.version_step = None;
         self.show_install = false;
         // An install/uninstall can change the active Node, so refresh the
         // header runtime line too, not just the version list.
         self.refresh_runtime_versions(cx);
-        self.load_nvm_versions(cx);
+        self.load_managed_versions(cx);
         cx.notify();
     }
 
@@ -1093,6 +1168,8 @@ impl NodePanel {
         self.selected_project = Some(path.clone());
         self.load_scripts(cx);
         self.reload_package_data(cx);
+        // Each project can ask for its own Node.js version.
+        self.refresh_runtime_versions(cx);
 
         let proj = path.clone();
         let sppkg_proj = path.clone();
@@ -1347,26 +1424,64 @@ impl NodePanel {
 
 // ── Background init ───────────────────────────────────────────────────
 
+/// What [`probe_runtimes`] found.
+struct Runtimes {
+    /// The Node.js scripts will run under, `None` when there is none at all.
+    node: Option<String>,
+    npm: Option<String>,
+    /// The Node.js on the `PATH`, independent of the built-in manager.
+    system_node: Option<String>,
+    project: ProjectNode,
+}
+
+/// Works out which Node.js and npm a script run in `project` will get, by
+/// asking them for their versions. Blocks on several process launches, so
+/// call it from a background thread.
+fn probe_runtimes(project: Option<PathBuf>) -> Runtimes {
+    let store = node_versions::store_dir();
+    let system_node = query_runtime("node".into()).ok();
+    let project_node = project
+        .as_deref()
+        .map(|project| node_versions::project_node(&store, project))
+        .unwrap_or_default();
+    let (node, npm) = match node_versions::bin_dir_for(&store, project.as_deref()) {
+        // A built-in version applies: ask the executables in its own folder.
+        Some(bin_dir) => {
+            let exe = |windows: &str, other: &str| {
+                bin_dir
+                    .join(if cfg!(windows) { windows } else { other })
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            (
+                query_runtime(exe("node.exe", "node")).ok(),
+                query_runtime(exe("npm.cmd", "npm")).ok(),
+            )
+        }
+        None => (system_node.clone(), query_runtime("npm".into()).ok()),
+    };
+    Runtimes {
+        node,
+        npm,
+        system_node,
+        project: project_node,
+    }
+}
+
 fn init_discovery(cx: &mut Context<NodePanel>) {
     cx.spawn(
         async move |this: WeakEntity<NodePanel>, cx: &mut AsyncApp| {
-            let node_ver = cx
-                .background_spawn(async { query_runtime("node".into()).ok() })
+            let runtimes = cx
+                .background_spawn(async { probe_runtimes(None) })
                 .await;
-            let npm_ver = cx
-                .background_spawn(async { query_runtime("npm".into()).ok() })
-                .await;
-            let not_found = node_ver.is_none();
 
             let _ = cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
                     let _ = panel.update(app, |panel, cx| {
-                        panel.node_ver = node_ver;
-                        panel.npm_ver = npm_ver;
-                        panel.not_found = not_found;
-                        if !not_found {
-                            panel.load_nvm_versions(cx);
-                        }
+                        panel.apply_runtimes(runtimes);
+                        // The built-in manager needs no Node.js on the
+                        // machine: it is how one gets installed.
+                        panel.load_managed_versions(cx);
                         panel.scan_projects(cx);
                         cx.notify();
                     });
@@ -1541,36 +1656,14 @@ impl Render for NodePanel {
                 .text_color(cx.theme().foreground),
         );
 
-        if self.not_found {
-            return div()
-                .id("node-panel-empty")
-                .track_focus(&self.focus_handle(cx))
-                .flex()
-                .flex_col()
-                .w_full()
-                .h_full()
-                .bg(cx.theme().background)
-                .child(panel_header)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .items_center()
-                        .justify_center()
-                        .p_4()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Node.js not found in PATH"),
-                )
-                .into_any_element();
-        }
-
-        let nvm_section = section_container(
+        // No early return when Node.js is missing: the Node Versions section
+        // below is where one gets installed, so the panel has to stay usable.
+        let versions_section = section_container(
             cx,
-            "NVM",
-            self.nvm_versions.len(),
-            self.is_open("NVM", true),
-            self.render_nvm(cx),
+            "Node Versions",
+            self.managed_versions.len(),
+            self.is_open("Node Versions", true),
+            self.render_node_versions(cx),
         );
 
         let projects_section = section_container(
@@ -1642,7 +1735,7 @@ impl Render for NodePanel {
             .flex()
             .flex_col()
             .child(self.render_versions(cx))
-            .child(nvm_section)
+            .child(versions_section)
             .child(projects_section)
             .child(actions_section)
             .child(packages_section)
@@ -1671,8 +1764,8 @@ impl Render for NodePanel {
         // `&mut Window` borrow across the successive calls (Rust 2024's
         // `impl Trait` lifetime-capture rules would otherwise reject the
         // second mutable borrow below).
-        let nvm_install_modal = self
-            .render_nvm_install_modal(window, cx)
+        let version_modal = self
+            .render_version_modal(window, cx)
             .map(|m| m.into_any_element());
         let pkg_modal = self
             .render_pkg_modal(window, cx)
@@ -1699,7 +1792,7 @@ impl Render for NodePanel {
                     .child(body),
             )
             .children(pkg_modal)
-            .children(nvm_install_modal)
+            .children(version_modal)
             .into_any_element()
     }
 }
@@ -1781,13 +1874,52 @@ impl NodePanel {
         let text = match (&self.node_ver, &self.npm_ver) {
             (Some(n), Some(pm)) => format!("Node.js {n}  |  npm {pm}"),
             (Some(n), None) => format!("Node.js {n}"),
-            _ => "Node.js not detected".into(),
+            _ => "Node.js isn't installed".into(),
         };
+
+        // What the selected project's own version file asks for. Installed,
+        // it is what the line above reports; missing, the active version is
+        // used instead and installing the right one is a click away.
+        let project_line = self.project_node.requested.clone().map(|requested| {
+            match &self.project_node.installed {
+                Some(installed) => div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("Project asks for {requested} \u{2014} using {installed}"))
+                    .into_any_element(),
+                None => h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().warning)
+                            .child(format!(
+                                "Project asks for {requested}, which isn't installed"
+                            )),
+                    )
+                    .child(
+                        Button::new("node-version-install-project")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Plus)
+                            .label("Install")
+                            .on_click(cx.listener(move |this, _e, _w, cx| {
+                                this.request_install(requested.clone(), cx);
+                                // Install from the project's own request, not
+                                // from the text shown: a `package.json` range
+                                // can't be asked for by name.
+                                this.install_for_project = this.run_dir();
+                            })),
+                    )
+                    .into_any_element(),
+            }
+        });
 
         div()
             .flex()
-            .items_center()
-            .justify_between()
+            .flex_col()
+            .gap_1()
             .px_3()
             .py_2()
             .border_b_1()
@@ -1799,12 +1931,13 @@ impl NodePanel {
                     .text_color(cx.theme().primary)
                     .child(text),
             )
+            .children(project_line)
     }
 
-    fn render_nvm(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_node_versions(&self, cx: &Context<Self>) -> impl IntoElement {
         let mut col = div().flex().flex_col();
 
-        match self.nvm_available {
+        match self.versions_loaded {
             None => {
                 col = col.child(
                     h_flex()
@@ -1817,7 +1950,7 @@ impl NodePanel {
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Detecting NVM\u{2026}"),
+                                .child("Loading Node.js versions\u{2026}"),
                         ),
                 );
             }
@@ -1827,14 +1960,14 @@ impl NodePanel {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("NVM not found \u{2014} managing Node directly"),
+                            .child("Couldn't read the installed Node.js versions"),
                     ),
                 );
             }
             Some(true) => {
                 col = col.child(
                     div().px_3().py_0p5().child(
-                        Button::new("nvm-install-toggle")
+                        Button::new("node-version-install-toggle")
                             .ghost()
                             .xsmall()
                             .selected(self.show_install)
@@ -1851,7 +1984,11 @@ impl NodePanel {
                                     let weak = cx.weak_entity();
                                     cx.spawn(async move |_, cx: &mut AsyncApp| {
                                         let result = cx
-                                            .background_spawn(async { nvm_list_available() })
+                                            .background_spawn(async {
+                                                node_versions::list_available(
+                                                    &node_versions::store_dir(),
+                                                )
+                                            })
                                             .await;
                                         let _ = cx.update(|app| {
                                             if let Some(panel) = weak.upgrade() {
@@ -1872,7 +2009,87 @@ impl NodePanel {
                     ),
                 );
 
-                for v in &self.nvm_versions {
+                // With nothing installed here yet, say what is being used
+                // instead and offer the one step that changes it. Nothing
+                // has to be set up first: the manager is part of the IDE.
+                if self.managed_versions.is_empty() {
+                    let explanation = match &self.system_node_ver {
+                        Some(version) => format!(
+                            "Using the Node.js already on this machine ({version}). \
+                             Install a version here to switch between versions per project."
+                        ),
+                        None => "Node.js isn't installed. Install a version to get started."
+                            .to_string(),
+                    };
+                    col = col
+                        .child(
+                            div()
+                                .px_3()
+                                .py_1()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(explanation),
+                        )
+                        .child(
+                            div().px_3().py_0p5().child(
+                                Button::new("node-version-install-lts")
+                                    .primary()
+                                    .xsmall()
+                                    .icon(IconName::Plus)
+                                    .label("Install latest LTS")
+                                    .on_click(cx.listener(|this, _e, _w, cx| {
+                                        this.request_install("lts".to_string(), cx);
+                                    })),
+                            ),
+                        );
+                }
+
+                // The Node.js on the `PATH`, however it got there. It is in
+                // use whenever no built-in version is active, and picking it
+                // hands the choice back without removing anything.
+                if let Some(system) = &self.system_node_ver {
+                    let system_current = !self.managed_versions.iter().any(|v| v.current);
+                    let color = if system_current {
+                        cx.theme().primary
+                    } else {
+                        cx.theme().foreground
+                    };
+                    col = col.child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .px_3()
+                            .py_0p5()
+                            .text_xs()
+                            .child(
+                                div()
+                                    .w_3()
+                                    .flex_shrink_0()
+                                    .text_color(if system_current {
+                                        cx.theme().primary
+                                    } else {
+                                        cx.theme().muted_foreground
+                                    })
+                                    .child(if system_current { "\u{25CF}" } else { "\u{25CB}" }),
+                            )
+                            .child(
+                                Button::new("node-version-system")
+                                    .custom(ButtonCustomVariant::new(cx).foreground(color))
+                                    .xsmall()
+                                    .label(format!("System ({system})"))
+                                    .tooltip(if system_current {
+                                        "In use: the Node.js already on this machine"
+                                    } else {
+                                        "Use the Node.js already on this machine"
+                                    })
+                                    .on_click(cx.listener(|this, _e, _w, cx| {
+                                        this.switch_version(None, cx);
+                                    })),
+                            ),
+                    );
+                }
+
+                for v in &self.managed_versions {
                     let marker = if v.current { "\u{25CF}" } else { "\u{25CB}" };
                     let marker_color = if v.current {
                         cx.theme().primary
@@ -1910,7 +2127,7 @@ impl NodePanel {
                                             .child(marker),
                                     )
                                     .child(
-                                        Button::new(format!("nvm-ver-{ver}"))
+                                        Button::new(format!("node-version-ver-{ver}"))
                                             .custom(ButtonCustomVariant::new(cx).foreground(color))
                                             .xsmall()
                                             .label(v.version.clone())
@@ -1920,12 +2137,15 @@ impl NodePanel {
                                                 "Use this version"
                                             })
                                             .on_click(cx.listener(move |this, _e, _w, cx| {
-                                                this.switch_nvm_version(ver_for_switch.clone(), cx);
+                                                this.switch_version(
+                                                    Some(ver_for_switch.clone()),
+                                                    cx,
+                                                );
                                             })),
                                     ),
                             )
                             .child(
-                                Button::new(format!("nvm-uninstall-{ver}"))
+                                Button::new(format!("node-version-uninstall-{ver}"))
                                     .custom(
                                         ButtonCustomVariant::new(cx)
                                             .foreground(cx.theme().muted_foreground),
@@ -1934,7 +2154,7 @@ impl NodePanel {
                                     .icon(IconName::CircleX)
                                     .tooltip("Uninstall")
                                     .on_click(cx.listener(move |this, _e, _w, cx| {
-                                        this.request_nvm_uninstall(ver_for_delete.clone(), cx);
+                                        this.request_uninstall(ver_for_delete.clone(), cx);
                                     })),
                             ),
                     );
@@ -1967,14 +2187,15 @@ impl NodePanel {
                         );
                     } else {
                         let installed: HashSet<&str> = self
-                            .nvm_versions
+                            .managed_versions
                             .iter()
                             .map(|v| v.version.as_str())
                             .collect();
                         let available: Vec<&String> = self
                             .available_versions
                             .iter()
-                            .filter(|v| !installed.contains(v.as_str()))
+                            // An entry may carry an LTS note after the version.
+                            .filter(|v| !installed.contains(node_versions::version_of(v)))
                             .collect();
 
                         let start = self.available_page * PAGE_SIZE;
@@ -1990,13 +2211,13 @@ impl NodePanel {
                             let ver = v.clone();
                             col = col.child(
                                 div().px_3().py_0p5().child(
-                                    Button::new(format!("nvm-install-{v}"))
+                                    Button::new(format!("node-version-install-{v}"))
                                         .ghost()
                                         .xsmall()
                                         .icon(IconName::Plus)
                                         .label(v.clone())
                                         .on_click(cx.listener(move |this, _e, _w, cx| {
-                                            this.request_nvm_install(ver.clone(), cx);
+                                            this.request_install(ver.clone(), cx);
                                         })),
                                 ),
                             );
@@ -2015,7 +2236,7 @@ impl NodePanel {
                                     .py_1()
                                     .text_xs()
                                     .child(
-                                        Button::new("nvm-available-prev")
+                                        Button::new("node-version-available-prev")
                                             .ghost()
                                             .xsmall()
                                             .label("\u{2039} Prev")
@@ -2035,7 +2256,7 @@ impl NodePanel {
                                         ),
                                     ))
                                     .child(
-                                        Button::new("nvm-available-next")
+                                        Button::new("node-version-available-next")
                                             .ghost()
                                             .xsmall()
                                             .label("Next \u{203A}")
@@ -2705,35 +2926,35 @@ impl NodePanel {
         col
     }
 
-    fn render_nvm_install_modal(
+    fn render_version_modal(
         &self,
         window: &mut Window,
         cx: &Context<Self>,
     ) -> Option<impl IntoElement> {
-        let step = self.nvm_install_step.clone()?;
+        let step = self.version_step.clone()?;
         let viewport = window.viewport_size();
 
         let title = match &step {
-            NvmInstallStep::Confirm(action, _) => match action {
-                NvmAction::Install => "Install Node.js version",
-                NvmAction::Uninstall => "Uninstall Node.js version",
+            VersionStep::Confirm(action, _) => match action {
+                VersionAction::Install => "Install Node.js version",
+                VersionAction::Uninstall => "Uninstall Node.js version",
             },
-            NvmInstallStep::Running(action, _) => match action {
-                NvmAction::Install => "Installing\u{2026}",
-                NvmAction::Uninstall => "Uninstalling\u{2026}",
+            VersionStep::Running(action, _) => match action {
+                VersionAction::Install => "Installing\u{2026}",
+                VersionAction::Uninstall => "Uninstalling\u{2026}",
             },
-            NvmInstallStep::Done(action, ..) => match action {
-                NvmAction::Install => "Install complete",
-                NvmAction::Uninstall => "Uninstall complete",
+            VersionStep::Done(action, ..) => match action {
+                VersionAction::Install => "Install complete",
+                VersionAction::Uninstall => "Uninstall complete",
             },
-            NvmInstallStep::Error(action, ..) => match action {
-                NvmAction::Install => "Install failed",
-                NvmAction::Uninstall => "Uninstall failed",
+            VersionStep::Error(action, ..) => match action {
+                VersionAction::Install => "Install failed",
+                VersionAction::Uninstall => "Uninstall failed",
             },
         };
 
         let body: AnyElement = match &step {
-            NvmInstallStep::Confirm(action, version) => div()
+            VersionStep::Confirm(action, version) => div()
                 .text_sm()
                 .text_color(cx.theme().foreground)
                 .child(format!(
@@ -2741,7 +2962,7 @@ impl NodePanel {
                     action.title_verb().to_ascii_lowercase()
                 ))
                 .into_any_element(),
-            NvmInstallStep::Running(action, version) => h_flex()
+            VersionStep::Running(action, version) => h_flex()
                 .gap_3()
                 .items_center()
                 .justify_center()
@@ -2757,7 +2978,7 @@ impl NodePanel {
                         )),
                 )
                 .into_any_element(),
-            NvmInstallStep::Done(action, version, output) => div()
+            VersionStep::Done(action, version, output) => div()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -2775,7 +2996,7 @@ impl NodePanel {
                         .child(output.clone())
                 }))
                 .into_any_element(),
-            NvmInstallStep::Error(action, version, message) => div()
+            VersionStep::Error(action, version, message) => div()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -2794,42 +3015,42 @@ impl NodePanel {
         };
 
         let footer: AnyElement = match &step {
-            NvmInstallStep::Confirm(action, version) => {
+            VersionStep::Confirm(action, version) => {
                 let confirm_label = format!("{} {version}", action.title_verb());
                 let confirm_variant = match action {
-                    NvmAction::Install => ButtonVariant::Success,
-                    NvmAction::Uninstall => ButtonVariant::Danger,
+                    VersionAction::Install => ButtonVariant::Success,
+                    VersionAction::Uninstall => ButtonVariant::Danger,
                 };
                 div()
                     .flex()
                     .justify_end()
                     .gap_2()
                     .child(
-                        Button::new("nvm-install-cancel")
+                        Button::new("node-version-install-cancel")
                             .outline()
                             .xsmall()
                             .label("Cancel")
-                            .on_click(cx.listener(|this, _e, _w, cx| this.cancel_nvm_install(cx))),
+                            .on_click(cx.listener(|this, _e, _w, cx| this.cancel_version_step(cx))),
                     )
                     .child(
-                        Button::new("nvm-install-confirm")
+                        Button::new("node-version-install-confirm")
                             .with_variant(confirm_variant)
                             .xsmall()
                             .label(confirm_label)
-                            .on_click(cx.listener(|this, _e, _w, cx| this.confirm_nvm_action(cx))),
+                            .on_click(cx.listener(|this, _e, _w, cx| this.confirm_version_action(cx))),
                     )
                     .into_any_element()
             }
-            NvmInstallStep::Running(..) => div().into_any_element(),
-            NvmInstallStep::Done(..) | NvmInstallStep::Error(..) => div()
+            VersionStep::Running(..) => div().into_any_element(),
+            VersionStep::Done(..) | VersionStep::Error(..) => div()
                 .flex()
                 .justify_end()
                 .child(
-                    Button::new("nvm-install-ok")
+                    Button::new("node-version-install-ok")
                         .success()
                         .xsmall()
                         .label("OK")
-                        .on_click(cx.listener(|this, _e, _w, cx| this.finish_nvm_install(cx))),
+                        .on_click(cx.listener(|this, _e, _w, cx| this.finish_version_step(cx))),
                 )
                 .into_any_element(),
         };
@@ -2841,7 +3062,7 @@ impl NodePanel {
                     .position(point(px(0.0), px(0.0)))
                     .child(
                         div()
-                            .id("nvm-install-modal-backdrop")
+                            .id("node-version-install-modal-backdrop")
                             .w(viewport.width)
                             .h(viewport.height)
                             .flex()
@@ -2850,7 +3071,7 @@ impl NodePanel {
                             .bg(gpui::rgba(0x000000aa))
                             .child(
                                 div()
-                                    .id("nvm-install-modal")
+                                    .id("node-version-install-modal")
                                     .occlude()
                                     .w(px(400.0))
                                     .flex()

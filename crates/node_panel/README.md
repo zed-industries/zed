@@ -1,7 +1,7 @@
 # node_panel
 
-A left-dock panel for working with Node.js projects: runtime and NVM
-versions, project discovery, scripts, packages and running processes.
+A left-dock panel for working with Node.js projects: Node.js versions,
+project discovery, scripts, packages and running processes.
 
 ## Why it exists
 
@@ -18,7 +18,7 @@ The panel is a stack of collapsible sections:
 
 | Section | What it does |
 | --- | --- |
-| NVM | Lists installed Node versions; switch, install or uninstall |
+| Node Versions | Lists installed Node.js versions; switch, install or uninstall |
 | Projects | Every directory with a `package.json` under the workspace; pick the active one |
 | Quick Actions | Common commands for the active project, plus **Package Manager** and **Task Chain** |
 | Packages | Installed dependencies |
@@ -28,10 +28,33 @@ The panel is a stack of collapsible sections:
 | Processes | Running Node processes |
 | SPFx | SharePoint Framework actions, shown for SPFx projects |
 
+### Node versions
+
+Version management is built in. Nothing has to be installed first, neither
+fnm nor nvm, and it works the same on Windows, macOS and Linux.
+
+- **Install Version…** lists every Node.js release; long-term-support ones
+  are marked. With nothing installed yet, **Install latest LTS** is one click.
+- Click a version to make it the active one. The first version installed
+  becomes active on its own.
+- **System** is the Node.js already on the machine, however it got there. It
+  is used whenever no built-in version is active, and clicking it hands the
+  choice back without removing anything.
+- A project that asks for a version in `.nvmrc`, `.node-version`, or the
+  `engines.node` field of `package.json` gets that version when it is
+  installed. The header line says which version the project is using, and
+  offers **Install** when the one it asks for is missing.
+
+Choosing a version changes what this panel runs, by putting that version
+first on the `PATH` of the commands it starts. Nothing else on the machine is
+switched: other programs, and terminals, keep the Node.js they had. The
+versions are kept in a `node_versions` folder in the IDE's data directory.
+
 Useful to know:
 
 - Running a script or quick action sends the command to the **Script Runner**
-  panel, which opens and streams the output.
+  panel, which opens and streams the output. It runs under the Node.js
+  version described above.
 - **Package Manager** opens the Node Package Manager tab
   ([`npm_manager_panel`](../npm_manager_panel/README.md)).
 - **Task Chain** opens the Flows panel's task-chain wizard, pre-filled with
@@ -66,7 +89,8 @@ rescanning: `node_version()`, `detected_projects()`, `outdated_count()`,
 
 | Concern | Crate |
 | --- | --- |
-| Runtime detection, NVM, project scan | [`node_backend`](../node_backend/README.md) |
+| Runtime detection, project scan | [`node_backend`](../node_backend/README.md) |
+| Installing and selecting Node.js versions | `node_versions`, on the [fnm](https://github.com/Schniz/fnm) library |
 | npm CLI and output parsing | [`npm_backend`](../npm_backend/README.md) |
 | Running commands | [`script_runner_panel`](../script_runner_panel/README.md) |
 

@@ -1,7 +1,8 @@
 [package]
 name = "node_panel"
-description = "Node.js/NVM/scripts panel, built on gpui-component."
-license = "Apache-2.0"
+description = "Node.js versions, projects and scripts panel, built on gpui-component."
+# GPL because it links `node_versions`, which links fnm (GPL-3.0).
+license = "GPL-3.0-or-later"
 edition.workspace = true
 version = "0.1.0"
 publish = false
@@ -18,6 +19,7 @@ gpui.workspace = true
 gpui-component.workspace = true
 indexmap.workspace = true
 node_backend.workspace = true
+node_versions.workspace = true
 npm_backend.workspace = true
 npm_manager_panel.workspace = true
 project.workspace = true

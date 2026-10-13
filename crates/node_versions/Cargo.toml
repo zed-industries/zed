@@ -1,0 +1,20 @@
+[package]
+name = "node_versions"
+description = "Built-in Node.js version management for the Node panel, on the fnm library — no fnm or nvm install needed."
+# GPL because it links fnm, which is GPL-3.0. Kept as its own crate so the
+# licence stops here and at the panels that use it, not at `node_backend`.
+license = "GPL-3.0-or-later"
+edition.workspace = true
+version = "0.1.0"
+publish = false
+
+[lib]
+path = "src/node_versions.rs"
+doctest = false
+
+[dependencies]
+fnm.workspace = true
+paths.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

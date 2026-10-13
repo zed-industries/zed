@@ -24,6 +24,13 @@ accepted = [
     "CDLA-Permissive-2.0",
 ]
 
+# fnm is GPL-3.0, which is not accepted for dependencies in general. It is
+# accepted for this one crate: the application it is linked into is itself
+# GPL-3.0-or-later, and it is only used from `node_versions` and `node_panel`,
+# which are marked GPL for that reason.
+[fnm]
+accepted = ["GPL-3.0"]
+
 [procinfo.clarify]
 license = "MIT"
 [[procinfo.clarify.files]]
