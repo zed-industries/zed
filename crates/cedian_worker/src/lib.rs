@@ -22,6 +22,7 @@
 pub mod brief;
 pub mod cleanup;
 pub mod host_tool;
+pub mod progress;
 pub mod registry;
 pub mod worktree;
 
@@ -31,6 +32,7 @@ pub use host_tool::{
     WORKTREE_REQUEST_TOOL, WorktreeGate, request_worktree, worktree_request_tool,
     worktree_request_tool_with_gate,
 };
+pub use progress::{note_evidence, note_import};
 pub use registry::{Registry, WorkerError, WorkerHead, WorkerStatus, now_ms};
 pub use worktree::{
     MergePlan, last_commit_ms, merge_back, merge_preview, remove, spawn, validate_id,

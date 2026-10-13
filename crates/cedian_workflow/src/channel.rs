@@ -130,11 +130,15 @@ pub struct WorkflowChannel {
     /// Optional `worker` on `cedian_complete` (ADR-0033 decision 4): the
     /// panel marks that worker Done when its verify gates pass.
     worker_complete: Mutex<Option<Box<WorkerComplete>>>,
+    /// Optional progress touch when evidence is stored for a gate
+    /// (ADR-0033 decision 5): the panel advances matching workers.
+    worker_progress: Mutex<Option<Box<WorkerProgress>>>,
 }
 
 type Blockers = dyn Fn() -> Vec<String> + Send + Sync;
 type WorkerComplete =
     dyn Fn(&str, &[crate::Evidence], &CurrentState) -> Result<(), String> + Send + Sync;
+type WorkerProgress = dyn Fn(&str) + Send + Sync;
 
 impl WorkflowChannel {
     pub fn new(
@@ -172,6 +176,7 @@ impl WorkflowChannel {
             profiles,
             blockers: Mutex::new(Box::new(Vec::new)),
             worker_complete: Mutex::new(None),
+            worker_progress: Mutex::new(None),
         })
     }
 
@@ -192,6 +197,14 @@ impl WorkflowChannel {
             .worker_complete
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(complete));
+    }
+
+    /// Where evidence for a gate advances worker `last_progress`.
+    pub fn set_worker_progress(&self, progress: impl Fn(&str) + Send + Sync + 'static) {
+        *self
+            .worker_progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(progress));
     }
 
     /// `cedian_workflow_update`: `op` is `start`, `evidence` or `advance`.
@@ -316,6 +329,14 @@ impl WorkflowChannel {
                 }
                 state.attach(item).map_err(|e| e.to_string())?;
                 self.store.save(&state)?;
+                if let Some(progress) = self
+                    .worker_progress
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                {
+                    progress(gate);
+                }
                 let gate_line = match state.gate_result(gate, &current) {
                     Ok(r) => format!("gate {gate}: {:?} — {}", r.status, r.reason),
                     Err(e) => e.to_string(),

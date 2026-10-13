@@ -323,6 +323,10 @@ impl LaunchSpec {
         channel.set_worker_complete(move |id, evidence, current| {
             crate::worker_trees::complete(&worker_state, id, evidence, current)
         });
+        let progress_state = state_dir.clone();
+        channel.set_worker_progress(move |gate| {
+            let _ = cedian_worker::note_evidence(&progress_state, gate);
+        });
         let mut tools = channel.host_tools();
         let models = Arc::clone(&router);
         tools.push(cedian_shell::review_agent::review_request_tool(

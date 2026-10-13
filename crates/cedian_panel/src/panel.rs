@@ -1781,8 +1781,7 @@ impl CedianPanel {
         let (registry, _) = Registry::open(&state).ok()?;
         let mut briefs = Vec::new();
         for head in registry.all().filter(|h| h.status == WorkerStatus::Running) {
-            let path = state.join("briefs").join(format!("{}.1.json", head.id));
-            briefs.push((head.id.clone(), Brief::from_file(&path).ok()?));
+            briefs.push((head.id.clone(), Brief::latest(&state, &head.id).ok()?));
         }
         if briefs.is_empty() {
             return None;
@@ -1790,6 +1789,18 @@ impl CedianPanel {
         WorkerScope::new(briefs.iter().map(|(id, b)| (id.as_str(), b)))
             .ok()
             .map(Arc::new)
+    }
+
+    /// An imported edit advances `last_progress` on running workers whose
+    /// brief covers the file (ADR-0033 decision 5).
+    fn note_import_progress(&mut self, buffer: &Entity<Buffer>, cx: &App) {
+        let Some((_, state)) = self.worker_paths(cx) else {
+            return;
+        };
+        let Some(path) = crate::review::scope_path(&buffer.read(cx)) else {
+            return;
+        };
+        let _ = cedian_worker::note_import(&state, &path);
     }
 
     /// One audit row for one out-of-scope file (ADR-0063 decision 4), through
@@ -4291,6 +4302,7 @@ impl CedianPanel {
                         Ok(ImportOutcome::Imported(transaction)) => {
                             let models = this.answered_models();
                             this.audit_import(&tool_call_id, &buffer, scope.as_deref(), cx);
+                            this.note_import_progress(&buffer, cx);
                             this.review.agent_edited(
                                 &buffer,
                                 &tool_call_id,

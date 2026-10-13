@@ -68,6 +68,15 @@ impl WorkerScope {
     pub fn workers(&self) -> impl Iterator<Item = &str> {
         self.briefs.iter().map(|b| b.worker.as_str())
     }
+
+    /// Workers whose own brief covers `path` (write matches, deny does not).
+    /// Used for import progress (ADR-0033 decision 5): an edit advances only
+    /// the workers that may write that path, not every running worker.
+    pub fn covering<'a>(&'a self, path: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        self.briefs.iter().filter_map(move |b| {
+            (b.write.is_match(path) && !b.deny.is_match(path)).then_some(b.worker.as_str())
+        })
+    }
 }
 
 /// A glob in a brief will not compile; the error names the pattern.
@@ -460,6 +469,18 @@ mod tests {
 
     /// Several running briefs union (ADR-0063 decision 1): a path one allows
     /// is in scope, and a path any denies is out.
+
+    #[test]
+    fn covering_names_only_workers_whose_brief_allows_the_path() {
+        let a = scope_brief(&["src/**"], &[]);
+        let b = scope_brief(&["docs/**"], &["docs/private.md"]);
+        let scope = WorkerScope::new([("wa", &a), ("wb", &b)]).unwrap();
+        assert_eq!(scope.covering("src/lib.rs").collect::<Vec<_>>(), vec!["wa"]);
+        assert_eq!(scope.covering("docs/x.md").collect::<Vec<_>>(), vec!["wb"]);
+        assert!(scope.covering("docs/private.md").next().is_none());
+        assert!(scope.covering("other.txt").next().is_none());
+    }
+
     #[test]
     fn several_briefs_union() {
         let a = scope_brief(&["src/**"], &[]);
