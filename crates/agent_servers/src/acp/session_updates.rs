@@ -27,6 +27,8 @@ pub enum InboundSessionUpdate {
         update_meta: Option<acp_v2::Meta>,
     },
     Terminal(DecodedTerminalUpdate),
+    SessionInfo(acp_v2::SessionInfoUpdate),
+    AvailableCommands(acp_v2::AvailableCommandsUpdate),
 }
 
 impl From<DecodedTerminalNotification> for InboundSessionNotification {
@@ -82,6 +84,12 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
                     update_meta: update.meta,
                 }
             }
+            acp_v2::SessionUpdate::SessionInfoUpdate(update) => {
+                InboundSessionUpdate::SessionInfo(update)
+            }
+            acp_v2::SessionUpdate::AvailableCommandsUpdate(update) => {
+                InboundSessionUpdate::AvailableCommands(update)
+            }
             update => {
                 notification.update = update;
                 return Err(notification);
@@ -106,7 +114,7 @@ impl InboundSessionNotification {
             &session_id == thread.session_id(),
             "Session notification belongs to a different ACP session"
         );
-        // Delivery metadata must not patch retained message, tool, plan or terminal fields.
+        // Delivery metadata must not patch retained payload fields.
         match update {
             InboundSessionUpdate::UserMessage(message) => thread.upsert_user_message(message, cx),
             InboundSessionUpdate::AgentMessage(message) => {
@@ -138,6 +146,14 @@ impl InboundSessionNotification {
                 update,
             }
             .apply(thread, cx),
+            InboundSessionUpdate::SessionInfo(update) => {
+                thread.update_session_info(update, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::AvailableCommands(update) => {
+                thread.update_available_commands(update.available_commands, cx);
+                Ok(())
+            }
         }
     }
 }
