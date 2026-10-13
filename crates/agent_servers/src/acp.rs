@@ -4223,6 +4223,208 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_notice_sdk_preserves_feedback_without_failing_the_turn(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use acp_thread::{AcpThreadEvent, ForegroundActivity};
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let notice_events = Rc::new(RefCell::new(0));
+        let turn_errors = Rc::new(RefCell::new(0));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&harness.thread, {
+                let notice_events = notice_events.clone();
+                let turn_errors = turn_errors.clone();
+                move |_, event, _| match event {
+                    AcpThreadEvent::NoticesUpdated => *notice_events.borrow_mut() += 1,
+                    AcpThreadEvent::Error
+                    | AcpThreadEvent::Refusal
+                    | AcpThreadEvent::Stopped { .. } => {
+                        *turn_errors.borrow_mut() += 1;
+                    }
+                    _ => {}
+                }
+            })
+        });
+        let sources = [
+            json!({"severity": "error", "title": "Optional integration failed",
+                "description": "Continue with the available tools",
+                "_meta": {"scope": "notice", "retain": [null, 7]}}),
+            json!({"severity": "_future", "title": "Optional integration failed",
+                "_meta": {"scope": "second notice"}}),
+        ];
+        for source in &sources {
+            let mut update = source.clone();
+            update
+                .as_object_mut()
+                .expect("notice object")
+                .insert("sessionUpdate".into(), json!("notice"));
+            harness.send(update, Some(v2_terminal_meta("delivery")));
+        }
+        harness.send_to(
+            "unknown-session",
+            json!({"sessionUpdate": "notice", "severity": "error", "title": "Ignored"}),
+            None,
+        );
+        harness.drain(cx).await;
+        let first_id = harness.thread.read_with(cx, |thread, _| {
+            let [(first_id, first), (second_id, second)] = thread.notices() else {
+                panic!("two independent notices");
+            };
+            assert_ne!(first_id, second_id);
+            assert_eq!(
+                &serde_json::to_value(first).expect("first notice"),
+                sources.first().expect("source")
+            );
+            assert_eq!(
+                &serde_json::to_value(second).expect("second notice"),
+                sources.get(1).expect("source")
+            );
+            assert!(thread.entries().is_empty());
+            assert!(!thread.had_error());
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+            *first_id
+        });
+        harness
+            .thread
+            .update(cx, |thread, cx| thread.dismiss_notice(first_id, cx));
+        cx.run_until_parked();
+        harness.thread.read_with(cx, |thread, _| {
+            let [(_, notice)] = thread.notices() else {
+                panic!("only the selected notice is dismissed");
+            };
+            assert_eq!(
+                &serde_json::to_value(notice).expect("retained notice"),
+                sources.get(1).expect("source")
+            );
+        });
+        assert_eq!(*notice_events.borrow(), 3);
+        assert_eq!(*turn_errors.borrow(), 0);
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_compaction_sdk_chunks_snapshots_and_historical_targeting(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use acp_thread::{AgentThreadEntry, ContextCompactionStatus};
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let original = json!({"type": "text", "text": "original", "_meta": {"scope": "item"}});
+        harness.send(
+            json!({"sessionUpdate": "compaction_summary_chunk", "compactionId": "first",
+                "content": original, "_meta": {"scope": "chunk"}}),
+            Some(v2_terminal_meta("delivery")),
+        );
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, _| {
+            let [AgentThreadEntry::ContextCompaction(compaction)] = thread.entries() else {
+                panic!("chunk-first compaction");
+            };
+            assert_eq!(compaction.status, ContextCompactionStatus::InProgress);
+            assert_eq!(compaction.meta, None);
+            assert!(thread.is_compacting());
+        });
+        for update in [
+            json!({"sessionUpdate": "compaction_update", "compactionId": "first-extra",
+                "status": "completed", "summary": [{"type": "text", "text": "other"}]}),
+            json!({"sessionUpdate": "compaction_summary_chunk", "compactionId": "first",
+                "content": {"type": "text", "text": " tail"}, "_meta": {"scope": "chunk"}}),
+            json!({"sessionUpdate": "compaction_update", "compactionId": "first",
+                "status": "failed", "error": "Retry compaction", "_meta": {"scope": "compaction"}}),
+        ] {
+            harness.send(update, Some(v2_terminal_meta("later delivery")));
+        }
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, cx| {
+            let [
+                AgentThreadEntry::ContextCompaction(first),
+                AgentThreadEntry::ContextCompaction(other),
+            ] = thread.entries()
+            else {
+                panic!("first-seen compaction rows");
+            };
+            let mut expected: Vec<acp_v2::ContentBlock> =
+                vec![serde_json::from_value(original).expect("item source")];
+            expected.push(" tail".into());
+            assert_eq!(first.summary.source_blocks(), expected);
+            assert_eq!(first.status, ContextCompactionStatus::Failed);
+            assert_eq!(
+                first.error.as_ref().expect("error").read(cx).source(),
+                "Retry compaction"
+            );
+            assert_eq!(first.meta, Some(v2_terminal_meta("compaction")));
+            assert_eq!(other.summary.to_markdown(cx), "other");
+            assert!(!thread.is_compacting());
+        });
+        let replacement = json!([
+            {"type": "text", "text": "replacement", "_meta": {"scope": "replacement item"}},
+            {"type": "_future", "payload": {"retain": [false, null]}}
+        ]);
+        for update in [
+            json!({"sessionUpdate": "compaction_update", "compactionId": "first",
+                "status": "_future", "summary": replacement}),
+            json!({"sessionUpdate": "compaction_summary_chunk", "compactionId": "first",
+                "content": {"type": "text", "text": " appended"}, "_meta": {"scope": "chunk"}}),
+        ] {
+            harness.send(update, Some(v2_terminal_meta("replacement delivery")));
+        }
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, cx| {
+            let [
+                AgentThreadEntry::ContextCompaction(first),
+                AgentThreadEntry::ContextCompaction(_),
+            ] = thread.entries()
+            else {
+                panic!("replacement retains its historical row");
+            };
+            let mut expected: Vec<acp_v2::ContentBlock> =
+                serde_json::from_value(replacement).expect("replacement source");
+            expected.push(" appended".into());
+            assert_eq!(first.summary.source_blocks(), expected);
+            assert_eq!(
+                first.status,
+                ContextCompactionStatus::Other("_future".into())
+            );
+            assert_eq!(
+                first
+                    .error
+                    .as_ref()
+                    .expect("omitted error survives")
+                    .read(cx)
+                    .source(),
+                "Retry compaction"
+            );
+            assert_eq!(first.meta, Some(v2_terminal_meta("compaction")));
+        });
+        harness.send(
+            json!({"sessionUpdate": "compaction_update", "compactionId": "first",
+                "status": "completed", "summary": null, "error": null, "_meta": null}),
+            Some(v2_terminal_meta("clear delivery")),
+        );
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, cx| {
+            let [
+                AgentThreadEntry::ContextCompaction(first),
+                AgentThreadEntry::ContextCompaction(other),
+            ] = thread.entries()
+            else {
+                panic!("clears do not remove compaction identities");
+            };
+            assert_eq!(first.id.0.as_ref(), "first");
+            assert_eq!(first.status, ContextCompactionStatus::Completed);
+            assert!(first.summary.source_blocks().is_empty());
+            assert_eq!(first.error, None);
+            assert_eq!(first.meta, None);
+            assert_eq!(other.id.0.as_ref(), "first-extra");
+            assert_eq!(other.summary.to_markdown(cx), "other");
+        });
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
+    }
+
+    #[gpui::test]
     async fn v2_terminal_sdk_snapshots_chunks_and_metadata(cx: &mut gpui::TestAppContext) {
         let harness = V2SessionHarness::new(cx).await;
         harness
