@@ -872,11 +872,23 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
             if !state.exposed_threads.borrow().contains(id) {
                 return error(&request.request_id, "THREAD_NOT_EXPOSED");
             }
-            let Some(thread) = loaded_threads(&state.project_root, cx)
-                .into_iter()
-                .find(|thread| thread.read(cx).session_id().to_string() == id)
-            else {
-                return error(&request.request_id, "THREAD_NOT_EXPOSED");
+            let subagent_id = request.params.get("subagent_id").and_then(Value::as_str);
+            if subagent_id.is_some() && !matches_instance(&request, state) {
+                return error(&request.request_id, "RESYNC_REQUIRED");
+            }
+            let thread = if let Some(subagent_id) = subagent_id {
+                match exposed_subagent_thread_view(id, subagent_id, state, cx) {
+                    Ok((thread, _)) => thread,
+                    Err(code) => return error(&request.request_id, code),
+                }
+            } else {
+                let Some(thread) = loaded_threads(&state.project_root, cx)
+                    .into_iter()
+                    .find(|thread| thread.read(cx).session_id().to_string() == id)
+                else {
+                    return error(&request.request_id, "THREAD_NOT_EXPOSED");
+                };
+                thread
             };
             let thread = thread.read(cx);
             let total_entries = thread.entries().len();
@@ -897,6 +909,7 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
                     "instance_id": state.instance_id,
                     "epoch": state.epoch,
                     "thread_id": id,
+                    "subagent_id": subagent_id,
                     "entries_markdown": entries,
                     "entry_start_index": entry_start_index,
                     "entry_end_index": entry_end_index,
@@ -1421,14 +1434,20 @@ fn subagent_snapshots(
     server_view: Option<&Entity<ConversationView>>,
     cx: &App,
 ) -> Vec<Value> {
-    root.entries()
+    let mut seen: HashSet<String> = HashSet::default();
+    let mut snapshots = root
+        .entries()
         .iter()
+        .rev()
         .filter_map(|entry| {
             let AgentThreadEntry::ToolCall(tool_call) = entry else {
                 return None;
             };
             let info = tool_call.subagent_session_info.as_ref()?;
             let session_id = info.session_id.to_string();
+            if !seen.insert(session_id.clone()) {
+                return None;
+            }
             let label = tool_call
                 .label
                 .read(cx)
@@ -1461,7 +1480,7 @@ fn subagent_snapshots(
             let mut truncated = false;
             for entry in child.entries().iter().rev() {
                 let markdown = entry.to_markdown(cx);
-                if used + markdown.len() > MAX_SUBAGENT_SNAPSHOT_BYTES {
+                if !entries.is_empty() && used + markdown.len() > MAX_SUBAGENT_SNAPSHOT_BYTES {
                     truncated = true;
                     break;
                 }
@@ -1475,6 +1494,9 @@ fn subagent_snapshots(
             }
             snapshot["current_turn_id"] = json!(current_turn_id);
             snapshot["title"] = json!(child.title().map(|title| title.to_string()));
+            snapshot["entry_start_index"] =
+                json!(child.entries().len().saturating_sub(entries.len()));
+            snapshot["total_entries"] = json!(child.entries().len());
             snapshot["entries_markdown"] = json!(entries);
             snapshot["entries_truncated"] = json!(truncated);
             snapshot["pending_approvals"] =
@@ -1482,7 +1504,9 @@ fn subagent_snapshots(
             Some(snapshot)
         })
         .take(MAX_SUBAGENTS_PER_SNAPSHOT)
-        .collect()
+        .collect::<Vec<_>>();
+    snapshots.reverse();
+    snapshots
 }
 
 fn approval_list(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
