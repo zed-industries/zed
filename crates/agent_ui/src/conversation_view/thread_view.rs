@@ -1268,6 +1268,14 @@ impl ThreadView {
         self.parent_session_id.is_some()
     }
 
+    fn has_visible_conversation(&self, cx: &App) -> bool {
+        self.generating_indicator_in_list
+            || self.thread.read(cx).entries().iter().any(|entry| {
+                !matches!(entry, AgentThreadEntry::UserMessage(message)
+                    if message.content.source_blocks().is_empty())
+            })
+    }
+
     pub(super) fn can_edit_user_message(&self, index: usize, cx: &App) -> bool {
         let thread = self.thread.read(cx);
         let Some(message) = thread
@@ -1278,6 +1286,7 @@ impl ThreadView {
             return false;
         };
         thread.can_rewind_to(message.client_id.as_ref(), cx)
+            && !message.content.source_blocks().is_empty()
             && message
                 .content
                 .source_blocks()
@@ -1496,6 +1505,15 @@ impl ThreadView {
             self.turn_fields.last_turn_duration = duration;
         }
         cx.notify();
+    }
+
+    pub(crate) fn sync_follow_agent_state(&mut self, cx: &mut Context<Self>) {
+        self.should_be_following = self
+            .workspace
+            .update(cx, |workspace, _| {
+                workspace.is_being_followed(CollaboratorId::Agent)
+            })
+            .unwrap_or_default();
     }
 
     pub(crate) fn report_activity_completion(
@@ -2117,12 +2135,7 @@ impl ThreadView {
                 match res {
                     Ok(Some(SubmissionResponse::LegacyCompleted(_))) => {
                         this.current_submission.take();
-                        this.should_be_following = this
-                            .workspace
-                            .update(cx, |workspace, _| {
-                                workspace.is_being_followed(CollaboratorId::Agent)
-                            })
-                            .unwrap_or_default();
+                        this.sync_follow_agent_state(cx);
                     }
                     Ok(Some(SubmissionResponse::Accepted(_))) => {}
                     Ok(None) => {}
@@ -2817,7 +2830,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.list_state.item_count() == 0 {
+        if !self.has_visible_conversation(cx) {
             return;
         }
         self.set_editor_is_expanded(!self.editor_expanded, cx);
@@ -4947,7 +4960,7 @@ impl ThreadView {
         };
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.has_visible_conversation(cx);
         let fills_container = !has_messages || editor_expanded;
         let composer_is_read_only = self.message_editor.read(cx).editor().read(cx).read_only(cx);
         let discard_draft_button = composer_is_read_only.then(|| {
@@ -6759,6 +6772,9 @@ impl ThreadView {
 
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
+                if message.content.source_blocks().is_empty() {
+                    return Empty.into_any_element();
+                }
                 let Some(editor) = self
                     .entry_view_state
                     .read(cx)
@@ -7902,7 +7918,7 @@ impl ThreadView {
     }
 
     pub(crate) fn sync_editor_mode(&mut self, cx: &mut Context<Self>) {
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.has_visible_conversation(cx);
         let v2_empty_state = !has_messages;
 
         if !has_messages {
@@ -13013,7 +13029,7 @@ impl Render for ThreadView {
         // renders (settings, connection state, feature flags).
         self.sync_local_commands(cx);
 
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.has_visible_conversation(cx);
         let list_state = self.list_state.clone();
 
         let conversation = v_flex()
@@ -13427,7 +13443,7 @@ pub(crate) fn open_link(
                             ));
                             break;
                         }
-                        let paths = if path_style.is_absolute(&path.to_string_lossy())
+                        let paths = if path_style.has_root(&path)
                             || path.starts_with("~")
                         {
                             vec![path]
@@ -13625,7 +13641,7 @@ fn file_link_parts(input: &str, path_style: PathStyle) -> Option<(&str, Option<&
     let (path, fragment) = input
         .split_once('#')
         .map_or((input, None), |(path, fragment)| (path, Some(fragment)));
-    if !path_style.is_absolute(path)
+    if !path_style.has_root(Path::new(path))
         && let Ok(url) = Url::parse(input)
         && (!url.scheme().contains('.')
             || url.path().trim_matches(':').is_empty()
@@ -13644,7 +13660,7 @@ fn file_link_candidates(
     fragment_point: Option<Point>,
     path_style: PathStyle,
 ) -> Vec<(PathBuf, Option<Point>)> {
-    if path_style.is_windows() && path_style.is_absolute(path) {
+    if path_style.is_windows() && path_style.has_root(Path::new(path)) {
         return [
             MentionUri::parse_hyperlink(path, path_style).ok(),
             MentionUri::parse_hyperlink_literal(path, path_style),
