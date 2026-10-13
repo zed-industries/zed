@@ -304,6 +304,7 @@ fn git_panel_context_menu(
     has_staged_changes: bool,
     has_unstaged_changes: bool,
     has_new_changes: bool,
+    has_untracked_files: bool,
     has_stash_items: bool,
     group_by: GitPanelGroupBy,
     include_copy_paths: bool,
@@ -358,7 +359,7 @@ fn git_panel_context_menu(
                 RestoreTrackedFiles.boxed_clone(),
             )
             .action_disabled_when(
-                !has_new_changes,
+                !has_untracked_files,
                 "Trash Untracked Files",
                 TrashUntrackedFiles.boxed_clone(),
             )
@@ -2576,6 +2577,11 @@ impl GitPanel {
             .unique_by(|entry| entry.repo_path.clone())
     }
 
+    fn has_untracked_files(&self) -> bool {
+        self.change_entries_by_path()
+            .any(|entry| entry.status.is_untracked())
+    }
+
     fn directory_descendants(&self, entry_index: usize) -> Option<&[GitStatusEntry]> {
         let GitListEntry::Directory(directory) = self.entries.get(entry_index)? else {
             return None;
@@ -3313,9 +3319,11 @@ impl GitPanel {
         let Some(active_repo) = self.active_repository.clone() else {
             return;
         };
+        // Files added to the index are not untracked; trashing them would also
+        // discard their staged contents.
         let to_delete = self
             .change_entries_by_path()
-            .filter(|status_entry| status_entry.status.is_created())
+            .filter(|status_entry| status_entry.status.is_untracked())
             .cloned()
             .collect::<Vec<_>>();
 
@@ -3368,11 +3376,6 @@ impl GitPanel {
                     .collect::<Vec<_>>()
             })?;
             let total_count = tasks.len();
-            let to_unstage = to_delete
-                .into_iter()
-                .filter(|entry| !entry.status.staging().is_fully_unstaged())
-                .collect();
-            this.update(cx, |this, cx| this.change_file_stage(false, to_unstage, cx))?;
 
             let results = futures::future::join_all(tasks).await;
             let errors: Vec<anyhow::Error> = results.into_iter().filter_map(|r| r.err()).collect();
@@ -6757,6 +6760,7 @@ impl GitPanel {
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
+        let has_untracked_files = self.has_untracked_files();
         let has_stash_items = self.stash_entries.entries.len() > 0;
         let group_by = GitPanelSettings::get_global(cx).group_by;
 
@@ -6776,6 +6780,7 @@ impl GitPanel {
                     has_staged_changes,
                     has_unstaged_changes,
                     has_new_changes,
+                    has_untracked_files,
                     has_stash_items,
                     group_by,
                     false,
@@ -8679,6 +8684,7 @@ impl GitPanel {
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
+        let has_untracked_files = self.has_untracked_files();
         let has_staged_tracked_changes = target_entry_index
             .and_then(|entry_index| self.directory_descendants(entry_index))
             .map_or_else(
@@ -8692,6 +8698,7 @@ impl GitPanel {
             has_staged_changes,
             has_unstaged_changes,
             has_new_changes,
+            has_untracked_files,
             has_stash_items,
             GitPanelSettings::get_global(cx).group_by,
             include_copy_paths,
@@ -16457,6 +16464,35 @@ mod tests {
             "created files should be trashed by bulk revert",
         );
         assert!(!fs.is_file(path!("/project/new2.txt").as_ref()).await);
+    }
+
+    #[gpui::test]
+    async fn test_trash_untracked_files_keeps_added_files(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, panel, mut cx) = setup_git_panel_with_index_contents(
+            cx,
+            &[],
+            &[("added.txt", "staged\n")],
+            json!({
+                ".git": {},
+                "added.txt": "unstaged\n",
+                "untracked.txt": "untracked\n",
+            }),
+        )
+        .await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.clean_all(&TrashUntrackedFiles, window, cx);
+        });
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Trash");
+        cx.executor().run_until_parked();
+
+        assert!(!fs.is_file(path!("/project/untracked.txt").as_ref()).await);
+        assert_eq!(
+            worktree_and_index(&fs, "added.txt").await,
+            ("unstaged\n".into(), Some("staged\n".into()))
+        );
     }
 
     #[gpui::test]
