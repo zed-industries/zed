@@ -1668,6 +1668,8 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 event.position.along(*axis) - thumb_bounds.origin.along(*axis);
                             state.set_dragging(*axis, offset, window, cx);
                         } else {
+                            let axis = *axis;
+                            let thumb_drag_offset = thumb_bounds.size.along(axis) / 2.;
                             let scroll_handle = state.scroll_handle();
                             let click_offset = scrollbar_layout.compute_click_offset(
                                 event.position,
@@ -1675,9 +1677,11 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 ScrollbarMouseEvent::TrackClick,
                             );
                             state.set_offset(
-                                scroll_handle.offset().apply_along(*axis, |_| click_offset),
+                                scroll_handle.offset().apply_along(axis, |_| click_offset),
                                 cx,
                             );
+                            state.show_scrollbars(window, cx);
+                            state.set_dragging(axis, thumb_drag_offset, window, cx);
                         };
 
                         cx.stop_propagation();
