@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 
 use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
@@ -27,6 +27,22 @@ use crate::{Project, ProjectPath};
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
+}
+
+/// Puts the IDE's own runtimes (`ide_env`: the built-in Node.js, …) first on
+/// the `PATH` of a local terminal opened in `directory`. They are folders on
+/// this machine, so this is not for a remote terminal's environment.
+async fn add_ide_runtimes(
+    env: &mut HashMap<String, String>,
+    directory: Option<Arc<Path>>,
+    cx: &AsyncApp,
+) {
+    // Finding them reads the disk (a version store, the project's version
+    // file), which must stay off the main thread.
+    let dirs = cx
+        .background_spawn(async move { ide_env::bin_dirs(directory.as_deref()) })
+        .await;
+    ide_env::apply_to(env, &dirs);
 }
 
 impl Project {
@@ -135,6 +151,9 @@ impl Project {
         cx.spawn(async move |project, cx| {
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            if !is_via_remote {
+                add_ide_runtimes(&mut env, path.clone(), cx).await;
+            }
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -404,6 +423,9 @@ impl Project {
             let shell_kind = ShellKind::new(&shell_program, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            if !is_via_remote {
+                add_ide_runtimes(&mut env, path.clone(), cx).await;
+            }
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {

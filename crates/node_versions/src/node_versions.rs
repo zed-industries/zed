@@ -5,11 +5,14 @@
 //! first: no fnm, no nvm. The versions live in a folder of the IDE's own
 //! ([`store_dir`]), apart from any version manager the user may have.
 //!
-//! One version is *active*: the default one, when there is one. A process
-//! runs under it by having that version's folder put first on its `PATH`
-//! ([`path_env`]), so choosing a version here changes what the IDE launches
-//! and nothing else on the machine. With no default, whatever `node` is
-//! already on the `PATH` (the "system" Node.js) is used as it is.
+//! One version is *active*: the one the user picked, marked by the store's
+//! `default` link. A process runs under it by having that link put first on
+//! its `PATH` ([`path_env`]), so choosing a version here changes what the IDE
+//! launches — including terminals it has already opened — and nothing else
+//! on the machine. With nothing picked, whatever `node` is already on the
+//! `PATH` (the "system" Node.js) is used as it is. What a project's version
+//! file asks for is reported, for the user to act on, and never applied by
+//! itself.
 //!
 //! Like `node_backend`, this has no GPUI or app-state dependency. Every call
 //! blocks on disk or network, so call them from a background thread.
@@ -127,7 +130,7 @@ pub fn use_system(store: &Path) -> Result<String, String> {
     // The default is a link in the store's `aliases` folder; taking it away
     // is all "no default" means. It is a directory junction on Windows and a
     // symlink elsewhere, which are removed differently.
-    let link = manager(store).base_dir().join("aliases").join("default");
+    let link = default_link(store);
     if link.symlink_metadata().is_err() {
         return Ok("Already using the system Node.js".to_string());
     }
@@ -179,28 +182,48 @@ pub fn install_for_project(store: &Path, project: &Path) -> Result<String, Strin
     ))
 }
 
-/// The folder whose Node.js a command run in `project` should use: the
-/// version the project asks for when that is installed, otherwise the active
-/// one. `None` means the system Node.js, with nothing to change.
-pub fn bin_dir_for(store: &Path, project: Option<&Path>) -> Option<PathBuf> {
-    let manager = manager(store);
-    let for_project = project
-        .and_then(|project| request_of(&manager, project))
-        .and_then(|(directory, _)| manager.resolve_for(directory).ok().flatten());
-    for_project
-        .or_else(|| manager.resolve("default").ok())
+/// The active version's own folder, holding `node`, `npm` and `npx`. `None`
+/// when the system Node.js is in use.
+///
+/// The active version is the one the user picked, and nothing else: what a
+/// project asks for ([`project_node`]) is reported next to it, never applied
+/// over it. A pick that a version file could silently override is a pick
+/// that appears to do nothing.
+pub fn active_bin_dir(store: &Path) -> Option<PathBuf> {
+    manager(store)
+        .resolve("default")
+        .ok()
         .map(|version| version.bin_dir)
 }
 
-/// The `PATH` to give a command run in `project`, with the right Node.js
-/// first on it. `None` when the system Node.js applies and the `PATH` should
-/// be left alone.
-pub fn path_env(store: &Path, project: Option<&Path>) -> Option<OsString> {
-    let bin_dir = bin_dir_for(store, project)?;
+/// The folder to put on a process's `PATH` for it to run the active version:
+/// the store's `default` link, not the version's own folder.
+///
+/// The link is re-pointed on every switch, so a process that has it on its
+/// `PATH` (a terminal that is already open) follows the switch at once
+/// instead of keeping the version it was started with. On the system
+/// Node.js the link doesn't exist; an entry that leads nowhere is skipped,
+/// and the `node` further along the `PATH` is found, which is the system one.
+pub fn live_bin_dir(store: &Path) -> PathBuf {
+    let link = default_link(store);
+    // A Windows distribution has its executables at the top; the others
+    // keep them in `bin`.
+    if cfg!(windows) { link } else { link.join("bin") }
+}
+
+/// The `PATH` to give a process the IDE starts: this process's own, with
+/// [`live_bin_dir`] first. `None` only when that can't be written as a `PATH`.
+pub fn path_env(store: &Path) -> Option<OsString> {
     let current = std::env::var_os("PATH").unwrap_or_default();
-    let mut dirs = vec![bin_dir];
+    let mut dirs = vec![live_bin_dir(store)];
     dirs.extend(std::env::split_paths(&current));
     std::env::join_paths(dirs).ok()
+}
+
+/// The link that marks the active version: present and pointing at it, or
+/// absent on the system Node.js.
+fn default_link(store: &Path) -> PathBuf {
+    manager(store).base_dir().join("aliases").join("default")
 }
 
 /// The version `project` asks for and the folder that says so: its own, or
@@ -266,41 +289,38 @@ mod tests {
 
         use_version(store.path(), "22").unwrap();
         assert!(active(store.path()).is_some());
-        assert!(path_env(store.path(), None).is_some());
+        assert!(active_bin_dir(store.path()).is_some());
 
         use_system(store.path()).unwrap();
         assert_eq!(active(store.path()), None);
-        assert_eq!(bin_dir_for(store.path(), None), None);
-        assert_eq!(path_env(store.path(), None), None);
+        assert_eq!(active_bin_dir(store.path()), None);
         // The version is still installed.
         assert_eq!(names(&list(store.path()).unwrap()), vec!["v22.3.0"]);
     }
 
     #[test]
-    fn a_projects_own_version_wins_over_the_active_one() {
+    fn a_projects_request_is_reported_and_the_active_version_stays() {
         let store = store(&["v20.11.1", "v22.3.0"]);
         use_version(store.path(), "22").unwrap();
-        let active_dir = active(store.path()).unwrap().bin_dir;
+        let active_dir = active_bin_dir(store.path()).unwrap();
 
         let project = tempfile::tempdir().unwrap();
-        // Asks for nothing: the active version applies.
+        // Asks for nothing.
         assert_eq!(project_node(store.path(), project.path()), ProjectNode::default());
-        assert_eq!(bin_dir_for(store.path(), Some(project.path())), Some(active_dir.clone()));
 
-        // Asks for 20, which is installed: that one is used, in subfolders too.
+        // Asks for 20, which is installed: reported, in subfolders too, for
+        // the user to switch to. The active version is still the one picked.
         std::fs::write(project.path().join(".nvmrc"), "20\n").unwrap();
         let status = project_node(store.path(), project.path());
         assert_eq!(status.requested.as_deref(), Some("v20.x.x"));
         assert_eq!(status.installed.as_deref(), Some("v20.11.1"));
         let nested = project.path().join("packages").join("app");
         std::fs::create_dir_all(&nested).unwrap();
-        let chosen = bin_dir_for(store.path(), Some(&nested)).unwrap();
-        assert_ne!(chosen, active_dir);
-        assert!(chosen.to_string_lossy().contains("v20.11.1"));
-        let path = path_env(store.path(), Some(&nested)).unwrap();
-        assert_eq!(std::env::split_paths(&path).next().unwrap(), chosen);
+        assert_eq!(project_node(store.path(), &nested), status);
+        assert_eq!(active_bin_dir(store.path()), Some(active_dir.clone()));
+        assert_eq!(active(store.path()).unwrap().version, "v22.3.0");
 
-        // A `package.json` range is honoured too, when no version file is.
+        // A `package.json` range is read too, when no version file is there.
         std::fs::remove_file(project.path().join(".nvmrc")).unwrap();
         std::fs::write(
             project.path().join("package.json"),
@@ -311,12 +331,41 @@ mod tests {
         assert!(status.requested.is_some());
         assert_eq!(status.installed.as_deref(), Some("v20.11.1"));
 
-        // Asks for 18, which isn't: reported, and the active one is used.
+        // Asks for 18, which isn't installed: reported as missing.
         std::fs::write(project.path().join(".nvmrc"), "18\n").unwrap();
         let status = project_node(store.path(), project.path());
         assert_eq!(status.requested.as_deref(), Some("v18.x.x"));
         assert_eq!(status.installed, None);
-        assert_eq!(bin_dir_for(store.path(), Some(project.path())), Some(active_dir));
+        assert_eq!(active_bin_dir(store.path()), Some(active_dir));
+    }
+
+    /// The folder on a process's `PATH` is the same one whichever version is
+    /// active, and leads to that version: that is what lets a terminal that
+    /// is already open follow a switch.
+    #[test]
+    fn the_path_entry_follows_the_active_version() {
+        let store = store(&["v20.11.1", "v22.3.0"]);
+        let entry = live_bin_dir(store.path());
+        let path = path_env(store.path()).unwrap();
+        assert_eq!(std::env::split_paths(&path).next().unwrap(), entry);
+
+        let link = default_link(store.path());
+        // On the system Node.js it leads nowhere, and is skipped.
+        assert!(!link.exists());
+
+        use_version(store.path(), "20").unwrap();
+        assert_eq!(live_bin_dir(store.path()), entry);
+        let target = std::fs::canonicalize(&link).unwrap();
+        assert!(target.to_string_lossy().contains("v20.11.1"));
+
+        use_version(store.path(), "22").unwrap();
+        assert_eq!(live_bin_dir(store.path()), entry);
+        let target = std::fs::canonicalize(&link).unwrap();
+        assert!(target.to_string_lossy().contains("v22.3.0"));
+
+        use_system(store.path()).unwrap();
+        assert!(!link.exists());
+        assert_eq!(live_bin_dir(store.path()), entry);
     }
 
     #[test]
@@ -325,7 +374,8 @@ mod tests {
         use_version(store.path(), "22").unwrap();
         uninstall(store.path(), "v22.3.0").unwrap();
         assert!(list(store.path()).unwrap().is_empty());
-        assert_eq!(path_env(store.path(), None), None);
+        assert_eq!(active_bin_dir(store.path()), None);
+        assert!(!default_link(store.path()).exists());
     }
 
     /// `node_runtime` wipes `<data dir>/node` when it replaces its own

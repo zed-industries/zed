@@ -9825,6 +9825,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 
 [[package]]
+name = "ide_env"
+version = "0.1.0"
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12777,6 +12781,7 @@ dependencies = [
  "fs",
  "gpui",
  "gpui-component",
+ "ide_env",
  "indexmap 2.14.0",
  "node_backend",
  "node_versions",
@@ -15673,6 +15678,7 @@ dependencies = [
  "globset",
  "gpui",
  "http_client",
+ "ide_env",
  "image",
  "indexmap 2.14.0",
  "itertools 0.14.0",
@@ -17930,6 +17936,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "gpui_util",
+ "ide_env",
  "settings",
  "tokio",
  "ui",
@@ -24337,6 +24344,7 @@ dependencies = [
  "chrono",
  "datalogic-rs",
  "futures 0.3.34",
+ "ide_env",
  "indexmap 2.14.0",
  "log",
  "serde",

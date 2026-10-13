@@ -18,6 +18,7 @@ fs.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
 indexmap.workspace = true
+ide_env.workspace = true
 node_backend.workspace = true
 node_versions.workspace = true
 npm_backend.workspace = true

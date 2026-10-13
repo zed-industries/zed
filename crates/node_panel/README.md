@@ -40,15 +40,19 @@ fnm nor nvm, and it works the same on Windows, macOS and Linux.
 - **System** is the Node.js already on the machine, however it got there. It
   is used whenever no built-in version is active, and clicking it hands the
   choice back without removing anything.
-- A project that asks for a version in `.nvmrc`, `.node-version`, or the
-  `engines.node` field of `package.json` gets that version when it is
-  installed. The header line says which version the project is using, and
-  offers **Install** when the one it asks for is missing.
+- The version in use is always the one picked here. A project that asks for a
+  version in `.nvmrc`, `.node-version`, or the `engines.node` field of
+  `package.json` never overrides the pick; the header line shows what it asks
+  for, and offers **Use** when the matching version is installed but isn't
+  the one picked, or **Install** when it is missing.
 
-Choosing a version changes what this panel runs, by putting that version
-first on the `PATH` of the commands it starts. Nothing else on the machine is
-switched: other programs, and terminals, keep the Node.js they had. The
-versions are kept in a `node_versions` folder in the IDE's data directory.
+Choosing a version changes what the IDE starts: its terminals, the Script
+Runner, workflow actions and this panel's own commands. They have the store's
+link to the active version first on their `PATH`, so a switch reaches a
+terminal that is already open, at its next command. A program that is already
+running (a dev server) keeps the Node.js it started with. Nothing outside the
+IDE is switched. The versions are kept in a `node_versions` folder in the
+IDE's data directory.
 
 Useful to know:
 

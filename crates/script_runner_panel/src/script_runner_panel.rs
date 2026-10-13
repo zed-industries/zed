@@ -26,6 +26,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::ffi::OsString;
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -434,6 +435,7 @@ impl ScriptRunnerPanel {
         let kill_flag = self.kill_flag.clone();
 
         std::thread::spawn(move || {
+            let env = with_ide_runtimes(env, &cwd);
             run_shell_blocking(&cmd, &cwd, &env, event_tx, kill_flag);
         });
     }
@@ -441,6 +443,25 @@ impl ScriptRunnerPanel {
     fn stop(&mut self) {
         self.kill_flag.store(true, Ordering::SeqCst);
     }
+}
+
+/// `env` with a `PATH` that has the IDE's own runtimes (`ide_env`: the
+/// built-in Node.js, …) first, so a command run from `cwd` finds them however
+/// it was started: typed into the panel or sent by another one. A caller
+/// that passed its own `PATH` keeps it.
+///
+/// Reads the disk, so this runs on the command's thread, not the main one.
+fn with_ide_runtimes(mut env: Vec<(OsString, OsString)>, cwd: &str) -> Vec<(OsString, OsString)> {
+    let has_path = env
+        .iter()
+        .any(|(name, _)| name.to_str().is_some_and(ide_env::is_path_variable));
+    if !has_path {
+        let directory = (!cwd.is_empty()).then(|| Path::new(cwd));
+        if let Some(path) = ide_env::path_env(directory) {
+            env.push((OsString::from("PATH"), path));
+        }
+    }
+    env
 }
 
 /// Force-kills a process tree by PID. Used both by the kill-watcher below and

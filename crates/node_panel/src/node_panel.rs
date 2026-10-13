@@ -34,7 +34,6 @@
 mod node_panel_settings;
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -160,6 +159,17 @@ struct ViewPackageJson;
 /// Registers the Node panel's actions on every workspace. Call once at
 /// app startup, alongside the other panels' `init` functions.
 pub fn init(cx: &mut App) {
+    // Makes the built-in Node.js reach past this panel: terminals, the
+    // Script Runner and workflow actions all ask `ide_env` what to put first
+    // on a new process's `PATH`.
+    //
+    // What goes on the `PATH` is the store's link to the active version, the
+    // same folder whatever is active, so a terminal that is already open
+    // follows a switch made here.
+    ide_env::register(|_directory| {
+        vec![node_versions::live_bin_dir(&node_versions::store_dir())]
+    });
+
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<NodePanel>(window, cx);
@@ -201,6 +211,10 @@ pub struct NodePanel {
     /// one when it has none.
     node_ver: Option<String>,
     npm_ver: Option<String>,
+    /// Whether `node_ver` is one of the built-in manager's versions rather
+    /// than the system Node.js. The header says which, since the two can be
+    /// a patch release apart and look the same at a glance.
+    node_is_built_in: bool,
     not_found: bool,
     /// The Node.js already on this machine's `PATH`, whoever put it there.
     /// Shown as the "System" entry; `None` when there isn't one.
@@ -507,6 +521,7 @@ impl NodePanel {
                 node_ver: None,
                 npm_ver: None,
                 not_found: false,
+                node_is_built_in: false,
                 system_node_ver: None,
                 project_node: ProjectNode::default(),
                 install_for_project: None,
@@ -716,25 +731,13 @@ impl NodePanel {
             .clone()
             .unwrap_or_else(|| self.cwd.clone());
         let command = command.to_string();
-        // Run under the Node.js this project should use: the built-in
-        // manager's pick goes first on `PATH`, so `node`, `npm` and anything
-        // they start resolve to it. With no pick the environment is left
-        // alone and the system Node.js runs, as before. Working it out reads
-        // the version store, so it happens off the main thread.
-        let project = (!cwd.is_empty()).then(|| PathBuf::from(&cwd));
+        // The Script Runner puts the active Node.js first on the command's
+        // `PATH` itself (`ide_env`), as it does for everything it runs, so
+        // `node`, `npm` and anything they start resolve to it.
         cx.spawn(async move |_, cx: &mut AsyncApp| {
-            let path = cx
-                .background_spawn(async move {
-                    node_versions::path_env(&node_versions::store_dir(), project.as_deref())
-                })
-                .await;
-            let env: Vec<(OsString, OsString)> = path
-                .into_iter()
-                .map(|path| (OsString::from("PATH"), path))
-                .collect();
             let _ = cx.update(|app| {
                 script_runner.update(app, |panel, cx| {
-                    panel.run_external_with_env(command, cwd, env, cx);
+                    panel.run_external(command, cwd, cx);
                 });
             });
         })
@@ -1032,6 +1035,7 @@ impl NodePanel {
         self.not_found = runtimes.node.is_none();
         self.node_ver = runtimes.node;
         self.npm_ver = runtimes.npm;
+        self.node_is_built_in = runtimes.built_in;
         self.system_node_ver = runtimes.system_node;
         self.project_node = runtimes.project;
     }
@@ -1429,6 +1433,8 @@ struct Runtimes {
     /// The Node.js scripts will run under, `None` when there is none at all.
     node: Option<String>,
     npm: Option<String>,
+    /// Whether `node` is a built-in version rather than the system one.
+    built_in: bool,
     /// The Node.js on the `PATH`, independent of the built-in manager.
     system_node: Option<String>,
     project: ProjectNode,
@@ -1444,7 +1450,9 @@ fn probe_runtimes(project: Option<PathBuf>) -> Runtimes {
         .as_deref()
         .map(|project| node_versions::project_node(&store, project))
         .unwrap_or_default();
-    let (node, npm) = match node_versions::bin_dir_for(&store, project.as_deref()) {
+    let bin_dir = node_versions::active_bin_dir(&store);
+    let built_in = bin_dir.is_some();
+    let (node, npm) = match bin_dir {
         // A built-in version applies: ask the executables in its own folder.
         Some(bin_dir) => {
             let exe = |windows: &str, other: &str| {
@@ -1463,6 +1471,7 @@ fn probe_runtimes(project: Option<PathBuf>) -> Runtimes {
     Runtimes {
         node,
         npm,
+        built_in,
         system_node,
         project: project_node,
     }
@@ -1871,21 +1880,52 @@ impl Panel for NodePanel {
 
 impl NodePanel {
     fn render_versions(&self, cx: &Context<Self>) -> impl IntoElement {
+        let source = if self.node_is_built_in {
+            "built-in"
+        } else {
+            "system"
+        };
         let text = match (&self.node_ver, &self.npm_ver) {
-            (Some(n), Some(pm)) => format!("Node.js {n}  |  npm {pm}"),
-            (Some(n), None) => format!("Node.js {n}"),
+            (Some(n), Some(pm)) => format!("Node.js {n} ({source})  |  npm {pm}"),
+            (Some(n), None) => format!("Node.js {n} ({source})"),
             _ => "Node.js isn't installed".into(),
         };
 
-        // What the selected project's own version file asks for. Installed,
-        // it is what the line above reports; missing, the active version is
-        // used instead and installing the right one is a click away.
+        // What the selected project's own version file asks for. It is never
+        // applied by itself: the version in use is the one picked below, and
+        // this line only says how the two compare. When the matching version
+        // is installed but isn't the one picked, switching is a click away;
+        // when it isn't installed, installing it is.
+        let active = self
+            .managed_versions
+            .iter()
+            .find(|version| version.current)
+            .map(|version| version.version.clone());
         let project_line = self.project_node.requested.clone().map(|requested| {
-            match &self.project_node.installed {
-                Some(installed) => div()
+            match self.project_node.installed.clone() {
+                Some(installed) if active.as_ref() == Some(&installed) => div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(format!("Project asks for {requested} \u{2014} using {installed}"))
+                    .into_any_element(),
+                Some(installed) => h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().warning)
+                            .child(format!("Project asks for {requested}")),
+                    )
+                    .child(
+                        Button::new("node-version-use-project")
+                            .ghost()
+                            .xsmall()
+                            .label(format!("Use {installed}"))
+                            .on_click(cx.listener(move |this, _e, _w, cx| {
+                                this.switch_version(Some(installed.clone()), cx);
+                            })),
+                    )
                     .into_any_element(),
                 None => h_flex()
                     .gap_2()

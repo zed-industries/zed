@@ -544,6 +544,12 @@ async fn run_script_process(
     if let Some(working_dir) = working_dir {
         cmd.current_dir(working_dir);
     }
+    // The IDE's own runtimes (the built-in Node.js, …) go first on `PATH`,
+    // so `node` is the version the project should use, installed or not on
+    // the machine itself.
+    if let Some(path) = ide_env::path_env(working_dir) {
+        cmd.env("PATH", path);
+    }
     cmd.args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -818,6 +824,11 @@ async fn execute_start_process(
             .stderr(Stdio::piped());
         if let Some(cwd) = &cwd {
             cmd.current_dir(cwd);
+        }
+        // As for scripts: the IDE's own runtimes first, so `npm run dev`
+        // starts under the project's Node.js version.
+        if let Some(path) = ide_env::path_env(cwd.as_deref()) {
+            cmd.env("PATH", path);
         }
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash.
