@@ -830,9 +830,9 @@ fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities 
 }
 
 impl AcpConnection {
-    /// Binds supported v2 session updates to the existing foreground session registry.
+    /// Binds supported v2 client handlers to the existing foreground owners.
     /// This does not change the protocol used by the connection's transport.
-    pub fn with_v2_session_ingress<Handler: HandleDispatchFrom<Agent>>(
+    pub fn with_v2_client_ingress<Handler: HandleDispatchFrom<Agent>>(
         &self,
         builder: V2Builder<Client, Handler>,
     ) -> V2Builder<Client, impl HandleDispatchFrom<Agent> + use<Handler>> {
@@ -850,14 +850,6 @@ impl AcpConnection {
             move |notification| dispatch(notification.into())
         });
         with_v2_session_notifications(builder, dispatch)
-    }
-
-    /// Binds v2 permission and elicitation requests without selecting a v2 transport.
-    pub fn with_v2_request_ingress<Handler: HandleDispatchFrom<Agent>>(
-        &self,
-        builder: V2Builder<Client, Handler>,
-    ) -> V2Builder<Client, impl HandleDispatchFrom<Agent> + use<Handler>> {
-        builder
             .on_receive_request(
                 {
                     let dispatch_sender = self.dispatch_tx.clone();
@@ -3286,7 +3278,7 @@ mod tests {
                 agent_client_protocol::on_receive_notification!(),
             );
             let client_builder = connection
-                .with_v2_request_ingress(connection.with_v2_session_ingress(observed_builder))
+                .with_v2_client_ingress(observed_builder)
                 .on_receive_notification(
                     {
                         let fallback = fallback.clone();
@@ -3568,6 +3560,43 @@ mod tests {
         .subject(acp_v2::RequestPermissionSubject::Command(
             acp_v2::CommandPermissionSubject::new("echo test", "/a"),
         ));
+        let published = Rc::new(RefCell::new(0));
+        let subscription = cx.update(|cx| {
+            cx.subscribe(&harness.thread, {
+                let published = published.clone();
+                move |_, event, _| {
+                    if matches!(
+                        event,
+                        acp_thread::AcpThreadEvent::ToolAuthorizationRequested(_)
+                    ) {
+                        *published.borrow_mut() += 1;
+                    }
+                }
+            })
+        });
+        let (response, cancellation) = harness.request(request.clone(), cx);
+        cancellation
+            .cancel()
+            .expect("cancel before foreground publication");
+        drain_sdk_background_tasks(cx);
+        harness.thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+        });
+        assert_eq!(
+            v2_response(response, cx, "pre-cancelled permission")
+                .await
+                .expect_err("RPC cancellation before registration")
+                .code,
+            ErrorCode::RequestCancelled
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            *published.borrow(),
+            0,
+            "no transient permission publication"
+        );
+        drop(subscription);
+
         let (first, cancellation) = harness.request(request.clone(), cx);
         harness.drain(cx).await;
         let first_id = harness.thread.read_with(cx, |thread, _| {
@@ -3796,6 +3825,35 @@ mod tests {
                 ),
                 "Same scope and URL ID",
             );
+            let entry_count = harness
+                .thread
+                .read_with(cx, |thread, _| thread.entries().len());
+            let request_count = harness
+                .connection
+                .request_elicitations
+                .read_with(cx, |store, _| store.elicitations().len());
+            let (response, cancellation) = harness.request(request.clone(), cx);
+            cancellation
+                .cancel()
+                .expect("cancel before foreground publication");
+            drain_sdk_background_tasks(cx);
+            assert_eq!(
+                v2_response(response, cx, "pre-cancelled elicitation")
+                    .await
+                    .expect_err("RPC cancellation before registration")
+                    .code,
+                ErrorCode::RequestCancelled
+            );
+            harness.thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.entries().len(), entry_count);
+            });
+            harness
+                .connection
+                .request_elicitations
+                .read_with(cx, |store, _| {
+                    assert_eq!(store.elicitations().len(), request_count);
+                });
+
             let (first, cancellation) = harness.request(request.clone(), cx);
             harness.drain(cx).await;
             let first_id = harness.elicitation_id(session_scoped, cx);
