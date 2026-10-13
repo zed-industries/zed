@@ -73,14 +73,28 @@ pub struct OmpChoice {
 }
 
 /// The OMP binary (ADR-0057 decision 4). A set `CEDIAN_OMP_BINARY` runs as
-/// given, asked `--version` once only for the warning. Otherwise the first
-/// of PATH's `omp` and `~/.local/bin/omp` whose `--version` is the pin, else
-/// the first found. Off the pin, the warning names both versions. Blocking:
-/// call it off the UI thread.
+/// given, asked `--version` once only for the warning. Otherwise an OMP
+/// bundled next to the running executable (U13: `cedian.app`'s
+/// `Contents/Resources/omp`) runs as the bundle shipped it — off-pin and all,
+/// because a shipped app must not need an `omp` on PATH. Else the first of
+/// PATH's `omp` and `~/.local/bin/omp` whose `--version` is the pin, else the
+/// first found. Off the pin, the warning names both versions. Blocking: call
+/// it off the UI thread.
 pub fn omp_binary() -> Result<OmpChoice, String> {
+    omp_binary_for(std::env::current_exe().ok().as_deref())
+}
+
+/// The resolution, from the executable a bundle lookup starts at
+/// ([`omp_binary`] passes the running one; tests drive a fake `.app` layout,
+/// which `current_exe` cannot be moved to).
+pub fn omp_binary_for(exe: Option<&Path>) -> Result<OmpChoice, String> {
     let pinned = pinned_omp_version();
     let probe = |binary: &Path| cedian_omp::omp_version(binary, Duration::from_secs(3));
     if let Some(binary) = std::env::var_os("CEDIAN_OMP_BINARY").map(PathBuf::from) {
+        let warning = off_pin(&pinned, &binary, probe(&binary));
+        return Ok(OmpChoice { binary, warning });
+    }
+    if let Some(binary) = exe.and_then(bundled_sidecar) {
         let warning = off_pin(&pinned, &binary, probe(&binary));
         return Ok(OmpChoice { binary, warning });
     }
@@ -109,6 +123,23 @@ pub fn omp_binary() -> Result<OmpChoice, String> {
         first.ok_or("omp not found in CEDIAN_OMP_BINARY, on PATH or in ~/.local/bin")?;
     let warning = off_pin(&pinned, &binary, version);
     Ok(OmpChoice { binary, warning })
+}
+
+/// The OMP a bundle ships: `<exe>`'s `Contents/Resources/omp` when the
+/// executable sits in a bundle's `Contents/MacOS` (U13,
+/// `script/cedian-build-omp`). Any other layout gives nothing, so a
+/// `target/release/cedian` next to a stray `Resources/` is not a bundle.
+fn bundled_sidecar(exe: &Path) -> Option<PathBuf> {
+    let macos = exe.parent()?;
+    if macos.file_name()? != "MacOS" {
+        return None;
+    }
+    let contents = macos.parent()?;
+    if contents.file_name()? != "Contents" {
+        return None;
+    }
+    let sidecar = contents.join("Resources/omp");
+    sidecar.is_file().then_some(sidecar)
 }
 
 fn off_pin(

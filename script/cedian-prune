@@ -4,7 +4,7 @@
 # newest of each name. Only build output; a later build recreates it.
 # `script/cedian-prune [min-free-GB]`, default 5; does nothing above it.
 set -euo pipefail
-cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+cd "$(unset GIT_DIR GIT_WORK_TREE; git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 min_gb=${1:-5}
 free_gb() { df -Pk . | awk 'NR==2 { print int($4 / 1048576) }'; }
 [ "$(free_gb)" -ge "$min_gb" ] && exit 0

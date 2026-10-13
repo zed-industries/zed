@@ -2,7 +2,10 @@
 # Format, lint and test the cedian crates only (ADR-0042), so a check never
 # builds all of Zed. `script/cedian-check check` stops after `cargo check`.
 set -euo pipefail
-cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+# Git sets GIT_DIR when it runs a hook, and with it `rev-parse --show-toplevel`
+# answers the current directory, not the checkout a worktree is. Unset, so the
+# discovery from this script's own directory is what answers.
+cd "$(unset GIT_DIR GIT_WORK_TREE; git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_PROFILE_DEV_DEBUG=${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}
 # A full disk mid-build fails with no useful message; free build output first.

@@ -34,7 +34,7 @@
 # Results: $BENCH_RESULTS/<pass>/results/<mandate>/<id>.json.
 set -euo pipefail
 
-ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+ROOT=$(unset GIT_DIR GIT_WORK_TREE; git -C "$(dirname "$0")" rev-parse --show-toplevel)
 BENCH=$ROOT/script/cedian-bench
 # The tasks start from commits in the cedian docs repo, which keeps the code
 # history from before the move into the fork (ADR-0042). The binary under test

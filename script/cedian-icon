@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Draw cedian's app icon and write it as `cedian/assets/AppIcon.icns` (U13).
+
+The mark is a terminal chevron and a cursor bar on a dark tile: the agent
+prompt, which is what cedian is. Deterministic and dependency-free (stdlib
+PNGs plus macOS `iconutil`), so the committed asset can be redrawn from here
+at any size.
+
+    script/cedian-icon                  # write the .icns
+    script/cedian-icon --preview p.png  # also write the 512px frame as a PNG
+"""
+import argparse
+import math
+import os
+import struct
+import subprocess
+import sys
+import tempfile
+import zlib
+
+# The tile: macOS' icon grid inset and corner ratio (a Big Sur-style rounded
+# square; the system's own mask is the viewer's).
+TILE = 0.075
+RADIUS = 0.1857
+TOP = (0x26, 0x2E, 0x3B)
+BOTTOM = (0x13, 0x18, 0x21)
+INK_TOP = (0x66, 0xB6, 0xFF)
+INK_BOTTOM = (0x2F, 0x6B, 0xFF)
+
+# The chevron's three joints and the cursor bar, in tile coordinates. The two
+# are one group, optically centred on the tile.
+CHEVRON = ((0.295, 0.305), (0.555, 0.50), (0.295, 0.695))
+BAR = ((0.585, 0.695), (0.715, 0.695))
+STROKE = 0.115
+
+# Every frame is drawn at its own pixel size, so nothing is upscaled. These are
+# the names `iconutil` wants, by pixel size.
+ICONSET = {
+    16: ("icon_16x16.png",),
+    32: ("icon_16x16@2x.png", "icon_32x32.png"),
+    64: ("icon_32x32@2x.png",),
+    128: ("icon_128x128.png",),
+    256: ("icon_128x128@2x.png", "icon_256x256.png"),
+    512: ("icon_256x256@2x.png", "icon_512x512.png"),
+    1024: ("icon_512x512@2x.png",),
+}
+
+
+def rounded_rect_distance(x, y, half, radius):
+    """Distance in tile units from (x, y) to a rounded square centred at 0.5."""
+    dx = abs(x - 0.5) - (half - radius)
+    dy = abs(y - 0.5) - (half - radius)
+    return math.hypot(max(dx, 0.0), max(dy, 0.0)) + min(max(dx, dy), 0.0) - radius
+
+
+def capsule_distance(px, py, a, b, radius):
+    """Distance from (px, py) to the segment a-b with round ends of `radius`."""
+    (ax, ay), (bx, by) = a, b
+    vx, vy = bx - ax, by - ay
+    t = ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)
+    t = min(1.0, max(0.0, t))
+    return math.hypot(px - (ax + t * vx), py - (ay + t * vy)) - radius
+
+
+def mix(a, b, t):
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+def coverage(distance, size):
+    """A 1px analytic edge: full inside, empty outside, linear across the edge."""
+    return min(1.0, max(0.0, 0.5 - distance * size))
+
+
+def render(size):
+    """One RGBA frame: the tile, then the ink, at this pixel size."""
+    half = 0.5 - TILE
+    stroke = STROKE / 2
+    segments = [
+        (a, b) for (a, b) in zip(CHEVRON, CHEVRON[1:])
+    ] + [(BAR[0], BAR[1])]
+    pixels = bytearray()
+    for py in range(size):
+        for px in range(size):
+            x, y = (px + 0.5) / size, (py + 0.5) / size
+            tile = coverage(rounded_rect_distance(x, y, half, RADIUS), size)
+            if tile == 0.0:
+                pixels += b"\x00\x00\x00\x00"
+                continue
+            ink = coverage(
+                min(capsule_distance(x, y, a, b, stroke) for a, b in segments), size
+            )
+            base = mix(TOP, BOTTOM, (py + 0.5) / size)
+            color = mix(INK_TOP, INK_BOTTOM, (y - TILE) / (1 - 2 * TILE))
+            pixels += bytes(
+                [round(base[i] * (1 - ink) + color[i] * ink) for i in range(3)]
+            ) + bytes([round(tile * 255)])
+    return bytes(pixels)
+
+
+def write_png(path, size, pixels):
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    rows = b"".join(
+        b"\x00" + pixels[y * size * 4 : (y + 1) * size * 4] for y in range(size)
+    )
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n")
+        f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)))
+        f.write(chunk(b"IDAT", zlib.compress(rows, 9)))
+        f.write(chunk(b"IEND", b""))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--preview", help="also write the 512px frame as a PNG here")
+    parser.add_argument("--out", help="the .icns to write (default cedian/assets/AppIcon.icns)")
+    args = parser.parse_args()
+
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
+    root = subprocess.run(
+        ["git", "-C", os.path.dirname(os.path.abspath(__file__)), "rev-parse",
+         "--show-toplevel"],
+        check=True, capture_output=True, text=True, env=env,
+    ).stdout.strip()
+    out = args.out or os.path.join(root, "cedian/assets/AppIcon.icns")
+
+    frames = {size: render(size) for size in sorted(ICONSET)}
+    with tempfile.TemporaryDirectory() as tmp:
+        iconset = os.path.join(tmp, "AppIcon.iconset")
+        os.makedirs(iconset)
+        for size, names in ICONSET.items():
+            for name in names:
+                write_png(os.path.join(iconset, name), size, frames[size])
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        subprocess.run(["iconutil", "-c", "icns", iconset, "-o", out], check=True)
+        if args.preview:
+            write_png(args.preview, 512, frames[512])
+    print(f"cedian-icon: {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

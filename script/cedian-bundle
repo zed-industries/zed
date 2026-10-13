@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Assemble `cedian.app` from the release build (U13, ADR-0058's packaging unit).
 #
-# The bundle is built unsigned by default: signing and notarization need the
-# owner's Apple identity, so with no `CODESIGN_IDENTITY` this script says what
-# is missing instead of failing. `script/cedian-build-omp` builds the pinned OMP
-# sidecar from `vendor/omp-revision.json` (ADR-0003's recorded triple); set
-# `CEDIAN_SKIP_OMP=1` to skip it, and the bundle then needs an `omp` on PATH.
+# The bundle is built unsigned: it is the owner's own build (ADR-0062), so
+# signing and notarization are for redistributing it, not for running it. A
+# set `CODESIGN_IDENTITY` signs it anyway. `script/cedian-build-omp` builds the
+# pinned OMP sidecar from `vendor/omp-revision.json` (ADR-0003's recorded
+# triple); set `CEDIAN_SKIP_OMP=1` to skip it, and the bundle then needs an
+# `omp` on PATH (the app prefers the sidecar when it is there).
 #
 #   script/cedian-bundle
 #   CODESIGN_IDENTITY="Developer ID Application: …" script/cedian-bundle
 set -euo pipefail
-cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+cd "$(unset GIT_DIR GIT_WORK_TREE; git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 
 BIN=${CEDIAN_BIN:-target/release/cedian}
 APP=${CEDIAN_APP:-cedian.app}
@@ -44,6 +45,7 @@ cat >"$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>cedian</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleExecutable</key><string>cedian</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
@@ -54,10 +56,13 @@ cat >"$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# The icon is U13's branding step: there is no cedian asset yet, so the bundle
-# ships without one rather than shipping Zed's.
-if [ ! -f "$APP/Contents/Resources/AppIcon.icns" ]; then
-  echo "cedian-bundle: no Contents/Resources/AppIcon.icns: the cedian icon asset is U13's branding step" >&2
+# The icon is U13's branding step: `script/cedian-icon` draws
+# `cedian/assets/AppIcon.icns` (the chevron mark), and the bundle carries it.
+ICON=cedian/assets/AppIcon.icns
+if [ -f "$ICON" ]; then
+  cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
+else
+  echo "cedian-bundle: no $ICON: run script/cedian-icon to draw it" >&2
 fi
 
 if [ "${CEDIAN_SKIP_OMP:-0}" = 1 ]; then
@@ -71,6 +76,6 @@ if [ -n "$IDENTITY" ]; then
   echo "cedian-bundle: signed as $IDENTITY"
   echo "cedian-bundle: notarize with: xcrun notarytool submit <zip> --keychain-profile <profile> --wait && xcrun stapler staple $APP" >&2
 else
-  echo "cedian-bundle: built unsigned; set CODESIGN_IDENTITY to sign, and notarization needs the owner's Apple Developer account" >&2
+  echo "cedian-bundle: built unsigned (ADR-0062: the owner's own build ships unsigned); CODESIGN_IDENTITY signs it, and redistribution needs signing and notarization" >&2
 fi
 echo "cedian-bundle: $APP"
