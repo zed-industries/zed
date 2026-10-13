@@ -1150,12 +1150,10 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
-            let is_markdown = !is_dir
-                && MarkdownPreviewView::is_markdown_path(
-                    entry.path.as_std_path(),
-                    project.languages(),
-                );
-            let is_svg = !is_dir && SvgPreviewView::is_svg_path(entry.path.as_std_path());
+            let file_name = Path::new(entry_file_name(entry, worktree.root_name()));
+            let is_markdown =
+                !is_dir && MarkdownPreviewView::is_markdown_path(file_name, project.languages());
+            let is_svg = !is_dir && SvgPreviewView::is_svg_path(file_name);
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -2005,14 +2003,15 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(project_path) = self.selected_file_project_path(cx).filter(|project_path| {
-            MarkdownPreviewView::is_markdown_path(
-                project_path.path.as_std_path(),
-                self.project.read(cx).languages(),
-            )
-        }) else {
+        let Some((project_path, file_name)) = self.selected_file(cx) else {
             return;
         };
+        if !MarkdownPreviewView::is_markdown_path(
+            Path::new(file_name),
+            self.project.read(cx).languages(),
+        ) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| {
                 MarkdownPreviewView::open_for_project_path(project_path, workspace, window, cx);
@@ -2026,12 +2025,12 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(project_path) = self
-            .selected_file_project_path(cx)
-            .filter(|project_path| SvgPreviewView::is_svg_path(project_path.path.as_std_path()))
-        else {
+        let Some((project_path, file_name)) = self.selected_file(cx) else {
             return;
         };
+        if !SvgPreviewView::is_svg_path(Path::new(file_name)) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| {
                 SvgPreviewView::open_for_project_path(project_path, workspace, window, cx)
@@ -4076,14 +4075,20 @@ impl ProjectPanel {
     }
 
     fn selected_file_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.selected_file(cx).map(|(project_path, _)| project_path)
+    }
+
+    fn selected_file<'a>(&self, cx: &'a App) -> Option<(ProjectPath, &'a str)> {
         let (worktree, entry) = self.selected_sub_entry(cx)?;
         if entry.is_dir() {
             return None;
         }
-        Some(ProjectPath {
-            worktree_id: worktree.read(cx).id(),
+        let worktree = worktree.read(cx);
+        let project_path = ProjectPath {
+            worktree_id: worktree.id(),
             path: entry.path.clone(),
-        })
+        };
+        Some((project_path, entry_file_name(entry, worktree.root_name())))
     }
 
     fn reveal_in_finder(
@@ -7104,11 +7109,7 @@ impl ProjectPanel {
                     suffix.display(path_style).to_string()
                 })
         } else {
-            entry
-                .path
-                .file_name()
-                .map(|name| name.to_string())
-                .unwrap_or_else(|| root_name.as_unix_str().to_string())
+            entry_file_name(entry, root_name).to_string()
         };
 
         let selection = SelectedEntry {
@@ -7460,6 +7461,14 @@ impl StickyCandidate for StickyProjectPanelCandidate {
     fn depth(&self) -> usize {
         self.depth
     }
+}
+
+/// A single-file worktree's root entry has an empty path, so its name is the worktree's root name.
+fn entry_file_name<'a>(entry: &'a Entry, root_name: &'a RelPath) -> &'a str {
+    entry
+        .path
+        .file_name()
+        .unwrap_or_else(|| root_name.as_unix_str())
 }
 
 fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
