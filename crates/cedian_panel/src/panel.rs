@@ -1877,8 +1877,7 @@ impl CedianPanel {
     }
 
     /// Trial-merge a worker's branch into the base in a throwaway clone and
-    /// say what it would come to — the CLI's `worker preview` — without
-    /// touching the repo.
+    /// say what it would come to, without touching the repo.
     pub fn preview_worker(&mut self, id: &str, cx: &mut Context<Self>) {
         let id = id.to_string();
         self.worker_action(cx, move |repo, state| {
@@ -1929,7 +1928,7 @@ impl CedianPanel {
 
     /// Clean up this worker's tree; the click is its explicit per-tree
     /// decision (§43), which is what a `Wip` tree needs. Exactly this tree
-    /// goes: the repo-wide sweep is the CLI's `cedian worker cleanup`.
+    /// goes, never its neighbours.
     pub fn cleanup_worker(&mut self, id: &str, cx: &mut Context<Self>) {
         let id = id.to_string();
         self.worker_action(cx, move |repo, state| {

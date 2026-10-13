@@ -26,7 +26,7 @@ pub mod registry;
 pub mod worktree;
 
 pub use brief::{Brief, BriefError, Scope, ScopeError, WorkerScope};
-pub use cleanup::{CleanupOutcome, TreeClass, TreeState, cleanup, cleanup_one, trees};
+pub use cleanup::{CleanupOutcome, TreeClass, TreeState, cleanup_one, trees};
 pub use host_tool::{
     WORKTREE_REQUEST_TOOL, WorktreeGate, request_worktree, worktree_request_tool,
     worktree_request_tool_with_gate,

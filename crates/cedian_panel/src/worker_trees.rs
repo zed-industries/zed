@@ -2,9 +2,9 @@
 //! person does with them (preview, merge back, remove, clean up).
 //!
 //! The mechanism is [`cedian_worker`]'s; this is the panel's view of it plus
-//! the registry bookkeeping `cedian worker`'s verb does, so the app never
-//! leaves a `workers.json` row naming a tree that is gone, nor one that says
-//! `done` before the merge landed.
+//! the registry bookkeeping each action needs, so the app never leaves a
+//! `workers.json` row naming a tree that is gone, nor one that says `done`
+//! before the merge landed.
 
 use cedian_worker::{MergePlan, Registry, TreeState, WorkerError, WorkerHead, WorkerStatus};
 use std::path::Path;
@@ -37,8 +37,8 @@ pub fn read(repo: &Path, state: &Path, base: &str) -> Result<Vec<WorkerTreeRow>,
         .collect())
 }
 
-/// Merge `id`'s branch into `base` and mark its row done, in the CLI's order:
-/// a refused merge (STALE) leaves the row as it was.
+/// Merge `id`'s branch into `base`, and mark its row done only once the merge
+/// landed: a refusal (STALE) leaves the row as it was.
 pub fn merge_back(repo: &Path, state: &Path, id: &str, base: &str) -> Result<(), String> {
     let _lock = Registry::lock(state).map_err(|e| e.to_string())?;
     let (mut registry, _) = Registry::open(state).map_err(|e| e.to_string())?;
@@ -64,8 +64,8 @@ pub fn remove(repo: &Path, state: &Path, id: &str) -> Result<(), String> {
 
 /// Clean up `id`, this call being its explicit per-tree decision (§43: a `Wip`
 /// tree is never removed without one). Only that tree goes: a person who
-/// clicked one row's Cleanup did not decide anything about the others, and the
-/// repo-wide sweep is the CLI's `cleanup`. The row goes with the tree.
+/// clicked one row's Cleanup did not decide anything about the others. The row
+/// goes with the tree.
 pub fn cleanup(repo: &Path, state: &Path, id: &str, base: &str) -> Result<String, String> {
     let outcome = cedian_worker::cleanup_one(repo, base, id, true).map_err(|e| e.to_string())?;
     let said = if outcome.removed {
@@ -81,10 +81,10 @@ pub fn cleanup(repo: &Path, state: &Path, id: &str, base: &str) -> Result<String
     Ok(said)
 }
 
-/// What merging `id` into `base` would come to, without touching the repo:
-/// the CLI's `worker preview` (a throwaway clone does the trial merge)
-/// squeezed into one line for the notice. The row is needed for its branch,
-/// so a tree without one is refused exactly as the other actions refuse it.
+/// What merging `id` into `base` would come to, without touching the repo: a
+/// throwaway clone does the trial merge, squeezed into one line for the notice.
+/// The row is needed for its branch, so a tree without one is refused exactly
+/// as the other actions refuse it.
 pub fn preview(repo: &Path, state: &Path, id: &str, base: &str) -> Result<String, String> {
     let (registry, _) = Registry::open(state).map_err(|e| e.to_string())?;
     let head = row(&registry, id)?;
@@ -93,8 +93,7 @@ pub fn preview(repo: &Path, state: &Path, id: &str, base: &str) -> Result<String
 }
 
 /// The preview line: how many files the merge would touch, the clean ones by
-/// name, then the conflicts — the CLI's two headings ("clean",
-/// "conflicted(STALE)") said flat.
+/// name, then the conflicts, in the words the trial merge reports.
 fn said(id: &str, plan: &MergePlan) -> String {
     let touched = plan.clean.len() + plan.conflicted.len();
     let mut said = format!("{id}: a merge would touch {touched} file(s)");
@@ -111,8 +110,7 @@ fn said(id: &str, plan: &MergePlan) -> String {
     said
 }
 
-/// The row an action needs; a tree without one is refused naming the id, as
-/// the CLI's verb does.
+/// The row an action needs; a tree without one is refused naming the id.
 fn row(registry: &Registry, id: &str) -> Result<WorkerHead, String> {
     registry
         .get(id)

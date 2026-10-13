@@ -64,7 +64,6 @@ fn is_read_only(args: &[String]) -> bool {
         "review" => sub.is_none(),
         "state" | "palette" | "help" | "shell" => true,
         "workflow" => sub == Some("status"),
-        "worker" => sub == Some("preview"),
         _ => false,
     }
 }
@@ -879,34 +878,13 @@ fn cmd_workflow(
     }
 }
 
-/// Read `--base <branch>` from `args[from..]`; defaults to `HEAD`.
-fn worker_base(args: &[String], from: usize) -> Result<String, String> {
-    let mut base = "HEAD".to_string();
-    let mut i = from;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--base" => {
-                base = args
-                    .get(i + 1)
-                    .cloned()
-                    .ok_or("usage: cedian worker … [--base <branch>]")?;
-                i += 2;
-            }
-            flag => return Err(format!("unknown flag {flag:?}")),
-        }
-    }
-    Ok(base)
-}
-
 /// Worker commands (S5 headless surface — one-shot per invocation; `list`
 /// and `steer` were deleted at S9 U8, ADR-0050: the app's subagent rows
-/// and `steer_subagent` replace them):
+/// and `steer_subagent` replace them; `preview`, `merge-back`, `remove` and
+/// `cleanup` were deleted at the S5 exit, where the panel's worker trees
+/// took them over):
 /// ```text
 /// cedian worker spawn <id> --brief <file> [--kind <k>] [--base <branch>]
-/// cedian worker preview <id> [--base <branch>]
-/// cedian worker merge-back <id> [--base <branch>]
-/// cedian worker remove <id>
-/// cedian worker cleanup [--base <branch>] [--decide <id>]...
 /// ```
 ///
 /// `CEDIAN_WORKDIR` must be the repo root: the registry lives at
@@ -916,10 +894,10 @@ fn worker_base(args: &[String], from: usize) -> Result<String, String> {
 /// `cedian_worktree_request` host tool uses); without a whole brief it
 /// refuses and creates nothing. `kind` defaults to `worker`.
 fn cmd_worker(workdir: &Path, args: &[String]) -> Result<(), String> {
+    let usage = "usage: cedian worker spawn <id> --brief <file> [--kind K] [--base B]";
     let state = state::dir(workdir)?;
     match args.first().map(|s| s.as_str()) {
         Some("spawn") => {
-            let usage = "usage: cedian worker spawn <id> --brief <file> [--kind K] [--base B]";
             let id = args.get(1).ok_or(usage)?;
             let mut brief_file: Option<&String> = None;
             let mut kind = "worker".to_string();
@@ -964,127 +942,7 @@ fn cmd_worker(workdir: &Path, args: &[String]) -> Result<(), String> {
             println!("worker {id} → {worktree} (branch {branch})");
             Ok(())
         }
-        Some("preview") => {
-            let id = args
-                .get(1)
-                .ok_or("usage: cedian worker preview <id> [--base <branch>]")?;
-            let base = worker_base(args, 2)?;
-            let (reg, _) = cedian_worker::Registry::open(&state).map_err(|e| e.to_string())?;
-            let head = reg
-                .get(id)
-                .cloned()
-                .ok_or_else(|| cedian_worker::WorkerError::NoSuch(id.clone()).to_string())?;
-            let plan =
-                cedian_worker::merge_preview(workdir, &head, &base).map_err(|e| e.to_string())?;
-            println!("clean:");
-            for f in &plan.clean {
-                println!("  {f}");
-            }
-            println!("conflicted(STALE):");
-            for f in &plan.conflicted {
-                println!("  {f}");
-            }
-            Ok(())
-        }
-        Some("merge-back") => {
-            let id = args
-                .get(1)
-                .ok_or("usage: cedian worker merge-back <id> [--base <branch>]")?;
-            let base = worker_base(args, 2)?;
-            let _lock = cedian_worker::Registry::lock(&state).map_err(|e| e.to_string())?;
-            let (mut reg, _) = cedian_worker::Registry::open(&state).map_err(|e| e.to_string())?;
-            let head = reg
-                .get(id)
-                .cloned()
-                .ok_or_else(|| cedian_worker::WorkerError::NoSuch(id.clone()).to_string())?;
-            match cedian_worker::merge_back(workdir, &head, &base) {
-                Ok(()) => {
-                    reg.set_status(id, cedian_worker::WorkerStatus::Done, String::new())
-                        .map_err(|e| e.to_string())?;
-                    reg.save(&state).map_err(|e| e.to_string())?;
-                    println!("merged {} → {base}", head.branch);
-                    Ok(())
-                }
-                Err(cedian_worker::WorkerError::Conflicted(files)) => {
-                    println!("refused (STALE):");
-                    for f in &files {
-                        println!("  {f}");
-                    }
-                    Err(format!("refused (STALE): {}", files.join(", ")))
-                }
-                Err(e) => Err(e.to_string()),
-            }
-        }
-        Some("remove") => {
-            let id = args.get(1).ok_or("usage: cedian worker remove <id>")?;
-            if args.len() > 2 {
-                return Err("usage: cedian worker remove <id>".to_string());
-            }
-            let _lock = cedian_worker::Registry::lock(&state).map_err(|e| e.to_string())?;
-            let (mut reg, _) = cedian_worker::Registry::open(&state).map_err(|e| e.to_string())?;
-            let head = reg
-                .get(id)
-                .cloned()
-                .ok_or_else(|| cedian_worker::WorkerError::NoSuch(id.clone()).to_string())?;
-            cedian_worker::remove(workdir, &head).map_err(|e| e.to_string())?;
-            reg.remove(id);
-            reg.save(&state).map_err(|e| e.to_string())?;
-            println!("removed {id}");
-            Ok(())
-        }
-        Some("cleanup") => {
-            let usage = "usage: cedian worker cleanup [--base <branch>] [--decide <id>]…";
-            let mut base = "HEAD".to_string();
-            // `--decide` may repeat: one explicit decision per wip tree.
-            let mut decided: Vec<String> = Vec::new();
-            let mut i = 1;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--base" => {
-                        base = args.get(i + 1).cloned().ok_or(usage)?;
-                        i += 2;
-                    }
-                    "--decide" => {
-                        decided.push(args.get(i + 1).cloned().ok_or(usage)?);
-                        i += 2;
-                    }
-                    flag => return Err(format!("unknown flag {flag:?}")),
-                }
-            }
-            let outcomes =
-                cedian_worker::cleanup(workdir, &base, &decided).map_err(|e| e.to_string())?;
-            // A removed tree whose registry row stayed would name a tree that is
-            // gone (the S5 exit reads `git worktree list`, not the registry).
-            let gone: Vec<&str> = outcomes
-                .iter()
-                .filter(|out| out.removed)
-                .map(|out| out.id.as_str())
-                .collect();
-            if !gone.is_empty() {
-                let _lock = cedian_worker::Registry::lock(&state).map_err(|e| e.to_string())?;
-                let (mut reg, _) =
-                    cedian_worker::Registry::open(&state).map_err(|e| e.to_string())?;
-                let mut dropped = false;
-                for id in gone {
-                    dropped |= reg.remove(id).is_some();
-                }
-                if dropped {
-                    reg.save(&state).map_err(|e| e.to_string())?;
-                }
-            }
-            // One line per tree; skipped trees still exit 0 (a wip needs a
-            // human decision, which is not a command failure).
-            for out in outcomes {
-                let why = if out.removed {
-                    "removed".to_string()
-                } else {
-                    out.reason
-                };
-                println!("{} {} {} {why}", out.class, out.id, out.path.display());
-            }
-            Ok(())
-        }
-        _ => Err("usage: cedian worker <spawn|preview|merge-back|remove|cleanup> …".into()),
+        _ => Err(usage.into()),
     }
 }
 

@@ -1,4 +1,4 @@
-//! Worker cleanup (S5 exit): sweep the cedian worktrees and decide what may go.
+//! Worker cleanup (S5 exit): classify each cedian worktree and clean one at a time.
 //!
 //! The source of truth is `git worktree list`, never the registry — a row can
 //! outlive its tree or miss one made by hand. Only paths under `<repo>/.worktrees/<id>`
@@ -48,7 +48,7 @@ pub struct TreeState {
     pub class: TreeClass,
 }
 
-/// What [`cleanup`] did (or declined to do) with one tree.
+/// What [`cleanup_one`] did (or declined to do) with one tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CleanupOutcome {
     pub id: String,
@@ -105,25 +105,6 @@ pub fn trees(repo: &Path, base: &str) -> Result<Vec<TreeState>, WorkerError> {
     Ok(out)
 }
 
-/// Sweep every cedian tree: remove what is safe, report what is not.
-///
-/// `Merged` and `Scratch` trees are removed; `Unmerged` is skipped so commits
-/// not in `base` are never lost; a `Wip` tree is removed only when its id is in
-/// `decided` — an explicit per-tree decision. A removal git refuses yields
-/// `removed: false` with git's message and the sweep continues to the rest.
-pub fn cleanup(
-    repo: &Path,
-    base: &str,
-    decided: &[String],
-) -> Result<Vec<CleanupOutcome>, WorkerError> {
-    let mut outcomes = Vec::new();
-    for tree in trees(repo, base)? {
-        let decided = decided.iter().any(|id| id == &tree.id);
-        outcomes.push(decide(repo, base, tree, decided));
-    }
-    Ok(outcomes)
-}
-
 /// Clean up exactly one tree, this call being its explicit per-tree decision
 /// when it is a `Wip` (§43). `decided` is what the caller decided; a tree that
 /// is not there is a refusal naming the id, never a silent success.
@@ -165,7 +146,7 @@ fn decide(repo: &Path, base: &str, tree: TreeState, decided: bool) -> CleanupOut
         TreeClass::Wip => (
             false,
             format!(
-                "tracked edits: needs an explicit per-tree decision (pass --decide {})",
+                "tracked edits: needs an explicit per-tree decision for {}",
                 tree.id
             ),
         ),
@@ -256,7 +237,7 @@ fn classify(repo: &Path, tree: &Path, branch: &str, base: &str) -> Result<TreeCl
 
 #[cfg(test)]
 mod tests {
-    use super::{TreeClass, cleanup, cleanup_one, trees};
+    use super::{TreeClass, cleanup_one, trees};
     use crate::worktree::{merge_back, spawn};
     use std::path::{Path, PathBuf};
 
@@ -371,6 +352,56 @@ mod tests {
     }
 
     #[test]
+    fn trees_classify_the_four_and_cleanup_one_leaves_the_rest_alone() {
+        let (repo, _, foreign) = scene();
+        let mut got: Vec<(String, TreeClass)> = trees(&repo, "main")
+            .unwrap()
+            .into_iter()
+            .map(|tree| (tree.id, tree.class))
+            .collect();
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            vec![
+                ("m1".to_string(), TreeClass::Merged),
+                ("s1".to_string(), TreeClass::Scratch),
+                ("u1".to_string(), TreeClass::Unmerged),
+                ("w1".to_string(), TreeClass::Wip),
+            ]
+        );
+
+        // Merged and scratch go when their own row is cleaned; unmerged waits
+        // for merge-back.
+        assert!(cleanup_one(&repo, "main", "m1", false).unwrap().removed);
+        assert!(cleanup_one(&repo, "main", "s1", false).unwrap().removed);
+        let unmerged = cleanup_one(&repo, "main", "u1", true).unwrap();
+        assert!(!unmerged.removed);
+        assert!(unmerged.reason.contains("merge-back"), "{unmerged:?}");
+
+        // The last branch merges back; then its own row cleans it and the repo
+        // holds no cedian tree.
+        let head = crate::registry::WorkerHead {
+            id: "u1".to_string(),
+            branch: "cedian-worker/u1".to_string(),
+            worktree: ".worktrees/u1".to_string(),
+            task_title: String::new(),
+            kind: String::new(),
+            status: crate::registry::WorkerStatus::Running,
+            note: String::new(),
+            timebox_min: 0.0,
+            last_progress: None,
+        };
+        crate::worktree::merge_back(&repo, &head, "main").unwrap();
+        assert!(cleanup_one(&repo, "main", "u1", false).unwrap().removed);
+        let left = trees(&repo, "main").unwrap();
+        assert_eq!(left.len(), 1, "only the wip tree is left: {left:?}");
+        assert_eq!(left[0].id, "w1");
+
+        std::fs::remove_dir_all(&repo).unwrap();
+        let _ = std::fs::remove_dir_all(&foreign);
+    }
+
+    #[test]
     fn cleanup_one_acts_on_the_named_tree_and_leaves_its_siblings() {
         let (repo, _, foreign) = scene();
 
@@ -407,61 +438,6 @@ mod tests {
             cleanup_one(&repo, "main", "nope", true),
             Err(crate::registry::WorkerError::NoSuch(id)) if id == "nope"
         ));
-
-        std::fs::remove_dir_all(&repo).unwrap();
-        let _ = std::fs::remove_dir_all(&foreign);
-    }
-
-    #[test]
-    fn cleanup_removes_merged_and_scratch_then_a_decided_wip() {
-        let (repo, unmerged, foreign) = scene();
-
-        // No decision: merged + scratch go, wip + unmerged stay.
-        let out = cleanup(&repo, "main", &[]).unwrap();
-        let removed: Vec<&str> = out
-            .iter()
-            .filter(|o| o.removed)
-            .map(|o| o.id.as_str())
-            .collect();
-        let mut sorted = removed.clone();
-        sorted.sort();
-        assert_eq!(sorted, vec!["m1", "s1"]);
-        assert!(!repo.join(".worktrees/m1").exists());
-        assert!(!repo.join(".worktrees/s1").exists());
-        assert!(repo.join(".worktrees/w1/a.txt").exists());
-        assert!(repo.join(".worktrees/u1/u.txt").exists());
-
-        let wip = out.iter().find(|o| o.id == "w1").unwrap();
-        assert!(!wip.removed);
-        assert!(
-            wip.reason.contains("per-tree decision"),
-            "wip reason names the decision: {:?}",
-            wip.reason
-        );
-        let unmerged_out = out.iter().find(|o| o.id == "u1").unwrap();
-        assert!(!unmerged_out.removed);
-        assert!(
-            unmerged_out.reason.contains("merge-back"),
-            "unmerged reason names merge-back: {:?}",
-            unmerged_out.reason
-        );
-
-        // An explicit decision removes the wip tree too.
-        let out = cleanup(&repo, "main", &["w1".to_string()]).unwrap();
-        let wip = out.iter().find(|o| o.id == "w1").unwrap();
-        assert!(wip.removed, "decided wip is removed: {:?}", wip.reason);
-        assert!(!repo.join(".worktrees/w1").exists());
-        assert!(repo.join(".worktrees/u1/u.txt").exists());
-
-        // Merge the last branch back; now a plain sweep clears it and a
-        // repeated sweep finds nothing and removes nothing.
-        merge_back(&repo, &unmerged, "main").unwrap();
-        let out = cleanup(&repo, "main", &[]).unwrap();
-        assert_eq!(out.len(), 1);
-        assert!(out[0].removed, "merged now: {:?}", out[0].reason);
-        let repeat = cleanup(&repo, "main", &[]).unwrap();
-        assert!(repeat.is_empty(), "second run finds nothing: {repeat:?}");
-        assert!(trees(&repo, "main").unwrap().is_empty());
 
         std::fs::remove_dir_all(&repo).unwrap();
         let _ = std::fs::remove_dir_all(&foreign);
