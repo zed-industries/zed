@@ -3,7 +3,7 @@ name = "designer_panel"
 description = "The workflow Designer: a gpui-flow canvas tab for viewing, editing, and running .flow.json workflows."
 license = "Apache-2.0"
 edition.workspace = true
-version = "0.1.0"
+version = "0.1.1"
 publish = false
 
 [lib]

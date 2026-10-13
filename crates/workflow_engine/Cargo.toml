@@ -3,7 +3,7 @@ name = "workflow_engine"
 description = "Forge workflow execution engine: flow.json schema, action registry, level scheduler and executors, process tracker, project scanner."
 license = "Apache-2.0"
 edition.workspace = true
-version = "0.1.0"
+version = "0.1.1"
 publish = false
 
 [lib]
