@@ -12,11 +12,11 @@
 //! or is stopped is recorded as `abstain` (§63 lease, ADR-0013).
 
 use cedian_omp::{
-    DialogRecord, EventRouter, NewSession, OmpBinary, OmpError, OmpRuntime, RouterEvent,
-    RuntimeConfig, RuntimeControl, Sessions, SpawnPolicy, UserAnswer,
+    Answerer, DialogRecord, EventRouter, GateDecision, NewSession, OmpBinary, OmpError, OmpRuntime,
+    RouterEvent, RuntimeConfig, RuntimeControl, Sessions, SpawnPolicy, UserAnswer,
 };
 use cedian_shell::audit::AuditLog;
-use cedian_shell::{Policy, RunKind};
+use cedian_shell::{Policy, RunKind, Verdict};
 use collections::HashMap;
 use futures::channel::mpsc::UnboundedSender;
 use omp_rpc::{
@@ -114,6 +114,13 @@ pub enum LinkEvent {
     SubagentCancelled {
         id: String,
         result: Result<bool, String>,
+    },
+    /// A host-tool thread waits on the person for worktree `id`; the panel
+    /// shows Allow/Deny and answers with `WorktreeAsk::answer` (ADR-0012).
+    WorktreeAsked {
+        request: u64,
+        id: String,
+        goal: String,
     },
 }
 
@@ -236,6 +243,9 @@ pub struct LaunchSpec {
     /// The host tools registered before the session opens (one
     /// `set_host_tools` replaces OMP's whole set, ADR-0004).
     pub tools: Vec<HostTool>,
+    /// The worktree gate, when project writes need a person: the panel
+    /// wires it and answers its requests (ADR-0012).
+    pub worktree_ask: Option<Arc<WorktreeAsk>>,
     /// The runtime's router once OMP runs: the workflow channel binds
     /// reported evidence to the calls in its log (ADR-0031).
     pub router: Arc<OnceLock<Arc<EventRouter>>>,
@@ -329,11 +339,24 @@ impl LaunchSpec {
             cedian_workflow::COMPLETE_TOOL,
             cedian_shell::review_agent::REVIEW_REQUEST_TOOL,
         ];
+        let mut worktree_ask = None;
         if cedian_shell::launch::registers_worktree_request(&settings) {
-            tools.push(cedian_worker::worktree_request_tool(
-                workdir.to_path_buf(),
-                state_dir.clone(),
-            ));
+            let tool = if settings.permissions.project_write == Verdict::Ask {
+                // A person answers: the panel keeps the ask and shows the bar.
+                let ask = Arc::new(WorktreeAsk::new(
+                    crate::panel::DIALOG_TIMEOUT + WORKTREE_ASK_MARGIN,
+                ));
+                worktree_ask = Some(Arc::clone(&ask));
+                cedian_worker::worktree_request_tool_with_gate(
+                    workdir.to_path_buf(),
+                    state_dir.clone(),
+                    Arc::new(AskWorktree { ask }),
+                )
+            } else {
+                // `allow`: a tree with no question (today's behaviour).
+                cedian_worker::worktree_request_tool(workdir.to_path_buf(), state_dir.clone())
+            };
+            tools.push(tool);
             names.push(cedian_worker::WORKTREE_REQUEST_TOOL);
         }
         let policy = cedian_shell::launch::spawn_policy(&settings, choice.policy, &names);
@@ -347,6 +370,7 @@ impl LaunchSpec {
             omp_state: cedian_omp::driver::state_root(),
             uris: Vec::new(),
             tools,
+            worktree_ask,
             router,
             browser,
             workflow: channel,
@@ -409,6 +433,87 @@ pub fn review_place(workdir: &Path, state_dir: &Path) -> cedian_shell::review_ag
         workdir: workdir.to_path_buf(),
         state_dir: state_dir.to_path_buf(),
         session_dir: state_dir.to_path_buf(),
+    }
+}
+
+/// How long past the panel's dialog lease a host-tool thread waits before
+/// giving up on the person. The panel's expiry answers first (ADR-0013).
+const WORKTREE_ASK_MARGIN: Duration = Duration::from_secs(30);
+
+/// A worktree request waiting on the person. The host-tool thread calls
+/// `ask` and blocks; the panel calls `answer`.
+pub struct WorktreeAsk {
+    /// The link's event channel, set once the panel has it (`wire`).
+    events: OnceLock<UnboundedSender<LinkEvent>>,
+    /// Blocked host-tool threads, by request id.
+    pending: Mutex<HashMap<u64, mpsc::Sender<bool>>>,
+    next: AtomicU64,
+    /// How long `ask` blocks: the dialog lease plus a margin, so the
+    /// panel's expiry answers first. A test shortens it (the seam).
+    wait: Duration,
+}
+
+impl WorktreeAsk {
+    /// `wait` is how long `ask` blocks before failing closed (ADR-0013).
+    pub fn new(wait: Duration) -> Self {
+        Self {
+            events: OnceLock::new(),
+            pending: Mutex::new(HashMap::default()),
+            next: AtomicU64::new(0),
+            wait,
+        }
+    }
+
+    /// Give the ask the link's events. Called once, by the panel.
+    pub fn wire(&self, events: UnboundedSender<LinkEvent>) {
+        self.events.set(events).ok();
+    }
+
+    /// Ask the person and block until they answer, the panel's lease runs
+    /// out, or `wait` passes. A timeout or a dropped channel is a denial.
+    pub fn ask(&self, id: &str, goal: &str) -> bool {
+        let request = self.next.fetch_add(1, Ordering::Relaxed);
+        let (reply, answer) = mpsc::channel();
+        self.pending.lock().insert(request, reply);
+        let sent = self.events.get().is_some_and(|events| {
+            events
+                .unbounded_send(LinkEvent::WorktreeAsked {
+                    request,
+                    id: id.to_string(),
+                    goal: goal.to_string(),
+                })
+                .is_ok()
+        });
+        let answer = if sent {
+            answer.recv_timeout(self.wait)
+        } else {
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        };
+        if answer.is_err() {
+            // Nobody answered: fail closed, and let a late answer find none.
+            self.pending.lock().remove(&request);
+        }
+        answer.unwrap_or(false)
+    }
+
+    /// Answer a pending request. False when it expired or was already
+    /// answered.
+    pub fn answer(&self, request: u64, allow: bool) -> bool {
+        match self.pending.lock().remove(&request) {
+            Some(reply) => reply.send(allow).is_ok(),
+            None => false,
+        }
+    }
+}
+
+/// The panel's gate over a [`WorktreeAsk`]: a person's answer, or none.
+struct AskWorktree {
+    ask: Arc<WorktreeAsk>,
+}
+
+impl cedian_worker::WorktreeGate for AskWorktree {
+    fn allow(&self, id: &str, goal: &str) -> bool {
+        self.ask.ask(id, goal)
     }
 }
 
@@ -1080,6 +1185,35 @@ impl OmpLink {
         self.gate.state.lock().audit = None;
     }
 
+    /// A link whose only live part is its audit log: a panel test drives
+    /// `on_link_event` and the gate's rows without an OMP process.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn audit_only(
+        events: UnboundedSender<LinkEvent>,
+        state_dir: &Path,
+        approvals: cedian_omp::Approvals,
+    ) -> Result<Self, String> {
+        let (commands, _rx) = mpsc::channel::<Command>();
+        let gate = Arc::new(Gate {
+            control: Mutex::default(),
+            turn: Mutex::default(),
+            state: Mutex::new(GateState {
+                audit: Some(AuditLog::open(state_dir, approvals)?),
+                open: HashMap::default(),
+            }),
+            queue: Mutex::default(),
+            sending: Mutex::default(),
+            stops: AtomicU64::default(),
+            events,
+        });
+        Ok(Self {
+            commands,
+            pid: Arc::new(AtomicU32::new(0)),
+            gate,
+            thread: None,
+        })
+    }
+
     /// Check a taken session again; `Ready` or `Taken` follows.
     pub fn retry(&self) -> Result<(), String> {
         self.command(Command::Retry)
@@ -1177,6 +1311,32 @@ impl OmpLink {
             None => Err("the audit log is not open".to_string()),
         };
         if let Err(e) = recorded {
+            let _ = self.gate.events.unbounded_send(LinkEvent::AuditFailed(e));
+        }
+    }
+
+    /// One worktree request's outcome (§64 audit tuple), through the link
+    /// that owns the log: the person answered, or the 5-minute lease ran
+    /// out and cedian denied it (ADR-0012, ADR-0013).
+    pub fn worktree_decision(&self, id: &str, goal: &str, allow: bool, abstained: bool) {
+        let record = DialogRecord {
+            label: format!("{id}: {goal}"),
+            tool: Some(cedian_worker::WORKTREE_REQUEST_TOOL.to_string()),
+            decision: if abstained {
+                GateDecision::Abstain
+            } else if allow {
+                GateDecision::Allow
+            } else {
+                GateDecision::Deny
+            },
+            answered_by: if abstained {
+                Answerer::Cedian
+            } else {
+                Answerer::User
+            },
+            at_ms: cedian_omp::now_ms(),
+        };
+        if let Err(e) = self.gate.state.lock().record(record) {
             let _ = self.gate.events.unbounded_send(LinkEvent::AuditFailed(e));
         }
     }
@@ -1712,6 +1872,74 @@ mod tests {
         ("abstain".to_string(), "cedian".to_string())
     }
 
+    /// Drive one ask on its own thread; the event it sends names the
+    /// request the panel answers.
+    fn asked(ask: &Arc<WorktreeAsk>) -> (std::thread::JoinHandle<bool>, u64) {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        ask.wire(tx);
+        let asking = Arc::clone(ask);
+        let handle = std::thread::spawn(move || asking.ask("w1", "try it"));
+        let event = futures::executor::block_on(rx.next()).expect("the ask sends its event");
+        match event {
+            LinkEvent::WorktreeAsked { request, id, goal } => {
+                assert_eq!((id.as_str(), goal.as_str()), ("w1", "try it"));
+                (handle, request)
+            }
+            other => panic!("expected WorktreeAsked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_allow_answer_resolves_the_ask_true() {
+        let ask = Arc::new(WorktreeAsk::new(Duration::from_secs(30)));
+        let (handle, request) = asked(&ask);
+        assert!(ask.answer(request, true));
+        assert!(handle.join().unwrap());
+        assert!(!ask.answer(request, true), "the request is gone");
+    }
+
+    #[test]
+    fn a_deny_answer_resolves_the_ask_false() {
+        let ask = Arc::new(WorktreeAsk::new(Duration::from_secs(30)));
+        let (handle, request) = asked(&ask);
+        assert!(ask.answer(request, false));
+        assert!(!handle.join().unwrap());
+    }
+
+    /// The seam: `new` takes the wait, so a test proves the timeout
+    /// without waiting the five-minute lease.
+    #[test]
+    fn an_unanswered_ask_times_out_false() {
+        let ask = Arc::new(WorktreeAsk::new(Duration::from_millis(50)));
+        let (handle, request) = asked(&ask);
+        assert!(!handle.join().unwrap());
+        assert!(!ask.answer(request, true), "the lease had run out");
+    }
+
+    #[test]
+    fn an_unwired_ask_fails_closed() {
+        assert!(!WorktreeAsk::new(Duration::from_secs(30)).ask("w1", "try it"));
+    }
+
+    #[test]
+    fn a_worktree_decision_records_the_gate_row() {
+        let dir = temp("worktree-decision");
+        let (tx, _rx) = futures::channel::mpsc::unbounded();
+        let link = OmpLink::audit_only(tx, &dir, SpawnPolicy::default().approvals).unwrap();
+        link.worktree_decision("w1", "try it", true, false);
+        link.worktree_decision("w2", "try it", false, false);
+        link.worktree_decision("w3", "try it", false, true);
+        assert_eq!(
+            rows(&dir),
+            [
+                ("allow".to_string(), "user".to_string()),
+                ("deny".to_string(), "user".to_string()),
+                abstain(),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn omp_withdrawing_a_dialog_is_one_abstain_row() {
         let dir = temp("cancel");
@@ -2201,6 +2429,7 @@ mod tests {
             omp_state: cedian_omp::driver::state_root(),
             uris: Vec::new(),
             tools: Vec::new(),
+            worktree_ask: None,
             router: Arc::default(),
             browser: Arc::default(),
             workflow: cedian_workflow::WorkflowChannel::new(

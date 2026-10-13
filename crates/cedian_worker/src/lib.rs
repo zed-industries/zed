@@ -27,7 +27,10 @@ pub mod worktree;
 
 pub use brief::{Brief, BriefError, Scope, ScopeError, WorkerScope};
 pub use cleanup::{CleanupOutcome, TreeClass, TreeState, cleanup, cleanup_one, trees};
-pub use host_tool::{WORKTREE_REQUEST_TOOL, request_worktree, worktree_request_tool};
+pub use host_tool::{
+    WORKTREE_REQUEST_TOOL, WorktreeGate, request_worktree, worktree_request_tool,
+    worktree_request_tool_with_gate,
+};
 pub use registry::{Registry, WorkerError, WorkerHead, WorkerStatus, now_ms};
 pub use worktree::{
     MergePlan, last_commit_ms, merge_back, merge_preview, remove, spawn, validate_id,

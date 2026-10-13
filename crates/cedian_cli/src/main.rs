@@ -41,6 +41,7 @@ use cedian_shell::{
 use cedian_workspace::{HostTools, WorkspaceHost};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn main() {
@@ -169,8 +170,9 @@ pub(crate) fn dispatch(args: Vec<String>, in_shell: bool) -> Result<(), String> 
 
 /// The complete cedian host-tool set for these settings (ADR-0004: one
 /// `set_host_tools` call replaces the whole set, so register all of it).
-/// `cedian_worktree_request` writes `.worktrees/` + a branch: present only
-/// when project writes are allowed.
+/// `cedian_worktree_request` writes `.worktrees/` + a branch: present
+/// unless project writes are refused outright (a person answers it under
+/// `ask`, ADR-0012).
 fn host_tool_names(settings: &cedian_shell::Settings) -> Vec<&'static str> {
     let mut names = vec![
         cedian_workflow::WORKFLOW_UPDATE_TOOL,
@@ -182,6 +184,39 @@ fn host_tool_names(settings: &cedian_shell::Settings) -> Vec<&'static str> {
         names.push(cedian_worker::WORKTREE_REQUEST_TOOL);
     }
     names
+}
+
+/// The worktree tool the CLI registers. Under `ask` there is no person at
+/// the keyboard, so its gate denies every request (ADR-0012); under `allow`
+/// the tree needs no question.
+fn worktree_tool(
+    workdir: &Path,
+    state_dir: PathBuf,
+    settings: &cedian_shell::Settings,
+) -> omp_rpc::HostTool {
+    if settings.permissions.project_write == cedian_shell::Verdict::Ask {
+        cedian_worker::worktree_request_tool_with_gate(
+            workdir.to_path_buf(),
+            state_dir,
+            Arc::new(NoPerson),
+        )
+    } else {
+        cedian_worker::worktree_request_tool(workdir.to_path_buf(), state_dir)
+    }
+}
+
+/// The headless gate: nobody is at the keyboard to answer, so a request
+/// fails closed without creating a tree (ADR-0012).
+struct NoPerson;
+
+impl cedian_worker::WorktreeGate for NoPerson {
+    fn allow(&self, _id: &str, _goal: &str) -> bool {
+        false
+    }
+
+    fn refused(&self, id: &str) -> String {
+        format!("no worktree {id}: no person is at the keyboard")
+    }
 }
 
 /// The workflow channel over `workdir`'s store, with the user's floor and
@@ -282,10 +317,7 @@ fn host_tools(
         move || current_state(&class_root),
     ));
     if names.contains(&cedian_worker::WORKTREE_REQUEST_TOOL) {
-        tools.push(cedian_worker::worktree_request_tool(
-            workdir.to_path_buf(),
-            state_dir,
-        ));
+        tools.push(worktree_tool(workdir, state_dir, settings));
     }
     debug_assert_eq!(tools.len(), names.len());
     Ok(tools)
@@ -1182,13 +1214,36 @@ mod tests {
         for name in &names {
             assert!(cedian_workflow::is_channel_call(name, ""), "{name}");
         }
-        for verdict in [cedian_shell::Verdict::Ask, cedian_shell::Verdict::Deny] {
-            settings.permissions.project_write = verdict;
-            assert!(
-                !host_tool_names(&settings).contains(&cedian_worker::WORKTREE_REQUEST_TOOL),
-                "a worktree request makes a tree with no dialog: only under allow (ADR-0012)"
-            );
-        }
+        // Registered under `ask` too (the headless gate answers it);
+        // unregistered under `deny` (ADR-0012).
+        settings.permissions.project_write = cedian_shell::Verdict::Ask;
+        assert!(
+            host_tool_names(&settings).contains(&cedian_worker::WORKTREE_REQUEST_TOOL),
+            "under ask the tool is registered and refuses"
+        );
+        settings.permissions.project_write = cedian_shell::Verdict::Deny;
+        assert!(
+            !host_tool_names(&settings).contains(&cedian_worker::WORKTREE_REQUEST_TOOL),
+            "a worktree request under deny is not registered at all"
+        );
+    }
+
+    /// Under `ask` the CLI registers the tool with a gate that refuses: no
+    /// person is at the keyboard, so nothing is created (ADR-0012).
+    #[test]
+    fn the_headless_worktree_gate_refuses_under_ask() {
+        let mut settings = cedian_shell::Settings::default();
+        settings.permissions.project_write = cedian_shell::Verdict::Ask;
+        assert!(
+            host_tool_names(&settings).contains(&cedian_worker::WORKTREE_REQUEST_TOOL),
+            "under ask the tool is registered"
+        );
+        let gate = NoPerson;
+        assert!(!cedian_worker::WorktreeGate::allow(&gate, "w1", "try it"));
+        assert_eq!(
+            cedian_worker::WorktreeGate::refused(&gate, "w1"),
+            "no worktree w1: no person is at the keyboard"
+        );
     }
 
     #[test]

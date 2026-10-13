@@ -21,7 +21,9 @@ use crate::browser::BrowserHost;
 use crate::context;
 use crate::dialogs::OpenDialog;
 use crate::import::{self, ImportOutcome, Mark};
-use crate::omp_link::{AnswerError, LaunchSpec, LinkEvent, OmpLink, Prompt, ReviewReader};
+use crate::omp_link::{
+    AnswerError, LaunchSpec, LinkEvent, OmpLink, Prompt, ReviewReader, WorktreeAsk,
+};
 use crate::omp_settings::OmpSettings;
 use crate::review::{ReviewError, TaskReview};
 use crate::worker_trees::{self, WorkerTreeRow};
@@ -427,6 +429,12 @@ pub struct CedianPanel {
     worker_trees: Option<Vec<WorkerTreeRow>>,
     /// The worker whose Remove is waiting on a second click (§43).
     confirm_remove: Option<String>,
+    /// A worktree request waiting on the person: (request, id, goal).
+    worktree_ask: Option<(u64, String, String)>,
+    /// The running launch's worktree gate, which answers its requests.
+    worktree_gate: Option<Arc<WorktreeAsk>>,
+    /// The lease on the pending worktree request (ADR-0013).
+    _worktree_expiry: Option<Task<()>>,
 }
 
 /// The model and thinking-level picker: OMP's choices once read, and what
@@ -596,6 +604,9 @@ impl CedianPanel {
             edit_turn: None,
             worker_trees: None,
             confirm_remove: None,
+            worktree_ask: None,
+            worktree_gate: None,
+            _worktree_expiry: None,
         };
         this._worktree_changes = Some(cx.subscribe(&this.project, |this, project, event, cx| {
             if let project::Event::WorktreeUpdatedEntries(worktree, changes) = event {
@@ -1436,6 +1447,8 @@ impl CedianPanel {
         self.notice = None;
         self.forget_old_omp(window, cx);
         self.dialogs.clear();
+        self.worktree_ask = None;
+        self._worktree_expiry = None;
         self.release_in_flight(cx);
         self.set_turn(Turn::Idle);
         let Some(root) = self.workspace_root(cx) else {
@@ -1489,6 +1502,10 @@ impl CedianPanel {
             cx,
         ));
         let (event_tx, mut event_rx) = mpsc::unbounded::<LinkEvent>();
+        self.worktree_gate = spec.worktree_ask.clone();
+        if let Some(ask) = &self.worktree_gate {
+            ask.wire(event_tx.clone());
+        }
         self.instruments.spawning();
         self.link = Some(OmpLink::start(spec, event_tx, previous));
         self.connection = Connection::Starting;
@@ -2240,6 +2257,15 @@ impl CedianPanel {
                     Err(e) => format!("cancel failed: {e}"),
                 };
                 self.subagent_notes.insert(id, note);
+            }
+            LinkEvent::WorktreeAsked { request, id, goal } => {
+                self.worktree_ask = Some((request, id, goal));
+                // The same 5-minute lease the dialogs get (ADR-0013).
+                self._worktree_expiry = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(DIALOG_TIMEOUT).await;
+                    this.update(cx, |this, cx| this.expire_worktree(cx)).ok();
+                }));
+                cx.notify();
             }
             LinkEvent::Event(RouterEvent::UiRequest(ExtensionUiRequest::Cancel(cancel))) => {
                 self.dialogs.shift_remove(&cancel.target_id);
@@ -3616,6 +3642,45 @@ impl CedianPanel {
         cx.notify();
     }
 
+    /// The person's Allow/Deny on a worktree request (ADR-0012): audit the
+    /// answer, resolve the blocked host-tool thread, and clear the bar. A
+    /// late answer — the lease already ran out — only says so.
+    pub fn answer_worktree(&mut self, allow: bool, cx: &mut Context<Self>) {
+        let Some((request, id, goal)) = self.worktree_ask.take() else {
+            self.notice = Some("that worktree request was already answered".to_string());
+            cx.notify();
+            return;
+        };
+        if let Some(link) = &self.link {
+            link.worktree_decision(&id, &goal, allow, false);
+        }
+        if let Some(gate) = &self.worktree_gate {
+            gate.answer(request, allow);
+        }
+        self._worktree_expiry = None;
+        cx.notify();
+    }
+
+    /// The worktree request's lease ran out: cedian denies it, resolves the
+    /// blocked host-tool thread, and says nobody answered (§63, ADR-0013).
+    fn expire_worktree(&mut self, cx: &mut Context<Self>) {
+        let Some((request, id, goal)) = self.worktree_ask.take() else {
+            return;
+        };
+        if let Some(link) = &self.link {
+            link.worktree_decision(&id, &goal, false, true);
+        }
+        if let Some(gate) = &self.worktree_gate {
+            gate.answer(request, false);
+        }
+        self._worktree_expiry = None;
+        self.notice = Some(format!(
+            "the worktree request for {id} got no answer in {} minutes; cedian denied it",
+            DIALOG_TIMEOUT.as_secs() / 60
+        ));
+        cx.notify();
+    }
+
     fn submit_dialog(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(dialog) = self.dialogs.get_mut(id) else {
             return;
@@ -3700,6 +3765,34 @@ impl CedianPanel {
                     .color(Color::Warning)
             }))
             .into_any_element()
+    }
+
+    /// The Allow/Deny bar for a worktree request waiting on the person
+    /// (ADR-0012). No modal primitive, so it sits with the other confirms.
+    fn render_worktree_ask(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (_, id, goal) = self.worktree_ask.as_ref()?;
+        let button = |label: &str, selector: &'static str, allow: bool| {
+            div().debug_selector(move || selector.to_string()).child(
+                Button::new(ElementId::Name(selector.into()), label)
+                    .on_click(cx.listener(move |this, _, _, cx| this.answer_worktree(allow, cx))),
+            )
+        };
+        Some(
+            v_flex()
+                .debug_selector(|| "cedian-worktree-ask".to_string())
+                .gap_1()
+                .child(
+                    Label::new(format!("OMP asks for a worktree \"{id}\": {goal}"))
+                        .size(LabelSize::Small),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(button("Allow", "cedian-worktree-ask-allow", true))
+                        .child(button("Deny", "cedian-worktree-ask-deny", false)),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_dialog(&self, id: &str, dialog: &OpenDialog, cx: &mut Context<Self>) -> AnyElement {
@@ -4731,6 +4824,7 @@ impl Render for CedianPanel {
             .children(browser)
             .children(workers)
             .children(dialogs)
+            .children(self.render_worktree_ask(cx))
             .children(self.render_onboarding(cx))
             .child(self.render_picker(cx))
             .child(self.render_session(cx))
@@ -6267,6 +6361,162 @@ mod tests {
             accept_all_with_stale(cx, "cedian-accept-all-no").await,
             vec![HunkStatus::Accepted, HunkStatus::Stale]
         );
+    }
+
+    /// The worktree tool's gate rows `(decision, answered_by)` in `dir`.
+    fn worktree_rows(dir: &Path) -> Vec<(String, String)> {
+        std::fs::read_to_string(dir.join(cedian_shell::audit::AUDIT_FILE))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["item"].clone())
+            .filter(|item| item["tool"] == "cedian_worktree_request")
+            .map(|item| {
+                (
+                    item["decision"].as_str().unwrap().to_string(),
+                    item["answered_by"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    /// A fresh temp dir for the link the panel's worktree gate audits
+    /// through.
+    fn worktree_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("cedian-panel-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Put a link with an audit log in `dir` and a worktree gate behind the
+    /// panel, returning the ask and the events it sends.
+    fn panel_worktree(
+        cx: &mut TestAppContext,
+        f: &Fixture,
+        dir: &Path,
+    ) -> (Arc<WorktreeAsk>, mpsc::UnboundedReceiver<LinkEvent>) {
+        let (tx, rx) = mpsc::unbounded::<LinkEvent>();
+        let link = OmpLink::audit_only(
+            tx.clone(),
+            dir,
+            cedian_omp::SpawnPolicy::default().approvals,
+        )
+        .unwrap();
+        let ask = Arc::new(WorktreeAsk::new(Duration::from_secs(30)));
+        ask.wire(tx);
+        f.window
+            .update(cx, |panel, _, _| {
+                panel.link = Some(link);
+                panel.worktree_gate = Some(Arc::clone(&ask));
+            })
+            .unwrap();
+        (ask, rx)
+    }
+
+    /// Hand the panel the `WorktreeAsked` event the blocked ask sent.
+    fn feed_worktree_ask(
+        f: &Fixture,
+        cx: &mut TestAppContext,
+        rx: &mut mpsc::UnboundedReceiver<LinkEvent>,
+    ) {
+        let event = futures::executor::block_on(rx.next()).expect("the ask sends an event");
+        f.window
+            .update(cx, |panel, window, cx| {
+                panel.on_link_event(event, window, cx)
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn a_worktree_request_shows_a_bar_and_an_allow_is_audited(cx: &mut TestAppContext) {
+        let (f, _buffer) = fixture(cx).await;
+        let dir = worktree_dir("worktree-allow");
+        let (ask, mut rx) = panel_worktree(cx, &f, &dir);
+        let asking = Arc::clone(&ask);
+        let handle = std::thread::spawn(move || asking.ask("w1", "try it"));
+        feed_worktree_ask(&f, cx, &mut rx);
+
+        let mut vcx = VisualTestContext::from_window(f.window.into(), cx);
+        assert!(vcx.debug_bounds("cedian-worktree-ask").is_some());
+        click(&mut vcx, "cedian-worktree-ask-allow");
+        assert!(vcx.debug_bounds("cedian-worktree-ask").is_none());
+        assert!(handle.join().unwrap(), "the person allowed it");
+        assert_eq!(
+            worktree_rows(&dir),
+            [("allow".to_string(), "user".to_string())]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[gpui::test]
+    async fn a_worktree_request_deny_is_audited_and_resolves_false(cx: &mut TestAppContext) {
+        let (f, _buffer) = fixture(cx).await;
+        let dir = worktree_dir("worktree-deny");
+        let (ask, mut rx) = panel_worktree(cx, &f, &dir);
+        let asking = Arc::clone(&ask);
+        let handle = std::thread::spawn(move || asking.ask("w1", "try it"));
+        feed_worktree_ask(&f, cx, &mut rx);
+
+        let mut vcx = VisualTestContext::from_window(f.window.into(), cx);
+        click(&mut vcx, "cedian-worktree-ask-deny");
+        assert!(!handle.join().unwrap(), "the person denied it");
+        assert_eq!(
+            worktree_rows(&dir),
+            [("deny".to_string(), "user".to_string())]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The lease firing is the panel's `expire_worktree` — driven directly
+    /// rather than waiting five minutes.
+    #[gpui::test]
+    async fn an_expired_worktree_request_is_denied_and_audited(cx: &mut TestAppContext) {
+        let (f, _buffer) = fixture(cx).await;
+        let dir = worktree_dir("worktree-expire");
+        let (ask, mut rx) = panel_worktree(cx, &f, &dir);
+        let asking = Arc::clone(&ask);
+        let handle = std::thread::spawn(move || asking.ask("w1", "try it"));
+        feed_worktree_ask(&f, cx, &mut rx);
+
+        f.window
+            .update(cx, |panel, _, cx| {
+                assert!(panel.worktree_ask.is_some());
+                panel.expire_worktree(cx);
+            })
+            .unwrap();
+        assert!(!handle.join().unwrap(), "nobody answered");
+        assert_eq!(
+            worktree_rows(&dir),
+            [("abstain".to_string(), "cedian".to_string())]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[gpui::test]
+    async fn a_late_worktree_answer_only_says_so(cx: &mut TestAppContext) {
+        let (f, _buffer) = fixture(cx).await;
+        let dir = worktree_dir("worktree-late");
+        let (ask, mut rx) = panel_worktree(cx, &f, &dir);
+        let asking = Arc::clone(&ask);
+        let handle = std::thread::spawn(move || asking.ask("w1", "try it"));
+        feed_worktree_ask(&f, cx, &mut rx);
+        f.window
+            .update(cx, |panel, _, cx| panel.expire_worktree(cx))
+            .unwrap();
+        handle.join().unwrap();
+
+        f.window
+            .update(cx, |panel, _, cx| panel.answer_worktree(true, cx))
+            .unwrap();
+        assert_eq!(
+            notice(&f, cx),
+            Some("that worktree request was already answered".to_string())
+        );
+        assert_eq!(
+            worktree_rows(&dir),
+            [("abstain".to_string(), "cedian".to_string())]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The question is about the STALE hunks there are: when the person

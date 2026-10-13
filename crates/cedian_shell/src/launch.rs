@@ -10,10 +10,15 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Whether `cedian_worktree_request` is registered. It makes a tree and a
-/// branch with no dialog of its own, so only project writes that need no
-/// approval allow it (ADR-0012 strict-wins).
+/// branch with no dialog of its own, so the two verdicts that do not refuse
+/// project writes register it (ADR-0012 strict-wins). What answers it
+/// differs: under `allow` the caller's gate always allows, under `ask` a
+/// person answers, and under `deny` nobody could, so it is not registered.
 pub fn registers_worktree_request(settings: &Settings) -> bool {
-    settings.permissions.project_write == Verdict::Allow
+    matches!(
+        settings.permissions.project_write,
+        Verdict::Allow | Verdict::Ask
+    )
 }
 
 /// Map `[permissions]` onto the OMP spawn policy (ADR-0020). Under the
@@ -252,5 +257,24 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["cedian_worktree_request"]
         );
+    }
+
+    /// The tool is registered unless project writes are refused outright;
+    /// who answers it is the caller's gate (ADR-0012).
+    #[test]
+    fn worktree_request_is_registered_under_allow_and_ask_but_not_deny() {
+        let mut settings = Settings::default();
+        for (verdict, registered) in [
+            (Verdict::Allow, true),
+            (Verdict::Ask, true),
+            (Verdict::Deny, false),
+        ] {
+            settings.permissions.project_write = verdict;
+            assert_eq!(
+                registers_worktree_request(&settings),
+                registered,
+                "{verdict:?}"
+            );
+        }
     }
 }

@@ -8,9 +8,32 @@ use crate::{Registry, WorkerError, WorkerStatus, spawn, validate_id};
 use omp_rpc::HostTool;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Host tool name (listed in `cedian_workflow::CHANNEL_TOOLS`).
 pub const WORKTREE_REQUEST_TOOL: &str = "cedian_worktree_request";
+
+/// Who answers a worktree request when the project's writes need a person
+/// (ADR-0012). `ask` blocks its caller, which is a host-tool thread of its
+/// own; a timeout or a dropped channel is a denial.
+pub trait WorktreeGate: Send + Sync {
+    fn allow(&self, id: &str, goal: &str) -> bool;
+
+    /// The refusal OMP sees for a denied request. The default names the
+    /// person a panel asked; a headless caller says nobody was there.
+    fn refused(&self, id: &str) -> String {
+        format!("no worktree {id}: a person denied the request")
+    }
+}
+
+/// The gate `worktree_request_tool` uses: today's `allow` behaviour.
+struct AlwaysAllow;
+
+impl WorktreeGate for AlwaysAllow {
+    fn allow(&self, _id: &str, _goal: &str) -> bool {
+        true
+    }
+}
 
 /// Create worktree `id` off `base` (default `HEAD`) for the brief in
 /// `args`, record it in the registry under `state` (the repo's cedian state
@@ -26,20 +49,7 @@ pub fn request_worktree(
     args: &Map<String, Value>,
 ) -> Result<String, String> {
     let id = args.get("id").and_then(Value::as_str).unwrap_or("");
-    let brief = match Brief::from_json(&Value::Object(args.clone()).to_string()) {
-        Ok(brief) => brief,
-        Err(BriefError::Missing(mut fields)) => {
-            // `id` is the tunnel that names the worker, not a brief field.
-            if id.is_empty() {
-                fields.insert(0, "id".to_string());
-            }
-            return Err(BriefError::Missing(fields).to_string());
-        }
-        Err(e) => return Err(e.to_string()),
-    };
-    if id.is_empty() {
-        return Err(BriefError::Missing(vec!["id".to_string()]).to_string());
-    }
+    let brief = checked_brief(id, args)?;
     let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("");
     let base = match text("base") {
         "" => "HEAD",
@@ -83,8 +93,50 @@ pub fn request_worktree(
     Ok(reply)
 }
 
-/// The host tool over `repo` (the repo root, like `cedian worker`).
-pub fn worktree_request_tool(repo: PathBuf, state: PathBuf) -> HostTool {
+/// The brief in `args`, refused with the brief's error before anything else
+/// (ADR-0033 decision 1).
+fn checked_brief(id: &str, args: &Map<String, Value>) -> Result<Brief, String> {
+    let brief = match Brief::from_json(&Value::Object(args.clone()).to_string()) {
+        Ok(brief) => brief,
+        Err(BriefError::Missing(mut fields)) => {
+            // `id` is the tunnel that names the worker, not a brief field.
+            if id.is_empty() {
+                fields.insert(0, "id".to_string());
+            }
+            return Err(BriefError::Missing(fields).to_string());
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    if id.is_empty() {
+        return Err(BriefError::Missing(vec!["id".to_string()]).to_string());
+    }
+    Ok(brief)
+}
+
+/// One request through `gate`: the brief is checked first (a missing field
+/// is the brief's error, never a person's question), then the gate, then
+/// `request_worktree`. A denied request creates nothing.
+fn request_with_gate(
+    repo: &Path,
+    state: &Path,
+    gate: &dyn WorktreeGate,
+    args: &Map<String, Value>,
+) -> Result<String, String> {
+    let id = args.get("id").and_then(Value::as_str).unwrap_or("");
+    let brief = checked_brief(id, args)?;
+    if !gate.allow(id, &brief.goal) {
+        return Err(gate.refused(id));
+    }
+    request_worktree(repo, state, args)
+}
+
+/// The host tool over `repo` (the repo root, like `cedian worker`), with a
+/// gate that asks before a tree is made (ADR-0012).
+pub fn worktree_request_tool_with_gate(
+    repo: PathBuf,
+    state: PathBuf,
+    gate: Arc<dyn WorktreeGate>,
+) -> HostTool {
     let lines = |what: &str| json!({"type": "array", "items": {"type": "string"}, "minItems": 1, "description": what});
     // The `required` list is built from the same fields the refusal checks,
     // so the schema cannot drift from the validator (ADR-0033 decision 1).
@@ -129,11 +181,16 @@ pub fn worktree_request_tool(repo: PathBuf, state: PathBuf) -> HostTool {
          never run `git worktree add` yourself. Returns the worktree id and path.",
         params,
         move |args, _ctx| {
-            request_worktree(&repo, &state, &args)
+            request_with_gate(&repo, &state, &*gate, &args)
                 .map(Into::into)
                 .map_err(Into::into)
         },
     )
+}
+
+/// The host tool whose gate always allows: today's `allow` behaviour.
+pub fn worktree_request_tool(repo: PathBuf, state: PathBuf) -> HostTool {
+    worktree_request_tool_with_gate(repo, state, Arc::new(AlwaysAllow))
 }
 
 #[cfg(test)]
@@ -298,5 +355,74 @@ mod tests {
         no_id.as_object_mut().unwrap().remove("id");
         let err = request_worktree(&repo, &state(&repo), &args(no_id)).unwrap_err();
         assert!(err.contains("missing id"), "{err}");
+    }
+
+    /// Counts the questions it is asked, so a test can prove the brief is
+    /// validated before the gate.
+    struct RecordingGate {
+        allow: bool,
+        asked: std::sync::atomic::AtomicUsize,
+    }
+
+    impl RecordingGate {
+        fn new(allow: bool) -> Self {
+            Self {
+                allow,
+                asked: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl WorktreeGate for RecordingGate {
+        fn allow(&self, _id: &str, _goal: &str) -> bool {
+            self.asked
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.allow
+        }
+    }
+
+    #[test]
+    fn a_gate_that_allows_makes_the_tree_and_row() {
+        let repo = fixture();
+        let gate = RecordingGate::new(true);
+        let out = request_with_gate(&repo, &state(&repo), &gate, &args(brief("w1"))).unwrap();
+        assert!(out.contains("branch cedian-worker/w1"), "{out}");
+        assert!(repo.join(".worktrees/w1/a.txt").exists());
+        assert!(Registry::open(&state(&repo)).unwrap().0.get("w1").is_some());
+        assert_eq!(gate.asked.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_gate_that_denies_names_the_id_and_makes_nothing() {
+        let repo = fixture();
+        let gate = RecordingGate::new(false);
+        let err = request_with_gate(&repo, &state(&repo), &gate, &args(brief("w1"))).unwrap_err();
+        assert!(err.contains("w1"), "{err}");
+        assert!(!repo.join(".worktrees/w1").exists());
+        assert!(Registry::open(&state(&repo)).unwrap().0.get("w1").is_none());
+        assert!(!state(&repo).join("briefs/w1.1.json").exists());
+    }
+
+    #[test]
+    fn a_missing_brief_field_is_refused_before_the_gate_is_asked() {
+        let repo = fixture();
+        let gate = RecordingGate::new(true);
+        let err = request_with_gate(
+            &repo,
+            &state(&repo),
+            &gate,
+            &args(json!({"id": "bare", "goal": "no brief"})),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("scope.write, acceptance, verify, timebox_min"),
+            "{err}"
+        );
+        assert_eq!(
+            gate.asked.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "the brief is checked before the gate"
+        );
+        assert!(!repo.join(".worktrees/bare").exists());
     }
 }
