@@ -1,11 +1,11 @@
 mod debug_log;
-mod message_updates;
+mod session_updates;
 mod terminal_updates;
 mod transport;
 
 use debug_log::AcpDebugLog;
 pub use debug_log::{AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection};
-use message_updates::MessageNotification;
+use session_updates::InboundSessionNotification;
 pub use terminal_updates::{DecodedTerminalNotification, DecodedTerminalUpdate};
 
 use acp_thread::{
@@ -765,16 +765,16 @@ pub fn v2_terminal_client_builder(
     )
 }
 
-fn with_v2_message_notifications<Handler: HandleDispatchFrom<Agent>>(
+fn with_v2_session_notifications<Handler: HandleDispatchFrom<Agent>>(
     builder: V2Builder<Client, Handler>,
-    mut dispatch: impl FnMut(MessageNotification) -> Result<(), agent_client_protocol::Error>
+    mut dispatch: impl FnMut(InboundSessionNotification) -> Result<(), agent_client_protocol::Error>
     + Send
     + 'static,
 ) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
     builder.on_receive_notification(
         async move |notification: acp_v2::UpdateSessionNotification,
                     connection: V2ConnectionTo<Agent>| {
-            let notification = match MessageNotification::try_from(notification) {
+            let notification = match InboundSessionNotification::try_from(notification) {
                 Ok(notification) => notification,
                 Err(notification) => {
                     return Ok(Handled::No {
@@ -824,18 +824,18 @@ fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities 
 }
 
 impl AcpConnection {
-    /// Binds v2 message ingress to the existing foreground session registry.
+    /// Binds supported v2 session updates to the existing foreground session registry.
     /// This does not change the protocol used by the connection's transport.
-    pub fn with_v2_message_ingress<Handler: HandleDispatchFrom<Agent>>(
+    pub fn with_v2_session_ingress<Handler: HandleDispatchFrom<Agent>>(
         &self,
         builder: V2Builder<Client, Handler>,
     ) -> V2Builder<Client, impl HandleDispatchFrom<Agent> + use<Handler>> {
         let dispatch_sender = self.dispatch_tx.clone();
-        with_v2_message_notifications(builder, move |notification| {
+        with_v2_session_notifications(builder, move |notification| {
             enqueue_notification(
                 &dispatch_sender,
                 notification,
-                handle_v2_message_notification,
+                handle_v2_session_notification,
             );
             Ok(())
         })
@@ -3035,7 +3035,7 @@ mod tests {
                 }
             });
             let client_builder = connection
-                .with_v2_message_ingress(terminal_builder)
+                .with_v2_session_ingress(terminal_builder)
                 .on_receive_notification(
                     {
                         let fallback = fallback.clone();
@@ -3163,6 +3163,243 @@ mod tests {
                     .expect("display terminal")
             })
         }
+    }
+
+    #[gpui::test]
+    async fn v2_tool_sdk_patches_chunks_and_display_references(cx: &mut gpui::TestAppContext) {
+        use acp_thread::{ToolCallContent, ToolCallStatus};
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let unknown = json!({"type": "_future", "payload": {"retain": [null, 7]},
+            "_meta": {"scope": "unknown"}});
+        for update in [
+            json!({"sessionUpdate": "tool_call_content_chunk", "toolCallId": "first",
+                "content": {"type": "content", "content": {"type": "text", "text": "original"},
+                    "_meta": {"scope": "item"}}, "_meta": {"scope": "chunk"}}),
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "first-extra",
+                "title": "Other tool", "content": [{"type": "content",
+                    "content": {"type": "text", "text": "other"}}]}),
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "first",
+                "title": "First tool", "kind": "_future_kind", "status": "in_progress",
+                "rawInput": {"path": "./a/../b"}, "rawOutput": {"retain": [null, true]},
+                "locations": [{"path": "/a/../file.rs", "line": 3, "_meta": {"scope": "location"}}],
+                "_meta": {"scope": "tool", "old": true}}),
+            json!({"sessionUpdate": "tool_call_content_chunk", "toolCallId": "first",
+                "content": {"type": "content", "content": {"type": "text", "text": "historical"}},
+                "_meta": {"scope": "chunk"}}),
+            json!({"sessionUpdate": "tool_call_content_chunk", "toolCallId": "first",
+                "content": unknown, "_meta": {"scope": "chunk"}}),
+        ] {
+            harness.send(update, Some(v2_terminal_meta("delivery")));
+        }
+        harness.drain(cx).await;
+        let first_id = acp_v2::ToolCallId::new("first");
+        harness.thread.read_with(cx, |thread, cx| {
+            let (index, tool) = thread.tool_call(&first_id).expect("first tool");
+            assert_eq!(index, 0);
+            assert_eq!(tool.label.read(cx).source(), "First tool");
+            assert_eq!(tool.status(), ToolCallStatus::InProgress);
+            assert_eq!(
+                serde_json::to_value(tool.kind()).expect("kind"),
+                json!("_future_kind")
+            );
+            assert_eq!(tool.raw_input, Some(json!({"path": "./a/../b"})));
+            assert_eq!(tool.raw_output, Some(json!({"retain": [null, true]})));
+            assert_eq!(
+                tool.meta.as_ref().and_then(|meta| meta.get("old")),
+                Some(&json!(true))
+            );
+            let [location] = tool.locations.as_slice() else {
+                panic!("one raw location");
+            };
+            assert_eq!(location.path, std::path::PathBuf::from("/a/../file.rs"));
+            assert_eq!(location.line, Some(3));
+            assert_eq!(location.meta, Some(v2_terminal_meta("location")));
+            let [
+                ToolCallContent::ContentBlock { meta, .. },
+                ToolCallContent::ContentBlock { .. },
+                ToolCallContent::Other { source, .. },
+            ] = tool.content()
+            else {
+                panic!("ordered retained chunks");
+            };
+            assert_eq!(meta, &Some(v2_terminal_meta("item")));
+            assert_eq!(
+                serde_json::to_value(source).expect("unknown content"),
+                unknown
+            );
+            assert_eq!(
+                tool.content()
+                    .iter()
+                    .take(2)
+                    .map(|item| item.to_markdown(cx))
+                    .collect::<Vec<_>>(),
+                ["original", "historical"]
+            );
+            let (index, other) = thread.tool_call(&"first-extra".into()).expect("other tool");
+            assert_eq!(index, 1);
+            assert_eq!(
+                other.content().first().expect("content").to_markdown(cx),
+                "other"
+            );
+        });
+
+        for update in [
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "first",
+                "content": [{"type": "content", "content": {"type": "text", "text": "replacement"}},
+                    {"type": "terminal", "terminalId": "patch-display"}],
+                "_meta": {"scope": "replacement"}}),
+            json!({"sessionUpdate": "tool_call_content_chunk", "toolCallId": "first",
+                "content": {"type": "terminal", "terminalId": "chunk-display"}}),
+        ] {
+            harness.send(update, Some(v2_terminal_meta("later delivery")));
+        }
+        harness.drain(cx).await;
+        let terminals = [
+            harness.terminal("patch-display", cx),
+            harness.terminal("chunk-display", cx),
+        ];
+        for terminal in &terminals {
+            terminal.read_with(cx, |terminal, _| {
+                assert!(terminal.display_state().is_some());
+                assert!(!terminal.is_process_backed());
+            });
+        }
+        harness.thread.read_with(cx, |thread, cx| {
+            let (index, tool) = thread.tool_call(&first_id).expect("replaced tool");
+            assert_eq!(index, 0);
+            assert_eq!(
+                tool.content().first().expect("content").to_markdown(cx),
+                "replacement"
+            );
+            assert_eq!(tool.terminals().cloned().collect::<Vec<_>>(), terminals);
+            assert_eq!(tool.meta, Some(v2_terminal_meta("replacement")));
+            assert_eq!(tool.raw_input, Some(json!({"path": "./a/../b"})));
+            assert_eq!(tool.locations.len(), 1);
+        });
+        harness.send(
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "first",
+                "content": null, "locations": null, "rawInput": null, "rawOutput": null,
+                "_meta": null, "status": "completed"}),
+            Some(v2_terminal_meta("clear delivery")),
+        );
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, _| {
+            let (_, tool) = thread.tool_call(&first_id).expect("cleared tool");
+            assert!(tool.content().is_empty());
+            assert!(tool.locations.is_empty());
+            assert_eq!(tool.raw_input, None);
+            assert_eq!(tool.raw_output, None);
+            assert_eq!(tool.meta, None);
+            assert_eq!(tool.status(), ToolCallStatus::Completed);
+            assert_eq!(
+                thread
+                    .terminal("patch-display".into())
+                    .expect("retained terminal"),
+                terminals.first().expect("first terminal").clone()
+            );
+            assert_eq!(thread.entries().len(), 2);
+        });
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_plan_sdk_keyed_snapshots_and_metadata_scopes(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let entry = json!({"content": "Original", "priority": "_urgent", "status": "_blocked",
+            "_meta": {"scope": "entry", "retain": [null, 7]}});
+        for update in [
+            json!({"sessionUpdate": "plan_update",
+                "plan": {"type": "items", "planId": "plan", "entries": [entry], "_meta": {"scope": "plan"}},
+                "_meta": {"scope": "update"}}),
+            json!({"sessionUpdate": "plan_update",
+                "plan": {"type": "items", "planId": "plan-extra", "entries": [
+                    {"content": "Other plan", "priority": "low", "status": "pending"}]}}),
+        ] {
+            harness.send(update, Some(v2_terminal_meta("delivery")));
+        }
+        harness.drain(cx).await;
+        let plan_id = acp_v2::PlanId::new("plan");
+        let markdown = harness.thread.read_with(cx, |thread, _| {
+            let plan = thread.plan_by_id(&plan_id).expect("first plan");
+            assert_eq!(plan.meta, Some(v2_terminal_meta("plan")));
+            assert_eq!(plan.update_meta, Some(v2_terminal_meta("update")));
+            let [retained] = plan.entries.as_slice() else {
+                panic!("one retained entry");
+            };
+            assert_eq!(
+                serde_json::to_value(&retained.source).expect("entry source"),
+                entry
+            );
+            retained.content.clone()
+        });
+        harness
+            .thread
+            .update(cx, |thread, cx| thread.clear_plan(cx));
+        harness.send(
+            json!({"sessionUpdate": "plan_update",
+                "plan": {"type": "items", "planId": "plan", "entries": [entry], "_meta": {}},
+                "_meta": {}}),
+            Some(v2_terminal_meta("metadata delivery")),
+        );
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.plan().is_none(),
+                "metadata changes must not undo dismissal"
+            );
+            let plan = thread.plan_by_id(&plan_id).expect("retained hidden plan");
+            assert_eq!(plan.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(plan.update_meta, Some(acp_v2::Meta::new()));
+            assert_eq!(plan.entries.first().expect("entry").content, markdown);
+        });
+        harness.send(
+            json!({"sessionUpdate": "plan_update",
+                "plan": {"type": "items", "planId": "plan", "entries": [
+                    {"content": "Revised", "priority": "low", "status": "completed"}]}}),
+            Some(v2_terminal_meta("replacement delivery")),
+        );
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, cx| {
+            let plan = thread.plan().expect("changed tasks reopen the plan");
+            assert_eq!(plan.meta, None);
+            assert_eq!(plan.update_meta, None);
+            let [entry] = plan.entries.as_slice() else {
+                panic!("replacement entry");
+            };
+            assert_eq!(entry.source.status, acp_v2::PlanEntryStatus::Completed);
+            assert_eq!(entry.source.meta, None);
+            assert_eq!(entry.content, markdown);
+            assert_eq!(markdown.read(cx).source(), "Revised");
+        });
+        harness.send(
+            json!({"sessionUpdate": "plan_update",
+                "plan": {"type": "items", "planId": "plan", "entries": []}}),
+            None,
+        );
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, _| {
+            assert!(
+                thread
+                    .plan_by_id(&plan_id)
+                    .expect("empty plan")
+                    .entries
+                    .is_empty()
+            );
+            assert_eq!(
+                thread
+                    .plan_by_id(&"plan-extra".into())
+                    .expect("other plan")
+                    .entries
+                    .len(),
+                1
+            );
+            assert!(thread.entries().is_empty(), "plans are not transcript rows");
+        });
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
     }
 
     #[gpui::test]
@@ -3361,18 +3598,19 @@ mod tests {
         } = harness;
         let _transport_tasks = (_client_task, _agent_task, _legacy_agent_task);
         let weak_thread = thread.downgrade();
-        let notification = MessageNotification::try_from(acp_v2::UpdateSessionNotification::new(
-            thread.read_with(cx, |thread, _| thread.session_id().clone()),
-            acp_v2::SessionUpdate::AgentMessage(
-                acp_v2::AgentMessage::new("queued-before-drop").content(vec!["queued".into()]),
-            ),
-        ))
-        .expect("message notification");
+        let notification =
+            InboundSessionNotification::try_from(acp_v2::UpdateSessionNotification::new(
+                thread.read_with(cx, |thread, _| thread.session_id().clone()),
+                acp_v2::SessionUpdate::AgentMessage(
+                    acp_v2::AgentMessage::new("queued-before-drop").content(vec!["queued".into()]),
+                ),
+            ))
+            .expect("message notification");
         cx.update(|_| {
             enqueue_notification(
                 &connection.dispatch_tx,
                 notification,
-                handle_v2_message_notification,
+                handle_v2_session_notification,
             );
             drop(thread);
         });
@@ -3669,15 +3907,19 @@ mod tests {
     #[gpui::test]
     async fn v2_session_sdk_falls_through_unhandled_updates(cx: &mut gpui::TestAppContext) {
         let harness = V2SessionHarness::new(cx).await;
+        harness.send(
+            serde_json::json!({"sessionUpdate": "plan_update",
+                "plan": {"type": "items", "planId": "unhandled-plan", "entries": [
+                    {"content": "Retain", "priority": "low", "status": "pending"}]}}),
+            None,
+        );
+        harness.drain(cx).await;
         let params = [
             serde_json::json!({
                 "sessionId": "v2-terminal-session", "_meta": {"scope": "known envelope"},
                 "futureOuter": {"preserve": [1, null, true]},
                 "update": {
-                    "sessionUpdate": "tool_call_update", "toolCallId": "tool-1",
-                    "content": [{"type": "content", "content": {
-                        "type": "text", "text": "not a terminal", "futureContent": 42
-                    }}],
+                    "sessionUpdate": "available_commands_update", "availableCommands": [],
                     "_meta": {"scope": "known update"}, "futureKnownField": {"nested": "keep"}
                 }
             }),
@@ -3693,6 +3935,21 @@ mod tests {
             serde_json::json!({
                 "sessionId": "v2-terminal-session",
                 "update": {"sessionUpdate": "state_update", "state": "running"}
+            }),
+            serde_json::json!({
+                "sessionId": "v2-terminal-session",
+                "update": {"sessionUpdate": "plan_update",
+                    "plan": {"type": "file", "planId": "unhandled-plan", "uri": "file:///tmp/plan.md"}}
+            }),
+            serde_json::json!({
+                "sessionId": "v2-terminal-session",
+                "update": {"sessionUpdate": "plan_update",
+                    "plan": {"type": "markdown", "planId": "unhandled-plan", "content": "Unsupported"}}
+            }),
+            serde_json::json!({
+                "sessionId": "v2-terminal-session",
+                "update": {"sessionUpdate": "plan_update",
+                    "plan": {"type": "_future", "planId": "unhandled-plan", "payload": [null, 7]}}
             }),
         ];
         let sent = params
@@ -3740,6 +3997,14 @@ mod tests {
                 thread.foreground_activity(),
                 acp_thread::ForegroundActivity::Idle
             );
+            let plan = thread
+                .plan_by_id(&"unhandled-plan".into())
+                .expect("retained plan");
+            assert_eq!(
+                plan.entries.first().expect("entry").source.content,
+                "Retain"
+            );
+            assert!(thread.entries().is_empty());
         });
     }
 
@@ -7805,15 +8070,15 @@ fn session_thread(
         .ok_or_else(|| acp::Error::internal_error().data(format!("unknown session: {session_id}")))
 }
 
-fn handle_v2_message_notification(
-    notification: MessageNotification,
+fn handle_v2_session_notification(
+    notification: InboundSessionNotification,
     cx: &mut AsyncApp,
     context: &ClientContext,
 ) {
     let thread = match session_thread(context, &notification.session_id) {
         Ok(thread) => thread,
         Err(error) => {
-            log::warn!("Received ACP v2 message for an unknown session: {error}");
+            log::warn!("Received ACP v2 update for an unknown session: {error}");
             return;
         }
     };
