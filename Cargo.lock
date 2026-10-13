@@ -12611,7 +12611,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dunce",
- "pretty_assertions",
  "serde",
  "tempfile",
  "tendril",
