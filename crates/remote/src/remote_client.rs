@@ -606,6 +606,13 @@ impl RemoteClient {
         }
 
         let state = self.state.take().unwrap();
+
+        let failed_requests = self.client.fail_pending_requests();
+        if failed_requests > 0 {
+            log::warn!(
+                "remote client: failing {failed_requests} pending request(s) after connection loss"
+            );
+        }
         let (attempts, remote_connection, delegate) = match state {
             State::Connected {
                 remote_connection,
@@ -642,6 +649,12 @@ impl RemoteClient {
                 "Failed to reconnect to after {} attempts, giving up",
                 MAX_RECONNECT_ATTEMPTS
             );
+            let failed_requests = self.client.fail_pending_requests();
+            if failed_requests > 0 {
+                log::warn!(
+                    "remote client: giving up reconnecting with {failed_requests} pending request(s)"
+                );
+            }
             self.set_state(State::ReconnectExhausted, cx);
             return Ok(());
         }
@@ -896,6 +909,12 @@ impl RemoteClient {
                             ProxyLaunchError::ServerNotRunning => {
                                 log::error!("failed to reconnect because server is not running");
                                 this.update(cx, |this, cx| {
+                                    let failed_requests = this.client.fail_pending_requests();
+                                    if failed_requests > 0 {
+                                        log::warn!(
+                                            "remote client: server is not running; failing {failed_requests} pending request(s)"
+                                        );
+                                    }
                                     this.set_state(State::ServerNotRunning, cx);
                                 })?;
                             }
@@ -1591,6 +1610,74 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_channel_client_fail_pending_requests_on_connection_loss(
+        cx: &mut TestAppContext,
+    ) {
+        let (_incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        // Start a request but never send a response for it, leaving it pending.
+        let request = client.request_internal(proto::FlushBufferedMessages {}, false);
+        assert_eq!(client.response_channels.lock().len(), 1);
+
+        let failed = client.fail_pending_requests();
+        assert_eq!(failed, 1);
+        assert_eq!(client.response_channels.lock().len(), 0);
+
+        let error = request.await.err().expect("pending request should fail");
+        assert!(
+            format!("{error}").contains("connection lost"),
+            "expected a connection lost error, got: {error}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_fail_pending_requests_fails_streams_on_connection_loss(
+        cx: &mut TestAppContext,
+    ) {
+        let (_incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        // Open a stream but never send a response for it, leaving it pending.
+        let mut stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+        assert_eq!(client.stream_response_channels.lock().len(), 1);
+
+        let failed = client.fail_pending_requests();
+        assert_eq!(failed, 1);
+        assert_eq!(client.stream_response_channels.lock().len(), 0);
+
+        let error = stream
+            .next()
+            .await
+            .expect("pending stream should yield a terminal item")
+            .expect_err("pending stream should fail");
+        assert!(
+            format!("{error}").contains("connection lost"),
+            "expected a connection lost error, got: {error}"
+        );
+
+        // The failed stream ends after the terminal error rather than hanging.
+        assert!(stream.next().await.is_none());
+    }
+
     #[test]
     fn test_ssh_host_ignores_nickname() {
         let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
@@ -1916,6 +2003,44 @@ impl ChannelClient {
             }
             anyhow::Ok(())
         })
+    }
+
+    /// Fail every in-flight request with a "connection lost" error, mirroring
+    /// `rpc::Peer`'s behavior when the connection is torn down.
+    ///
+    /// Unary requests fail by dropping their response channel. Stream requests
+    /// receive a terminal error item so consumers observe an explicit failure
+    /// instead of a silent end of stream.
+    ///
+    /// Called when the connection to the remote server is declared lost: the
+    /// proxy process is gone, so responses for requests already handed to it
+    /// can never arrive, and without this their callers (e.g. terminal
+    /// creation) would await forever. Requests created after this point buffer
+    /// and replay on the next successful reconnect as usual.
+    pub(crate) fn fail_pending_requests(&self) -> usize {
+        let unary_failed = {
+            let mut response_channels = self.response_channels.lock();
+            let failed = response_channels.len();
+            response_channels.clear();
+            failed
+        };
+
+        let (stream_failed, stream_senders) = {
+            let mut stream_response_channels = self.stream_response_channels.lock();
+            let senders = stream_response_channels
+                .drain()
+                .map(|(_, sender)| sender)
+                .collect::<Vec<_>>();
+            (senders.len(), senders)
+        };
+        for sender in stream_senders {
+            let (barrier_tx, _barrier_rx) = oneshot::channel();
+            sender
+                .unbounded_send((Err(anyhow!("connection lost")), barrier_tx))
+                .ok();
+        }
+
+        unary_failed + stream_failed
     }
 
     pub(crate) fn reconnect(
