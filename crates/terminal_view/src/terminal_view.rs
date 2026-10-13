@@ -1498,7 +1498,7 @@ impl Render for TerminalView {
                 div()
                     .id("terminal-view-container")
                     .size_full()
-                    .bg(cx.theme().colors().editor_background)
+                    .bg(cx.theme().colors().terminal_background)
                     .when_some(self.background_corner_radii, |this, radii| {
                         this.rounded_tl(radii.top_left)
                             .rounded_tr(radii.top_right)
@@ -1522,7 +1522,7 @@ impl Render for TerminalView {
                                 .show_along(ScrollAxes::Vertical)
                                 .with_stable_track_along(
                                     ScrollAxes::Vertical,
-                                    colors.editor_background,
+                                    colors.terminal_background,
                                 )
                                 .tracked_scroll_handle(&self.scroll_handle),
                             window,
