@@ -3,6 +3,8 @@ use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use gpui::Context;
 
+use super::terminal_updates::{DecodedTerminalNotification, DecodedTerminalUpdate};
+
 #[derive(Debug)]
 pub struct InboundSessionNotification {
     pub session_id: acp_v2::SessionId,
@@ -24,6 +26,17 @@ pub enum InboundSessionUpdate {
         plan: acp_v2::PlanItems,
         update_meta: Option<acp_v2::Meta>,
     },
+    Terminal(DecodedTerminalUpdate),
+}
+
+impl From<DecodedTerminalNotification> for InboundSessionNotification {
+    fn from(notification: DecodedTerminalNotification) -> Self {
+        Self {
+            session_id: notification.session_id,
+            update: InboundSessionUpdate::Terminal(notification.update),
+            meta: notification.meta,
+        }
+    }
 }
 
 impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
@@ -87,13 +100,13 @@ impl InboundSessionNotification {
         let Self {
             session_id,
             update,
-            meta: _delivery_metadata,
+            meta: delivery_metadata,
         } = self;
         anyhow::ensure!(
             &session_id == thread.session_id(),
             "Session notification belongs to a different ACP session"
         );
-        // Delivery metadata must not patch retained message, tool or plan fields.
+        // Delivery metadata must not patch retained message, tool, plan or terminal fields.
         match update {
             InboundSessionUpdate::UserMessage(message) => thread.upsert_user_message(message, cx),
             InboundSessionUpdate::AgentMessage(message) => {
@@ -119,6 +132,12 @@ impl InboundSessionNotification {
                 thread.upsert_plan_items(plan, update_meta, cx);
                 Ok(())
             }
+            InboundSessionUpdate::Terminal(update) => DecodedTerminalNotification {
+                session_id,
+                meta: delivery_metadata,
+                update,
+            }
+            .apply(thread, cx),
         }
     }
 }
