@@ -29,6 +29,9 @@ pub enum InboundSessionUpdate {
     Terminal(DecodedTerminalUpdate),
     SessionInfo(acp_v2::SessionInfoUpdate),
     AvailableCommands(acp_v2::AvailableCommandsUpdate),
+    Notice(acp_v2::Notice),
+    Compaction(acp_v2::CompactionUpdate),
+    CompactionSummary(acp_v2::CompactionSummaryChunk),
 }
 
 impl From<DecodedTerminalNotification> for InboundSessionNotification {
@@ -89,6 +92,13 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
             }
             acp_v2::SessionUpdate::AvailableCommandsUpdate(update) => {
                 InboundSessionUpdate::AvailableCommands(update)
+            }
+            acp_v2::SessionUpdate::Notice(notice) => InboundSessionUpdate::Notice(notice),
+            acp_v2::SessionUpdate::CompactionUpdate(update) => {
+                InboundSessionUpdate::Compaction(update)
+            }
+            acp_v2::SessionUpdate::CompactionSummaryChunk(chunk) => {
+                InboundSessionUpdate::CompactionSummary(chunk)
             }
             update => {
                 notification.update = update;
@@ -152,6 +162,18 @@ impl InboundSessionNotification {
             }
             InboundSessionUpdate::AvailableCommands(update) => {
                 thread.update_available_commands(update.available_commands, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::Notice(notice) => {
+                thread.push_notice(notice, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::Compaction(update) => {
+                thread.upsert_context_compaction_update(update, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::CompactionSummary(chunk) => {
+                thread.append_context_compaction_summary(chunk, cx);
                 Ok(())
             }
         }
