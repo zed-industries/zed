@@ -27,6 +27,9 @@ pub enum InboundSessionUpdate {
         update_meta: Option<acp_v2::Meta>,
     },
     Terminal(DecodedTerminalUpdate),
+    Notice(acp_v2::Notice),
+    Compaction(acp_v2::CompactionUpdate),
+    CompactionSummary(acp_v2::CompactionSummaryChunk),
 }
 
 impl From<DecodedTerminalNotification> for InboundSessionNotification {
@@ -82,6 +85,13 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
                     update_meta: update.meta,
                 }
             }
+            acp_v2::SessionUpdate::Notice(notice) => InboundSessionUpdate::Notice(notice),
+            acp_v2::SessionUpdate::CompactionUpdate(update) => {
+                InboundSessionUpdate::Compaction(update)
+            }
+            acp_v2::SessionUpdate::CompactionSummaryChunk(chunk) => {
+                InboundSessionUpdate::CompactionSummary(chunk)
+            }
             update => {
                 notification.update = update;
                 return Err(notification);
@@ -106,7 +116,7 @@ impl InboundSessionNotification {
             &session_id == thread.session_id(),
             "Session notification belongs to a different ACP session"
         );
-        // Delivery metadata must not patch retained message, tool, plan or terminal fields.
+        // Delivery metadata must not patch retained payload fields.
         match update {
             InboundSessionUpdate::UserMessage(message) => thread.upsert_user_message(message, cx),
             InboundSessionUpdate::AgentMessage(message) => {
@@ -138,6 +148,18 @@ impl InboundSessionNotification {
                 update,
             }
             .apply(thread, cx),
+            InboundSessionUpdate::Notice(notice) => {
+                thread.push_notice(notice, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::Compaction(update) => {
+                thread.upsert_context_compaction_update(update, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::CompactionSummary(chunk) => {
+                thread.append_context_compaction_summary(chunk, cx);
+                Ok(())
+            }
         }
     }
 }
