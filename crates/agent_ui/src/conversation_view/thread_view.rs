@@ -1,6 +1,7 @@
 use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     conversation_view::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent},
+    entry_view_state::TERMINAL_CONTENT_TOP_PADDING,
     open_abs_path_at_point, project_path_for_file_link,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
@@ -8644,7 +8645,10 @@ impl ThreadView {
                                 .content_mode(window, cx)
                                 .is_scrollable()
                             {
-                                div().h(rems(18.5)).child(terminal_view).into_any_element()
+                                div()
+                                    .h(rems(18. + TERMINAL_CONTENT_TOP_PADDING))
+                                    .child(terminal_view)
+                                    .into_any_element()
                             } else {
                                 terminal_view.into_any_element()
                             };
