@@ -96,6 +96,8 @@ pub enum WorkerError {
         base: String,
         checked_out: String,
     },
+    /// Merge-back needs a completed worker (ADR-0033 decision 4).
+    NotComplete(String),
 }
 
 impl std::fmt::Display for WorkerError {
@@ -120,6 +122,10 @@ impl std::fmt::Display for WorkerError {
             Self::WrongBase { base, checked_out } => write!(
                 f,
                 "merge base {base:?} is not checked out (main checkout is on {checked_out:?})"
+            ),
+            Self::NotComplete(id) => write!(
+                f,
+                "worker {id} is not complete: its verify gates must pass before merge-back"
             ),
         }
     }
@@ -232,14 +238,26 @@ impl Registry {
         Ok(())
     }
 
+    /// Record a side effect on `id` (ADR-0033 decision 5): imported edit,
+    /// stored evidence, completion attempt, or an explicit touch. The caller
+    /// saves. Spawn already sets `last_progress` when the row is inserted.
+    pub fn note_progress(&mut self, id: &str) -> Result<(), WorkerError> {
+        let head = self
+            .workers
+            .get_mut(id)
+            .ok_or_else(|| WorkerError::NoSuch(id.to_string()))?;
+        head.last_progress = Some(now_ms());
+        Ok(())
+    }
+
     /// Drop a head, returning it when present.
     pub fn remove(&mut self, id: &str) -> Option<WorkerHead> {
         self.workers.remove(id)
     }
 
     /// Flip every `running` row whose timebox has passed to `stale`
-    /// (ADR-0033 decision 5) and return how many changed. A later unit feeds
-    /// imported edits and evidence into `last_progress`; the caller saves.
+    /// (ADR-0033 decision 5) and return how many changed. Imported edits and
+    /// evidence feed `last_progress` through [`Self::note_progress`].
     pub fn refresh_liveness(&mut self, now_ms: u64, repo: &Path) -> usize {
         let mut changed = 0;
         for head in self.workers.values_mut() {

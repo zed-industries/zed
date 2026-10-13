@@ -319,6 +319,10 @@ impl LaunchSpec {
         channel.set_blockers(move || {
             cedian_shell::review_findings::open_blockers(&blockers_dir, || blocker_diffs())
         });
+        let worker_state = state_dir.clone();
+        channel.set_worker_complete(move |id, evidence, current| {
+            crate::worker_trees::complete(&worker_state, id, evidence, current)
+        });
         let mut tools = channel.host_tools();
         let models = Arc::clone(&router);
         tools.push(cedian_shell::review_agent::review_request_tool(

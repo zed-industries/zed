@@ -319,8 +319,23 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     // base where it was.
     git(&ws, &["reset", "--hard", "-q", "HEAD~1"]);
 
-    // 7. Merge back: the branch's commit lands on the checked-out base and
-    // the row's status is `done`.
+    // 7. Merge back needs a completed worker (ADR-0033 decision 4).
+    {
+        use cedian_workflow::{CurrentState, Evidence, EvidenceKind, Outcome};
+        let brief = cedian_worker::Brief::latest(&state, "w1").unwrap();
+        let current = CurrentState::from_files([("notes.txt".into(), b"x" as &[u8])]);
+        let evidence = [Evidence::attributed(
+            "e-verify",
+            EvidenceKind::Test,
+            &[brief.verify[0].as_str()],
+            "ok",
+            Outcome::Pass,
+            "task",
+            "call-1",
+        )
+        .with_code_state(current.bind(&[]))];
+        cedian_panel::worker_trees::complete(&state, "w1", &evidence, &current).unwrap();
+    }
     click(&mut vcx, "cedian-worker-w1-merge");
     wait(cx, &window, "the merge", |p| {
         worker(p, "w1").is_some_and(|row| {

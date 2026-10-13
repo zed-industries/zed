@@ -37,17 +37,45 @@ pub fn read(repo: &Path, state: &Path, base: &str) -> Result<Vec<WorkerTreeRow>,
         .collect())
 }
 
-/// Merge `id`'s branch into `base`, and mark its row done only once the merge
-/// landed: a refusal (STALE) leaves the row as it was.
-pub fn merge_back(repo: &Path, state: &Path, id: &str, base: &str) -> Result<(), String> {
+/// Mark `id` complete after its brief's verify items have fresh attributed
+/// `pass` evidence (ADR-0033 decision 4). Sets `Done` and notes progress.
+pub fn complete(
+    state: &Path,
+    id: &str,
+    evidence: &[cedian_workflow::Evidence],
+    current: &cedian_workflow::CurrentState,
+) -> Result<(), String> {
+    let brief = cedian_worker::Brief::latest(state, id).map_err(|e| e.to_string())?;
+    let missing = crate::worker_complete::missing_verify(&brief, evidence, current);
+    if !missing.is_empty() {
+        return Err(format!(
+            "worker {id} is not complete:\n  - {}",
+            missing.join("\n  - ")
+        ));
+    }
     let _lock = Registry::lock(state).map_err(|e| e.to_string())?;
     let (mut registry, _) = Registry::open(state).map_err(|e| e.to_string())?;
     let head = row(&registry, id)?;
-    cedian_worker::merge_back(repo, &head, base).map_err(|e| e.to_string())?;
+    if head.status == WorkerStatus::Done {
+        return Ok(());
+    }
     registry
         .set_status(id, WorkerStatus::Done, String::new())
         .map_err(|e| e.to_string())?;
+    registry.note_progress(id).map_err(|e| e.to_string())?;
     registry.save(state).map_err(|e| e.to_string())
+}
+
+/// Merge `id`'s branch into `base`. Refused unless the worker is already
+/// `Done` (ADR-0033 decision 4); a refusal (STALE) leaves the row as it was.
+pub fn merge_back(repo: &Path, state: &Path, id: &str, base: &str) -> Result<(), String> {
+    let _lock = Registry::lock(state).map_err(|e| e.to_string())?;
+    let (registry, _) = Registry::open(state).map_err(|e| e.to_string())?;
+    let head = row(&registry, id)?;
+    if head.status != WorkerStatus::Done {
+        return Err(WorkerError::NotComplete(id.to_string()).to_string());
+    }
+    cedian_worker::merge_back(repo, &head, base).map_err(|e| e.to_string())
 }
 
 /// Remove `id`'s worktree and branch, then drop its row. Git refuses a tree

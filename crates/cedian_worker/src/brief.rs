@@ -211,6 +211,40 @@ impl Brief {
         serde_json::to_string(self).expect("a brief has no unserializable field")
     }
 
+    /// The highest revision of `id` under `<state>/briefs/`, or an error when
+    /// none exists or the file will not parse as a brief.
+    pub fn latest(state: &Path, id: &str) -> Result<Self, BriefError> {
+        let dir = state.join("briefs");
+        let prefix = format!("{id}.");
+        let mut best: Option<(u32, PathBuf)> = None;
+        let entries = std::fs::read_dir(&dir)
+            .map_err(|e| BriefError::Malformed(format!("briefs for {id}: {e}")))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|e| BriefError::Malformed(format!("briefs for {id}: {e}")))?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(rest) = name
+                .strip_prefix(&prefix)
+                .and_then(|s| s.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            let Ok(rev) = rest.parse::<u32>() else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|(r, _)| rev > *r) {
+                best = Some((rev, entry.path()));
+            }
+        }
+        let Some((_, path)) = best else {
+            return Err(BriefError::Malformed(format!(
+                "no stored brief for worker {id}"
+            )));
+        };
+        Self::from_file(&path)
+    }
+
     /// Write this revision to `<state>/briefs/<id>.<revision>.json`. `create_new`
     /// keeps a stored revision immutable — a change is a new revision beside it
     /// (ADR-0033 decision 2) — and returns the path so the caller can remove it
@@ -465,6 +499,23 @@ mod tests {
         std::fs::write(&path, full().to_string()).unwrap();
         assert_eq!(Brief::from_file(&path).unwrap().goal, "fix the casing");
         assert!(Brief::from_file(&dir.join("absent.json")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn latest_picks_the_highest_revision() {
+        let dir = std::env::temp_dir().join(format!("cedian-brief-latest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut brief = Brief::from_json(&full().to_string()).unwrap();
+        brief.store(&dir, "w1", 1).unwrap();
+        brief.verify = vec!["v2".into()];
+        brief.store(&dir, "w1", 2).unwrap();
+        assert_eq!(
+            Brief::latest(&dir, "w1").unwrap().verify,
+            vec!["v2".to_string()]
+        );
+        assert!(Brief::latest(&dir, "missing").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

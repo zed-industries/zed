@@ -5497,10 +5497,18 @@ mod tests {
                 let path = panel.review.path(&panel.review.files()[0], cx);
                 let key = panel.review.files()[0].hunks()[0].key.clone();
                 panel.review.accept(&path, &key, cx).unwrap();
+                // Completion is separate from merge-back (ADR-0033 decision 4).
+                {
+                    let mut registry = Registry::open(&state).unwrap().0;
+                    registry
+                        .set_status("w1", WorkerStatus::Done, String::new())
+                        .unwrap();
+                    registry.save(&state).unwrap();
+                }
                 panel.merge_worker("w1", cx);
                 assert!(
                     panel.notice.is_none(),
-                    "resolved, so nothing refuses the merge: {:?}",
+                    "resolved and complete, so nothing refuses the merge: {:?}",
                     panel.notice
                 );
             })

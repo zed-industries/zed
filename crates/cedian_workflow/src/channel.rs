@@ -127,9 +127,14 @@ pub struct WorkflowChannel {
     profiles: Box<dyn ProfileStore>,
     /// Open review blockers (S3), one line each; any refuses completion.
     blockers: Mutex<Box<Blockers>>,
+    /// Optional `worker` on `cedian_complete` (ADR-0033 decision 4): the
+    /// panel marks that worker Done when its verify gates pass.
+    worker_complete: Mutex<Option<Box<WorkerComplete>>>,
 }
 
 type Blockers = dyn Fn() -> Vec<String> + Send + Sync;
+type WorkerComplete =
+    dyn Fn(&str, &[crate::Evidence], &CurrentState) -> Result<(), String> + Send + Sync;
 
 impl WorkflowChannel {
     pub fn new(
@@ -166,12 +171,27 @@ impl WorkflowChannel {
             floor,
             profiles,
             blockers: Mutex::new(Box::new(Vec::new)),
+            worker_complete: Mutex::new(None),
         })
     }
 
     /// Where open review blockers come from (the CLI's findings store).
     pub fn set_blockers(&self, blockers: impl Fn() -> Vec<String> + Send + Sync + 'static) {
         *self.blockers.lock().unwrap_or_else(|e| e.into_inner()) = Box::new(blockers);
+    }
+
+    /// Where a `cedian_complete { worker }` goes (the panel's worker trees).
+    pub fn set_worker_complete(
+        &self,
+        complete: impl Fn(&str, &[crate::Evidence], &CurrentState) -> Result<(), String>
+        + Send
+        + Sync
+        + 'static,
+    ) {
+        *self
+            .worker_complete
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(complete));
     }
 
     /// `cedian_workflow_update`: `op` is `start`, `evidence` or `advance`.
@@ -380,6 +400,27 @@ impl WorkflowChannel {
     /// continue, and at `MAX_CONTINUE` the workflow is `blocked`.
     pub fn complete(&self, args: &Map<String, Value>) -> Result<String, String> {
         let _guard = store_lock();
+        if let Some(worker) = args
+            .get("worker")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        {
+            let evidence = self
+                .store
+                .load()?
+                .map(|state| state.evidence_list())
+                .unwrap_or_default();
+            let current = (self.current)();
+            let lock = self
+                .worker_complete
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let Some(complete) = lock.as_ref() else {
+                return Err("cedian_complete { worker } is not wired in this host".to_string());
+            };
+            complete(worker, &evidence, &current)?;
+            return Ok(format!("worker {worker} complete"));
+        }
         let Some(mut state) = self.store.load()? else {
             return Ok("no cedian workflow is active; nothing to check".to_string());
         };
@@ -658,6 +699,7 @@ pub fn complete_parameters() -> Map<String, Value> {
     object(
         json!({
             "summary": {"type": "string"},
+            "worker": {"type": "string", "description": "complete this worker's brief verify gates (ADR-0033)"},
             "claims": {"type": "array", "items": {"type": "object", "properties": {
                 "text": {"type": "string"},
                 "label": {"type": "string", "enum": ["measured", "inferred", "guess"]},
