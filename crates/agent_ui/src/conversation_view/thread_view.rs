@@ -1178,6 +1178,88 @@ impl ThreadView {
         }
     }
 
+    pub(crate) fn send_remote_skill(
+        &mut self,
+        skill: crate::completion_provider::AvailableSkill,
+        mut content: Vec<acp_v2::ContentBlock>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+        let uri = acp_thread::MentionUri::Skill {
+            name: skill.name.to_string(),
+            source: skill.source.to_string(),
+            skill_file_path: skill.skill_file_path,
+        };
+        let http_client = workspace.read(cx).client().http_client();
+        let mention_set = self.message_editor.read(cx).mention_set().clone();
+        let task = mention_set.update(cx, |set, cx| {
+            set.confirm_mention_for_uri(uri.clone(), false, http_client, cx)
+        });
+        let contents = cx.spawn_in(window, async move |_this, _cx| {
+            let mention = task.await?;
+            let mut tracked_buffers = Vec::new();
+            let block = crate::message_editor::mention_to_content_block(
+                &uri,
+                Some(&mention),
+                true,
+                &mut tracked_buffers,
+            );
+            if let Some(acp_v2::ContentBlock::Text(text)) = content.first_mut() {
+                text.text = format!("{} {}", uri.as_link(), text.text);
+            }
+            content.push(block);
+            Ok(Some((content, tracked_buffers)))
+        });
+        if self.thread.read(cx).status() == ThreadStatus::Idle && !self.has_queued_messages() {
+            self.send_content(contents, false, window, cx);
+        } else {
+            cx.spawn_in(window, async move |this, cx| {
+                let result = contents.await;
+                this.update_in(cx, |this, window, cx| match result {
+                    Ok(Some((content, buffers))) => {
+                        if this.thread.read(cx).status() == ThreadStatus::Idle
+                            && !this.has_queued_messages()
+                        {
+                            this.send_content(
+                                Task::ready(Ok(Some((content, buffers)))),
+                                false,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            this.add_to_queue(content, buffers, window, cx);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.send_content(Task::ready(Err(error)), false, window, cx),
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+        true
+    }
+
+    pub(crate) fn remote_local_commands(&self, cx: &App) -> Vec<PromptLocalCommand> {
+        self.available_local_commands(cx)
+    }
+
+    pub(crate) fn run_remote_local_command(
+        &mut self,
+        command: PromptLocalCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.available_local_commands(cx).contains(&command) {
+            return false;
+        }
+        self.run_local_command(command, window, cx);
+        true
+    }
+
     fn run_local_command(
         &mut self,
         command: PromptLocalCommand,

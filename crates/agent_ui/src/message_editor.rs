@@ -749,8 +749,7 @@ impl MessageEditor {
             .is_some_and(|menu| matches!(menu, CodeContextMenu::Completions(_)) && menu.visible())
     }
 
-    #[cfg(test)]
-    pub fn mention_set(&self) -> &Entity<MentionSet> {
+    pub(crate) fn mention_set(&self) -> &Entity<MentionSet> {
         &self.mention_set
     }
 
@@ -2182,7 +2181,7 @@ fn image_preview_task_for_mention(
     )
 }
 
-fn mention_to_content_block(
+pub(crate) fn mention_to_content_block(
     uri: &MentionUri,
     mention: Option<&Mention>,
     supports_embedded_context: bool,

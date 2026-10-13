@@ -1982,33 +1982,81 @@ fn command_list(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Val
     if !state.exposed_threads.borrow().contains(thread_id) {
         return error(&request.request_id, "THREAD_NOT_EXPOSED");
     }
-    let Some((thread, _)) = loaded_thread_views(&state.project_root, cx)
+    let Some((thread, view)) = loaded_thread_views(&state.project_root, cx)
         .into_iter()
         .find(|(thread, _)| thread.read(cx).session_id().to_string() == thread_id)
     else {
         return error(&request.request_id, "THREAD_NOT_EXPOSED");
     };
-    let commands = thread
+    let connection = view.read(cx).as_native_connection(cx);
+    if let Some(connection) = connection {
+        connection.ensure_skills_scan_started(cx);
+        connection.refresh_skills_for_project(thread.read(cx).project().clone(), cx);
+    }
+    let mut commands = remote_command_catalog(&thread, &view, cx);
+    if !state
+        .permissions
+        .get()
+        .allows("thread.unexpose", &request.params)
+    {
+        commands.retain(|command| {
+            command.get("name").and_then(Value::as_str) != Some("remote-control")
+        });
+    }
+    success(
+        &request.request_id,
+        json!({"thread_id": thread_id, "commands": commands}),
+    )
+}
+
+fn remote_command_catalog(
+    thread: &Entity<AcpThread>,
+    view: &Entity<ThreadView>,
+    cx: &App,
+) -> Vec<Value> {
+    let mut commands = thread
         .read(cx)
         .available_commands()
         .iter()
         .map(|command| {
+            let input_hint = command.input.as_ref().and_then(|input| match input {
+                acp::AvailableCommandInput::Text(input) => Some(input.hint.clone()),
+                _ => None,
+            });
             json!({
-                "name": command.name,
-                "description": command.description,
+                "name": command.name, "description": command.description,
                 "category": match acp_thread::command_category_from_meta(&command.meta) {
                     Some(acp_thread::CommandCategory::Native) => "native",
                     Some(acp_thread::CommandCategory::Mcp) => "mcp",
                     None => "agent",
                 },
-                "requires_argument": command.input.is_some(),
+                "requires_argument": command.input.is_some(), "input_hint": input_hint,
+                "execution": "prompt",
             })
         })
         .collect::<Vec<_>>();
-    success(
-        &request.request_id,
-        json!({"thread_id": thread_id, "commands": commands}),
-    )
+    let view = view.read(cx);
+    let capabilities = view.session_capabilities.read();
+    commands.extend(capabilities.available_skills().iter().map(|skill| json!({
+        "name": format!("{}:{}", skill.source, skill.name), "bare_name": skill.name,
+        "description": skill.description, "category": "skill", "execution": "prompt",
+        "requires_argument": false, "input_hint": "Optional instructions", "warning": skill.warning,
+    })));
+    commands.extend(view.remote_local_commands(cx).into_iter().map(|command| json!({
+        "name": command.keyword(), "description": command.description(), "category": "local",
+        "execution": "local", "requires_argument": false,
+        "confirmation": if command.keyword() == "remote-control" { "Stops exposing this conversation to remote devices. The desktop agent keeps running." } else { "This feedback shares the current conversation with the Zed team. Negative feedback may require completing a form in desktop Zed." },
+    })));
+    let mut seen = HashSet::new();
+    commands.reverse();
+    commands.retain(|command| {
+        command
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| seen.insert(name.to_string()))
+    });
+    commands.reverse();
+    commands
 }
 
 fn thread_settings(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
@@ -3314,20 +3362,96 @@ fn send_request(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Val
         .trim_start()
         .strip_prefix('/')
         .map(|rest| rest.split_whitespace().next().unwrap_or(""));
-    let native_command = if let Some(name) = slash_name {
-        let thread = thread.read(cx);
-        let Some(command) = thread
-            .available_commands()
+    let catalog = remote_command_catalog(&thread, &view, cx);
+    let slash_text = text.trim_start().strip_prefix('/');
+    let selected_command = slash_text.and_then(|input| {
+        let matches = |name: &str| {
+            input.strip_prefix(name).is_some_and(|remainder| {
+                remainder.is_empty() || remainder.starts_with(char::is_whitespace)
+            })
+        };
+        catalog
             .iter()
-            .find(|command| command.name == name)
-        else {
+            .filter(|command| {
+                command
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(matches)
+            })
+            .max_by_key(|command| {
+                command
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::len)
+                    .unwrap_or(0)
+            })
+            .or_else(|| {
+                catalog.iter().find(|command| {
+                    command
+                        .get("bare_name")
+                        .and_then(Value::as_str)
+                        .is_some_and(matches)
+                })
+            })
+    });
+    if slash_name.is_some() && selected_command.is_none() {
+        return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
+    }
+    if selected_command
+        .is_some_and(|command| command.get("execution").and_then(Value::as_str) == Some("local"))
+    {
+        if request
+            .params
+            .get("local_confirmed")
+            .and_then(Value::as_bool)
+            != Some(true)
+            || text.trim().split_whitespace().count() != 1
+            || request.params.get("context_paths").is_some()
+            || request.params.get("uploads").is_some()
+        {
+            return error(&request.request_id, "INVALID_REQUEST");
+        }
+        if slash_name == Some("remote-control")
+            && !state
+                .permissions
+                .get()
+                .allows("thread.unexpose", &request.params)
+        {
+            return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
+        }
+        let local_command = view
+            .read(cx)
+            .remote_local_commands(cx)
+            .into_iter()
+            .find(|command| Some(command.keyword()) == slash_name);
+        let Some(local_command) = local_command else {
             return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
         };
-        acp_thread::command_category_from_meta(&command.meta)
-            == Some(acp_thread::CommandCategory::Native)
-    } else {
-        false
-    };
+        let executed = cx.with_window(view.entity_id(), |window, cx| {
+            view.update(cx, |view, cx| {
+                view.run_remote_local_command(local_command, window, cx)
+            })
+        });
+        if executed != Some(true) {
+            return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+        }
+        let outcome = if slash_name == Some("not-helpful") {
+            "desktop_review_required"
+        } else {
+            "local_completed"
+        };
+        state.submissions.borrow_mut().insert(
+            request.request_id.clone(),
+            SubmissionRecord {
+                thread_id: thread_id.to_string(),
+                payload_digest,
+                outcome,
+            },
+        );
+        return send_result(&request.request_id, outcome);
+    }
+    let native_command = selected_command
+        .is_some_and(|command| command.get("category").and_then(Value::as_str) == Some("native"));
     if native_command
         && (request.params.get("context_paths").is_some()
             || request.params.get("uploads").is_some())
@@ -3342,6 +3466,49 @@ fn send_request(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Val
     match attachment_content(request, state, cx) {
         Ok(attachments) => content.extend(attachments),
         Err(code) => return error(&request.request_id, code),
+    }
+    if let Some(command) = selected_command
+        .filter(|command| command.get("category").and_then(Value::as_str) == Some("skill"))
+    {
+        let name = command.get("name").and_then(Value::as_str).unwrap_or("");
+        // Keep bare names on the agent's normal dispatch path, where native MCP/skill precedence is defined.
+        if let Some(remainder) = text
+            .trim_start()
+            .strip_prefix('/')
+            .and_then(|input| input.strip_prefix(name))
+        {
+            let skill = view
+                .read(cx)
+                .session_capabilities
+                .read()
+                .available_skills()
+                .iter()
+                .find(|skill| format!("{}:{}", skill.source, skill.name) == name)
+                .cloned();
+            let Some(skill) = skill else {
+                return error(&request.request_id, "UNSUPPORTED_CAPABILITY");
+            };
+            if let Some(acp::ContentBlock::Text(text)) = content.first_mut() {
+                text.text = remainder.trim_start().to_string();
+            }
+            let executed = cx.with_window(view.entity_id(), |window, cx| {
+                view.update(cx, |view, cx| {
+                    view.send_remote_skill(skill, content, window, cx)
+                })
+            });
+            if executed != Some(true) {
+                return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+            }
+            state.submissions.borrow_mut().insert(
+                request.request_id.clone(),
+                SubmissionRecord {
+                    thread_id: thread_id.to_string(),
+                    payload_digest,
+                    outcome: "unknown",
+                },
+            );
+            return send_result(&request.request_id, "unknown");
+        }
     }
     let can_send_now =
         thread.read(cx).status() == ThreadStatus::Idle && !view.read(cx).has_queued_messages();
