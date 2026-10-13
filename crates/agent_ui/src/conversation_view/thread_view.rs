@@ -1313,7 +1313,7 @@ impl ThreadView {
     fn resync_entry(&mut self, entry_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let thread = self.thread.clone();
         self.entry_view_state.update(cx, |state, cx| {
-            state.sync_entry(entry_ix, &thread, window, cx);
+            state.materialize_entry(entry_ix, &thread, window, cx);
         });
     }
 

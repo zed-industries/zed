@@ -236,7 +236,7 @@ impl EntryViewState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sync_entry_inner(index, thread, window, true, cx);
+        self.sync_entry_inner(index, thread, window, true, true, cx);
     }
 
     /// Like [`Self::sync_entry`], but does not materialize the diff/terminal
@@ -253,7 +253,21 @@ impl EntryViewState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sync_entry_inner(index, thread, window, false, cx);
+        self.sync_entry_inner(index, thread, window, false, true, cx);
+    }
+
+    /// Materializes a tool call's diff/terminal views (used when a card is
+    /// expanded) without re-running the terminal lifecycle, so that expanding
+    /// a card whose process is still running is not immediately collapsed
+    /// again by a `TerminalMovedToBackground` event.
+    pub fn materialize_entry(
+        &mut self,
+        index: usize,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_entry_inner(index, thread, window, true, false, cx);
     }
 
     fn sync_entry_inner(
@@ -262,6 +276,7 @@ impl EntryViewState {
         thread: &Entity<AcpThread>,
         window: &mut Window,
         materialize_tool_calls: bool,
+        run_terminal_lifecycle: bool,
         cx: &mut Context<Self>,
     ) {
         let Some(thread_entry) = thread.read(cx).entries().get(index) else {
@@ -407,7 +422,8 @@ impl EntryViewState {
                             }
                             collections::hash_map::Entry::Occupied(_entry) => {
                                 let terminal = terminal.read(cx);
-                                if is_tool_call_completed
+                                if run_terminal_lifecycle
+                                    && is_tool_call_completed
                                     && terminal.is_process_backed()
                                     && terminal.output().is_none()
                                 {

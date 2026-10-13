@@ -294,29 +294,40 @@ impl Diff {
             path,
             base_text: old_text.clone().unwrap_or_default().into(),
             base_text_exists: old_text.is_some(),
-            new_text,
-            language_registry: Some(language_registry),
             resolved: OnceCell::new(),
+            deferred: Some(DeferredSource {
+                new_text,
+                language_registry: Some(language_registry),
+            }),
         })
     }
 
     /// Builds the diff's buffer, multibuffer and syntax tree if not already
     /// built. Cheap and idempotent. Call this before `multibuffer`, `buffer` or
     /// `has_revealed_range` on a finalized diff.
-    pub(crate) fn resolve(&self, cx: &mut Context<Self>) {
+    pub(crate) fn resolve(&mut self, cx: &mut Context<Self>) {
         let Self::Finalized(finalized) = self else {
             return;
         };
-        finalized.resolved.get_or_init(|| {
-            build_finalized(
-                finalized.path.clone(),
-                finalized.base_text_exists,
-                finalized.base_text.clone(),
-                finalized.new_text.clone(),
-                finalized.language_registry.clone(),
-                cx,
-            )
-        });
+        if finalized.resolved.get().is_some() {
+            return;
+        }
+        let Some(DeferredSource {
+            new_text,
+            language_registry,
+        }) = finalized.deferred.take()
+        else {
+            return;
+        };
+        let resolved = build_finalized(
+            finalized.path.clone(),
+            finalized.base_text_exists,
+            finalized.base_text.clone(),
+            new_text,
+            language_registry,
+            cx,
+        );
+        let _ = finalized.resolved.set(resolved);
     }
 
     pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
@@ -437,7 +448,11 @@ impl Diff {
                 }
                 None => (
                     Some(finalized.path.as_str().into()),
-                    finalized.new_text.clone(),
+                    finalized
+                        .deferred
+                        .as_ref()
+                        .map(|source| source.new_text.clone())
+                        .unwrap_or_default(),
                 ),
             },
         };
@@ -582,20 +597,16 @@ impl PendingDiff {
             })
         });
 
-        let new_text = self.new_buffer.read(cx).text();
-        let language_registry = self.new_buffer.read(cx).language_registry();
-
         FinalizedDiff {
             path,
             base_text: self.base_text.clone(),
             base_text_exists: true,
-            new_text,
-            language_registry,
             resolved: OnceCell::from(ResolvedFinalized {
                 new_buffer: self.new_buffer.clone(),
                 multibuffer: self.multibuffer.clone(),
                 _update_diff: update_diff,
             }),
+            deferred: None,
         }
     }
 
@@ -658,9 +669,17 @@ pub struct FinalizedDiff {
     path: String,
     base_text: Arc<str>,
     base_text_exists: bool,
+    resolved: OnceCell<ResolvedFinalized>,
+    /// The full new text and language registry needed to build the
+    /// resolved state, retained only until [`Diff::resolve`] consumes
+    /// them. `None` for a diff built eagerly (`PendingDiff::finalize`).
+    deferred: Option<DeferredSource>,
+}
+
+/// Retained source for a finalized diff that has not been built yet.
+struct DeferredSource {
     new_text: String,
     language_registry: Option<Arc<LanguageRegistry>>,
-    resolved: OnceCell<ResolvedFinalized>,
 }
 
 struct ResolvedFinalized {
@@ -683,7 +702,6 @@ fn build_finalized(
     let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
     let task = cx.spawn({
         let multibuffer = multibuffer.clone();
-        let path = path.clone();
         let buffer = new_buffer.clone();
         async move |_, cx| {
             if let Some(language_registry) = language_registry {
