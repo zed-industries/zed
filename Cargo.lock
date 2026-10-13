@@ -12554,7 +12554,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dunce",
- "pretty_assertions",
  "serde",
  "tempfile",
  "tendril",
@@ -13990,6 +13989,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "svg_preview",
  "telemetry",
  "tempfile",
  "theme",
@@ -17475,6 +17475,7 @@ dependencies = [
  "gpui",
  "language",
  "multi_buffer",
+ "project",
  "ui",
  "workspace",
  "zed_actions",

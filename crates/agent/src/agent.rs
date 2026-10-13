@@ -31,7 +31,8 @@ pub use tools::*;
 
 use acp_thread::{
     AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
-    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
+    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, ProcessOutput,
+    TokenUsageRatio,
 };
 use agent_client_protocol::schema::v1 as acp_v1;
 use agent_client_protocol::schema::v2 as acp_v2;
@@ -1800,6 +1801,10 @@ impl NativeAgent {
             return;
         }
 
+        session
+            .thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .detach();
         self.enqueue_save(session_id, draft_prompt, cx);
         let Some(session) = self.sessions.remove(session_id) else {
             return;
@@ -1980,11 +1985,7 @@ impl NativeAgent {
                     .sessions
                     .get(&session_id)
                     .context("Failed to get session")?;
-                let acp_thread = session
-                    .acp_thread
-                    .upgrade()
-                    .context("Session was released")?;
-                anyhow::Ok((acp_thread, session.thread.clone()))
+                anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
             let mut last_is_user = true;
@@ -2014,7 +2015,7 @@ impl NativeAgent {
                                 true,
                                 cx,
                             );
-                        });
+                        })?;
 
                         thread.update(cx, |thread, cx| {
                             thread.push_acp_user_block(id, [block], path_style, cx)
@@ -2028,7 +2029,7 @@ impl NativeAgent {
                                 true,
                                 cx,
                             );
-                        });
+                        })?;
 
                         thread.update(cx, |thread, cx| thread.push_acp_agent_block(block, cx))?;
                     }
@@ -2050,7 +2051,7 @@ impl NativeAgent {
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
-                    acp_thread.downgrade(),
+                    acp_thread,
                     connection,
                     cx,
                 )
@@ -2073,24 +2074,20 @@ impl NativeAgent {
                     .sessions
                     .get(&session_id)
                     .context("Failed to get session")?;
-                let acp_thread = session
-                    .acp_thread
-                    .upgrade()
-                    .context("Session was released")?;
-                anyhow::Ok((acp_thread, session.thread.clone()))
+                anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
             let response_stream =
                 thread.update(cx, |thread, cx| thread.compact(client_user_message_id, cx))?;
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.update_token_usage(None, cx);
-            });
+            })?;
 
             let connection = this.upgrade().map(NativeAgentConnection);
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
-                    acp_thread.downgrade(),
+                    acp_thread,
                     connection,
                     cx,
                 )
@@ -2128,11 +2125,7 @@ impl NativeAgent {
                     .sessions
                     .get(&session_id)
                     .context("Failed to get session")?;
-                let acp_thread = session
-                    .acp_thread
-                    .upgrade()
-                    .context("Session was released")?;
-                anyhow::Ok((acp_thread, session.thread.clone()))
+                anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
             // Build the model-context message: skill envelope first, then
@@ -2181,7 +2174,7 @@ impl NativeAgent {
                     true,
                     cx,
                 );
-            });
+            })?;
 
             // Model context: a single user message containing the skill
             // envelope followed by the user's appended content.
@@ -2199,7 +2192,7 @@ impl NativeAgent {
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
-                    acp_thread.downgrade(),
+                    acp_thread,
                     connection,
                     cx,
                 )
@@ -3399,7 +3392,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
-        extra_env: Vec<acp_v1::EnvVariable>,
+        extra_env: Vec<(String, String)>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<acp_thread::SandboxWrap>,
@@ -3448,9 +3441,9 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                     let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
                     let temp_dir_string = temp_dir.to_string_lossy().into_owned();
                     extra_env.extend([
-                        acp_v1::EnvVariable::new("TMPDIR", &temp_dir_string),
-                        acp_v1::EnvVariable::new("TMP", &temp_dir_string),
-                        acp_v1::EnvVariable::new("TEMP", &temp_dir_string),
+                        ("TMPDIR".into(), temp_dir_string.clone()),
+                        ("TMP".into(), temp_dir_string.clone()),
+                        ("TEMP".into(), temp_dir_string),
                     ]);
                     // The command's `$TMPDIR` must live inside the sandbox's
                     // writable scope. The per-thread temp directory is owned
@@ -3708,12 +3701,12 @@ impl TerminalHandle for AcpTerminalHandle {
         Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
     }
 
-    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp_v1::TerminalExitStatus>>> {
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp_v2::TerminalExitStatus>>> {
         self.terminal
             .read_with(cx, |term, _cx| term.wait_for_exit())
     }
 
-    fn current_output(&self, cx: &AsyncApp) -> Result<acp_v1::TerminalOutputResponse> {
+    fn current_output(&self, cx: &AsyncApp) -> Result<ProcessOutput> {
         Ok(self
             .terminal
             .read_with(cx, |term, cx| term.current_output(cx)))
@@ -3848,6 +3841,8 @@ pub fn skill_body_resolver_for_project(
                     worktree
                         .path_style()
                         .strip_prefix(&skill.skill_file_path, &worktree_root)
+                        .ok()
+                        .and_then(|path| RelPath::new(path, worktree.path_style()).ok())
                         .map(|relative_path| relative_path.into_arc())
                         .context("skill file is not inside its worktree")
                 })?;
@@ -4271,6 +4266,74 @@ mod internal_tests {
             .skip(1)
             .map(language_model::LanguageModelRequestMessage::string_contents)
             .collect()
+    }
+
+    #[gpui::test]
+    async fn test_native_skill_command_releases_while_waiting_for_permission(
+        cx: &mut TestAppContext,
+    ) {
+        use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
+
+        let fake = init_test(cx);
+        let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        cx.run_until_parked();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let fs = project.read_with(cx, |project, _| project.fs().clone());
+        fs.write(Path::new("/a/file.txt"), b"retained")
+            .await
+            .expect("test file");
+        let model = fake.model("fake");
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            settings.tool_permissions.tools.clear();
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        let mut skill = make_global_skill("release-skill", "Release skill");
+        skill.embedded_body = Some("Do the requested work");
+        agent.update(cx, |agent, _| {
+            agent
+                .projects
+                .get_mut(&project.entity_id())
+                .expect("project state")
+                .skills = Arc::new(vec![skill]);
+        });
+        let send = acp_thread.update(cx, |thread, cx| {
+            thread.send(vec!["/:release-skill".into()], cx)
+        });
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("skill reaches model");
+        let input = json!({"path": "a/file.txt"});
+        fake.send_event(
+            &model,
+            &request,
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                id: "delete".into(),
+                name: DeletePathTool::NAME.into(),
+                raw_input: input.to_string(),
+                input: LanguageModelToolUseInput::Json(input),
+                is_input_complete: true,
+                thought_signature: None,
+            }),
+        );
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        assert!(acp_thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+        drop(acp_thread);
+        release_dropped_entities(cx);
+        assert!(agent.read_with(cx, |agent, _| !agent.sessions.contains_key(&session_id)));
+        assert!(
+            thread.read_with(cx, |thread, _| thread.is_turn_complete()),
+            "release cancels model even with retained native Thread"
+        );
+        send.await
+            .expect_err("release cancels the pending completion");
     }
 
     #[gpui::test]

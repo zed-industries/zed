@@ -772,8 +772,9 @@ fn mention_path_for_terminal(
     match (abs_path, working_directory) {
         (Some(abs_path), Some(working_directory)) => path_style
             .strip_prefix(&abs_path, working_directory)
-            .map(|relative| relative.display(path_style).into_owned())
-            .unwrap_or_else(|| abs_path.to_string_lossy().into_owned()),
+            .unwrap_or(&abs_path)
+            .to_string_lossy()
+            .into_owned(),
         (Some(abs_path), None) => abs_path.to_string_lossy().into_owned(),
         (None, _) => project_path.path.display(path_style).into_owned(),
     }

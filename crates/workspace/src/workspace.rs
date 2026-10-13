@@ -5213,7 +5213,7 @@ impl Workspace {
         let project_is_local = project.read(cx).is_local();
 
         // If it's an absolute path, open it directly
-        if path_style.is_absolute(url_or_path) {
+        if path_style.has_root(Path::new(url_or_path)) {
             open_abs_path(self, PathBuf::from(url_or_path), cx);
             return;
         }
@@ -10934,6 +10934,8 @@ pub async fn find_existing_workspace(
                             let abs_path = worktree.abs_path();
                             path_style
                                 .strip_prefix(path.as_ref(), abs_path.as_ref())
+                                .ok()
+                                .and_then(|path| RelPath::new(path, path_style).ok())
                                 .and_then(|rel| worktree.entry_for_path(&rel))
                                 .is_some_and(|e| e.is_dir())
                         })

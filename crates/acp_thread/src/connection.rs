@@ -21,6 +21,10 @@ impl ClientUserMessageId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string().into())
     }
+
+    pub fn message_id(&self) -> acp_v2::MessageId {
+        acp_v2::MessageId::new(self.0.as_ref())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -316,6 +320,16 @@ pub trait ReceiptSessionSubmissions {
         content: Vec<acp_v2::ContentBlock>,
         cx: &mut App,
     ) -> Task<Result<acp_v2::PromptResponse>>;
+
+    fn supports_retry(&self) -> bool {
+        false
+    }
+
+    fn retry(&self, _cx: &mut App) -> Task<Result<acp_v2::PromptResponse>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Receipt-driven retry is not supported"
+        )))
+    }
 }
 
 pub trait AgentSessionRetry {
@@ -337,11 +351,11 @@ pub trait AgentTelemetry {
 }
 
 pub trait AgentSessionModes {
-    fn current_mode(&self) -> acp_v1::SessionModeId;
+    fn current_mode(&self) -> acp_v2::SessionConfigValueId;
 
-    fn all_modes(&self) -> Vec<acp_v1::SessionMode>;
+    fn all_modes(&self) -> Vec<acp_v2::SessionConfigSelectOption>;
 
-    fn set_mode(&self, mode: acp_v1::SessionModeId, cx: &mut App) -> Task<Result<()>>;
+    fn set_mode(&self, mode: acp_v2::SessionConfigValueId, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentSessionConfigOptions {
@@ -368,14 +382,14 @@ pub trait AgentSessionConfigOptions {
 pub struct AgentSessionListRequest {
     pub cwd: Option<PathBuf>,
     pub cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentSessionListResponse {
     pub sessions: Vec<AgentSessionInfo>,
     pub next_cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 impl AgentSessionListResponse {
@@ -496,6 +510,35 @@ impl dyn AgentSessionList {
     }
 }
 
+/// Read protocol fields without replacing the concrete SDK error or its context chain.
+#[derive(Clone, Copy)]
+pub struct ProtocolErrorInfo<'a> {
+    pub code: i32,
+    pub message: &'a str,
+    pub data: Option<&'a serde_json::Value>,
+}
+
+impl<'a> ProtocolErrorInfo<'a> {
+    pub fn from_error(error: &'a anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<acp_v1::Error>() {
+            return Some(Self {
+                code: error.code.into(),
+                message: &error.message,
+                data: error.data.as_ref(),
+            });
+        }
+        error.downcast_ref::<acp_v2::Error>().map(|error| Self {
+            code: error.code.into(),
+            message: &error.message,
+            data: error.data.as_ref(),
+        })
+    }
+
+    pub fn is_auth_required(&self) -> bool {
+        self.code == i32::from(acp_v2::ErrorCode::AuthRequired)
+    }
+}
+
 #[derive(Debug)]
 pub struct AuthRequired {
     pub description: Option<String>,
@@ -509,6 +552,19 @@ impl AuthRequired {
     pub fn with_description(mut self, description: String) -> Self {
         self.description = Some(description);
         self
+    }
+
+    pub fn from_error(error: &anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<Self>() {
+            return Some(Self {
+                description: error.description.clone(),
+            });
+        }
+        let error = ProtocolErrorInfo::from_error(error)?;
+        error.is_auth_required().then(|| Self {
+            description: (error.message != acp_v2::ErrorCode::AuthRequired.to_string())
+                .then(|| error.message.to_owned()),
+        })
     }
 }
 
@@ -863,6 +919,7 @@ mod test_support {
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
         set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
+        cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
@@ -893,6 +950,7 @@ mod test_support {
                 receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
                 set_title_calls: Default::default(),
+                cancel_calls: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_receipt_submissions: false,
@@ -942,6 +1000,10 @@ mod test_support {
 
         pub fn take_set_title_calls(&self) -> Vec<(acp_v2::SessionId, SharedString)> {
             std::mem::take(&mut *self.set_title_calls.lock())
+        }
+
+        pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
+            std::mem::take(&mut *self.cancel_calls.lock())
         }
 
         pub fn defer_next_truncate(&self) -> oneshot::Sender<()> {
@@ -1238,6 +1300,7 @@ mod test_support {
         }
 
         fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
+            self.cancel_calls.lock().push(session_id.clone());
             if let Some(end_turn_tx) = self
                 .sessions
                 .lock()
