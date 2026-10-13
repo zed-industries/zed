@@ -2655,7 +2655,7 @@ impl ProjectPanel {
 
                 let task = panel.update(cx, |_panel, cx| {
                     repository.update(cx, |repo, cx| {
-                        repo.checkout_files("HEAD", vec![repo_path], cx)
+                        repo.checkout_files(Some("HEAD"), vec![repo_path], cx)
                     })
                 })?;
 
