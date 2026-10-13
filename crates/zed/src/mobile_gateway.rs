@@ -8,15 +8,15 @@ use agent_ui::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures::{
-    AsyncReadExt, AsyncWriteExt, StreamExt,
+    AsyncReadExt, AsyncWriteExt, FutureExt as _, StreamExt,
     channel::mpsc::{self, Receiver, Sender},
 };
 use gpui::{
-    App, AsyncApp, Entity, Global, ReadGlobal as _, Subscription, Task, TaskExt as _, WeakEntity,
-    WindowHandle,
+    App, AsyncApp, Entity, Global, ReadGlobal as _, SharedString, Subscription, Task, TaskExt as _,
+    WeakEntity, WindowHandle,
 };
 use language_model::LanguageModelRegistry;
-use project::ProjectItem as _;
+use project::{Project, ProjectItem as _};
 use rand::RngCore;
 use remote::RemoteConnectionOptions;
 use serde::Deserialize;
@@ -250,6 +250,33 @@ fn refresh(cx: &mut App) {
         .try_global::<Gateway>()
         .is_some_and(|gateway| gateway.settings == settings)
     {
+        return;
+    }
+    // Pairing a phone saves the device list, and the new phone's first request follows at once.
+    // Keep the listener when only credentials change so that request is not refused; streams for
+    // removed or re-credentialed devices are still closed and outstanding QR codes still expire.
+    let keeps_listener = cx.try_global::<Gateway>().is_some_and(|gateway| {
+        gateway._listener.is_some()
+            && gateway.settings.enabled == settings.enabled
+            && gateway.settings.bind_address == settings.bind_address
+    });
+    if keeps_listener {
+        let gateway = cx.global_mut::<Gateway>();
+        let previous_devices =
+            std::mem::replace(&mut gateway.settings, settings.clone()).paired_devices;
+        gateway.pairing_tickets.clear();
+        cx.global_mut::<MobileGatewayEvents>()
+            .streams
+            .retain(|device_id, _| {
+                let credential = |devices: &[PairedDevice]| {
+                    devices
+                        .iter()
+                        .find(|device| &device.id == device_id)
+                        .map(|device| device.credential_hash.clone())
+                };
+                credential(&settings.paired_devices)
+                    .is_some_and(|hash| credential(&previous_devices) == Some(hash))
+            });
         return;
     }
     // Listener replacement also drops in-flight HTTP requests. Pairing tickets are deliberately
@@ -923,6 +950,8 @@ struct PairClaim {
 #[serde(deny_unknown_fields)]
 struct CreateThread {
     project_id: String,
+    /// An agent id from `GET /v2/projects/{id}/agents`; omitted means the built-in Zed Agent.
+    agent_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -969,6 +998,17 @@ struct ThreadConfigurationUpdate {
     model: Option<ModelSelection>,
     thinking_enabled: Option<bool>,
     thinking_effort: Option<Option<String>>,
+    /// External agents only: a mode id the agent reported in `modes.available`.
+    mode_id: Option<String>,
+    /// External agents only: a value for one of the agent's reported `options`.
+    config_option: Option<ConfigOptionUpdate>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigOptionUpdate {
+    id: String,
+    value: Value,
 }
 
 fn body<T: serde::de::DeserializeOwned>(request: &Request) -> Result<T, ApiError> {
@@ -1227,11 +1267,21 @@ async fn dispatch_request(request: Request, cx: &AsyncApp) -> ApiResult {
     if is_catalog_request(&request) {
         dispatch_catalog_request(request, cx).await
     } else {
-        cx.update(|cx| dispatch(request, cx))
+        match cx.update(|cx| dispatch(request, cx))? {
+            Reply::Ready(value) => Ok(value),
+            Reply::Pending(task) => task.await,
+        }
     }
 }
 
-fn dispatch(request: Request, cx: &mut App) -> ApiResult {
+/// External agents apply configuration changes asynchronously over ACP, so those responses are
+/// produced only after the agent confirms the change.
+enum Reply {
+    Ready(Value),
+    Pending(Task<ApiResult>),
+}
+
+fn dispatch(request: Request, cx: &mut App) -> Result<Reply, ApiError> {
     let version = request
         .segments
         .first()
@@ -1253,7 +1303,7 @@ fn dispatch(request: Request, cx: &mut App) -> ApiResult {
                     .map(String::as_str)
                     .eq(["v2", "pair", "claim"])
             {
-                return claim_pairing(&request, cx);
+                return claim_pairing(&request, cx).map(Reply::Ready);
             }
             let device = authorize_device(&request, &settings)?;
             if request.method == "POST"
@@ -1263,13 +1313,16 @@ fn dispatch(request: Request, cx: &mut App) -> ApiResult {
                     .map(String::as_str)
                     .eq(["v2", "devices", "current", "revoke"])
             {
-                return revoke_device(&device, cx);
+                return revoke_device(&device, cx).map(Reply::Ready);
+            }
+            if let Some(task) = update_external_configuration(&request, cx)? {
+                return Ok(Reply::Pending(task));
             }
         }
         _ => return Err(ApiError(404, "Unknown route or unsupported method".into())),
     }
 
-    dispatch_workspace(&request, cx)
+    dispatch_workspace(&request, cx).map(Reply::Ready)
 }
 
 struct OpenProject {
@@ -1632,17 +1685,7 @@ fn ensure_conversation_event_subscriptions(
     cx: &mut App,
 ) {
     for view in panel.read(cx).conversation_views() {
-        let (conversation_id, is_native) = {
-            let view = view.read(cx);
-            (
-                view.parent_id().to_key_string(),
-                matches!(view.agent_key(), Agent::NativeAgent),
-            )
-        };
-        if !is_native {
-            continue;
-        }
-
+        let conversation_id = view.read(cx).parent_id().to_key_string();
         ensure_conversation_thread_subscription(project_id, project_name, &view, cx);
         if cx
             .global::<MobileGatewayEvents>()
@@ -1732,7 +1775,7 @@ fn ensure_thread_event_subscription(
 }
 
 fn conversation_allowed(view: &ConversationView, project: &OpenProject, cx: &App) -> bool {
-    if !matches!(view.agent_key(), Agent::NativeAgent) {
+    if !matches!(view.agent_key(), Agent::NativeAgent | Agent::Custom { .. }) {
         return false;
     }
     if view.root_thread_view().is_none() {
@@ -1742,16 +1785,13 @@ fn conversation_allowed(view: &ConversationView, project: &OpenProject, cx: &App
                 && pending.roots == project.roots
         });
     }
-    let Some(native) = view.as_native_thread(cx) else {
-        return false;
-    };
-    if native.read(cx).project() != project.workspace.read(cx).project() {
-        return false;
-    }
     let Some(thread_view) = view.root_thread_view() else {
         return false;
     };
     let thread = thread_view.read(cx).thread.read(cx);
+    if thread.project() != project.workspace.read(cx).project() {
+        return false;
+    }
     thread.work_dirs().is_none_or(|paths| {
         !paths.is_empty()
             && paths
@@ -1761,7 +1801,45 @@ fn conversation_allowed(view: &ConversationView, project: &OpenProject, cx: &App
     })
 }
 
-fn summary(view: &ConversationView, cx: &App) -> Value {
+fn project_agents(project: &Entity<Project>, cx: &App) -> Vec<(Agent, SharedString)> {
+    let mut agents = vec![(Agent::NativeAgent, Agent::NativeAgent.label())];
+    let project = project.read(cx);
+    if project.is_via_collab() {
+        return agents;
+    }
+    let store = project.agent_server_store().read(cx);
+    let registry = project::AgentRegistryStore::try_global(cx);
+    for id in store.external_agents() {
+        let name = store
+            .agent_display_name(id)
+            .or_else(|| {
+                registry.as_ref().and_then(|registry| {
+                    registry
+                        .read(cx)
+                        .agent(id)
+                        .map(|agent| agent.name().clone())
+                })
+            })
+            .unwrap_or_else(|| id.0.clone());
+        agents.push((Agent::Custom { id: id.clone() }, name));
+    }
+    agents
+}
+
+fn agent_json(agent: &Agent, project: &Entity<Project>, cx: &App) -> Value {
+    let name = project_agents(project, cx)
+        .into_iter()
+        .find(|(candidate, _)| candidate == agent)
+        .map(|(_, name)| name)
+        .unwrap_or_else(|| agent.label());
+    json!({
+        "id": agent.id().0,
+        "name": event_display_label(&name, "Agent"),
+        "is_native": agent.is_native(),
+    })
+}
+
+fn summary(view: &ConversationView, project: &OpenProject, cx: &App) -> Value {
     let status = view
         .root_thread_view()
         .map(|thread_view| {
@@ -1778,10 +1856,21 @@ fn summary(view: &ConversationView, cx: &App) -> Value {
         })
         .unwrap_or(if view.is_loading() {
             "initializing"
+        } else if view.needs_authentication() {
+            "needs_authentication"
         } else {
             "error"
         });
-    json!({"id": view.parent_id().to_key_string(), "title": view.title(cx).to_string(), "status": status})
+    let mut result = json!({
+        "id": view.parent_id().to_key_string(),
+        "title": view.title(cx).to_string(),
+        "status": status,
+        "agent": agent_json(view.agent_key(), project.workspace.read(cx).project(), cx),
+    });
+    if let Some(message) = view.load_error_message() {
+        result["error_message"] = json!(truncate_to_byte_limit(&message, 512));
+    }
+    result
 }
 
 /// Returns the newest messages that fit `MAX_MESSAGES_BYTES`. v2 clients render the transcript, so
@@ -2357,6 +2446,12 @@ fn update_thread_configuration(
     cx: &mut App,
 ) -> ApiResult {
     let update: ThreadConfigurationUpdate = body(request)?;
+    if update.mode_id.is_some() || update.config_option.is_some() {
+        return Err(ApiError(
+            400,
+            "Modes and config options apply only to external agents".into(),
+        ));
+    }
     if update.model.is_none()
         && update.thinking_enabled.is_none()
         && update.thinking_effort.is_none()
@@ -2447,6 +2542,233 @@ fn update_thread_configuration(
     Ok(thread_configuration(native, cx))
 }
 
+const EXTERNAL_CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn config_option_json(option: &acp::SessionConfigOption) -> Option<Value> {
+    let mut result = json!({
+        "id": option.id.0,
+        "name": option.name,
+        "description": option.description,
+        "category": option.category,
+    });
+    match &option.kind {
+        acp::SessionConfigKind::Select(select) => {
+            let values = match &select.options {
+                acp::SessionConfigSelectOptions::Ungrouped(options) => options
+                    .iter()
+                    .map(|option| (None, option))
+                    .collect::<Vec<_>>(),
+                acp::SessionConfigSelectOptions::Grouped(groups) => groups
+                    .iter()
+                    .flat_map(|group| {
+                        group
+                            .options
+                            .iter()
+                            .map(move |option| (Some(group.name.as_str()), option))
+                    })
+                    .collect(),
+                _ => return None,
+            };
+            result["type"] = json!("select");
+            result["current_value"] = json!(select.current_value.0);
+            result["values"] = values
+                .into_iter()
+                .map(|(group, option)| {
+                    json!({
+                        "value": option.value.0,
+                        "name": option.name,
+                        "description": option.description,
+                        "group": group,
+                    })
+                })
+                .collect();
+        }
+        acp::SessionConfigKind::Boolean(boolean) => {
+            result["type"] = json!("boolean");
+            result["current_value"] = json!(boolean.current_value);
+        }
+        _ => return None,
+    }
+    Some(result)
+}
+
+fn select_option_values(select: &acp::SessionConfigSelect) -> Vec<&acp::SessionConfigValueId> {
+    match &select.options {
+        acp::SessionConfigSelectOptions::Ungrouped(options) => {
+            options.iter().map(|option| &option.value).collect()
+        }
+        acp::SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter().map(|option| &option.value))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Mirrors the desktop thread view: when an agent reports config options, they supersede the
+/// legacy session modes.
+fn external_configuration(thread: &acp_thread::AcpThread, cx: &App) -> Value {
+    let connection = thread.connection();
+    let session_id = thread.session_id();
+    if let Some(options) = connection.session_config_options(session_id, cx) {
+        let options = options
+            .config_options()
+            .iter()
+            .filter_map(config_option_json)
+            .collect::<Vec<_>>();
+        return json!({"modes": null, "options": options});
+    }
+    let modes = connection.session_modes(session_id, cx).map(|modes| {
+        json!({
+            "current": modes.current_mode().0,
+            "available": modes.all_modes().iter().map(|mode| json!({
+                "id": mode.id.0,
+                "name": mode.name,
+                "description": mode.description,
+            })).collect::<Vec<_>>(),
+        })
+    });
+    json!({"modes": modes, "options": []})
+}
+
+/// Starts a configuration change for an external-agent thread. Returns `None` for any other
+/// request so it falls through to the synchronous router.
+fn update_external_configuration(
+    request: &Request,
+    cx: &mut App,
+) -> Result<Option<Task<ApiResult>>, ApiError> {
+    let segments = request
+        .segments
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let ["v2", "threads", thread_id, "configuration"] = segments.as_slice() else {
+        return Ok(None);
+    };
+    if request.method != "PUT" {
+        return Ok(None);
+    }
+    let projects = open_projects(cx);
+    let Some((_, view)) = find_conversation(&projects, thread_id, cx) else {
+        return Ok(None);
+    };
+    if view.read(cx).agent_key().is_native() {
+        return Ok(None);
+    }
+    let thread = view
+        .read(cx)
+        .root_thread_view()
+        .map(|thread_view| thread_view.read(cx).thread.clone())
+        .ok_or_else(agent_unavailable)?;
+
+    let update: ThreadConfigurationUpdate = body(request)?;
+    if update.model.is_some()
+        || update.thinking_enabled.is_some()
+        || update.thinking_effort.is_some()
+    {
+        return Err(ApiError(
+            400,
+            "External agents are configured through their own modes and options".into(),
+        ));
+    }
+    let is_busy = {
+        let thread = thread.read(cx);
+        thread.status() == ThreadStatus::Generating || thread.is_waiting_for_confirmation()
+    };
+    if is_busy {
+        return Err(ApiError(
+            409,
+            "Wait for the current Agent turn or approval before changing its configuration".into(),
+        ));
+    }
+
+    let connection = thread.read(cx).connection().clone();
+    let session_id = thread.read(cx).session_id().clone();
+    let change: Task<anyhow::Result<()>> = match (update.mode_id, update.config_option) {
+        (Some(mode_id), None) => {
+            if connection.session_config_options(&session_id, cx).is_some() {
+                return Err(ApiError(
+                    409,
+                    "This agent is configured through its options, not modes".into(),
+                ));
+            }
+            let modes = connection
+                .session_modes(&session_id, cx)
+                .ok_or_else(|| ApiError(409, "This agent does not support modes".into()))?;
+            let mode = modes
+                .all_modes()
+                .into_iter()
+                .find(|mode| mode.id.0.as_ref() == mode_id)
+                .ok_or_else(|| ApiError(409, "That mode is not offered by the agent".into()))?;
+            modes.set_mode(mode.id, cx)
+        }
+        (None, Some(update)) => {
+            let options = connection
+                .session_config_options(&session_id, cx)
+                .ok_or_else(|| ApiError(409, "This agent does not report options".into()))?;
+            let option = options
+                .config_options()
+                .into_iter()
+                .find(|option| option.id.0.as_ref() == update.id)
+                .ok_or_else(|| ApiError(409, "That option is not offered by the agent".into()))?;
+            let value = match (&option.kind, &update.value) {
+                (acp::SessionConfigKind::Select(select), Value::String(value)) => {
+                    let value = select_option_values(select)
+                        .into_iter()
+                        .find(|candidate| candidate.0.as_ref() == value)
+                        .ok_or_else(|| {
+                            ApiError(409, "That value is not offered for this option".into())
+                        })?;
+                    acp::SessionConfigOptionValue::value_id(value.clone())
+                }
+                (acp::SessionConfigKind::Boolean(_), Value::Bool(value)) => {
+                    acp::SessionConfigOptionValue::boolean(*value)
+                }
+                _ => {
+                    return Err(ApiError(
+                        400,
+                        "The value does not match the option's type".into(),
+                    ));
+                }
+            };
+            let task = options.set_config_option(option.id, value, cx);
+            cx.spawn(async move |_| task.await.map(|_| ()))
+        }
+        _ => {
+            return Err(ApiError(
+                400,
+                "Supply exactly one of mode_id or config_option".into(),
+            ));
+        }
+    };
+
+    let agent = agent_json(view.read(cx).agent_key(), thread.read(cx).project(), cx);
+    let thread = thread.downgrade();
+    Ok(Some(cx.spawn(async move |cx| {
+        let timeout = cx
+            .background_executor()
+            .timer(EXTERNAL_CONFIGURATION_TIMEOUT);
+        let result = futures::select_biased! {
+            result = change.fuse() => result,
+            _ = timeout.fuse() => {
+                return Err(ApiError(504, "The agent did not confirm the change in time".into()));
+            }
+        };
+        if let Err(error) = result {
+            let message = format!("The agent rejected the change: {error}");
+            return Err(ApiError(
+                502,
+                truncate_to_byte_limit(&message, 512).to_string(),
+            ));
+        }
+        let mut result = thread
+            .read_with(cx, |thread, cx| external_configuration(thread, cx))
+            .map_err(|_| not_found())?;
+        result["agent"] = agent;
+        Ok(result)
+    })))
+}
+
 fn dispatch_workspace(request: &Request, cx: &mut App) -> ApiResult {
     let segments = request
         .segments
@@ -2468,6 +2790,18 @@ fn dispatch_workspace(request: &Request, cx: &mut App) -> ApiResult {
             let path = project.roots.first().map(PathBuf::as_path).unwrap_or_else(|| Path::new(""));
             json!({"id": project.id, "name": path.file_name().unwrap_or_default().to_string_lossy(), "path": path.to_string_lossy()})
         }).collect::<Vec<_>>()})),
+        ("GET", ["v2", "projects", project_id, "agents"]) => {
+            let project = projects
+                .iter()
+                .find(|project| project.id == *project_id)
+                .ok_or_else(not_found)?;
+            let project = project.workspace.read(cx).project();
+            let agents = project_agents(project, cx)
+                .iter()
+                .map(|(agent, _)| agent_json(agent, project, cx))
+                .collect::<Vec<_>>();
+            Ok(json!({"agents": agents}))
+        }
         ("GET", ["v2", "projects", project_id, "models"]) => {
             projects
                 .iter()
@@ -2491,7 +2825,7 @@ fn dispatch_workspace(request: &Request, cx: &mut App) -> ApiResult {
                 .into_iter()
                 .filter_map(|view| {
                     let view = view.read(cx);
-                    conversation_allowed(view, project, cx).then(|| summary(view, cx))
+                    conversation_allowed(view, project, cx).then(|| summary(view, project, cx))
                 })
                 .collect::<Vec<_>>();
             Ok(json!({"threads": threads}))
@@ -2524,6 +2858,21 @@ fn dispatch_workspace(request: &Request, cx: &mut App) -> ApiResult {
                 .find(|project| project.id == create.project_id)
                 .ok_or_else(not_found)?;
             ensure_can_prompt(project, cx)?;
+            let agent = match create.agent_id.as_deref() {
+                None => Agent::NativeAgent,
+                Some(agent_id) => {
+                    if agent_id.is_empty() || agent_id.len() > 256 {
+                        return Err(ApiError(400, "Invalid agent id".into()));
+                    }
+                    project_agents(project.workspace.read(cx).project(), cx)
+                        .into_iter()
+                        .map(|(agent, _)| agent)
+                        .find(|agent| agent.id().0.as_ref() == agent_id)
+                        .ok_or_else(|| {
+                            ApiError(409, "That agent is not configured on desktop".into())
+                        })?
+                }
+            };
             let panel = project
                 .workspace
                 .read(cx)
@@ -2535,7 +2884,7 @@ fn dispatch_workspace(request: &Request, cx: &mut App) -> ApiResult {
                     let id = panel.update(cx, |panel, cx| {
                         panel.create_thread_with_options(
                             CreateThreadOptions {
-                                agent: Some(Agent::NativeAgent),
+                                agent: Some(agent),
                                 ..Default::default()
                             },
                             AgentThreadSource::AgentPanel,
@@ -2556,111 +2905,116 @@ fn dispatch_workspace(request: &Request, cx: &mut App) -> ApiResult {
                             roots: project.roots.clone(),
                             view: view.downgrade(),
                         });
-                    Ok(summary(view.read(cx), cx))
+                    Ok(summary(view.read(cx), project, cx))
                 })
                 .map_err(|_| agent_unavailable())?
         }
         (method, [version, "threads", thread_id, rest @ ..]) => {
-            for project in &projects {
-                let Some(panel) = project.workspace.read(cx).panel::<AgentPanel>(cx) else {
-                    continue;
-                };
-                let view = panel
-                    .read(cx)
-                    .conversation_views()
-                    .into_iter()
-                    .find(|view| {
-                        let view = view.read(cx);
-                        view.parent_id().to_key_string() == *thread_id
-                            && conversation_allowed(view, project, cx)
-                    });
-                let Some(view) = view else {
-                    continue;
-                };
-                let Some(thread_view) = view.read(cx).root_thread_view() else {
-                    if method == "GET" && rest.is_empty() {
-                        let mut result = summary(view.read(cx), cx);
-                        result["messages"] = json!([]);
-                        if *version == "v2" {
-                            result["transcript"] = json!([]);
+            let (project, view) =
+                find_conversation(&projects, thread_id, cx).ok_or_else(not_found)?;
+            let Some(thread_view) = view.read(cx).root_thread_view() else {
+                if method == "GET" && rest.is_empty() {
+                    let mut result = summary(view.read(cx), project, cx);
+                    result["messages"] = json!([]);
+                    if *version == "v2" {
+                        result["transcript"] = json!([]);
+                    }
+                    return Ok(result);
+                }
+                if view.read(cx).needs_authentication() {
+                    return Err(ApiError(
+                        409,
+                        "Sign in to this agent from the thread on desktop first".into(),
+                    ));
+                }
+                return Err(agent_unavailable());
+            };
+            let thread = thread_view.read(cx).thread.clone();
+            let project_name = event_project_name(project);
+            let thread_title = view.read(cx).title(cx).to_string();
+            ensure_thread_event_subscription(
+                thread_id,
+                &project.id,
+                &project_name,
+                &thread_title,
+                &thread,
+                cx,
+            );
+            return match (method, rest) {
+                ("GET", []) => {
+                    let mut result = summary(view.read(cx), project, cx);
+                    let entries = thread.read(cx).entries();
+                    result["messages"] = json!(legacy_messages(entries, *version != "v2", cx));
+                    if *version == "v2" {
+                        with_transcript(&mut result, thread.read(cx), cx);
+                    }
+                    Ok(result)
+                }
+                ("GET", ["transcript"]) if *version == "v2" => {
+                    let before = request.query_number("before")?;
+                    let limit = request
+                        .query_number("limit")?
+                        .unwrap_or(DEFAULT_TRANSCRIPT_PAGE)
+                        .clamp(1, MAX_TRANSCRIPT_PAGE);
+                    let (entries, omitted) = transcript(thread.read(cx), before, limit, cx);
+                    Ok(json!({
+                        "entries": entries,
+                        "omitted_entries": omitted,
+                        "has_more": omitted > 0,
+                        "total_entries": thread.read(cx).entries().len(),
+                    }))
+                }
+                ("GET", ["tool-calls", tool_call_id, "output"]) if *version == "v2" => {
+                    tool_details(&thread, tool_call_id, cx)
+                }
+                ("GET", ["approvals"]) if *version == "v2" => {
+                    Ok(approvals(thread.read(cx).entries(), &thread_view, cx))
+                }
+                ("POST", ["approvals", tool_call_id, "resolve"]) if *version == "v2" => {
+                    resolve_approval(&thread, &thread_view, tool_call_id, request, cx)
+                }
+                ("GET", ["elicitations"]) if *version == "v2" => {
+                    Ok(pending_elicitations(thread.read(cx)))
+                }
+                ("POST", ["elicitations", elicitation_id, "respond"]) if *version == "v2" => {
+                    respond_to_elicitation(&thread, &thread_view, elicitation_id, request, cx)
+                }
+                ("GET", ["configuration"]) if *version == "v2" => {
+                    let agent =
+                        agent_json(view.read(cx).agent_key(), thread.read(cx).project(), cx);
+                    let mut result = match view.read(cx).as_native_thread(cx) {
+                        Some(native) => thread_configuration(&native, cx),
+                        None if view.read(cx).agent_key().is_native() => {
+                            return Err(agent_unavailable());
                         }
-                        return Ok(result);
+                        None => external_configuration(thread.read(cx), cx),
+                    };
+                    result["agent"] = agent;
+                    Ok(result)
+                }
+                // External agents are handled before this point by `update_external_configuration`.
+                ("PUT", ["configuration"]) if *version == "v2" => {
+                    let native = view
+                        .read(cx)
+                        .as_native_thread(cx)
+                        .ok_or_else(agent_unavailable)?;
+                    let mut result = update_thread_configuration(&native, &thread, request, cx)?;
+                    result["agent"] =
+                        agent_json(view.read(cx).agent_key(), thread.read(cx).project(), cx);
+                    Ok(result)
+                }
+                ("POST", ["messages"]) => {
+                    let prompt: Prompt = body(request)?;
+                    if prompt.text.trim().is_empty() {
+                        return Err(ApiError(400, "Prompt text must not be empty".into()));
                     }
-                    return Err(agent_unavailable());
-                };
-                let thread = thread_view.read(cx).thread.clone();
-                let project_name = event_project_name(project);
-                let thread_title = view.read(cx).title(cx).to_string();
-                ensure_thread_event_subscription(
-                    thread_id,
-                    &project.id,
-                    &project_name,
-                    &thread_title,
-                    &thread,
-                    cx,
-                );
-                return match (method, rest) {
-                    ("GET", []) => {
-                        let mut result = summary(view.read(cx), cx);
-                        let entries = thread.read(cx).entries();
-                        result["messages"] = json!(legacy_messages(entries, *version != "v2", cx));
-                        if *version == "v2" {
-                            with_transcript(&mut result, thread.read(cx), cx);
-                        }
-                        Ok(result)
+                    ensure_can_prompt(project, cx)?;
+                    if thread.read(cx).status() == ThreadStatus::Generating {
+                        return Err(ApiError(409, "Thread is already running".into()));
                     }
-                    ("GET", ["transcript"]) if *version == "v2" => {
-                        let before = request.query_number("before")?;
-                        let limit = request
-                            .query_number("limit")?
-                            .unwrap_or(DEFAULT_TRANSCRIPT_PAGE)
-                            .clamp(1, MAX_TRANSCRIPT_PAGE);
-                        let (entries, omitted) = transcript(thread.read(cx), before, limit, cx);
-                        Ok(json!({
-                            "entries": entries,
-                            "omitted_entries": omitted,
-                            "has_more": omitted > 0,
-                            "total_entries": thread.read(cx).entries().len(),
-                        }))
-                    }
-                    ("GET", ["tool-calls", tool_call_id, "output"]) if *version == "v2" => {
-                        tool_details(&thread, tool_call_id, cx)
-                    }
-                    ("GET", ["approvals"]) if *version == "v2" => {
-                        Ok(approvals(thread.read(cx).entries(), &thread_view, cx))
-                    }
-                    ("POST", ["approvals", tool_call_id, "resolve"]) if *version == "v2" => {
-                        resolve_approval(&thread, &thread_view, tool_call_id, request, cx)
-                    }
-                    ("GET", ["elicitations"]) if *version == "v2" => {
-                        Ok(pending_elicitations(thread.read(cx)))
-                    }
-                    ("POST", ["elicitations", elicitation_id, "respond"]) if *version == "v2" => {
-                        respond_to_elicitation(&thread, &thread_view, elicitation_id, request, cx)
-                    }
-                    ("GET", ["configuration"]) if *version == "v2" => {
-                        let native = view
-                            .read(cx)
-                            .as_native_thread(cx)
-                            .ok_or_else(agent_unavailable)?;
-                        Ok(thread_configuration(&native, cx))
-                    }
-                    ("PUT", ["configuration"]) if *version == "v2" => {
-                        let native = view
-                            .read(cx)
-                            .as_native_thread(cx)
-                            .ok_or_else(agent_unavailable)?;
-                        update_thread_configuration(&native, &thread, request, cx)
-                    }
-                    ("POST", ["messages"]) => {
-                        let prompt: Prompt = body(request)?;
-                        if prompt.text.trim().is_empty() {
-                            return Err(ApiError(400, "Prompt text must not be empty".into()));
-                        }
-                        ensure_can_prompt(project, cx)?;
-                        if thread.read(cx).status() == ThreadStatus::Generating {
-                            return Err(ApiError(409, "Thread is already running".into()));
-                        }
+                    // External agents bring their own models and credentials; an unauthenticated
+                    // one never reaches this point because it has no root thread view.
+                    if view.read(cx).agent_key().is_native() {
                         let native = view
                             .read(cx)
                             .as_native_thread(cx)
@@ -2679,44 +3033,63 @@ fn dispatch_workspace(request: &Request, cx: &mut App) -> ApiResult {
                                 "Authenticate the selected model provider on desktop first".into(),
                             ));
                         }
-                        let send = thread
-                            .update(cx, |thread, cx| thread.send(vec![prompt.text.into()], cx));
-                        cx.spawn(async move |_cx| {
-                            if let Err(error) = send.await {
-                                log::error!("Mobile Gateway agent prompt failed: {error}");
-                            }
-                        })
-                        .detach();
-                        Ok(json!({"accepted": true}))
                     }
-                    ("POST", ["cancel"]) => {
-                        thread_view.update(cx, |view, cx| view.cancel_generation(cx));
-                        Ok(json!({"accepted": true}))
-                    }
-                    ("GET", ["changes"]) => changes(thread.read(cx), project, cx),
-                    ("GET", ["changes", "file"]) if *version == "v2" => {
-                        changed_file_page(thread.read(cx), project, request, cx)
-                    }
-                    ("POST", ["changes", "review"]) if *version == "v2" => {
-                        review_changes(&thread, &thread_view, project, request, cx)
-                    }
-                    ("POST", ["changes", "undo-reject"]) if *version == "v2" => {
-                        let action_log = thread.read(cx).action_log().clone();
-                        if !action_log.read(cx).has_pending_undo() {
-                            return Err(ApiError(409, "There is no rejection to undo".into()));
+                    let send =
+                        thread.update(cx, |thread, cx| thread.send(vec![prompt.text.into()], cx));
+                    cx.spawn(async move |_cx| {
+                        if let Err(error) = send.await {
+                            log::error!("Mobile Gateway agent prompt failed: {error}");
                         }
-                        action_log
-                            .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
-                            .detach();
-                        Ok(json!({"accepted": true}))
+                    })
+                    .detach();
+                    Ok(json!({"accepted": true}))
+                }
+                ("POST", ["cancel"]) => {
+                    thread_view.update(cx, |view, cx| view.cancel_generation(cx));
+                    Ok(json!({"accepted": true}))
+                }
+                ("GET", ["changes"]) => changes(thread.read(cx), project, cx),
+                ("GET", ["changes", "file"]) if *version == "v2" => {
+                    changed_file_page(thread.read(cx), project, request, cx)
+                }
+                ("POST", ["changes", "review"]) if *version == "v2" => {
+                    review_changes(&thread, &thread_view, project, request, cx)
+                }
+                ("POST", ["changes", "undo-reject"]) if *version == "v2" => {
+                    let action_log = thread.read(cx).action_log().clone();
+                    if !action_log.read(cx).has_pending_undo() {
+                        return Err(ApiError(409, "There is no rejection to undo".into()));
                     }
-                    _ => Err(ApiError(404, "Unknown route or unsupported method".into())),
-                };
-            }
-            Err(not_found())
+                    action_log
+                        .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
+                        .detach();
+                    Ok(json!({"accepted": true}))
+                }
+                _ => Err(ApiError(404, "Unknown route or unsupported method".into())),
+            };
         }
         _ => Err(ApiError(404, "Unknown route or unsupported method".into())),
     }
+}
+
+fn find_conversation<'a>(
+    projects: &'a [OpenProject],
+    thread_id: &str,
+    cx: &App,
+) -> Option<(&'a OpenProject, Entity<ConversationView>)> {
+    projects.iter().find_map(|project| {
+        let panel = project.workspace.read(cx).panel::<AgentPanel>(cx)?;
+        let view = panel
+            .read(cx)
+            .conversation_views()
+            .into_iter()
+            .find(|view| {
+                let view = view.read(cx);
+                view.parent_id().to_key_string() == thread_id
+                    && conversation_allowed(view, project, cx)
+            })?;
+        Some((project, view))
+    })
 }
 
 fn not_found() -> ApiError {
@@ -2726,7 +3099,7 @@ fn not_found() -> ApiError {
 fn agent_unavailable() -> ApiError {
     ApiError(
         503,
-        "Built-in Agent is not ready; open and configure the Agent panel on desktop".into(),
+        "The Agent is not ready; open and configure the Agent panel on desktop".into(),
     )
 }
 
@@ -3284,5 +3657,82 @@ mod tests {
             .expect("complete")
             .0;
         assert!(!closing.keep_alive);
+    }
+
+    #[test]
+    fn reports_external_agent_options_for_the_phone() {
+        let model = acp::SessionConfigOption::select(
+            "model",
+            "Model",
+            "sonnet",
+            vec![
+                acp::SessionConfigSelectGroup::new(
+                    "claude",
+                    "Claude",
+                    vec![
+                        acp::SessionConfigSelectOption::new("sonnet", "Sonnet"),
+                        acp::SessionConfigSelectOption::new("opus", "Opus"),
+                    ],
+                ),
+                acp::SessionConfigSelectGroup::new(
+                    "other",
+                    "Other",
+                    vec![acp::SessionConfigSelectOption::new("haiku", "Haiku")],
+                ),
+            ],
+        )
+        .category(acp::SessionConfigOptionCategory::Model);
+        let json = config_option_json(&model).expect("select options are reported");
+        assert_eq!(json["type"], "select");
+        assert_eq!(json["category"], "model");
+        assert_eq!(json["current_value"], "sonnet");
+        assert_eq!(json["values"][1]["value"], "opus");
+        assert_eq!(json["values"][1]["group"], "Claude");
+        assert_eq!(json["values"][2]["group"], "Other");
+        let acp::SessionConfigKind::Select(select) = &model.kind else {
+            panic!("expected a select option");
+        };
+        assert_eq!(
+            select_option_values(select)
+                .iter()
+                .map(|value| value.0.as_ref())
+                .collect::<Vec<_>>(),
+            ["sonnet", "opus", "haiku"]
+        );
+
+        let flag = acp::SessionConfigOption::boolean("fast", "Fast mode", true);
+        let json = config_option_json(&flag).expect("boolean options are reported");
+        assert_eq!(json["type"], "boolean");
+        assert_eq!(json["current_value"], true);
+        assert!(json["category"].is_null());
+    }
+
+    #[test]
+    fn configuration_updates_accept_external_agent_fields_only_by_name() {
+        let update: ThreadConfigurationUpdate =
+            serde_json::from_str(r#"{"config_option":{"id":"model","value":"opus"}}"#)
+                .expect("option update");
+        let option = update.config_option.expect("option");
+        assert_eq!(option.id, "model");
+        assert_eq!(option.value, json!("opus"));
+        assert!(update.mode_id.is_none());
+
+        let update: ThreadConfigurationUpdate =
+            serde_json::from_str(r#"{"mode_id":"plan"}"#).expect("mode update");
+        assert_eq!(update.mode_id.as_deref(), Some("plan"));
+
+        assert!(
+            serde_json::from_str::<ThreadConfigurationUpdate>(
+                r#"{"config_option":{"id":"x","value":1,"command":"rm"}}"#
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<CreateThread>(r#"{"project_id":"p","agent_id":"claude-acp"}"#)
+                .is_ok_and(|create| create.agent_id.as_deref() == Some("claude-acp"))
+        );
+        assert!(
+            serde_json::from_str::<CreateThread>(r#"{"project_id":"p","command":"sh"}"#).is_err()
+        );
     }
 }

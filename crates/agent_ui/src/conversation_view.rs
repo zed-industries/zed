@@ -1592,6 +1592,19 @@ impl ConversationView {
         matches!(self.server_state, ServerState::Loading { .. })
     }
 
+    /// Whether the connected agent is waiting for the user to authenticate on desktop.
+    pub fn needs_authentication(&self) -> bool {
+        self.as_connected()
+            .is_some_and(|connected| !connected.auth_state.is_ok())
+    }
+
+    pub fn load_error_message(&self) -> Option<String> {
+        match &self.server_state {
+            ServerState::LoadError { error } => Some(error.to_string()),
+            _ => None,
+        }
+    }
+
     fn handle_thread_event(
         &mut self,
         thread: &Entity<AcpThread>,
