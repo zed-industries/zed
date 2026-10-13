@@ -23,6 +23,7 @@ use gpui::{App, BackgroundExecutor, EntityId, Subscription};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
+use smallvec::SmallVec;
 
 use std::{
     ffi::OsStr,
@@ -624,16 +625,42 @@ impl LanguageRegistry {
         cx: &App,
     ) -> Option<LanguageId> {
         let user_file_types = all_language_settings(Some(file), cx);
-
+        let filename = file
+            .path()
+            .file_name()
+            .unwrap_or_else(|| file.file_name(cx));
+        let paths = [Some(file.full_path(cx)), file.file_system_abs_path(cx)];
+        let path_style = file.path_style(cx);
+        let normalized_paths = paths.each_ref().map(|path| {
+            if path_style.is_windows()
+                && let Some(path) = path.as_deref().and_then(Path::to_str)
+                && path.contains('\\')
+            {
+                Some(PathBuf::from(path.replace('\\', "/")))
+            } else {
+                None
+            }
+        });
+        let paths = paths
+            .iter()
+            .filter_map(Option::as_deref)
+            .chain(normalized_paths.iter().filter_map(Option::as_deref))
+            .collect::<SmallVec<[_; 4]>>();
         self.language_for_file_internal(
-            &file.full_path(cx),
+            Some(filename),
+            &paths,
             content,
             Some(&user_file_types.file_types),
         )
     }
 
     pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<LanguageId> {
-        self.language_for_file_internal(path, None, None)
+        self.language_for_file_internal(
+            path.file_name().and_then(|filename| filename.to_str()),
+            &[path],
+            None,
+            None,
+        )
     }
 
     #[ztracing::instrument(skip_all)]
@@ -655,14 +682,17 @@ impl LanguageRegistry {
 
     fn language_for_file_internal(
         self: &Arc<Self>,
-        path: &Path,
+        filename: Option<&str>,
+        paths: &[&Path],
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<LanguageId> {
-        self.state
-            .read()
-            .available_languages
-            .find_for_file(path, content, user_file_types)
+        self.state.read().available_languages.find_for_file(
+            filename,
+            paths,
+            content,
+            user_file_types,
+        )
     }
 
     #[ztracing::instrument(skip_all)]

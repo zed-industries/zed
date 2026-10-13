@@ -45,7 +45,6 @@ pub use path::PathExt;
 pub use path::normalize_path;
 pub use path::rel_path;
 
-pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, path, uri};
 
@@ -53,12 +52,6 @@ pub use util_macros::{line_endings, path, uri};
 pub use self::shell::{
     get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
 };
-
-#[inline]
-pub const fn is_utf8_char_boundary(u8: u8) -> bool {
-    // This is bit magic equivalent to: b < 128 || b >= 192
-    (u8 as i8) >= -0x40
-}
 
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
@@ -242,6 +235,39 @@ Error: Running Zed as root or via sudo is unsupported.
         );
         std::process::exit(1);
     }
+}
+
+/// Raises the soft limit on open file descriptors without changing the hard limit.
+///
+/// Call during startup, before spawning children that will inherit the limit.
+#[cfg(unix)]
+pub fn increase_open_file_limit() -> Result<()> {
+    use anyhow::Context as _;
+    use nix::sys::resource::{Resource::RLIMIT_NOFILE, getrlimit, setrlimit};
+
+    let (soft_limit, hard_limit) = getrlimit(RLIMIT_NOFILE).context("getrlimit(RLIMIT_NOFILE)")?;
+    // These are startup targets, not OS ceilings. Preserve higher inherited limits.
+    let target = if cfg!(target_os = "macos") {
+        10_240
+    } else {
+        65_536
+    };
+    let mut requested_limit = hard_limit.min(target);
+
+    while requested_limit > soft_limit {
+        let Err(error) = setrlimit(RLIMIT_NOFILE, requested_limit, hard_limit) else {
+            log::info!("raised open file soft limit from {soft_limit} to {requested_limit}");
+            return Ok(());
+        };
+
+        // Some systems enforce a ceiling below the reported hard limit.
+        if error != nix::errno::Errno::EINVAL || requested_limit == soft_limit + 1 {
+            return Err(error).context("setrlimit(RLIMIT_NOFILE)");
+        }
+        requested_limit = soft_limit + (requested_limit - soft_limit) / 2;
+    }
+
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -680,7 +706,7 @@ pub fn dev_repo_root() -> Option<&'static std::path::Path> {
 /// detail). Hidden from the public API.
 #[doc(hidden)]
 pub mod __rust_embed {
-    pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, utils};
+    pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, flate, utils};
 }
 
 /// Backs the dev arm of [`fs_embed!`]'s `iter`: every file under the root-relative

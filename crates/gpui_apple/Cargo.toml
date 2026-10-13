@@ -10,34 +10,56 @@ workspace = true
 
 [lib]
 path = "src/gpui_apple.rs"
+doctest = false
 
 [features]
 default = []
 bench-support = ["gpui/bench-support"]
 test-support = ["gpui/test-support"]
 runtime_shaders = []
+font-kit = ["dep:font-kit", "dep:core-text", "dep:objc2-core-text", "dep:pathfinder_geometry"]
 
 [dependencies]
 gpui.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 anyhow.workspace = true
-block.workspace = true
-cocoa.workspace = true
+async-task.workspace = true
+block2.workspace = true
 collections.workspace = true
 core-foundation.workspace = true
-core-video.workspace = true
+core-foundation-sys.workspace = true
+core-graphics.workspace = true
+core-text = { workspace = true, optional = true }
 derive_more.workspace = true
+dispatch2.workspace = true
 etagere.workspace = true
 foreign-types.workspace = true
+futures.workspace = true
+# WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
+font-kit = { workspace = true, optional = true, features = ["source"] }
+gpui_util.workspace = true
 image.workspace = true
+libc.workspace = true
 log.workspace = true
+mach2.workspace = true
 metal.workspace = true
-objc.workspace = true
+objc2.workspace = true
+objc2-core-foundation = { workspace = true, features = ["std", "CFData", "CFDictionary", "CFString", "CFNumber", "CFBase"] }
+objc2-core-text = { workspace = true, optional = true }
+objc2-core-video = { workspace = true, features = ["CVPixelBuffer", "CVMetalTexture", "CVMetalTextureCache", "CVReturn", "objc2", "objc2-metal"] }
+objc2-metal = { version = "0.3", default-features = false, features = ["MTLDevice", "MTLPixelFormat", "MTLTexture"] }
+objc2-foundation = { workspace = true, features = ["NSThread", "NSNotification", "NSOperation", "NSProcessInfo", "block2"] }
+objc2-quartz-core.workspace = true
+objc2-security.workspace = true
 parking_lot.workspace = true
+pathfinder_geometry = { workspace = true, optional = true }
+smallvec.workspace = true
+thiserror.workspace = true
 
-[target.'cfg(target_os = "macos")'.build-dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.build-dependencies]
 cbindgen.workspace = true
 
-[target.'cfg(target_os = "macos")'.dev-dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+objc2-core-video = { workspace = true, features = ["CVBase"] }

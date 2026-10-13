@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/web_search.rs"
+test = false
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
