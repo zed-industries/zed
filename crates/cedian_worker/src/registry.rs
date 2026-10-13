@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Lifecycle state of one worker, serialized snake_case (`ready`, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,7 +22,7 @@ pub enum WorkerStatus {
 }
 
 /// One row in the registry: which branch/worktree serves a task.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkerHead {
     pub id: String,
     pub branch: String,
@@ -31,6 +32,49 @@ pub struct WorkerHead {
     pub kind: String,
     pub status: WorkerStatus,
     pub note: String,
+    /// Minutes before a running worker with no progress shows `stale`
+    /// (ADR-0033 decision 5). Defaulted so a pre-existing `workers.json`
+    /// keeps loading without a version bump.
+    #[serde(default)]
+    pub timebox_min: f64,
+    /// Epoch milliseconds of the last side effect (ADR-0033 decision 5), set
+    /// to the spawn time when the row is inserted. The same shape as an audit
+    /// row's `timestamp_ms`. Defaulted for the same reason.
+    #[serde(default)]
+    pub last_progress: Option<u64>,
+}
+
+impl WorkerHead {
+    /// Whether a `running` worker has passed its timebox with no progress:
+    /// the later of `last_progress` and the branch's newest commit is older
+    /// than `timebox_min` (ADR-0033 decision 5). A commit on the worker
+    /// branch counts as progress.
+    pub fn is_stuck(&self, now_ms: u64, repo: &Path) -> bool {
+        if self.status != WorkerStatus::Running || self.timebox_min <= 0.0 {
+            return false;
+        }
+        let progress = self
+            .last_progress
+            .into_iter()
+            .chain(
+                crate::worktree::last_commit_ms(repo, &self.branch)
+                    .ok()
+                    .flatten(),
+            )
+            .max();
+        progress.is_some_and(|progress| {
+            now_ms.saturating_sub(progress) as f64 > self.timebox_min * 60_000.0
+        })
+    }
+}
+
+/// Epoch milliseconds now, the shape `last_progress` and an audit row's
+/// `timestamp_ms` share.
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Registry errors: duplicate/unknown ids, or registry file I/O.
@@ -192,11 +236,60 @@ impl Registry {
     pub fn remove(&mut self, id: &str) -> Option<WorkerHead> {
         self.workers.remove(id)
     }
+
+    /// Flip every `running` row whose timebox has passed to `stale`
+    /// (ADR-0033 decision 5) and return how many changed. A later unit feeds
+    /// imported edits and evidence into `last_progress`; the caller saves.
+    pub fn refresh_liveness(&mut self, now_ms: u64, repo: &Path) -> usize {
+        let mut changed = 0;
+        for head in self.workers.values_mut() {
+            if head.status == WorkerStatus::Running && head.is_stuck(now_ms, repo) {
+                head.status = WorkerStatus::Stale;
+                changed += 1;
+            }
+        }
+        changed
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worktree::tests::fixture;
+    use std::path::Path;
+
+    fn head(id: &str, branch: &str, status: WorkerStatus) -> WorkerHead {
+        WorkerHead {
+            id: id.into(),
+            branch: branch.into(),
+            worktree: format!(".worktrees/{id}"),
+            task_title: "t".into(),
+            kind: "k".into(),
+            status,
+            note: String::new(),
+            timebox_min: 0.0,
+            last_progress: None,
+        }
+    }
+
+    /// Commit `file` in `dir`, optionally back-dating the commit. Goes through
+    /// the crate's scrubbed command: with GIT_DIR set (a git hook runs this
+    /// suite under `script/cedian-check`) a raw `git commit` here would write
+    /// to the wrong repository.
+    fn commit(dir: &Path, file: &str, date: Option<&str>) {
+        std::fs::write(dir.join(file), "x\n").unwrap();
+        let run = |args: &[&str], date: Option<&str>| {
+            let mut cmd = crate::worktree::git_command(dir);
+            cmd.args(args);
+            if let Some(date) = date {
+                cmd.env("GIT_COMMITTER_DATE", date)
+                    .env("GIT_AUTHOR_DATE", date);
+            }
+            assert!(cmd.status().unwrap().success(), "git {args:?}");
+        };
+        run(&["add", "."], None);
+        run(&["commit", "-m", "c"], date);
+    }
 
     #[test]
     fn registry_roundtrip() {
@@ -204,32 +297,88 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         let (mut reg, existed) = Registry::open(&repo).unwrap();
         assert!(!existed);
-        reg.insert(WorkerHead {
-            id: "w1".into(),
-            branch: "cedian-worker/w1".into(),
-            worktree: ".worktrees/w1".into(),
-            task_title: "fix login".into(),
-            kind: "bug_fix".into(),
-            status: WorkerStatus::Ready,
-            note: String::new(),
-        })
-        .unwrap();
-        assert!(
-            reg.insert(WorkerHead {
-                id: "w1".into(),
-                branch: "b".into(),
-                worktree: "w".into(),
-                task_title: "t".into(),
-                kind: "k".into(),
-                status: WorkerStatus::Ready,
-                note: String::new(),
-            })
-            .is_err()
-        );
+        let mut first = head("w1", "cedian-worker/w1", WorkerStatus::Ready);
+        first.last_progress = Some(1_700_000_000_000);
+        first.timebox_min = 15.0;
+        reg.insert(first).unwrap();
+        assert!(reg.insert(head("w1", "b", WorkerStatus::Ready)).is_err());
         reg.save(&repo).unwrap();
         let (reg2, existed2) = Registry::open(&repo).unwrap();
         assert!(existed2);
-        assert_eq!(reg2.get("w1").unwrap().task_title, "fix login");
+        let back = reg2.get("w1").unwrap();
+        assert_eq!(back.task_title, "t");
+        assert_eq!(back.last_progress, Some(1_700_000_000_000));
+        assert_eq!(back.timebox_min, 15.0);
+        std::fs::remove_dir_all(&repo).unwrap();
+    }
+
+    #[test]
+    fn is_stuck_respects_the_timebox_and_a_newer_commit() {
+        let repo = fixture();
+        // w1: the worker branch's newest commit is old, so progress is the
+        // (equally old) last_progress.
+        let mut w1 = crate::worktree::spawn(&repo, "w1", "main").unwrap();
+        commit(
+            &repo.join(".worktrees/w1"),
+            "old.txt",
+            Some("2020-01-01T00:00:00+00:00"),
+        );
+        w1.status = WorkerStatus::Running;
+        w1.timebox_min = 60.0;
+        let progress = 1_700_000_000_000u64;
+        w1.last_progress = Some(progress);
+        assert!(!w1.is_stuck(progress + 60_000, &repo), "inside the timebox");
+        assert!(
+            w1.is_stuck(progress + 61 * 60_000, &repo),
+            "past the timebox"
+        );
+
+        // w2: a commit newer than last_progress keeps it alive.
+        let mut w2 = crate::worktree::spawn(&repo, "w2", "main").unwrap();
+        commit(
+            &repo.join(".worktrees/w2"),
+            "new.txt",
+            Some("2024-01-01T00:00:00+00:00"),
+        );
+        w2.status = WorkerStatus::Running;
+        w2.timebox_min = 1.0;
+        w2.last_progress = Some(progress);
+        assert!(
+            !w2.is_stuck(progress + 61 * 60_000, &repo),
+            "a newer commit is progress"
+        );
+        std::fs::remove_dir_all(&repo).unwrap();
+    }
+
+    #[test]
+    fn refresh_liveness_flips_exactly_the_stuck_row() {
+        let repo = fixture();
+        let stuck = crate::worktree::spawn(&repo, "w1", "main").unwrap();
+        commit(
+            &repo.join(".worktrees/w1"),
+            "old.txt",
+            Some("2020-01-01T00:00:00+00:00"),
+        );
+        let live = crate::worktree::spawn(&repo, "w2", "main").unwrap();
+        commit(
+            &repo.join(".worktrees/w2"),
+            "new.txt",
+            Some("2024-01-01T00:00:00+00:00"),
+        );
+
+        let progress = 1_700_000_000_000u64;
+        let mut reg = Registry::default();
+        for mut row in [stuck, live] {
+            row.status = WorkerStatus::Running;
+            row.timebox_min = 60.0;
+            row.last_progress = Some(progress);
+            reg.insert(row).unwrap();
+        }
+        let now = progress + 2 * 60 * 60_000;
+        assert_eq!(reg.refresh_liveness(now, &repo), 1);
+        assert_eq!(reg.get("w1").unwrap().status, WorkerStatus::Stale);
+        assert_eq!(reg.get("w2").unwrap().status, WorkerStatus::Running);
+        assert_eq!(reg.refresh_liveness(now, &repo), 0, "idempotent");
         std::fs::remove_dir_all(&repo).unwrap();
     }
 

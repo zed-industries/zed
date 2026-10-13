@@ -49,7 +49,16 @@ class Bench(unittest.TestCase):
         return subprocess.run(CAP + [str(a) for a in args], capture_output=True, text=True)
 
     def bench(self, *args, **env):
-        e = dict(os.environ, BENCH_RESULTS=self.dir, BENCH_PASS="pass", CEDIAN_OMP_BINARY=self.omp)
+        # BENCH_DISK_FLOOR_GB=0: these tests prove the ledger and the lane
+        # wiring, so this machine's free space must not decide them (a full
+        # disk used to fail them from the preflight, gate included).
+        e = dict(
+            os.environ,
+            BENCH_RESULTS=self.dir,
+            BENCH_PASS="pass",
+            CEDIAN_OMP_BINARY=self.omp,
+            BENCH_DISK_FLOOR_GB="0",
+        )
         e.update(env)
         return subprocess.run([RUN, *args], capture_output=True, text=True, env=e)
 

@@ -24,19 +24,26 @@ fn unique_tag() -> String {
     format!("{}-{n}", std::process::id())
 }
 
-/// Run `git -C dir args`, returning trimmed stdout; failures become
-/// `WorkerError::Git` carrying trimmed stderr.
-fn git(dir: &Path, args: &[&str]) -> Result<String, WorkerError> {
-    let out = Command::new("git")
+/// A `git -C dir` command with the hook environment scrubbed.
+pub(crate) fn git_command(dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(dir)
-        .args(args)
         // Scrub GIT_* env: under `git commit` hooks git exports GIT_DIR (and
         // friends), which makes `git -C <other-dir>` resolve the index
         // against the WRONG repo ("Not a directory").
         .env_remove("GIT_DIR")
         .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_WORK_TREE");
+    command
+}
+
+/// Run `git -C dir args`, returning trimmed stdout; failures become
+/// `WorkerError::Git` carrying trimmed stderr.
+fn git(dir: &Path, args: &[&str]) -> Result<String, WorkerError> {
+    let out = git_command(dir)
+        .args(args)
         .output()
         .map_err(|e| WorkerError::Git(e.to_string()))?;
     if !out.status.success() {
@@ -80,7 +87,29 @@ pub fn spawn(repo: &Path, id: &str, base: &str) -> Result<WorkerHead, WorkerErro
         kind: String::new(),
         status: WorkerStatus::Ready,
         note: String::new(),
+        timebox_min: 0.0,
+        // The spawn is the row's first side effect (ADR-0033 decision 5).
+        last_progress: Some(crate::registry::now_ms()),
     })
+}
+
+/// The committer time of `branch`'s newest commit in epoch milliseconds, or
+/// `None` for a branch with no commits yet (an unborn ref).
+pub fn last_commit_ms(repo: &Path, branch: &str) -> Result<Option<u64>, WorkerError> {
+    let tip = format!("{branch}^{{commit}}");
+    let born = git_command(repo)
+        .args(["rev-parse", "--verify", "--quiet", &tip])
+        .output()
+        .map_err(|e| WorkerError::Git(e.to_string()))?
+        .status
+        .success();
+    if !born {
+        return Ok(None);
+    }
+    let seconds: u64 = git(repo, &["log", "-1", "--format=%ct", branch])?
+        .parse()
+        .map_err(|e| WorkerError::Git(format!("unreadable commit time: {e}")))?;
+    Ok(Some(seconds * 1_000))
 }
 
 /// Remove a worker: plain `worktree remove` first (no `--force`, so a
@@ -324,6 +353,27 @@ pub(crate) mod tests {
             assert!(super::validate_id(good).is_ok(), "{good:?} must be allowed");
         }
     }
+
+    #[test]
+    fn last_commit_ms_is_none_for_an_unborn_branch() {
+        let repo = fixture();
+        let head = spawn(&repo, "w1", "main").unwrap();
+        assert!(
+            super::last_commit_ms(&repo, &head.branch)
+                .unwrap()
+                .is_some(),
+            "a spawned branch points at the base commit"
+        );
+        // A repository with no commits has an unborn `main`.
+        let empty = std::env::temp_dir().join(format!("cedian-wt-empty-{}", super::unique_tag()));
+        let _ = std::fs::remove_dir_all(&empty);
+        std::fs::create_dir_all(&empty).unwrap();
+        git(&empty, &["init", "-b", "main"]).unwrap();
+        assert!(super::last_commit_ms(&empty, "main").unwrap().is_none());
+        std::fs::remove_dir_all(&repo).unwrap();
+        std::fs::remove_dir_all(&empty).unwrap();
+    }
+
     /// Regression: `spawn` works when the parent env carries hook-inherited
     /// `GIT_*` (the `git commit` hook exports relative `GIT_DIR`, which used
     /// to break `git -C <other-dir>` with "Not a directory").

@@ -870,7 +870,7 @@ fn worker_base(args: &[String], from: usize) -> Result<String, String> {
 /// and `steer` were deleted at S9 U8, ADR-0050: the app's subagent rows
 /// and `steer_subagent` replace them):
 /// ```text
-/// cedian worker spawn <id> <kind> <title> [--base <branch>]
+/// cedian worker spawn <id> --brief <file> [--kind <k>] [--base <branch>]
 /// cedian worker preview <id> [--base <branch>]
 /// cedian worker merge-back <id> [--base <branch>]
 /// cedian worker remove <id>
@@ -878,24 +878,53 @@ fn worker_base(args: &[String], from: usize) -> Result<String, String> {
 ///
 /// `CEDIAN_WORKDIR` must be the repo root: the registry lives at
 /// `workers.json` in its state dir (ADR-0044), worktrees at `<repo>/.worktrees/<id>`.
-/// Base defaults to `HEAD` unless `--base <branch>` is given. `steer`
-/// only records the note (status Running); the actual agent turn in the
-/// worktree is a follow-up invocation.
+/// Base defaults to `HEAD` unless `--base <branch>` is given. `spawn` takes
+/// the ADR-0033 brief from `--brief <file>` (the same validator the
+/// `cedian_worktree_request` host tool uses); without a whole brief it
+/// refuses and creates nothing. `kind` defaults to `worker`.
 fn cmd_worker(workdir: &Path, args: &[String]) -> Result<(), String> {
     let state = state::dir(workdir)?;
     match args.first().map(|s| s.as_str()) {
         Some("spawn") => {
-            let usage = "usage: cedian worker spawn <id> <kind> <title> [--base B]";
+            let usage = "usage: cedian worker spawn <id> --brief <file> [--kind K] [--base B]";
             let id = args.get(1).ok_or(usage)?;
-            let kind = args.get(2).ok_or(usage)?;
-            let title = args.get(3).ok_or(usage)?;
-            let base = worker_base(args, 4)?;
+            let mut brief_file: Option<&String> = None;
+            let mut kind = "worker".to_string();
+            let mut base = "HEAD".to_string();
+            let mut i = 2;
+            while i < args.len() {
+                let value = || args.get(i + 1).ok_or(usage);
+                match args[i].as_str() {
+                    "--brief" => brief_file = Some(value()?),
+                    "--kind" => kind = value()?.clone(),
+                    "--base" => base = value()?.clone(),
+                    flag => return Err(format!("unknown flag {flag:?}")),
+                }
+                i += 2;
+            }
+            let brief_file = brief_file.ok_or(usage)?;
+            // Checked before the lock or any tree: a refused brief creates
+            // nothing (ADR-0033 decision 1).
+            let brief = cedian_worker::Brief::from_file(Path::new(brief_file))
+                .map_err(|e| e.to_string())?;
             let _lock = cedian_worker::Registry::lock(&state).map_err(|e| e.to_string())?;
             let (mut reg, _) = cedian_worker::Registry::open(&state).map_err(|e| e.to_string())?;
-            let mut head = cedian_worker::spawn(workdir, id, &base).map_err(|e| e.to_string())?;
+            if reg.get(id).is_some() {
+                return Err(cedian_worker::WorkerError::Exists(id.clone()).to_string());
+            }
+            cedian_worker::validate_id(id).map_err(|e| e.to_string())?;
+            let brief_path = brief.store(&state, id, 1)?;
+            let mut head = match cedian_worker::spawn(workdir, id, &base) {
+                Ok(head) => head,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&brief_path);
+                    return Err(e.to_string());
+                }
+            };
             head.status = cedian_worker::WorkerStatus::Running;
-            head.task_title = title.clone();
-            head.kind = kind.clone();
+            head.task_title = brief.goal.clone();
+            head.kind = kind;
+            head.timebox_min = brief.timebox_min;
             let (worktree, branch) = (head.worktree.clone(), head.branch.clone());
             reg.insert(head).map_err(|e| e.to_string())?;
             reg.save(&state).map_err(|e| e.to_string())?;

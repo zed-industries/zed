@@ -264,12 +264,15 @@ WRAP
   echo "$w"
 }
 
-# Free disk before a step: refuse under 10 GB. `need` is what the step adds.
+# Free disk before a step: refuse under the floor, 10 GB by default. `need` is
+# what the step adds. `BENCH_DISK_FLOOR_GB` moves the floor so a test can leave
+# this machine's free space out of what it proves (`test_bench.py` sets 0: its
+# subject is the turn ledger, not this disk).
 preflight() {
-  local need=$1 free
+  local need=$1 free floor=${BENCH_DISK_FLOOR_GB:-10}
   free=$(df -Pk "$WORK" | awk 'NR==2 { print int($4 / 1048576) }')
-  if [ "$free" -lt 10 ]; then
-    echo "refused: ${free} GB free under $WORK, the floor is 10 GB; this step needs about ${need} GB (run script/cedian-prune 10, or free disk)" >&2
+  if [ "$free" -lt "$floor" ]; then
+    echo "refused: ${free} GB free under $WORK, the floor is ${floor} GB; this step needs about ${need} GB (run script/cedian-prune 10, or free disk)" >&2
     exit 2
   fi
   echo "disk: ${free} GB free; this step needs about ${need} GB" >&2

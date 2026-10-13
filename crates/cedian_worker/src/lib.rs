@@ -19,10 +19,14 @@
     reason = "headless, synchronous process control (OMP, LSP, DAP, Chrome, git, sandbox-exec): Zed's async spawn helpers do not apply"
 )]
 
+pub mod brief;
 pub mod host_tool;
 pub mod registry;
 pub mod worktree;
 
+pub use brief::{Brief, BriefError, Scope};
 pub use host_tool::{WORKTREE_REQUEST_TOOL, request_worktree, worktree_request_tool};
 pub use registry::{Registry, WorkerError, WorkerHead, WorkerStatus};
-pub use worktree::{MergePlan, merge_back, merge_preview, remove, spawn, validate_id};
+pub use worktree::{
+    MergePlan, last_commit_ms, merge_back, merge_preview, remove, spawn, validate_id,
+};
