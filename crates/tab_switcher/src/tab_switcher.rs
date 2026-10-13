@@ -740,6 +740,10 @@ impl PickerDelegate for TabSwitcherDelegate {
         self.selected_index
     }
 
+    fn select_on_hover(&self) -> bool {
+        false
+    }
+
     fn set_selected_index(
         &mut self,
         ix: usize,
@@ -883,7 +887,16 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().w_full().min_w_0().overflow_hidden().child(label))
+                .child(
+                    h_flex()
+                        .when(ix == 0, |row| {
+                            row.debug_selector(|| "tab-switcher-first-item".into())
+                        })
+                        .w_full()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(label),
+                )
                 .start_slot::<DecoratedIcon>(icon)
                 .map(|el| {
                     if self.selected_index == ix {

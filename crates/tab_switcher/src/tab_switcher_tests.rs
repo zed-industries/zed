@@ -140,7 +140,29 @@ async fn test_open_item_on_modifiers_release(cx: &mut gpui::TestAppContext) {
         assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
     });
 
+    let first_row = cx
+        .debug_bounds("tab-switcher-first-item")
+        .expect("first tab switcher row should be rendered");
+    cx.simulate_mouse_move(first_row.center(), None, Modifiers::control());
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "1.txt");
+    });
+
     cx.simulate_modifiers_change(Modifiers::none());
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "1.txt");
+    });
+    assert_tab_switcher_is_closed(workspace.clone(), cx);
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    open_tab_switcher(false, &workspace, cx);
+    let first_row = cx
+        .debug_bounds("tab-switcher-first-item")
+        .expect("first tab switcher row should be rendered");
+    cx.simulate_mouse_move(first_row.center(), None, Modifiers::control());
+    cx.simulate_click(first_row.center(), Modifiers::control());
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
         assert_eq!(active_editor.read(cx).title(cx), "1.txt");
