@@ -12,7 +12,7 @@ Rego language support in Zed is provided by the community-maintained [Rego exten
 
 ## Installation
 
-The extension is largely based on the [Regal](https://www.openpolicyagent.org/projects/regal/language-server) language server which should be installed to make use of the extension. Read the [getting started](https://www.openpolicyagent.org/projects/regal#getting-started) instructions for more information.
+The extension uses the [Regal](https://www.openpolicyagent.org/projects/regal/language-server) language server. If `regal` is on your PATH, Zed uses it; otherwise the extension downloads it automatically. Read the [getting started](https://www.openpolicyagent.org/projects/regal#getting-started) instructions for more information.
 
 ## Configuration
 
