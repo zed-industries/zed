@@ -193,8 +193,15 @@ llvm-objcopy --strip-debug --discard-all "${target_dir}/${target_triple}/release
 llvm-objcopy --strip-debug --discard-all "${target_dir}/${remote_server_triple}/release/remote_server" "${temp_dir}/remote_server"
 
 # Libs
-# Bundle libstdc++ so older supported systems can run binaries built with our
-# toolchain even when their system libstdc++.so.6 lacks required GLIBCXX symbols.
+# Never bundle libstdc++. Upstream does, because it builds with a newer
+# toolchain than the oldest system it supports. This fork builds on a stock
+# runner (build_installers.yml), so the copy it would ship is that distro's
+# own libstdc++: no system new enough to run the binary has an older one, and
+# every newer system is broken by it. The binaries' rpath puts a bundled copy
+# ahead of the system's, the host's graphics drivers (Mesa, through LLVM) need
+# the system's newer one, fail to load, and the app starts with "No GPU
+# adapters found" (dev-v21 on Kali rolling). Revisit if the build ever uses a
+# libstdc++ newer than its runner's own.
 #
 # Never bundle the GLib family or its private dependencies: host libraries that
 # get dlopen'd are built against the system GLib, and resolving them against an
@@ -202,7 +209,7 @@ llvm-objcopy --strip-debug --discard-all "${target_dir}/${remote_server_triple}/
 find_libs() {
     ldd ${target_dir}/${target_triple}/release/zeddev |\
         cut -d' ' -f3 |\
-        grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)' |\
+        grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\|libstdc++.so\)' |\
         grep -v '\<\(libglib-2.0.so\|libgobject-2.0.so\|libgio-2.0.so\|libgmodule-2.0.so\|libpcre.so\|libpcre2-8.so\|libmount.so\|libblkid.so\|libselinux.so\|libffi.so\|libresolv.so\|libz.so\)'
 }
 

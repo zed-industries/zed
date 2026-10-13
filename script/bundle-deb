@@ -122,14 +122,22 @@ done
 
 installed_size_kb=$(du -sk "$pkg_root" | cut -f1)
 
-# No Depends: bundle-linux already vendors most of the shared libraries Zed
-# needs (see its own find_libs — deliberately excluding the GLib/GTK family,
-# which must resolve against the *system's* copies or dlopen'd host
-# libraries break). Declaring exact versions for those without actually
-# testing across distros would be more likely to wrongly block a working
-# install than to catch a real problem, so this leaves it undeclared: if
-# something's missing, it'll fail at runtime, the same as running the
-# tarball directly.
+# bundle-linux vendors most of the shared libraries Zed needs (see its own
+# find_libs), but deliberately not the ones below, which must be the
+# *system's* copies: the GLib family, ALSA and libstdc++ (dlopen'd host
+# libraries are built against them), and the graphics stack, which belongs to
+# the machine's GPU. A desktop install has all of them already; a minimal one (a container,
+# a fresh WSL distro) has none, and without them the binary doesn't start, or
+# starts and finds no GPU. So they are declared.
+#
+# No versions: the names alone are what a bare system is missing, and a
+# version bound that hasn't been tested across distros is more likely to
+# block a working install than to catch a real problem. Where Debian and
+# Ubuntu renamed a package for the 64-bit time_t transition, either name does.
+#
+# Depends is what the binary links against, plus the Vulkan and EGL loaders
+# it can't open a window without. The Mesa drivers behind those loaders are
+# only recommended, since a machine on a vendor driver has no use for them.
 cat > "${pkg_root}/DEBIAN/control" <<EOF
 Package: ${pkg_name}
 Version: ${version}
@@ -137,6 +145,8 @@ Section: editors
 Priority: optional
 Architecture: ${deb_arch}
 Installed-Size: ${installed_size_kb}
+Depends: libc6, libgcc-s1, libstdc++6, libglib2.0-0t64 | libglib2.0-0, libasound2t64 | libasound2, libvulkan1, libegl1
+Recommends: mesa-vulkan-drivers, libgl1-mesa-dri, libwayland-client0, libwayland-cursor0, libwayland-egl1
 Maintainer: Unofficial build <noreply@example.invalid>
 Description: Zed code editor (unofficial .deb, ${channel} channel)
  High-performance, multiplayer code editor. Repackaged from the same
