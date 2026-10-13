@@ -30,6 +30,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
+use markdown_preview::markdown_preview_settings::MarkdownPreviewSettings;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use notifications::status_toast::StatusToast;
@@ -447,6 +448,8 @@ actions!(
         Redo,
         /// Opens a markdown preview for the selected file.
         OpenMarkdownPreview,
+        /// Opens the selected markdown file in the editor, bypassing the preview.
+        OpenMarkdownInEditor,
         /// Opens the context menu for the selected entry.
         OpenContextMenu,
     ]
@@ -1152,6 +1155,8 @@ impl ProjectPanel {
                     entry.path.as_std_path(),
                     project.languages(),
                 );
+            let open_markdown_files_in_preview =
+                MarkdownPreviewSettings::get_global(cx).open_markdown_files_in_preview;
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1181,7 +1186,11 @@ impl ProjectPanel {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
                         menu.when(is_markdown, |menu| {
-                            menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                            if open_markdown_files_in_preview {
+                                menu.action("Show Source", Box::new(OpenMarkdownInEditor))
+                            } else {
+                                menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                            }
                         })
                         .when(is_dir, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
@@ -1201,7 +1210,14 @@ impl ProjectPanel {
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_markdown, |menu| {
-                                menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                                if open_markdown_files_in_preview {
+                                    menu.action("Show Source", Box::new(OpenMarkdownInEditor))
+                                } else {
+                                    menu.action(
+                                        "Open Markdown Preview",
+                                        Box::new(OpenMarkdownPreview),
+                                    )
+                                }
                             })
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -2013,6 +2029,39 @@ impl ProjectPanel {
         self.workspace
             .update(cx, |workspace, cx| {
                 MarkdownPreviewView::open_for_project_path(project_path, workspace, window, cx);
+            })
+            .ok();
+    }
+
+    fn open_markdown_in_editor(
+        &mut self,
+        _: &OpenMarkdownInEditor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((worktree, entry)) = self.selected_entry(cx) else {
+            return;
+        };
+        if !entry.is_file()
+            || !MarkdownPreviewView::is_markdown_path(
+                entry.path.as_std_path(),
+                self.project.read(cx).languages(),
+            )
+        {
+            return;
+        }
+        let project_path = ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        };
+        self.workspace
+            .update(cx, |workspace, cx| {
+                MarkdownPreviewView::open_editor_for_project_path(
+                    project_path,
+                    workspace,
+                    window,
+                    cx,
+                );
             })
             .ok();
     }
@@ -7606,6 +7655,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))
                 .on_action(cx.listener(Self::open_markdown_preview))
+                .on_action(cx.listener(Self::open_markdown_in_editor))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
