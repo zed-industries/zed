@@ -10,6 +10,7 @@ pub mod omp_link;
 pub mod omp_settings;
 pub mod panel;
 pub mod review;
+pub mod worker_trees;
 pub mod workflow_view;
 
 pub use cedian_omp::{Toast, ToastLevel};

@@ -24,6 +24,7 @@ use crate::import::{self, ImportOutcome, Mark};
 use crate::omp_link::{AnswerError, LaunchSpec, LinkEvent, OmpLink, Prompt, ReviewReader};
 use crate::omp_settings::OmpSettings;
 use crate::review::{ReviewError, TaskReview};
+use crate::worker_trees::{self, WorkerTreeRow};
 use crate::workflow_view::WorkflowView;
 use cedian_agent::{Thread, ThreadEvent};
 use cedian_agent_ui::{SubagentRow, SubagentTree, ToolCard};
@@ -74,6 +75,9 @@ actions!(
 const PANEL_KEY: &str = "CedianPanel";
 /// OMP tools that write the filesystem directly.
 const EDIT_TOOLS: &[&str] = &["edit", "write", "ast_edit"];
+/// The worker worktrees are classified and merged against what is checked out
+/// (ADR-0033); the registry stores relative branches, not a rebase target.
+const WORKER_BASE: &str = "HEAD";
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -417,6 +421,11 @@ pub struct CedianPanel {
     follow_ups: Vec<QueuedFollowUp>,
     /// The inline edit the review's current turn is running, with its turn.
     edit_turn: Option<(u32, InlineEdit)>,
+    /// The cedian worktrees git sees, with their registry rows; `None` until
+    /// the first read, so the surface changes nothing before it.
+    worker_trees: Option<Vec<WorkerTreeRow>>,
+    /// The worker whose Remove is waiting on a second click (§43).
+    confirm_remove: Option<String>,
 }
 
 /// The model and thinking-level picker: OMP's choices once read, and what
@@ -584,6 +593,8 @@ impl CedianPanel {
             follow_ups: Vec::new(),
             instruction: None,
             edit_turn: None,
+            worker_trees: None,
+            confirm_remove: None,
         };
         this._worktree_changes = Some(cx.subscribe(&this.project, |this, project, event, cx| {
             if let project::Event::WorktreeUpdatedEntries(worktree, changes) = event {
@@ -603,6 +614,7 @@ impl CedianPanel {
         }
         if this.workspace_root(cx).is_some() {
             this.start(window, cx);
+            this.refresh_worker_trees(cx);
         }
         this
     }
@@ -1728,6 +1740,212 @@ impl CedianPanel {
         )
     }
 
+    /// The worker surface's repo and state dir, when the panel has both.
+    fn worker_paths(&mut self, cx: &App) -> Option<(PathBuf, PathBuf)> {
+        Some((self.workspace_root(cx)?, self.state_dir(cx).ok()?))
+    }
+
+    /// Read the worktrees again, off the UI thread (it shells out to `git`):
+    /// the first read is what builds the surface.
+    fn refresh_worker_trees(&mut self, cx: &mut Context<Self>) {
+        let Some((root, dir)) = self.worker_paths(cx) else {
+            return;
+        };
+        let task = cx.background_spawn(async move { worker_trees::read(&root, &dir, WORKER_BASE) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(rows) => this.worker_trees = Some(rows),
+                    Err(e) => {
+                        this.notice = Some(format!("the worker worktrees could not be read: {e}"))
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Run a worker-tree action off the UI thread, show what it came to in
+    /// `notice`, and re-read the list.
+    fn worker_action(
+        &mut self,
+        cx: &mut Context<Self>,
+        action: impl FnOnce(PathBuf, PathBuf) -> Result<String, String> + Send + 'static,
+    ) {
+        let Some((root, dir)) = self.worker_paths(cx) else {
+            self.notice = Some("no folder is open".to_string());
+            cx.notify();
+            return;
+        };
+        let task = cx.background_spawn(async move { action(root, dir) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.notice = Some(match result {
+                    Ok(said) => said,
+                    Err(e) => e,
+                });
+                this.refresh_worker_trees(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The cedian worktrees as last read; `None` before the first read.
+    pub fn worker_trees(&self) -> Option<&[WorkerTreeRow]> {
+        self.worker_trees.as_deref()
+    }
+
+    /// The worker whose Remove is waiting on a second click.
+    pub fn confirm_remove(&self) -> Option<&str> {
+        self.confirm_remove.as_deref()
+    }
+
+    /// Merge a worker's branch back into the checked-out base, on one click;
+    /// a STALE refusal is the notice, and nothing else changes.
+    pub fn merge_worker(&mut self, id: &str, cx: &mut Context<Self>) {
+        let (id, said) = (id.to_string(), id.to_string());
+        self.worker_action(cx, move |repo, state| {
+            worker_trees::merge_back(&repo, &state, &id, WORKER_BASE)
+                .map(|()| format!("merged {said}"))
+        });
+    }
+
+    /// Ask before removing: `worktree remove` throws away a dirty tree, so
+    /// the first click only arms the row's confirm.
+    pub fn begin_remove_worker(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.confirm_remove = Some(id.to_string());
+        cx.notify();
+    }
+
+    pub fn cancel_remove_worker(&mut self, cx: &mut Context<Self>) {
+        self.confirm_remove = None;
+        cx.notify();
+    }
+
+    pub fn confirm_remove_worker(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.confirm_remove = None;
+        let (id, said) = (id.to_string(), id.to_string());
+        self.worker_action(cx, move |repo, state| {
+            worker_trees::remove(&repo, &state, &id).map(|()| format!("removed {said}"))
+        });
+    }
+
+    /// Clean up this worker's tree; the click is its explicit per-tree
+    /// decision (§43), which is what a `Wip` tree needs. Exactly this tree
+    /// goes: the repo-wide sweep is the CLI's `cedian worker cleanup`.
+    pub fn cleanup_worker(&mut self, id: &str, cx: &mut Context<Self>) {
+        let id = id.to_string();
+        self.worker_action(cx, move |repo, state| {
+            worker_trees::cleanup(&repo, &state, &id, WORKER_BASE)
+        });
+    }
+
+    /// The cedian worktrees on disk, each with its class and registry row;
+    /// `None` until the first read, so nothing changes before it.
+    fn render_worker_trees(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // Nothing to show until a worker exists: an empty section would be a
+        // permanent line on every panel that never uses worktrees.
+        let rows = self.worker_trees.as_ref().filter(|rows| !rows.is_empty())?;
+        Some(
+            v_flex()
+                .debug_selector(|| "cedian-workers".to_string())
+                .gap_1()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Label::new(format!("Workers · {}", rows.len())).size(LabelSize::Small),
+                        )
+                        .child(
+                            div()
+                                .debug_selector(|| "cedian-workers-refresh".to_string())
+                                .child(Button::new("cedian-workers-refresh", "Refresh").on_click(
+                                    cx.listener(|this, _, _, cx| this.refresh_worker_trees(cx)),
+                                )),
+                        ),
+                )
+                .children(rows.iter().map(|row| self.render_worker_tree(row, cx)))
+                .into_any_element(),
+        )
+    }
+
+    /// One worker worktree: its class, the registry row when there is one, the
+    /// path on disk, and Merge / Remove / Cleanup.
+    fn render_worker_tree(&self, row: &WorkerTreeRow, cx: &mut Context<Self>) -> AnyElement {
+        let id = row.state.id.clone();
+        let selector = format!("cedian-worker-{id}");
+        type OnClick = fn(&mut CedianPanel, &str, &mut Context<CedianPanel>);
+        let button = |label: &'static str, suffix: &str, on: OnClick, cx: &mut Context<Self>| {
+            let selector = format!("cedian-worker-{id}-{suffix}");
+            let element = ElementId::Name(selector.clone().into());
+            let id = id.clone();
+            div().debug_selector(move || selector).child(
+                Button::new(element, label)
+                    .on_click(cx.listener(move |this, _, _, cx| on(this, &id, cx))),
+            )
+        };
+        let mut line = format!("{id} · {}", row.state.class);
+        match &row.head {
+            Some(head) => line.push_str(&format!(" · {:?} · {}", head.status, head.task_title)),
+            None => line.push_str(" · no registry row"),
+        }
+        let controls = if self.confirm_remove.as_deref() == Some(id.as_str()) {
+            let confirm = format!("cedian-worker-{id}-remove-confirm");
+            let cancel = format!("cedian-worker-{id}-remove-cancel");
+            let confirm_selector = confirm.clone();
+            let cancel_selector = cancel.clone();
+            let remove = id.clone();
+            h_flex()
+                .gap_2()
+                .child(
+                    Label::new("Remove this worktree and its branch?")
+                        .size(LabelSize::Small)
+                        .color(Color::Warning),
+                )
+                .child(div().debug_selector(move || confirm_selector).child(
+                    Button::new(ElementId::Name(confirm.into()), "Remove").on_click(
+                        cx.listener(move |this, _, _, cx| this.confirm_remove_worker(&remove, cx)),
+                    ),
+                ))
+                .child(
+                    div().debug_selector(move || cancel_selector).child(
+                        Button::new(ElementId::Name(cancel.into()), "Keep")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_remove_worker(cx))),
+                    ),
+                )
+        } else {
+            h_flex()
+                .gap_2()
+                .child(button("Merge back", "merge", Self::merge_worker, cx))
+                .child(button("Remove", "remove", Self::begin_remove_worker, cx))
+                .child(button("Cleanup", "cleanup", Self::cleanup_worker, cx))
+        };
+        let stuck = format!("cedian-worker-{id}-stuck");
+        let path = row.state.path.display().to_string();
+        v_flex()
+            .debug_selector(move || selector)
+            .gap_1()
+            .child(Label::new(line).size(LabelSize::Small))
+            .when(row.stuck, |col| {
+                col.child(
+                    div().debug_selector(move || stuck).child(
+                        Label::new("stuck: no progress inside its timebox")
+                            .size(LabelSize::Small)
+                            .color(Color::Warning),
+                    ),
+                )
+            })
+            .child(Label::new(path).size(LabelSize::Small).color(Color::Muted))
+            .child(controls)
+            .into_any_element()
+    }
+
     /// The prompt as OMP gets it: the bounded snapshot of what the person
     /// sees (§39), then their text.
     fn with_context(&self, text: &str, cx: &App) -> String {
@@ -2663,6 +2881,11 @@ impl CedianPanel {
             _ => {}
         }
         self.subagents.apply(&event);
+        // A subagent ending is when a worker it started usually finishes: the
+        // row's class and status show up without the person clicking Refresh.
+        if matches!(event, RouterEvent::SubagentLifecycle { .. }) {
+            self.refresh_worker_trees(cx);
+        }
         self.thread.apply(&event);
         cx.notify();
     }
@@ -4363,6 +4586,7 @@ impl Render for CedianPanel {
         let review = self.show_review.then(|| self.render_review(cx));
         let browser = self.render_browser(cx);
         let workflow = self.render_workflow(cx);
+        let workers = self.render_worker_trees(cx);
         v_flex()
             .key_context("CedianPanel")
             .track_focus(&self.focus_handle)
@@ -4431,6 +4655,7 @@ impl Render for CedianPanel {
             })
             .children(workflow)
             .children(browser)
+            .children(workers)
             .children(dialogs)
             .children(self.render_onboarding(cx))
             .child(self.render_picker(cx))

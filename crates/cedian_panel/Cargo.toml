@@ -104,6 +104,10 @@ name = "subagents"
 harness = false
 
 [[test]]
+name = "worker_trees"
+harness = false
+
+[[test]]
 name = "workflow"
 harness = false
 

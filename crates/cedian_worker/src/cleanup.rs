@@ -117,40 +117,66 @@ pub fn cleanup(
     decided: &[String],
 ) -> Result<Vec<CleanupOutcome>, WorkerError> {
     let mut outcomes = Vec::new();
-    // Same removal for every class we are allowed to drop; a refused git call
-    // is reported, not fatal, so the sweep reaches the remaining trees.
-    let remove = |tree: &TreeState| match force_remove(repo, &tree.path, &tree.branch) {
-        Ok(()) => (true, String::new()),
-        Err(e) => (false, format!("git refused: {e}")),
-    };
     for tree in trees(repo, base)? {
-        let (removed, reason) = match tree.class {
-            TreeClass::Merged | TreeClass::Scratch => remove(&tree),
-            TreeClass::Unmerged => (
-                false,
-                format!(
-                    "commits not in {base}: merge-back first, then remove {}",
-                    tree.branch
-                ),
-            ),
-            TreeClass::Wip if decided.iter().any(|id| id == &tree.id) => remove(&tree),
-            TreeClass::Wip => (
-                false,
-                format!(
-                    "tracked edits: needs an explicit per-tree decision (pass --decide {})",
-                    tree.id
-                ),
-            ),
-        };
-        outcomes.push(CleanupOutcome {
-            id: tree.id,
-            path: tree.path,
-            class: tree.class,
-            removed,
-            reason,
-        });
+        let decided = decided.iter().any(|id| id == &tree.id);
+        outcomes.push(decide(repo, base, tree, decided));
     }
     Ok(outcomes)
+}
+
+/// Clean up exactly one tree, this call being its explicit per-tree decision
+/// when it is a `Wip` (§43). `decided` is what the caller decided; a tree that
+/// is not there is a refusal naming the id, never a silent success.
+pub fn cleanup_one(
+    repo: &Path,
+    base: &str,
+    id: &str,
+    decided: bool,
+) -> Result<CleanupOutcome, WorkerError> {
+    let tree = trees(repo, base)?
+        .into_iter()
+        .find(|tree| tree.id == id)
+        .ok_or_else(|| WorkerError::NoSuch(id.to_string()))?;
+    Ok(decide(repo, base, tree, decided))
+}
+
+/// What one tree's verdict is, and do it. One home for the rule: `Merged` and
+/// `Scratch` go, a `Wip` goes only when the caller decided, `Unmerged` is left
+/// for merge-back, and a removal git refuses is reported rather than fatal.
+fn decide(repo: &Path, base: &str, tree: TreeState, decided: bool) -> CleanupOutcome {
+    let (removed, reason) = match tree.class {
+        TreeClass::Merged | TreeClass::Scratch => {
+            match force_remove(repo, &tree.path, &tree.branch) {
+                Ok(()) => (true, String::new()),
+                Err(e) => (false, format!("git refused: {e}")),
+            }
+        }
+        TreeClass::Unmerged => (
+            false,
+            format!(
+                "commits not in {base}: merge-back first, then remove {}",
+                tree.branch
+            ),
+        ),
+        TreeClass::Wip if decided => match force_remove(repo, &tree.path, &tree.branch) {
+            Ok(()) => (true, String::new()),
+            Err(e) => (false, format!("git refused: {e}")),
+        },
+        TreeClass::Wip => (
+            false,
+            format!(
+                "tracked edits: needs an explicit per-tree decision (pass --decide {})",
+                tree.id
+            ),
+        ),
+    };
+    CleanupOutcome {
+        id: tree.id,
+        path: tree.path,
+        class: tree.class,
+        removed,
+        reason,
+    }
 }
 
 /// One `worktree <path>` record from `--porcelain` output (branch optional).
@@ -230,7 +256,7 @@ fn classify(repo: &Path, tree: &Path, branch: &str, base: &str) -> Result<TreeCl
 
 #[cfg(test)]
 mod tests {
-    use super::{TreeClass, cleanup, trees};
+    use super::{TreeClass, cleanup, cleanup_one, trees};
     use crate::worktree::{merge_back, spawn};
     use std::path::{Path, PathBuf};
 
@@ -340,6 +366,48 @@ mod tests {
             !found.iter().any(|s| s.id == "odd"),
             "a cedian path on another branch is omitted too: {found:?}"
         );
+        std::fs::remove_dir_all(&repo).unwrap();
+        let _ = std::fs::remove_dir_all(&foreign);
+    }
+
+    #[test]
+    fn cleanup_one_acts_on_the_named_tree_and_leaves_its_siblings() {
+        let (repo, _, foreign) = scene();
+
+        // The clicked tree is `wip`: nothing is removed without the decision,
+        // and the clean trees beside it stay, which is what one row's click
+        // decides (the repo-wide sweep is `cleanup`).
+        let refused = cleanup_one(&repo, "main", "w1", false).unwrap();
+        assert_eq!(refused.class, TreeClass::Wip);
+        assert!(!refused.removed);
+        assert!(refused.reason.contains("per-tree decision"), "{refused:?}");
+        for kept in ["w1", "m1", "s1", "u1"] {
+            assert!(
+                repo.join(".worktrees").join(kept).exists(),
+                "{kept} is untouched"
+            );
+        }
+
+        let decided = cleanup_one(&repo, "main", "w1", true).unwrap();
+        assert!(decided.removed, "{decided:?}");
+        assert!(!repo.join(".worktrees/w1").exists());
+        for kept in ["m1", "s1", "u1"] {
+            assert!(
+                repo.join(".worktrees").join(kept).exists(),
+                "{kept} is still there after one tree's cleanup"
+            );
+        }
+
+        // An unmerged tree is never the decision's to remove, and an id with
+        // no tree is a refusal, not a silent success.
+        let unmerged = cleanup_one(&repo, "main", "u1", true).unwrap();
+        assert!(!unmerged.removed);
+        assert!(unmerged.reason.contains("merge-back"), "{unmerged:?}");
+        assert!(matches!(
+            cleanup_one(&repo, "main", "nope", true),
+            Err(crate::registry::WorkerError::NoSuch(id)) if id == "nope"
+        ));
+
         std::fs::remove_dir_all(&repo).unwrap();
         let _ = std::fs::remove_dir_all(&foreign);
     }
