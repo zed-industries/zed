@@ -29,11 +29,20 @@ echo "build-omp: building (bun install + bun run build)"
 (cd "$WORK/omp" && bun install && bun run build)
 
 mkdir -p "$(dirname "$OUT")"
-if [ ! -f "$WORK/omp/dist/omp" ]; then
-  echo "build-omp: the build produced no dist/omp; check OMP's build output before bundling" >&2
+# OMP's monorepo builds its CLI into packages/coding-agent/dist/omp; an older
+# checkout put it at dist/omp. Ask the built tree, not one hard-coded path.
+BIN=""
+for candidate in "$WORK/omp/packages/coding-agent/dist/omp" "$WORK/omp/dist/omp"; do
+  if [ -f "$candidate" ]; then
+    BIN=$candidate
+    break
+  fi
+done
+if [ -z "$BIN" ]; then
+  echo "build-omp: the build produced no omp binary (looked in packages/coding-agent/dist and dist); check OMP's build output before bundling" >&2
   exit 1
 fi
-cp "$WORK/omp/dist/omp" "$OUT"
+cp "$BIN" "$OUT"
 
 jq --arg tree "$TREE_HASH" --arg builder "$BUILDER" \
   '.sourceTreeHash = $tree | .builder = $builder' \

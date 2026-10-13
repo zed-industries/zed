@@ -3,8 +3,8 @@
   "commit": "f068751e2f1dbdbc195977776d47a26db8697495",
   "commitDate": "2026-10-08T18:52:25Z",
   "subject": "chore: bump version to 18.8.6",
-  "sourceTreeHash": "TODO: fill on build-omp run (normalized `git archive` sha256 of the pinned commit)",
-  "builder": "TODO: fill on build-omp run (machine/user that produced the bundled binary)",
+  "sourceTreeHash": "172e0b54407504d8ab732eaa73bd037ee197710fdc4b580830240947cf94344b",
+  "builder": "pond@CEDIA.local",
   "spikeVerified": {
     "ompVersion": "18.8.6",
     "date": "2026-10-11",
