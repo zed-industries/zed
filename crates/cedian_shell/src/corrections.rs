@@ -53,6 +53,7 @@ pub struct Event {
     pub path: Option<String>,
     pub hunk_key: Option<String>,
     pub tool_call_id: Option<String>,
+    pub model: Option<String>,
     pub excerpt: Option<String>,
 }
 
@@ -125,12 +126,23 @@ pub fn record(
         path: event.path,
         hunk_key: event.hunk_key,
         tool_call_id: event.tool_call_id,
-        model: None,
+        model: event.model,
         excerpt_hash: hash,
     };
     let line = serde_json::to_string(&row).map_err(|e| e.to_string())?;
     writeln!(file, "{line}").map_err(|e| format!("corrections.jsonl: {e}"))?;
+    drop(file);
+    note_repeat(state_dir, &row)?;
     Ok(Some(row.id))
+}
+
+/// Body for `cedian://corrections`: the ledger JSONL, or empty when none.
+pub fn render_uri(state_dir: &Path) -> Result<String, String> {
+    match std::fs::read_to_string(state_dir.join(CORRECTIONS_FILE)) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("corrections.jsonl: {e}")),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +161,8 @@ pub enum ClassStatus {
     /// Its proof was checked: the enforcer failed on the old code and passes now.
     Enforced,
     Documented,
+    /// A later correction matched this class (ADR-0032 decision 4).
+    Repeated,
 }
 
 impl ClassStatus {
@@ -156,6 +170,7 @@ impl ClassStatus {
         match self {
             Self::Enforced => "enforced",
             Self::Documented => "documented",
+            Self::Repeated => "repeated",
         }
     }
 }
@@ -291,9 +306,9 @@ struct ClassStore {
     classes: Vec<CorrectionClass>,
 }
 
-fn save_class(state_dir: &Path, class: CorrectionClass) -> Result<(), String> {
+fn load_class_store(state_dir: &Path) -> Result<ClassStore, String> {
     let path = state_dir.join(CLASSES_FILE);
-    let mut store: ClassStore = match std::fs::read_to_string(&path) {
+    match std::fs::read_to_string(&path) {
         Ok(raw) => {
             let s: ClassStore = serde_json::from_str(&raw)
                 .map_err(|e| format!("corrupt correction_classes.json: {e}"))?;
@@ -303,11 +318,20 @@ fn save_class(state_dir: &Path, class: CorrectionClass) -> Result<(), String> {
                     s.snapshot_version
                 ));
             }
-            s
+            Ok(s)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => ClassStore::default(),
-        Err(e) => return Err(format!("correction_classes.json: {e}")),
-    };
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ClassStore::default()),
+        Err(e) => Err(format!("correction_classes.json: {e}")),
+    }
+}
+
+fn write_class_store(state_dir: &Path, store: &ClassStore) -> Result<(), String> {
+    let raw = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    std::fs::write(state_dir.join(CLASSES_FILE), raw).map_err(|e| e.to_string())
+}
+
+fn save_class(state_dir: &Path, class: CorrectionClass) -> Result<(), String> {
+    let mut store = load_class_store(state_dir)?;
     if class.status != ClassStatus::Enforced
         && store
             .classes
@@ -322,8 +346,55 @@ fn save_class(state_dir: &Path, class: CorrectionClass) -> Result<(), String> {
     store.snapshot_version = CLASSES_SNAPSHOT_VERSION;
     store.classes.retain(|c| c.name != class.name);
     store.classes.push(class);
-    let raw = serde_json::to_string_pretty(&store).map_err(|e| e.to_string())?;
-    std::fs::write(path, raw).map_err(|e| e.to_string())
+    write_class_store(state_dir, &store)
+}
+
+/// Match path when both have one; path-less kinds match on kind alone.
+pub fn note_repeat(state_dir: &Path, row: &Correction) -> Result<(), String> {
+    if row.kind == CorrectionKind::FindingDismissed {
+        return Ok(());
+    }
+    let mut store = load_class_store(state_dir)?;
+    if store.classes.is_empty() {
+        return Ok(());
+    }
+    let rows = load(state_dir)?;
+    let mut changed = false;
+    for class in &mut store.classes {
+        if !matches!(
+            class.status,
+            ClassStatus::Enforced | ClassStatus::Documented
+        ) {
+            continue;
+        }
+        let events: Vec<&Correction> = class
+            .event_ids
+            .iter()
+            .filter_map(|id| rows.iter().find(|r| r.id == *id))
+            .collect();
+        if events.is_empty()
+            || events
+                .iter()
+                .all(|e| e.kind == CorrectionKind::FindingDismissed)
+        {
+            continue;
+        }
+        let matched = match &row.path {
+            Some(path) => events
+                .iter()
+                .any(|e| e.path.as_deref() == Some(path.as_str())),
+            None => events.iter().any(|e| e.kind == row.kind),
+        };
+        if matched {
+            class.status = ClassStatus::Repeated;
+            class.note = Some("a new correction matched this class".into());
+            changed = true;
+        }
+    }
+    if changed {
+        write_class_store(state_dir, &store)?;
+    }
+    Ok(())
 }
 
 /// OMP's host tool for proposing a class over recorded corrections.
@@ -599,5 +670,201 @@ mod tests {
         assert!(weaker.contains("already enforced"), "{weaker}");
         assert_eq!(classes(&dir)[0].status, ClassStatus::Enforced);
         save_class(&dir, class("x", ClassStatus::Enforced)).expect("a new proof replaces it");
+    }
+
+    #[test]
+    fn record_keeps_the_model_field() {
+        let dir = crate::test_dir::TestDir::new("corr-model");
+        record(
+            &dir,
+            "cli",
+            CorrectionKind::HunkRejected,
+            Event {
+                turn: Some(1),
+                path: Some("/a.rs".into()),
+                model: Some("x".into()),
+                ..Event::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(load(&dir).unwrap()[0].model.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn render_uri_returns_recorded_rows_or_empty() {
+        let dir = crate::test_dir::TestDir::new("corr-uri");
+        assert_eq!(render_uri(&dir).unwrap(), "");
+        record(
+            &dir,
+            "cli",
+            CorrectionKind::HunkRejected,
+            Event {
+                turn: Some(1),
+                path: Some("/a.rs".into()),
+                ..Event::default()
+            },
+        )
+        .unwrap();
+        let body = render_uri(&dir).unwrap();
+        assert!(body.contains("\"id\":\"c1\""), "{body}");
+        assert!(body.contains("hunk_rejected"), "{body}");
+    }
+
+    #[test]
+    fn a_new_path_match_marks_a_documented_class_repeated() {
+        let dir = crate::test_dir::TestDir::new("corr-repeat");
+        let e1 = Event {
+            turn: Some(1),
+            path: Some("/a.rs".into()),
+            ..Event::default()
+        };
+        let e2 = Event {
+            turn: Some(2),
+            path: Some("/a.rs".into()),
+            ..Event::default()
+        };
+        let id1 = record(&dir, "cli", CorrectionKind::HunkRejected, e1)
+            .unwrap()
+            .unwrap();
+        let id2 = record(&dir, "cli", CorrectionKind::HunkRejected, e2)
+            .unwrap()
+            .unwrap();
+        save_class(
+            &dir,
+            CorrectionClass {
+                name: "no unwrap".into(),
+                event_ids: vec![id1, id2],
+                level: Level::Lint,
+                enforcer: "clippy".into(),
+                status: ClassStatus::Documented,
+                note: Some("no proof".into()),
+            },
+        )
+        .unwrap();
+        record(
+            &dir,
+            "cli",
+            CorrectionKind::HunkRejected,
+            Event {
+                turn: Some(3),
+                path: Some("/a.rs".into()),
+                ..Event::default()
+            },
+        )
+        .unwrap();
+        let got = &classes(&dir)[0];
+        assert_eq!(got.status, ClassStatus::Repeated);
+        assert!(got.note.as_deref().unwrap().contains("matched"));
+    }
+
+    #[test]
+    fn finding_dismissed_alone_does_not_escalate_implementer_classes() {
+        let dir = crate::test_dir::TestDir::new("corr-noise");
+        let id1 = record(
+            &dir,
+            "cli",
+            CorrectionKind::HunkRejected,
+            Event {
+                turn: Some(1),
+                path: Some("/a.rs".into()),
+                ..Event::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+        let id2 = record(
+            &dir,
+            "cli",
+            CorrectionKind::HunkRejected,
+            Event {
+                turn: Some(2),
+                path: Some("/a.rs".into()),
+                ..Event::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+        save_class(
+            &dir,
+            CorrectionClass {
+                name: "impl".into(),
+                event_ids: vec![id1, id2],
+                level: Level::Lint,
+                enforcer: "clippy".into(),
+                status: ClassStatus::Documented,
+                note: None,
+            },
+        )
+        .unwrap();
+        let noise1 = record(
+            &dir,
+            "cli",
+            CorrectionKind::FindingDismissed,
+            Event {
+                turn: Some(1),
+                path: Some("/a.rs".into()),
+                ..Event::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+        let noise2 = record(
+            &dir,
+            "cli",
+            CorrectionKind::FindingDismissed,
+            Event {
+                turn: Some(2),
+                path: Some("/a.rs".into()),
+                ..Event::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+        save_class(
+            &dir,
+            CorrectionClass {
+                name: "noise".into(),
+                event_ids: vec![noise1, noise2],
+                level: Level::Docs,
+                enforcer: "ignore".into(),
+                status: ClassStatus::Documented,
+                note: None,
+            },
+        )
+        .unwrap();
+        // Path match against a noise-only class must not escalate it; a
+        // finding_dismissed row must not escalate the implementer class.
+        record(
+            &dir,
+            "cli",
+            CorrectionKind::FindingDismissed,
+            Event {
+                turn: Some(5),
+                path: Some("/a.rs".into()),
+                ..Event::default()
+            },
+        )
+        .unwrap();
+        let before = classes(&dir);
+        assert_eq!(
+            before.iter().find(|c| c.name == "impl").unwrap().status,
+            ClassStatus::Documented
+        );
+        record(
+            &dir,
+            "cli",
+            CorrectionKind::HunkRejected,
+            Event {
+                turn: Some(4),
+                path: Some("/a.rs".into()),
+                ..Event::default()
+            },
+        )
+        .unwrap();
+        let store = classes(&dir);
+        let impl_class = store.iter().find(|c| c.name == "impl").unwrap();
+        let noise = store.iter().find(|c| c.name == "noise").unwrap();
+        assert_eq!(impl_class.status, ClassStatus::Repeated);
+        assert_eq!(noise.status, ClassStatus::Documented);
     }
 }

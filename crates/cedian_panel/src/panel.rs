@@ -1393,7 +1393,10 @@ impl CedianPanel {
 
     fn after_review_change(&mut self, cx: &mut Context<Self>) {
         for event in self.review.drain_events() {
-            let (kind, row) = event.correction();
+            let (kind, mut row) = event.correction();
+            if row.model.is_none() {
+                row.model = self.model_for_correction(&row);
+            }
             let task = self.review.task_id().to_string();
             let recorded = self
                 .state_dir(cx)
@@ -1408,6 +1411,22 @@ impl CedianPanel {
         }
         self.sync_finding_blocks(cx);
         cx.notify();
+    }
+
+    /// Model string for an ADR-0032 row: the call's implementers when known,
+    /// else every model that has answered in the running OMP.
+    fn model_for_correction(&self, row: &cedian_shell::corrections::Event) -> Option<String> {
+        if let Some(id) = row.tool_call_id.as_deref() {
+            for file in self.review.files() {
+                if let Some(txn) = file.agent_txns().iter().find(|t| t.tool_call_id == id)
+                    && !txn.models.is_empty()
+                {
+                    return Some(txn.models.join(","));
+                }
+            }
+        }
+        let models = self.answered_models();
+        (!models.is_empty()).then(|| models.join(","))
     }
 
     /// Where this workspace's ledgers live (ADR-0044).

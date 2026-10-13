@@ -138,8 +138,24 @@ pub(crate) fn answer(
             kind: UriKind::Buffer,
             path,
         }) => buffer_read(&host, project, &path, cx),
+        Ok(CedianUri {
+            kind: UriKind::Corrections,
+            ..
+        }) => Task::ready(corrections_read(project, cx)),
         _ => Task::ready(host.read_uri(url).map_err(|e| e.to_string())),
     }
+}
+
+/// ADR-0032: the correction ledger for this workspace's state dir.
+fn corrections_read(project: &Entity<Project>, cx: &App) -> Result<HostUriRead, String> {
+    let worktree = project
+        .read(cx)
+        .visible_worktrees(cx)
+        .next()
+        .ok_or_else(|| "no folder is open".to_string())?;
+    let root = worktree.read(cx).abs_path();
+    let dir = cedian_shell::state::dir(&root)?;
+    cedian_shell::corrections::render_uri(&dir).map(|text| text.into())
 }
 
 /// The text Zed holds for `file`, unsaved edits included.

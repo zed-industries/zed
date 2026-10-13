@@ -369,6 +369,9 @@ fn spawn(
     .map_err(|e| e.to_string())?;
     // Nothing in the CLI can answer an OMP dialog: refuse at once (P5 gap).
     rt.deny_ui_requests();
+    if let Ok(dir) = state::dir(workdir) {
+        host.set_state_dir(Some(dir));
+    }
     rt.set_host_tools(host_tools(&rt, session_dir, workdir, settings)?)
         .map_err(|e| e.to_string())?;
     rt.set_host_uris(vec![host.cedian_uri_scheme()])

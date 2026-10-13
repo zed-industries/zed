@@ -27,6 +27,8 @@ pub enum UriKind {
     /// `cedian://references/<path>:<line>:<column>` (0-based, as LSP):
     /// every use of the symbol there. Served by the app (ADR-0048).
     References,
+    /// `cedian://corrections`: the correction ledger (ADR-0032). No path.
+    Corrections,
     Unknown(String),
 }
 
@@ -42,6 +44,7 @@ impl UriKind {
             "symbols" => Self::Symbols,
             "definitions" => Self::Definitions,
             "references" => Self::References,
+            "corrections" => Self::Corrections,
             other => Self::Unknown(other.to_string()),
         }
     }
@@ -130,6 +133,7 @@ mod tests {
             ("cedian://active-file", UriKind::ActiveFile),
             ("cedian://open-editors", UriKind::OpenEditors),
             ("cedian://diagnostics", UriKind::Diagnostics),
+            ("cedian://corrections", UriKind::Corrections),
         ] {
             let u = parse_cedian_uri(url).unwrap();
             assert_eq!(u.kind, kind, "{url}");

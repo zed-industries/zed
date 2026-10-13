@@ -75,6 +75,8 @@ pub struct HostTools {
     selection: Mutex<Option<(PathBuf, usize, usize)>>,
     diagnostics: Mutex<HashMap<PathBuf, Vec<Diagnostic>>>,
     workdir: PathBuf,
+    /// ADR-0044 state dir: `cedian://corrections` reads `corrections.jsonl` here.
+    state_dir: Mutex<Option<PathBuf>>,
 }
 
 impl HostTools {
@@ -90,12 +92,18 @@ impl HostTools {
             workdir: workdir
                 .canonicalize()
                 .unwrap_or_else(|_| workdir.to_path_buf()),
+            state_dir: Mutex::new(None),
         }
     }
 
     /// Shared handle (host-tool/URI handlers capture this).
     pub fn shared(workdir: &Path) -> Arc<Self> {
         Arc::new(Self::new(workdir))
+    }
+
+    /// Point `cedian://corrections` at the workspace state dir (ADR-0032).
+    pub fn set_state_dir(&self, dir: Option<PathBuf>) {
+        *self.state_dir.lock() = dir;
     }
 
     /// Open buffer keys (for CLI sync + `cedian://open-editors`).
@@ -228,11 +236,27 @@ impl HostTools {
             UriKind::Selection => Ok(self.render_selection().into()),
             UriKind::ActiveFile => Ok(self.render_active_file().into()),
             UriKind::OpenEditors => Ok(self.render_open_editors().into()),
+            UriKind::Corrections => self
+                .render_corrections()
+                .map(|text| text.into())
+                .map_err(|e| -> omp_rpc::HostUriError { e.into() }),
             UriKind::Diagnostics
             | UriKind::Symbols
             | UriKind::Definitions
             | UriKind::References => Err(HEADLESS_LSP.to_string().into()),
             UriKind::Unknown(kind) => Err(format!("unknown cedian:// kind: {kind}").into()),
+        }
+    }
+
+    /// `cedian://corrections`: the ledger JSONL, or empty when none.
+    fn render_corrections(&self) -> Result<String, String> {
+        let Some(dir) = self.state_dir.lock().clone() else {
+            return Err("cedian://corrections needs a state dir".into());
+        };
+        match std::fs::read_to_string(dir.join("corrections.jsonl")) {
+            Ok(text) => Ok(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(format!("corrections.jsonl: {e}")),
         }
     }
     /// Publish diagnostics for a buffer (fork: LSP publishDiagnostics lands here).
@@ -404,6 +428,23 @@ mod tests {
             })
             .is_err()
         );
+        // Corrections need a state dir; empty ledger is empty, not an error.
+        assert!(
+            h.serve_uri(&CedianUri {
+                kind: UriKind::Corrections,
+                path: String::new(),
+            })
+            .is_err()
+        );
+        let state =
+            std::env::temp_dir().join(format!("cedian-corrections-uri-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&state);
+        std::fs::create_dir_all(&state).unwrap();
+        h.set_state_dir(Some(state.clone()));
+        assert_eq!(serve(UriKind::Corrections, ""), "");
+        std::fs::write(state.join("corrections.jsonl"), "{\"id\":\"c1\"}\n").unwrap();
+        assert!(serve(UriKind::Corrections, "").contains("\"id\":\"c1\""));
+        let _ = std::fs::remove_dir_all(state);
     }
 
     /// A relative path names a file of the workspace, whatever the
