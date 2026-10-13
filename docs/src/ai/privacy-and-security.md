@@ -54,8 +54,9 @@ API terms; Zed-hosted model requests are governed by Zed's provider agreements.
 Some providers require limited data retention for specific models as a condition
 of offering them, on every platform where those models are available. Anthropic
 retains prompts and outputs for models it designates as Covered Models, including
-Claude Fable 5, for at least 30 days for trust and safety purposes. Zed cannot
-opt out of this retention; it applies wherever these models are served. See
+Claude Fable 5.1 and Claude Fable 5, for at least 30 days for trust and safety
+purposes. Zed cannot opt out of this retention; it applies wherever these models
+are served. See
 [Anthropic's data retention practices for Covered Models](https://support.claude.com/en/articles/15425996-data-retention-practices-for-covered-models).
 
 For these models:

@@ -148,6 +148,7 @@ When an agent opens or updates a pull request, it must:
 - Use one bullet under `Release Notes:`:
   - `- Added ...`, `- Fixed ...`, or `- Improved ...` for user-facing changes, or
   - `- N/A` for docs-only and other non-user-facing changes.
+- Changes to `gpui` (including its benchmark and test harnesses) must have a bullet prefixed with `[GPUI]` describing the improvement even when nothing is user-facing in Zed itself, since GPUI is consumed as a library (CI enforces this), for example `- [GPUI] Improved benchmarks to report retired CPU instructions alongside wall time on Linux`.
 - Format release notes exactly with a blank line after the heading, for example:
 
 ```

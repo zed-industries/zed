@@ -125,7 +125,7 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
-    /// Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+    /// Whether to allow windows to tab together based on the user's tabbing preference (macOS only).
     ///
     /// Default: false
     pub use_system_window_tabs: Option<bool>,
@@ -212,7 +212,8 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
-    /// Whether to open tabs in preview mode when opened from the project panel with a single click.
+    /// Whether to open tabs in preview mode when opened from the project panel
+    /// with a single click or the `project_panel::Open` action.
     ///
     /// Default: true
     pub enable_preview_from_project_panel: Option<bool>,
@@ -580,8 +581,8 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: non_utf8
     pub active_encoding_button: Option<EncodingDisplayOptions>,
-    /// Whether to show an indicator with a countdown while timed multi-stroke input is pending.
-    /// Hovering the indicator pauses the timeout.
+    /// Whether to show an indicator while multi-stroke input is pending.
+    /// If the input has a timeout, a countdown is shown and hovering the indicator pauses it.
     /// Its binding preview popover is disabled when the which-key popup is enabled.
     ///
     /// Default: true
