@@ -2005,20 +2005,13 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((worktree, entry)) = self.selected_entry(cx) else {
-            return;
-        };
-        if !entry.is_file()
-            || !MarkdownPreviewView::is_markdown_path(
-                entry.path.as_std_path(),
+        let Some(project_path) = self.selected_file_project_path(cx).filter(|project_path| {
+            MarkdownPreviewView::is_markdown_path(
+                project_path.path.as_std_path(),
                 self.project.read(cx).languages(),
             )
-        {
+        }) else {
             return;
-        }
-        let project_path = ProjectPath {
-            worktree_id: worktree.id(),
-            path: entry.path.clone(),
         };
         self.workspace
             .update(cx, |workspace, cx| {
