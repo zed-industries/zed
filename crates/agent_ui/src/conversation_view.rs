@@ -11818,14 +11818,20 @@ pub(crate) mod tests {
                 .expect("assistant message should have markdown")
         });
 
-        let entry_view_state = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, _| view.entry_view_state.clone());
+        let (entry_view_state, draft_editor) =
+            active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+                (
+                    view.entry_view_state.clone(),
+                    view.message_editor.read(cx).editor().clone(),
+                )
+            });
         let on_activate_match: Arc<dyn Fn(usize, &mut Window, &mut App)> = Arc::new(|_, _, _| {});
         let bar = cx.update(|window, cx| {
             cx.new(|cx| {
                 super::thread_search_bar::ThreadSearchBar::new(
                     thread.clone(),
                     entry_view_state,
+                    draft_editor,
                     on_activate_match,
                     window,
                     cx,

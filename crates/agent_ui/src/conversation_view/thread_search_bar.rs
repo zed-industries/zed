@@ -544,7 +544,7 @@ impl ThreadSearchBar {
                     let weak = markdown.downgrade();
                     for (ix, range) in ranges.iter().enumerate() {
                         self.matches.push(ThreadMatch {
-                            entry_ix,
+                            entry_ix: Some(entry_ix),
                             target: MatchTarget::Markdown {
                                 markdown: weak.clone(),
                                 markdown_match_ix: ix,
