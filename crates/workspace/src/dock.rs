@@ -849,6 +849,10 @@ impl Dock {
         }
     }
 
+    pub(crate) fn pending_serialized_state(&self) -> Option<&DockData> {
+        self.restoration.pending()
+    }
+
     fn replay_pending_serialized_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(serialized) = self.restoration.pending().cloned() else {
             return;
