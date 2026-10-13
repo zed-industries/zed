@@ -18,7 +18,10 @@ use crate::{
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use collections::{HashMap, HashSet};
 use fs::Fs as _;
-use futures::{StreamExt, channel::oneshot};
+use futures::{
+    StreamExt,
+    channel::{mpsc, oneshot},
+};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
@@ -8906,6 +8909,44 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
         FOX JUMPS OVER
         THE LAZY DOGˇ»
     "});
+}
+
+#[gpui::test]
+async fn test_multicursor_manipulate_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let mut failures = Vec::new();
+    for (before, expected, to_upper) in [
+        ("some_ˇvariˇable_naˇme", "«SOME_VARIABLE_NAMEˇ»", true),
+        ("some_ˇvariˇable naˇme", "«SOME_VARIABLEˇ» «NAMEˇ»", true),
+        ("SOME_ˇVARIˇABLE_NAˇME", "«some_variable_nameˇ»", false),
+        ("SOME_ˇVARIˇABLE NAˇME", "«some_variableˇ» «nameˇ»", false),
+        ("«word1ˇ» woˇr«d2 word3ˇ»", "«WORD1ˇ» «WORD2 WORD3ˇ»", true),
+        ("«aˇ»b«cdˇ»eˇf", "«ABCDEFˇ»", true),
+        ("hello woˇrˇld", "hello woˇrˇld", false),
+    ] {
+        cx.set_state(before);
+        cx.update_editor(|editor, window, cx| {
+            if to_upper {
+                editor.convert_to_upper_case(&ConvertToUpperCase, window, cx)
+            } else {
+                editor.convert_to_lower_case(&ConvertToLowerCase, window, cx)
+            }
+        });
+        let actual = cx.editor_state();
+        if actual != expected {
+            failures.push(format!(
+                "before:   {before}\nexpected: {expected}\nactual:   {actual}"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} case(s) failed:\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
 }
 
 #[gpui::test]
@@ -28093,6 +28134,82 @@ fn test_split_words_for_snippet_prefix() {
 }
 
 #[gpui::test]
+async fn test_go_to_symbol_after_edit(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.document_symbols = Some(settings::DocumentSymbols::On);
+    });
+
+    for direction in [-1, 1] {
+        let editor = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            build_editor(buffer, window, cx)
+        });
+        let mut cx = EditorTestContext::for_editor(editor, cx).await;
+        cx.set_state("padding\nˇ\n");
+        let (ready, pending) = oneshot::channel();
+        let navigation = cx.update_editor(|editor, window, cx| {
+            editor.refresh_document_symbols_task = cx
+                .background_spawn(async move {
+                    pending.await.expect("symbol refresh should complete");
+                })
+                .shared();
+            editor.go_to_symbol_by_offset(window, cx, direction)
+        });
+        cx.run_until_parked();
+        cx.update_buffer(|buffer, cx| {
+            let end = buffer.len();
+            buffer.edit(
+                [
+                    (0..0, "λ padding\nfn before() {}\n"),
+                    (end..end, "fn after() {}\n"),
+                ],
+                None,
+                cx,
+            );
+        });
+        cx.update_editor(|editor, _, cx| {
+            let buffer = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .expect("singleton buffer");
+            let snapshot = buffer.read(cx).snapshot();
+            let text = snapshot.text();
+            let items = ["fn before", "fn after"]
+                .into_iter()
+                .map(|name| {
+                    let start = text.find(name).expect("symbol should be in buffer");
+                    let range =
+                        snapshot.anchor_after(start)..snapshot.anchor_before(start + name.len());
+                    language::OutlineItem {
+                        depth: 0,
+                        range: range.clone(),
+                        selection_range: range.clone(),
+                        source_range_for_text: range,
+                        text: SharedString::from(name),
+                        highlight_ranges: Vec::new(),
+                        name_ranges: Vec::new(),
+                        body_range: None,
+                        annotation_range: None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            editor
+                .lsp_document_symbols
+                .insert(snapshot.remote_id(), items);
+        });
+        ready.send(()).expect("symbol refresh should be pending");
+        navigation.await.expect("symbol navigation should succeed");
+        cx.assert_editor_state(if direction < 0 {
+            "λ padding\nˇfn before() {}\npadding\n\nfn after() {}\n"
+        } else {
+            "λ padding\nfn before() {}\npadding\n\nˇfn after() {}\n"
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_move_to_syntax_node_relative_jumps(tcx: &mut TestAppContext) {
     init_test(tcx, |_| {});
 
@@ -31647,6 +31764,187 @@ async fn test_row_highlights_for_empty_conflict_side_after_edit(
 }
 
 #[gpui::test]
+async fn test_jumps_unfold_enclosing_sections(cx: &mut TestAppContext) {
+    use workspace::item::Item;
+
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇfirst\nouter\ninner\ntarget\nend\nunrelated\nend\nlast");
+
+    let outer = Point::new(1, 0)..Point::new(4, 0);
+    let inner = Point::new(2, 0)..Point::new(3, 6);
+    let unrelated = Point::new(5, 0)..Point::new(6, 3);
+    let target = Point::new(3, 2);
+
+    for use_history in [false, true] {
+        for already_selected in [false, true] {
+            cx.update_editor(|editor, window, cx| {
+                editor.unfold_ranges(&[Point::zero()..Point::new(7, 4)], false, false, cx);
+                let initial = if already_selected {
+                    target
+                } else {
+                    Point::zero()
+                };
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([initial..initial]);
+                });
+                editor.fold_ranges(
+                    vec![outer.clone(), inner.clone(), unrelated.clone()],
+                    false,
+                    window,
+                    cx,
+                );
+                let snapshot = editor.display_snapshot(cx);
+                assert_eq!(
+                    snapshot
+                        .folds_in_range(Point::zero()..Point::new(7, 4))
+                        .count(),
+                    3
+                );
+
+                if use_history {
+                    let snapshot = editor.buffer.read(cx).snapshot(cx);
+                    assert!(editor.navigate(
+                        Arc::new(NavigationData {
+                            cursor_anchor: snapshot.anchor_before(target),
+                            cursor_position: target,
+                            scroll_anchor: ScrollAnchor {
+                                anchor: snapshot.anchor_before(Point::zero()),
+                                offset: Default::default(),
+                            },
+                            scroll_top_row: 0,
+                        }),
+                        window,
+                        cx,
+                    ));
+                } else {
+                    editor.go_to_singleton_buffer_point(target, window, cx);
+                }
+
+                let snapshot = editor.display_snapshot(cx);
+                assert_eq!(editor.selections.newest::<Point>(&snapshot).head(), target);
+                let remaining_folds = snapshot
+                    .folds_in_range(Point::zero()..Point::new(7, 4))
+                    .map(|fold| {
+                        fold.range.start.to_point(snapshot.buffer_snapshot())
+                            ..fold.range.end.to_point(snapshot.buffer_snapshot())
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(remaining_folds, vec![unrelated.clone()]);
+            });
+        }
+    }
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_ranges(vec![outer.clone(), inner.clone()], false, window, cx);
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([target..target]);
+        });
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            snapshot
+                .folds_in_range(Point::zero()..Point::new(7, 4))
+                .count(),
+            3
+        );
+        editor.go_to_singleton_buffer_point(outer.start, window, cx);
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            snapshot
+                .folds_in_range(Point::zero()..Point::new(7, 4))
+                .count(),
+            3
+        );
+        editor.go_to_singleton_buffer_point(outer.end, window, cx);
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            snapshot
+                .folds_in_range(Point::zero()..Point::new(7, 4))
+                .count(),
+            3
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_selection_effects_unfold_opt_in(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇfirst\nouter\ninner\ntarget\nend\nunrelated\nend\nlast");
+    let target = Point::new(3, 2);
+    let unrelated = Point::new(5, 0)..Point::new(6, 3);
+    let folds = vec![
+        Point::new(1, 0)..Point::new(4, 0),
+        Point::new(2, 0)..Point::new(3, 6),
+        unrelated.clone(),
+    ];
+
+    for deferred in [false, true] {
+        cx.update_editor(|editor, window, cx| {
+            editor.unfold_ranges(&[Point::zero()..Point::new(7, 4)], false, false, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([target..target]);
+            });
+            editor.fold_ranges(folds.clone(), false, window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |_| {});
+            assert_eq!(
+                editor
+                    .display_snapshot(cx)
+                    .folds_in_range(target..target)
+                    .count(),
+                2
+            );
+
+            if deferred {
+                editor.with_selection_effects_deferred(window, cx, |editor, window, cx| {
+                    editor.change_selections(
+                        SelectionEffects::no_scroll().unfold(),
+                        window,
+                        cx,
+                        |selections| selections.select_ranges([Point::zero()..Point::zero()]),
+                    );
+                    editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            let snapshot = selections.display_snapshot();
+                            let anchor = snapshot.buffer_snapshot().anchor_before(target);
+                            selections.select_anchor_ranges([anchor..anchor]);
+                        },
+                    );
+                    assert_eq!(
+                        editor
+                            .display_snapshot(cx)
+                            .folds_in_range(target..target)
+                            .count(),
+                        2
+                    );
+                });
+            } else {
+                editor.change_selections(
+                    SelectionEffects::no_scroll().unfold(),
+                    window,
+                    cx,
+                    |_| {},
+                );
+            }
+
+            let snapshot = editor.display_snapshot(cx);
+            let remaining_folds = snapshot
+                .folds_in_range(Point::zero()..Point::new(7, 4))
+                .map(|fold| {
+                    fold.range.start.to_point(snapshot.buffer_snapshot())
+                        ..fold.range.end.to_point(snapshot.buffer_snapshot())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(remaining_folds, vec![unrelated.clone()]);
+            assert_eq!(editor.selections.newest::<Point>(&snapshot).head(), target);
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_go_to_singleton_buffer_point_with_expanded_deleted_hunks(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
@@ -34289,6 +34587,91 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
             references_fallback_text, "fn one() {\n    let mut a = two();\n}",
             "Should use the range from the references response and not the GoToDefinition one"
         );
+    });
+}
+
+#[gpui::test]
+async fn test_find_all_references_cleanup_after_edit(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let (requests, mut responses) = mpsc::unbounded();
+    let mut cx = EditorLspTestContext::new_with_adapter(
+        Arc::into_inner(rust_lang()).expect("Rust language should have a single owner"),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |server| {
+                let requests = requests.clone();
+                server.set_request_handler::<lsp::request::References, _, _>(move |_, _| {
+                    let requests = requests.clone();
+                    async move {
+                        let (response, pending) = oneshot::channel();
+                        requests
+                            .unbounded_send(response)
+                            .expect("request receiver should exist");
+                        pending.await.expect("reference response should arrive");
+                        Ok(Some(Vec::new()))
+                    }
+                });
+            })),
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn aˇ() {}\n");
+    let first = cx.update_editor(|editor, window, cx| {
+        editor
+            .find_all_references(&FindAllReferences::default(), window, cx)
+            .expect("first request should start")
+    });
+    let first_response = responses.next().await.expect("first request should arrive");
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.insert("fn b() {}\n", window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 4)..Point::new(1, 4)]);
+        });
+    });
+    let second = cx.update_editor(|editor, window, cx| {
+        editor
+            .find_all_references(&FindAllReferences::default(), window, cx)
+            .expect("second request should start")
+    });
+    let second_response = responses
+        .next()
+        .await
+        .expect("second request should arrive");
+    first_response
+        .send(())
+        .expect("first request should be pending");
+    assert_eq!(
+        first.await.expect("first request should succeed"),
+        Navigated::No
+    );
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        assert_eq!(
+            editor
+                .find_all_references_task_sources
+                .iter()
+                .map(|anchor| anchor.to_point(&snapshot))
+                .collect::<Vec<_>>(),
+            vec![Point::new(1, 4)],
+        );
+    });
+    second_response
+        .send(())
+        .expect("second request should be pending");
+    assert_eq!(
+        second.await.expect("second request should succeed"),
+        Navigated::No
+    );
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(editor.find_all_references_task_sources, Vec::new());
     });
 }
 

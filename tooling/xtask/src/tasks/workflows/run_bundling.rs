@@ -185,6 +185,7 @@ pub(crate) fn bundle_linux(
             .envs(bundle_envs(platform))
             .add_env(Env::new("CC", "clang-18"))
             .add_env(Env::new("CXX", "clang++-18"))
+            .add_env(Env::new("LLD", "/usr/bin/ld.lld-18"))
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .when_some(release_channel, |job, release_channel| {

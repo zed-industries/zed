@@ -1538,7 +1538,7 @@ impl OutlinePanel {
                 if change_selection {
                     active_editor.update(cx, |editor, cx| {
                         editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::center()),
+                            SelectionEffects::scroll(Autoscroll::center()).unfold(),
                             window,
                             cx,
                             |s| s.select_ranges(Some(anchor..anchor)),

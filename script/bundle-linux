@@ -114,15 +114,19 @@ if "$rustup_installed"; then
 fi
 
 export CC=${CC:-$(which clang)}
-lld=$("$CC" -print-prog-name=ld.lld)
+lld=${LLD:-$("$CC" -print-prog-name=ld.lld)}
+if [[ "$lld" != /* || ! -x "$lld" ]]; then
+    echo "Bundling requires an absolute executable linker path; set LLD (e.g. LLD=/usr/bin/ld.lld-18)." >&2
+    exit 1
+fi
 lld_version=$("$lld" --version)
 if [[ ! "$lld_version" =~ LLD\ ([0-9]+)\. ]] || (( BASH_REMATCH[1] < 12 )); then
-    echo "Bundling requires LLD 12 or newer for safe ICF; select a matching compiler with CC (e.g. CC=clang-18)." >&2
+    echo "Bundling requires LLD 12 or newer for safe ICF; set LLD to a supported linker (e.g. LLD=/usr/bin/ld.lld-18)." >&2
     exit 1
 fi
 
 # Build binary in release mode
-cargo --config .cargo/bundle-config.toml rustc --release --target "${target_triple}" --package zed --bin zed -- -C linker="$CC" -C llvm-args=-addrsig -C link-arg=-fuse-ld=lld -C link-arg=-Wl,--icf=safe
+cargo --config .cargo/bundle-config.toml rustc --release --target "${target_triple}" --package zed --bin zed -- -C linker="$CC" -C llvm-args=-addrsig -C link-arg=-fuse-ld=lld -C link-arg=--ld-path="$lld" -C link-arg=-Wl,--icf=safe
 cargo --config .cargo/bundle-config.toml build --release --target "${target_triple}" --package cli
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
