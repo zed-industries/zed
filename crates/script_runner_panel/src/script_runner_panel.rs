@@ -25,6 +25,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::ffi::OsString;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -257,6 +258,9 @@ pub struct ScriptRunnerPanel {
     output: Vec<String>,
     running: bool,
     kill_flag: Arc<AtomicBool>,
+    /// Environment variables for the run being started, from
+    /// [`Self::run_external_with_env`]. Empty outside that call.
+    run_env: Vec<(OsString, OsString)>,
 
     /// Latest SPFx debug query-string seen in this run, if any.
     debug_script: Option<String>,
@@ -363,6 +367,7 @@ impl ScriptRunnerPanel {
                 output: Vec::new(),
                 running: false,
                 kill_flag: Arc::new(AtomicBool::new(false)),
+                run_env: Vec::new(),
                 debug_script: None,
                 debug_copied: false,
                 detected_links: Vec::new(),
@@ -375,8 +380,26 @@ impl ScriptRunnerPanel {
     /// panel's entity (e.g. `entity.update(cx, |panel, cx| panel.run_external(...))`).
     /// Not called automatically by anything yet — see the module doc.
     pub fn run_external(&mut self, command: String, cwd: String, cx: &mut Context<Self>) {
+        self.run_external_with_env(command, cwd, Vec::new(), cx);
+    }
+
+    /// [`Self::run_external`], with `env` set on the command's process. This
+    /// is how a caller runs something under a particular toolchain: the Node
+    /// panel passes a `PATH` with its chosen Node.js version first.
+    ///
+    /// The variables apply to this run only. A command typed into the panel
+    /// afterwards runs in the IDE's own environment again.
+    pub fn run_external_with_env(
+        &mut self,
+        command: String,
+        cwd: String,
+        env: Vec<(OsString, OsString)>,
+        cx: &mut Context<Self>,
+    ) {
         self.cwd = cwd;
+        self.run_env = env;
         self.run(&command, cx);
+        self.run_env.clear();
     }
 
     /// Whether a command is currently executing on this panel. Used by the
@@ -406,11 +429,12 @@ impl ScriptRunnerPanel {
         cx.notify();
 
         let cwd = self.cwd.clone();
+        let env = self.run_env.clone();
         let event_tx = self.event_tx.clone();
         let kill_flag = self.kill_flag.clone();
 
         std::thread::spawn(move || {
-            run_shell_blocking(&cmd, &cwd, event_tx, kill_flag);
+            run_shell_blocking(&cmd, &cwd, &env, event_tx, kill_flag);
         });
     }
 
@@ -456,6 +480,7 @@ fn kill_process_tree(pid: u32) {
 fn run_shell_blocking(
     cmd: &str,
     cwd: &str,
+    env: &[(OsString, OsString)],
     tx: tokio::sync::broadcast::Sender<RunnerEvent>,
     kill_flag: Arc<AtomicBool>,
 ) {
@@ -468,6 +493,7 @@ fn run_shell_blocking(
         let mut c = gpui_util::new_std_command("pwsh.exe");
         c.args(["-NoProfile", "-NonInteractive", "-Command", &merged_cmd])
             .current_dir(cwd)
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .env("PYTHONUNBUFFERED", "1")
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -477,6 +503,7 @@ fn run_shell_blocking(
             let mut c = gpui_util::new_std_command("cmd.exe");
             c.args(["/C", &fallback_cmd])
                 .current_dir(cwd)
+                .envs(env.iter().map(|(name, value)| (name, value)))
                 .env("PYTHONUNBUFFERED", "1")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null());
@@ -492,6 +519,7 @@ fn run_shell_blocking(
         let mut c = gpui_util::new_std_command("sh");
         c.args(["-c", &merged_cmd])
             .current_dir(cwd)
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .env("PYTHONUNBUFFERED", "1")
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
