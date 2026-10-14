@@ -2282,50 +2282,18 @@ impl NativeAgentConnection {
             Ok(stream) => stream,
             Err(err) => return Task::ready(Err(err)),
         };
-        Self::handle_thread_events_for_turn(
-            response_stream,
-            acp_thread,
-            Some(self.clone()),
-            true,
-            cx,
-        )
+        Self::handle_thread_events(response_stream, acp_thread, Some(self.clone()), cx)
     }
 
     fn handle_thread_events(
-        events: mpsc::UnboundedReceiver<Result<ThreadEvent>>,
-        acp_thread: WeakEntity<AcpThread>,
-        connection: Option<NativeAgentConnection>,
-        cx: &App,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
-        Self::handle_thread_events_for_turn(events, acp_thread, connection, false, cx)
-    }
-
-    fn handle_thread_events_for_turn(
         mut events: mpsc::UnboundedReceiver<Result<ThreadEvent>>,
         acp_thread: WeakEntity<AcpThread>,
         connection: Option<NativeAgentConnection>,
-        track_turn: bool,
         cx: &App,
     ) -> Task<Result<acp_v1::PromptResponse>> {
         cx.spawn(async move |cx| {
-            let expected_turn_id = if track_turn {
-                let Some(turn_id) =
-                    acp_thread.read_with(cx, |thread, _| thread.current_turn_id())?
-                else {
-                    return Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Cancelled));
-                };
-                Some(turn_id)
-            } else {
-                None
-            };
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = events.next().await {
-                if let Some(expected_turn_id) = expected_turn_id
-                    && acp_thread.read_with(cx, |thread, _| thread.current_turn_id())?
-                        != Some(expected_turn_id)
-                {
-                    return Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Cancelled));
-                }
                 match result {
                     Ok(event) => {
                         log::trace!("Received completion event: {:?}", event);

@@ -123,7 +123,6 @@ pub enum SandboxStatusRefresh {
 /// pass to be worthwhile, so we leave the thread uncompacted and let the UI warn
 /// the user instead.
 pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
-const NATIVE_COMPACTION_MAX_OUTPUT_TOKENS: u64 = 2_048;
 
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
@@ -4612,13 +4611,7 @@ impl Thread {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
-            temperature: AgentSettings::temperature_for_model(model, cx),
-            max_output_tokens: Some(
-                model
-                    .max_output_tokens()
-                    .unwrap_or(NATIVE_COMPACTION_MAX_OUTPUT_TOKENS)
-                    .min(NATIVE_COMPACTION_MAX_OUTPUT_TOKENS),
-            ),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
             messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
             ..Default::default()
         };
@@ -7935,10 +7928,6 @@ mod tests {
         assert_eq!(
             compaction_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
-        );
-        assert_eq!(
-            compaction_request.max_output_tokens,
-            Some(NATIVE_COMPACTION_MAX_OUTPUT_TOKENS)
         );
         let compaction_texts = request_texts_after_system(&compaction_request.messages);
         assert_eq!(compaction_texts.len(), 3);
