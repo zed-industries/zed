@@ -32,8 +32,7 @@ where
 }
 
 /// `CREATE_NO_WINDOW` (0x0800_0000), so child tool processes spawned by
-/// actions don't flash a console window on Windows; `0` (a no-op) elsewhere.
+/// actions don't flash a console window. Windows only: no other platform
+/// opens one.
 #[cfg(target_os = "windows")]
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-#[cfg(not(target_os = "windows"))]
-pub(crate) const CREATE_NO_WINDOW: u32 = 0;

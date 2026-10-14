@@ -198,13 +198,17 @@ impl ProcessRegistry {
     /// `taskkill /T` kills the whole tree rooted at the tracked pid first —
     /// same technique `script_runner_panel::kill_process_tree` already uses
     /// for its own shelled-out commands.
+    ///
+    /// Elsewhere the tracked process is the real one, but it can have started
+    /// others (`npm run dev` starts the server as its child), which a plain
+    /// kill would leave running. It is started as the leader of its own
+    /// process group, and the whole group is killed.
     pub fn stop(&self, id: &str) -> Result<(), String> {
         let mut entries = self.entries.lock().unwrap();
         let entry = entries
             .get_mut(id)
             .ok_or_else(|| format!("no tracked process with id \"{id}\""))?;
 
-        #[cfg(target_os = "windows")]
         if let Some(pid) = entry.info.pid {
             kill_process_tree(pid);
         }
@@ -233,6 +237,16 @@ fn kill_process_tree(pid: u32) {
     c.args(["/F", "/T", "/PID", &pid.to_string()]);
     c.creation_flags(crate::async_rt::CREATE_NO_WINDOW);
     let _ = c.output();
+}
+
+/// `pid` leads its own process group (`execute_start_process` starts it that
+/// way), so a negative id signals the whole group. A process that already
+/// exited leaves no group, and `start_kill` in `stop` covers what is left.
+#[cfg(not(target_os = "windows"))]
+fn kill_process_tree(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .args(["-9", "--", &format!("-{pid}")])
+        .output();
 }
 
 /// Spawns a background task that reads `stream` line-by-line and appends

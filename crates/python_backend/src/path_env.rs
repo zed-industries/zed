@@ -104,11 +104,9 @@ pub fn merged_path() -> Option<String> {
     if merged.is_empty() { None } else { Some(merged) }
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn merged_path() -> Option<String> {
-    None
-}
-
+// Only Windows needs this: a packaged app there inherits a stripped-down
+// PATH. Elsewhere the inherited one is complete, and nothing calls it.
+#[cfg(target_os = "windows")]
 pub fn enrich_path(cmd: &mut std::process::Command) {
     if let Some(merged) = merged_path() {
         cmd.env("PATH", merged);

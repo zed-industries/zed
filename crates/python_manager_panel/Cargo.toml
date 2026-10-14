@@ -16,6 +16,7 @@ futures.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
 http_client.workspace = true
+ide_env.workspace = true
 project.workspace = true
 python_backend.workspace = true
 python_versions.workspace = true

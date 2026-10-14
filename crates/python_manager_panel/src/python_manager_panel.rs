@@ -851,15 +851,29 @@ pub async fn fetch_all_vulnerabilities(
 /// Script Runner dock panel loaded yet). Mirrors the shape of
 /// `npm_backend::run_npm_cli`'s own fallback, but takes a full shell command
 /// string (this panel's commands can be `&&`-chained, e.g. `create_venv`)
-/// rather than a program + args list, so it's a plain `cmd /C` invocation.
+/// rather than a program + args list, so it runs through the system shell:
+/// `cmd /C` on Windows, `sh -c` elsewhere (there is no `cmd` there).
 fn run_shell_sync(command: &str, cwd: &str) -> Result<String, String> {
-    let mut c = std::process::Command::new("cmd");
-    c.args(["/C", command]).current_dir(cwd);
     #[cfg(target_os = "windows")]
-    {
+    let mut c = {
         use std::os::windows::process::CommandExt as _;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        c.creation_flags(CREATE_NO_WINDOW);
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", command]).creation_flags(CREATE_NO_WINDOW);
+        c
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut c = {
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", command]);
+        c
+    };
+    c.current_dir(cwd);
+    // The IDE's own runtimes first, as the Script Runner gives its commands:
+    // a command naming the built-in Python as plain `python` (see
+    // `pip_program`) needs it on the `PATH` to find it.
+    if let Some(path) = ide_env::path_env(Some(Path::new(cwd))) {
+        c.env("PATH", path);
     }
     let out = c.output().map_err(|e| e.to_string())?;
     if out.status.success() {

@@ -16164,6 +16164,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "http_client",
+ "ide_env",
  "project",
  "python_backend",
  "python_versions",

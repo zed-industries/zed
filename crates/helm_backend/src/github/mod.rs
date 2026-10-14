@@ -58,6 +58,10 @@ pub use types::{
 /// Returns a `gh` Command with CREATE_NO_WINDOW set on Windows so no external
 /// console flashes for GitHub CLI calls.
 pub fn gh_cmd() -> tokio::process::Command {
+    #[cfg_attr(
+        not(target_os = "windows"),
+        expect(unused_mut, reason = "only the Windows creation flag changes it")
+    )]
     let mut c = tokio::process::Command::new("gh");
     #[cfg(target_os = "windows")]
     c.creation_flags(0x0800_0000);

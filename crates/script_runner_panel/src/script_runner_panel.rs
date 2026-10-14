@@ -475,10 +475,23 @@ fn kill_process_tree(pid: u32) {
     let _ = c.output();
 }
 
+/// Off Windows the shell is started as the leader of its own process group
+/// (see `run_shell_blocking`), so `pid` is also the group's id. Killing the
+/// group (a negative id) takes everything the command started with it — a
+/// dev server and its workers, not just the `sh` that launched them.
 #[cfg(not(target_os = "windows"))]
 fn kill_process_tree(pid: u32) {
     use std::process::Command;
-    let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+    let group = format!("-{pid}");
+    let killed_group = Command::new("kill")
+        .args(["-9", "--", &group])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    // A shell that already exited leaves no group to signal; whatever is
+    // left is then at most the process itself.
+    if !killed_group {
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+    }
 }
 
 /// Spawns a shell command, reads stdout line by line, sends each line and the
@@ -536,6 +549,7 @@ fn run_shell_blocking(
     // same "stderr merged into the one stdout pipe" shape as above.
     #[cfg(not(target_os = "windows"))]
     let child = {
+        use std::os::unix::process::CommandExt as _;
         let merged_cmd = format!("{{ {cmd}\n}} 2>&1");
         let mut c = gpui_util::new_std_command("sh");
         c.args(["-c", &merged_cmd])
@@ -543,7 +557,10 @@ fn run_shell_blocking(
             .envs(env.iter().map(|(name, value)| (name, value)))
             .env("PYTHONUNBUFFERED", "1")
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::null())
+            // Its own process group, so Stop can kill everything the command
+            // started (`kill_process_tree`), as `taskkill /T` does on Windows.
+            .process_group(0);
         c.spawn()
     };
 

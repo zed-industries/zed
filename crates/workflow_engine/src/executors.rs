@@ -815,7 +815,9 @@ async fn execute_start_process(
         #[cfg(not(target_os = "windows"))]
         let mut cmd = {
             let mut c = TokioCommand::new(&command);
-            c.args(&args);
+            // Its own process group, so stopping it from the Processes panel
+            // takes everything it started (`process_tracker::stop`).
+            c.args(&args).process_group(0);
             c
         };
 
