@@ -994,8 +994,8 @@ fn compaction_markdowns(
 ) -> impl Iterator<Item = Entity<Markdown>> + '_ {
     compaction
         .summary
-        .iter()
-        .filter_map(|content| content.markdown().cloned())
+        .markdowns()
+        .cloned()
         .chain(compaction.error.iter().cloned())
         .filter(move |_| is_expanded)
 }
@@ -1004,42 +1004,42 @@ fn compaction_markdowns(
 mod tests {
     use super::*;
     use acp_thread::{
-        ContentBlock, ContextCompaction, ContextCompactionId, ContextCompactionStatus,
+        ContextCompaction, ContextCompactionId, ContextCompactionStatus, MessageContent,
     };
-    use agent_client_protocol::schema::v1 as acp_v1;
+    use agent_client_protocol::schema::v2 as acp_v2;
     use language::LanguageRegistry;
+    use util::paths::PathStyle;
 
     #[gpui::test]
     fn test_compaction_markdowns_include_summary_and_error(cx: &mut App) {
-        let summary = cx.new(|cx| Markdown::new("summary match".into(), None, None, cx));
         let error = cx.new(|cx| Markdown::new("error match".into(), None, None, cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let unsupported_block = ContentBlock::new_output(
-            acp_thread::content::from_v1(acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new(
-                "YXVkaW8=",
-                "audio/wav",
-            )))
-            .expect("known v1 audio content"),
+        let mut summary = MessageContent::new(
+            acp_v2::ContentBlock::Text(acp_v2::TextContent::new("summary match")),
             &language_registry,
+            PathStyle::local(),
             cx,
         );
-        let unsupported = unsupported_block
-            .markdown()
-            .expect("audio fallback")
-            .clone();
+        summary.append(
+            acp_v2::ContentBlock::Audio(acp_v2::AudioContent::new("YXVkaW8=", "audio/wav")),
+            &language_registry,
+            PathStyle::local(),
+            cx,
+        );
+        let mut expected_markdowns = summary.markdowns().cloned().collect::<Vec<_>>();
+        assert_eq!(expected_markdowns.len(), 2);
+        expected_markdowns.push(error.clone());
         let compaction = ContextCompaction {
             id: ContextCompactionId("compaction".into()),
             status: ContextCompactionStatus::Failed,
-            summary: vec![
-                ContentBlock::from_markdown(summary.clone()),
-                unsupported_block,
-            ],
-            error: Some(error.clone()),
+            summary,
+            error: Some(error),
+            meta: None,
         };
 
         assert!(compaction_markdowns(&compaction, false).next().is_none());
 
         let markdowns = compaction_markdowns(&compaction, true).collect::<Vec<_>>();
-        assert_eq!(markdowns, vec![summary, unsupported, error]);
+        assert_eq!(markdowns, expected_markdowns);
     }
 }
