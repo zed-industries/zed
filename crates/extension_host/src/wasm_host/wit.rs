@@ -232,6 +232,32 @@ impl Extension {
         }
     }
 
+    pub async fn call_panel_action(
+        &self,
+        store: &mut Store<WasmState>,
+        panel_id: &str,
+        action: &str,
+        payload: &str,
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_panel_action(store, panel_id, action, payload)
+                    .await
+            }
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(Err(
+                "extension panel actions require extension API 0.8.0".into(),
+            )),
+        }
+    }
+
     pub async fn call_language_server_command(
         &self,
         store: &mut Store<WasmState>,

@@ -81,13 +81,52 @@ impl CapabilityGranter {
 
         Ok(())
     }
+
+    /// Grants a local TCP connection only when both the extension manifest and
+    /// the user's settings name the same loopback endpoint.
+    pub fn grant_tcp_connect(&self, desired_host: &str, desired_port: u16) -> Result<()> {
+        let is_manifest_allowed =
+            self.manifest
+                .capabilities
+                .iter()
+                .any(|capability| match capability {
+                    ExtensionCapability::TcpConnect(capability) => {
+                        capability.allows(desired_host, desired_port)
+                    }
+                    _ => false,
+                });
+
+        if !is_manifest_allowed {
+            bail!(
+                "capability for network:tcp-local {desired_host}:{desired_port} was not listed in the extension manifest"
+            );
+        }
+
+        let is_granted = self
+            .granted_capabilities
+            .iter()
+            .any(|capability| match capability {
+                ExtensionCapability::TcpConnect(capability) => {
+                    capability.allows(desired_host, desired_port)
+                }
+                _ => false,
+            });
+
+        if !is_granted {
+            bail!(
+                "capability for network:tcp-local {desired_host}:{desired_port} is not granted by the extension host"
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use extension::{ProcessExecCapability, SchemaVersion};
+    use extension::{ProcessExecCapability, SchemaVersion, TcpConnectCapability};
 
     use super::*;
 
@@ -149,5 +188,28 @@ mod tests {
             manifest,
         );
         assert!(granter.grant_exec("ls", &["-la"]).is_ok());
+    }
+
+    #[test]
+    fn test_grant_tcp_connect_requires_manifest_and_user_grant() {
+        let tcp_capability = TcpConnectCapability {
+            host: "localhost".to_string(),
+            port: Some(7888),
+        };
+        let manifest = Arc::new(ExtensionManifest {
+            capabilities: vec![ExtensionCapability::TcpConnect(tcp_capability.clone())],
+            ..extension_manifest()
+        });
+
+        let granter = CapabilityGranter::new(Vec::new(), manifest.clone());
+        assert!(granter.grant_tcp_connect("localhost", 7888).is_err());
+
+        let granter = CapabilityGranter::new(
+            vec![ExtensionCapability::TcpConnect(tcp_capability)],
+            manifest,
+        );
+        assert!(granter.grant_tcp_connect("localhost", 7888).is_ok());
+        assert!(granter.grant_tcp_connect("localhost", 7889).is_err());
+        assert!(granter.grant_tcp_connect("example.com", 7888).is_err());
     }
 }

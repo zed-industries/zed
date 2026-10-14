@@ -1,14 +1,17 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{App, EntityId, Global, ReadGlobal, SharedString, Task};
 use language::{BinaryStatus, LanguageLoader, LanguageMatcher, LanguageName};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
-use crate::Extension;
+use crate::{
+    Extension, ExtensionPanelAction, ExtensionPanelActionProxy, ExtensionPanelDescriptor,
+    ExtensionPanelEvent, ExtensionPanelId, ExtensionPanelUiProxy,
+};
 
 #[derive(Default)]
 struct GlobalExtensionHostProxy(Arc<ExtensionHostProxy>);
@@ -32,6 +35,8 @@ pub struct ExtensionHostProxy {
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
     language_model_provider_proxy: RwLock<Option<Arc<dyn ExtensionLanguageModelProviderProxy>>>,
+    panel_ui_proxy: RwLock<Option<Arc<dyn ExtensionPanelUiProxy>>>,
+    panel_action_proxy: RwLock<Option<Arc<dyn ExtensionPanelActionProxy>>>,
 }
 
 impl ExtensionHostProxy {
@@ -57,6 +62,8 @@ impl ExtensionHostProxy {
             context_server_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
             language_model_provider_proxy: RwLock::default(),
+            panel_ui_proxy: RwLock::default(),
+            panel_action_proxy: RwLock::default(),
         }
     }
 
@@ -97,6 +104,62 @@ impl ExtensionHostProxy {
         self.language_model_provider_proxy
             .write()
             .replace(Arc::new(proxy));
+    }
+
+    pub fn register_panel_ui_proxy(&self, proxy: impl ExtensionPanelUiProxy) {
+        self.panel_ui_proxy.write().replace(Arc::new(proxy));
+    }
+
+    pub fn register_panel_action_proxy(&self, proxy: impl ExtensionPanelActionProxy) {
+        self.panel_action_proxy.write().replace(Arc::new(proxy));
+    }
+}
+
+impl ExtensionPanelUiProxy for ExtensionHostProxy {
+    fn open_panel(&self, descriptor: ExtensionPanelDescriptor, cx: &mut App) -> Result<()> {
+        let Some(proxy) = self.panel_ui_proxy.read().clone() else {
+            return Err(anyhow!("extension panels are not available"));
+        };
+        proxy.open_panel(descriptor, cx)
+    }
+
+    fn send_panel_event(
+        &self,
+        panel: ExtensionPanelId,
+        event: ExtensionPanelEvent,
+        cx: &mut App,
+    ) -> Result<()> {
+        let Some(proxy) = self.panel_ui_proxy.read().clone() else {
+            return Err(anyhow!("extension panels are not available"));
+        };
+        proxy.send_panel_event(panel, event, cx)
+    }
+
+    fn active_worktree_root(&self, cx: &mut App) -> Result<String> {
+        let Some(proxy) = self.panel_ui_proxy.read().clone() else {
+            return Err(anyhow!("extension panels are not available"));
+        };
+        proxy.active_worktree_root(cx)
+    }
+
+    fn read_active_worktree_file(&self, path: &str, cx: &mut App) -> Result<String> {
+        let Some(proxy) = self.panel_ui_proxy.read().clone() else {
+            return Err(anyhow!("extension panels are not available"));
+        };
+        proxy.read_active_worktree_file(path, cx)
+    }
+}
+
+impl ExtensionPanelActionProxy for ExtensionHostProxy {
+    fn dispatch_panel_action(
+        &self,
+        action: ExtensionPanelAction,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(proxy) = self.panel_action_proxy.read().clone() else {
+            return Task::ready(Err(anyhow!("extension panel actions are not available")));
+        };
+        proxy.dispatch_panel_action(action, cx)
     }
 }
 
