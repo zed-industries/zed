@@ -3,7 +3,8 @@
 //! Pure path classifier plus default `bash.patterns` Deny rules. No Seatbelt
 //! on the implementer (omp2 owns that). Write/edit auto-allow stays; cedian
 //! denies by path at the gate, restores named edit/write targets, and pins
-//! Deny patterns for common bash writes into `.git`.
+//! Deny patterns for bash commands that name a path into `.git`, enter it,
+//! or move git's hooks elsewhere.
 
 use crate::spawn_profile::{BashRule, ToolPolicy};
 use std::path::{Component, Path, PathBuf};
@@ -79,19 +80,21 @@ pub fn approval_targets_protected(title: &str, roots: &ProtectedRoots) -> bool {
     false
 }
 
-/// Default bash.patterns Deny rules that catch common writes into `.git`
-/// (OMP `*` wildcards only).
+/// Default bash.patterns Deny rules (OMP 18.8.6 `tools/bash.ts`: `*` is any
+/// text, the rule is anchored, and a Deny fires on the whole command or on
+/// any one segment of a compound line). They deny any command that names a
+/// path into `.git` (`>.git/x`, `./.git/x` and `a/.git/x` included), one
+/// that enters `.git`, and git's `core.hooksPath`, which runs hooks from
+/// outside it. Git reads config keys case-insensitively; OMP matches case.
 pub fn default_protected_bash_rules() -> Vec<BashRule> {
     [
-        "* .git/*",
-        "*/*/.git/*",
-        "* > .git/*",
-        "* >> .git/*",
-        "cp * .git/*",
-        "mv * .git/*",
-        "rm * .git/*",
-        "tee .git/*",
-        "tee -a .git/*",
+        "*.git/*",
+        "cd .git",
+        "cd */.git",
+        "pushd .git",
+        "pushd */.git",
+        "*hooksPath*",
+        "*hookspath*",
     ]
     .into_iter()
     .map(|pattern| BashRule {
@@ -264,13 +267,64 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn default_bash_rules_deny_git_writes() {
+    /// OMP's match for a Deny rule: the glob against the whole command or
+    /// against one segment (split at `;`, `&&`, `||`, `|`, `&`, newlines).
+    fn omp_denies(command: &str) -> bool {
+        fn glob(pattern: &str, text: &str) -> bool {
+            let parts: Vec<&str> = pattern.split('*').collect();
+            let (first, last) = (parts[0], parts[parts.len() - 1]);
+            if parts.len() == 1 {
+                return pattern == text;
+            }
+            if !text.starts_with(first) || !text[first.len()..].ends_with(last) {
+                return false;
+            }
+            let mut rest = &text[first.len()..text.len() - last.len()];
+            for part in &parts[1..parts.len() - 1] {
+                match rest.find(part) {
+                    Some(at) => rest = &rest[at + part.len()..],
+                    None => return false,
+                }
+            }
+            true
+        }
+        let segments = command
+            .split(['\n', ';', '|', '&'])
+            .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|s| !s.is_empty());
+        let whole = command.split_whitespace().collect::<Vec<_>>().join(" ");
         let rules = default_protected_bash_rules();
-        assert!(
-            rules
-                .iter()
-                .any(|r| r.approval == ToolPolicy::Deny && r.pattern.contains(".git"))
-        );
+        assert!(rules.iter().all(|r| r.approval == ToolPolicy::Deny));
+        std::iter::once(whole)
+            .chain(segments)
+            .any(|text| rules.iter().any(|r| glob(&r.pattern, &text)))
+    }
+
+    #[test]
+    fn default_bash_rules_deny_writes_into_git_and_allow_the_rest() {
+        for command in [
+            "echo x > .git/hooks/pre-commit",
+            "echo x >.git/hooks/pre-commit",
+            "cat y > ./.git/config",
+            "printf x >> sub/.git/hooks/post-merge",
+            "cp evil .git/hooks/pre-commit",
+            "tee .git/info/exclude",
+            "cd .git && echo x > hooks/pre-commit",
+            "cd ./.git; echo x > hooks/pre-commit",
+            "pushd sub/.git",
+            "git config core.hooksPath /tmp/h",
+            "git -c core.hookspath=/tmp/h commit -m x",
+        ] {
+            assert!(omp_denies(command), "not denied: {command}");
+        }
+        for command in [
+            "git status",
+            "git commit -m 'fix'",
+            "cat .gitignore",
+            "ls .github/workflows",
+            "cargo test -p cedian_omp",
+        ] {
+            assert!(!omp_denies(command), "denied: {command}");
+        }
     }
 }
