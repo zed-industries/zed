@@ -8242,10 +8242,8 @@ dependencies = [
  "http_client",
  "language_model_core",
  "log",
- "schemars 1.0.4",
  "serde",
  "serde_json",
- "strum 0.28.0",
 ]
 
 [[package]]
@@ -15785,6 +15783,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "svg_preview",
  "telemetry",
  "tempfile",
  "theme",
@@ -19671,6 +19670,7 @@ dependencies = [
  "gpui",
  "language",
  "multi_buffer",
+ "project",
  "ui",
  "workspace",
  "zed_actions",
