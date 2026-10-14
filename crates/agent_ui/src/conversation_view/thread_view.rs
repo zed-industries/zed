@@ -5073,7 +5073,6 @@ impl ThreadView {
                                     .flex_wrap()
                                     .gap_1()
                                     .children(discard_draft_button)
-                                    .children(self.render_usage_status(cx))
                                     .children(self.render_token_usage(cx))
                                     .children(self.profile_selector.clone())
                                     .map(|this| match self.config_options_view.clone() {
@@ -5312,82 +5311,38 @@ impl ThreadView {
             .is_some_and(|model| model.supports_split_token_display())
     }
 
-    fn render_usage_status(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+    fn usage_status_windows(&self, cx: &App) -> Vec<UsageStatusWindow> {
         if !AgentSettings::get_global(cx).show_usage_status {
-            return None;
+            return Vec::new();
         }
         let rate_limits = self.thread.read(cx).rate_limits();
-        if rate_limits.is_empty() {
-            return None;
-        }
-
         let now = chrono::Utc::now();
-        let windows = [
-            (RateLimitWindowKind::FiveHour, "5h", "5 Hours"),
-            (RateLimitWindowKind::SevenDay, "7d", "7 Days"),
+        [
+            (RateLimitWindowKind::FiveHour, "5 Hours"),
+            (RateLimitWindowKind::SevenDay, "7 Days"),
         ]
         .into_iter()
-        .filter_map(|(kind, short_name, title)| {
-            rate_limits
-                .window(kind)
-                .map(|window| (window, short_name, title))
-        })
-        .collect::<Vec<_>>();
-
-        let is_warning = windows.iter().any(|(window, _, _)| window.is_warning());
-        let label = windows
-            .iter()
-            .map(|(window, short_name, _)| match window.utilization {
-                Some(utilization) => format!("{short_name} {}", format_utilization(utilization)),
-                None => short_name.to_string(),
-            })
-            .join(" · ");
-        let tooltip_windows = windows
-            .iter()
-            .map(|(window, _, title)| {
-                let reset = window.resets_at.map(|resets_at| {
-                    format!("resets in {}", format_duration_until(resets_at, now))
-                });
-                UsageStatusTooltipWindow {
-                    title,
-                    percentage: window.utilization.map(format_utilization),
-                    detail: if window.status == RateLimitStatus::Rejected {
-                        Some(match reset {
-                            Some(reset) => format!("limit reached, {reset}"),
-                            None => "limit reached".to_string(),
-                        })
-                    } else {
-                        reset
-                    },
-                    is_warning: window.is_warning(),
-                }
-            })
-            .collect::<Vec<_>>();
-        let separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
-
-        Some(
-            div()
-                .id("agent-usage-status")
-                .flex_shrink_0()
-                .mr_1()
-                .child(
-                    Label::new(label)
-                        .size(LabelSize::Small)
-                        .color(if is_warning {
-                            Color::Warning
-                        } else {
-                            Color::Muted
-                        }),
-                )
-                .tooltip(move |_window, cx| {
-                    let windows = tooltip_windows.clone();
-                    cx.new(move |_cx| UsageStatusTooltip {
-                        windows,
-                        separator_color,
+        .filter_map(|(kind, title)| {
+            let window = rate_limits.window(kind)?;
+            let reset = window
+                .resets_at
+                .map(|resets_at| format!("resets in {}", format_duration_until(resets_at, now)));
+            Some(UsageStatusWindow {
+                title,
+                ratio: window.utilization.unwrap_or(0.0),
+                percentage: window.utilization.map(format_utilization),
+                detail: if window.status == RateLimitStatus::Rejected {
+                    Some(match reset {
+                        Some(reset) => format!("limit reached, {reset}"),
+                        None => "limit reached".to_string(),
                     })
-                    .into()
-                }),
-        )
+                } else {
+                    reset
+                },
+                is_warning: window.is_warning(),
+            })
+        })
+        .collect()
     }
 
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -5425,6 +5380,8 @@ impl ThreadView {
 
         let ring_size = px(16.0);
         let stroke_width = px(2.);
+
+        let usage_windows = self.usage_status_windows(cx);
 
         let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
 
@@ -5468,6 +5425,7 @@ impl ThreadView {
         let output_max_label = crate::humanize_token_count(max_output_tokens);
 
         let build_tooltip = {
+            let usage_windows = usage_windows.clone();
             move |_window: &mut Window, cx: &mut App| {
                 let percentage = percentage.clone();
                 let used = used.clone();
@@ -5479,6 +5437,7 @@ impl ThreadView {
                 let project_entry_ids = project_entry_ids.clone();
                 let workspace = workspace.clone();
                 let cost_label = cost_label.clone();
+                let usage_windows = usage_windows.clone();
                 cx.new(move |_cx| TokenUsageTooltip {
                     percentage,
                     used,
@@ -5489,6 +5448,7 @@ impl ThreadView {
                     output_max: output_max_label,
                     show_split,
                     cost_label,
+                    usage_windows,
                     separator_color: tooltip_separator_color,
                     global_agents_md_loaded,
                     project_rules_count,
@@ -5561,7 +5521,7 @@ impl ThreadView {
                     .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
             )
-        } else {
+        } else if usage_windows.is_empty() {
             Some(
                 h_flex()
                     .id("circular_progress_tokens")
@@ -5577,6 +5537,43 @@ impl ThreadView {
                         .stroke_width(stroke_width)
                         .progress_color(progress_color(progress_ratio)),
                     )
+                    .hoverable_tooltip(build_tooltip)
+                    .into_any_element(),
+            )
+        } else {
+            let nested_ring_size = px(20.);
+            let nested_stroke_width = px(1.5);
+            let ring_spacing = nested_stroke_width + px(1.);
+            let outer_radius = nested_ring_size / 2. - nested_stroke_width;
+
+            let rings = std::iter::once((progress_ratio, progress_color(progress_ratio)))
+                .chain(usage_windows.iter().map(|window| {
+                    let color = if window.is_warning {
+                        cx.theme().status().warning
+                    } else {
+                        cx.theme().colors().text_muted
+                    };
+                    (window.ratio, color)
+                }))
+                .enumerate()
+                .map(|(index, (ratio, color))| {
+                    div().absolute().inset_0().child(
+                        CircularProgress::new(ratio, 1., nested_ring_size, cx)
+                            .stroke_width(nested_stroke_width)
+                            .radius(outer_radius - ring_spacing * index as f32)
+                            .progress_color(color),
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            Some(
+                div()
+                    .id("circular_progress_tokens")
+                    .relative()
+                    .flex_shrink_0()
+                    .size(nested_ring_size)
+                    .mr_1()
+                    .children(rings)
                     .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
             )
@@ -6425,64 +6422,12 @@ impl ThreadView {
 }
 
 #[derive(Clone)]
-struct UsageStatusTooltipWindow {
+struct UsageStatusWindow {
     title: &'static str,
+    ratio: f32,
     percentage: Option<String>,
     detail: Option<String>,
     is_warning: bool,
-}
-
-struct UsageStatusTooltip {
-    windows: Vec<UsageStatusTooltipWindow>,
-    separator_color: Color,
-}
-
-impl Render for UsageStatusTooltip {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let windows = self.windows.clone();
-        let separator_color = self.separator_color;
-
-        ui::tooltip_container(cx, move |container, cx| {
-            let border_color = cx.theme().colors().border_variant;
-            container
-                .min_w_40()
-                .children(windows.into_iter().enumerate().map(|(index, window)| {
-                    let has_both = window.percentage.is_some() && window.detail.is_some();
-                    v_flex()
-                        .gap_0p5()
-                        .when(index > 0, |this| {
-                            this.mt_1p5()
-                                .pt_1p5()
-                                .border_t_1()
-                                .border_color(border_color)
-                        })
-                        .child(
-                            Label::new(window.title)
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .children(window.percentage.map(|percentage| {
-                                    Label::new(percentage).color(if window.is_warning {
-                                        Color::Warning
-                                    } else {
-                                        Color::Default
-                                    })
-                                }))
-                                .when(has_both, |this| {
-                                    this.child(Label::new("\u{2022}").color(separator_color).mx_1())
-                                })
-                                .children(
-                                    window
-                                        .detail
-                                        .map(|detail| Label::new(detail).color(Color::Muted)),
-                                ),
-                        )
-                }))
-        })
-    }
 }
 
 struct TokenUsageTooltip {
@@ -6495,6 +6440,7 @@ struct TokenUsageTooltip {
     output_max: String,
     show_split: bool,
     cost_label: Option<String>,
+    usage_windows: Vec<UsageStatusWindow>,
     separator_color: Color,
     global_agents_md_loaded: bool,
     project_rules_count: usize,
@@ -6514,6 +6460,7 @@ impl Render for TokenUsageTooltip {
         let output_max = self.output_max.clone();
         let show_split = self.show_split;
         let cost_label = self.cost_label.clone();
+        let usage_windows = self.usage_windows.clone();
         let global_agents_md_loaded = self.global_agents_md_loaded;
         let project_rules_count = self.project_rules_count;
         let project_entry_ids = self.project_entry_ids.clone();
@@ -6562,20 +6509,45 @@ impl Render for TokenUsageTooltip {
                 })
                 .when_some(cost_label, |this, cost_label| {
                     this.child(
-                        v_flex()
-                            .mt_1p5()
-                            .pt_1p5()
+                        h_flex()
                             .gap_0p5()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                Label::new("Cost")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            )
+                            .child(Label::new("Cost:").color(Color::Muted).mr_0p5())
                             .child(Label::new(cost_label)),
                     )
                 })
+                .children(usage_windows.into_iter().map(|window| {
+                    let has_both = window.percentage.is_some() && window.detail.is_some();
+                    v_flex()
+                        .mt_1p5()
+                        .pt_1p5()
+                        .gap_0p5()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(
+                            Label::new(window.title)
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .children(window.percentage.map(|percentage| {
+                                    Label::new(percentage).color(if window.is_warning {
+                                        Color::Warning
+                                    } else {
+                                        Color::Default
+                                    })
+                                }))
+                                .when(has_both, |this| {
+                                    this.child(Label::new("\u{2022}").color(separator_color).mx_1())
+                                })
+                                .children(
+                                    window
+                                        .detail
+                                        .map(|detail| Label::new(detail).color(Color::Muted)),
+                                ),
+                        )
+                }))
                 .when(
                     global_agents_md_loaded || project_rules_count > 0,
                     move |this| {
