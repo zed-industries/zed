@@ -331,6 +331,7 @@ impl AcpV2Connection {
         &self,
         configurations: Vec<(String, Arc<ContextServerConfiguration>)>,
         work_dirs: &PathList,
+        is_absolute: impl Fn(&std::path::Path) -> bool,
     ) -> Result<acp::NewSessionRequest> {
         let capabilities = self
             .initialize_response
@@ -343,14 +344,14 @@ impl AcpV2Connection {
             .next()
             .cloned()
             .context("Working directory cannot be empty")?;
-        anyhow::ensure!(cwd.is_absolute(), "Working directory must be absolute");
+        anyhow::ensure!(is_absolute(&cwd), "Working directory must be absolute");
         let additional_directories = if capabilities.additional_directories.is_some() {
             paths.cloned().collect::<Vec<_>>()
         } else {
             Vec::new()
         };
         anyhow::ensure!(
-            additional_directories.iter().all(|path| path.is_absolute()),
+            additional_directories.iter().all(|path| is_absolute(path)),
             "Additional directories must be absolute"
         );
         let mut servers = Vec::new();
@@ -364,7 +365,7 @@ impl AcpV2Connection {
                         .is_some_and(|mcp| mcp.stdio.is_some()) =>
                 {
                     anyhow::ensure!(
-                        command.path.is_absolute(),
+                        is_absolute(&command.path),
                         "MCP stdio command must be absolute"
                     );
                     servers.push(acp::McpServer::Stdio(
@@ -492,9 +493,12 @@ impl AgentConnection for AcpV2Connection {
         work_dirs: PathList,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        let request = match self
-            .new_session_request(mcp_configurations_for_project(&project, cx), &work_dirs)
-        {
+        let path_style = project.read(cx).path_style(cx);
+        let request = match self.new_session_request(
+            mcp_configurations_for_project(&project, cx),
+            &work_dirs,
+            |path| path_style.is_absolute(path),
+        ) {
             Ok(request) => request,
             Err(error) => return Task::ready(Err(error)),
         };
@@ -1496,9 +1500,14 @@ done
                 cx,
             )
             .await;
+            let path_style = harness
+                .project
+                .read_with(cx, |project, cx| project.path_style(cx));
             let request = harness
                 .client
-                .new_session_request(configurations.clone(), &directories)
+                .new_session_request(configurations.clone(), &directories, |path| {
+                    path_style.is_absolute(path)
+                })
                 .expect("build request");
             assert_eq!(request.cwd.0, std::path::PathBuf::from("/a"));
             assert_eq!(
@@ -1528,7 +1537,11 @@ done
             assert!(
                 harness
                     .client
-                    .new_session_request(Vec::new(), &PathList::new::<std::path::PathBuf>(&[]))
+                    .new_session_request(
+                        Vec::new(),
+                        &PathList::new::<std::path::PathBuf>(&[]),
+                        |path| path_style.is_absolute(path)
+                    )
                     .is_err()
             );
             assert!(
@@ -1536,7 +1549,8 @@ done
                     .client
                     .new_session_request(
                         Vec::new(),
-                        &PathList::new(&[std::path::Path::new("relative")])
+                        &PathList::new(&[std::path::Path::new("relative")]),
+                        |path| path_style.is_absolute(path),
                     )
                     .is_err()
             );
