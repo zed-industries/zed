@@ -1093,6 +1093,8 @@ pub trait GitRepository: Send + Sync {
         include_remote_name: bool,
     ) -> BoxFuture<'_, Result<Option<SharedString>>>;
 
+    fn parent_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>>;
+
     /// Runs `git rev-list --parents` to get the commit graph structure.
     /// Returns commit SHAs and their parent SHAs for building the graph visualization.
     fn initial_graph_data(
@@ -3236,6 +3238,94 @@ impl GitRepository for RealGitRepository {
                 Ok(None)
             })
             .boxed()
+    }
+
+    fn parent_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
+        let git = self.git_binary();
+        async move {
+            let branches_scan = self.branches().await?;
+            self.executor
+                .spawn(async move {
+                    if let Some(error) = branches_scan.error {
+                        bail!("Could not determine parent branch: {error}");
+                    }
+                    let Some(current_branch) =
+                        branches_scan.branches.iter().find(|branch| branch.is_head)
+                    else {
+                        return Ok(None);
+                    };
+                    let Some(current_commit) = &current_branch.most_recent_commit else {
+                        return Ok(None);
+                    };
+                    let head_sha = &current_commit.sha;
+                    let mut nearest_branch = None;
+
+                    for branch in &branches_scan.branches {
+                        let remote_branch_name = branch
+                            .ref_name
+                            .strip_prefix("refs/remotes/")
+                            .and_then(|name| name.split_once('/'))
+                            .map(|(_, name)| name);
+                        if branch.is_head
+                            || branch.ref_name.ends_with("/HEAD")
+                            || remote_branch_name == Some(current_branch.name())
+                            || current_branch.upstream.as_ref().is_some_and(|upstream| {
+                                upstream.is_remote() && upstream.ref_name == branch.ref_name
+                            })
+                        {
+                            continue;
+                        }
+                        let Some(commit) = &branch.most_recent_commit else {
+                            continue;
+                        };
+                        let merge_base = match git
+                            .run(&["merge-base", head_sha.as_ref(), commit.sha.as_ref()])
+                            .await
+                        {
+                            Ok(merge_base) => merge_base,
+                            Err(error) => {
+                                if error
+                                    .downcast_ref::<GitBinaryCommandError>()
+                                    .is_some_and(|error| error.status.code() == Some(1))
+                                {
+                                    continue;
+                                }
+                                return Err(error);
+                            }
+                        };
+
+                        // A child branch would otherwise win with a zero distance.
+                        if merge_base == head_sha.as_ref() && commit.sha != *head_sha {
+                            continue;
+                        }
+                        let head_distance = git
+                            .run(&["rev-list", "--count", &format!("{merge_base}..{head_sha}")])
+                            .await?
+                            .parse::<u64>()?;
+                        let branch_distance = git
+                            .run(&[
+                                "rev-list",
+                                "--count",
+                                &format!("{merge_base}..{}", commit.sha),
+                            ])
+                            .await?
+                            .parse::<u64>()?;
+                        let candidate = (
+                            head_distance,
+                            branch_distance,
+                            branch.is_remote(),
+                            branch.name(),
+                        );
+                        if nearest_branch.is_none_or(|nearest| candidate < nearest) {
+                            nearest_branch = Some(candidate);
+                        }
+                    }
+
+                    Ok(nearest_branch.map(|(_, _, _, name)| name.to_owned().into()))
+                })
+                .await
+        }
+        .boxed()
     }
 
     fn run_hook(
@@ -6610,6 +6700,191 @@ mod tests {
         assert_eq!(
             repo.default_branch(true).await.unwrap(),
             Some("origin/main".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parent_branch_selects_nearest_merge_base(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repository_directory = tempfile::tempdir().expect("create repository directory");
+        let directory = repository_directory.path();
+        git_init_repo(directory);
+        git_command(directory, ["commit", "--allow-empty", "-m", "main"]);
+        git_command(directory, ["switch", "-c", "topic"]);
+        git_command(directory, ["commit", "--allow-empty", "-m", "topic"]);
+        git_command(directory, ["switch", "-c", "feature/child"]);
+        git_command(directory, ["commit", "--allow-empty", "-m", "feature"]);
+        git_command(directory, ["remote", "add", "origin", "/unused"]);
+        git_command(
+            directory,
+            ["update-ref", "refs/remotes/origin/published", "HEAD"],
+        );
+        git_command(
+            directory,
+            ["config", "branch.feature/child.remote", "origin"],
+        );
+        git_command(
+            directory,
+            [
+                "config",
+                "branch.feature/child.merge",
+                "refs/heads/published",
+            ],
+        );
+        git_command(
+            directory,
+            ["commit", "--allow-empty", "-m", "feature again"],
+        );
+        git_command(
+            directory,
+            ["update-ref", "refs/remotes/other/feature/child", "HEAD"],
+        );
+        git_command(directory, ["switch", "-c", "descendant"]);
+        git_command(directory, ["commit", "--allow-empty", "-m", "descendant"]);
+        git_command(directory, ["switch", "topic"]);
+        git_command(directory, ["switch", "-c", "sibling"]);
+        for message in [
+            "sibling one",
+            "sibling two",
+            "sibling three",
+            "sibling four",
+        ] {
+            git_command(directory, ["commit", "--allow-empty", "-m", message]);
+        }
+        git_command(directory, ["switch", "topic"]);
+        for message in ["topic one", "topic two", "topic three"] {
+            git_command(directory, ["commit", "--allow-empty", "-m", message]);
+        }
+        git_command(
+            directory,
+            ["update-ref", "refs/remotes/origin/topic", "HEAD"],
+        );
+        git_command(
+            directory,
+            [
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/topic",
+            ],
+        );
+        git_command(directory, ["switch", "--orphan", "unrelated"]);
+        git_command(directory, ["commit", "--allow-empty", "-m", "unrelated"]);
+        git_command(directory, ["switch", "feature/child"]);
+
+        let repository = RealGitRepository::new(
+            &directory.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("open repository");
+        assert_eq!(
+            repository.parent_branch().await.expect("resolve parent"),
+            Some("topic".into())
+        );
+
+        git_command(directory, ["branch", "-D", "topic"]);
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("resolve remote parent"),
+            Some("origin/topic".into())
+        );
+
+        let worktree_directory = repository_directory.path().join("linked");
+        git_command(
+            directory,
+            [
+                OsStr::new("worktree"),
+                OsStr::new("add"),
+                OsStr::new("-b"),
+                OsStr::new("worktree-feature"),
+                worktree_directory.as_os_str(),
+                OsStr::new("feature/child"),
+            ],
+        );
+        git_command(
+            &worktree_directory,
+            ["commit", "--allow-empty", "-m", "worktree feature"],
+        );
+        let worktree_repository = RealGitRepository::new(
+            &worktree_directory.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("open linked worktree repository");
+        assert_eq!(
+            worktree_repository
+                .parent_branch()
+                .await
+                .expect("resolve worktree parent"),
+            Some("feature/child".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parent_branch_ties_and_missing_candidates(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repository_directory = tempfile::tempdir().expect("create repository directory");
+        let directory = repository_directory.path();
+        git_init_repo(directory);
+        let repository = RealGitRepository::new(
+            &directory.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("open repository");
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("resolve unborn parent"),
+            None
+        );
+
+        git_command(directory, ["commit", "--allow-empty", "-m", "main"]);
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("resolve single branch parent"),
+            None
+        );
+        git_command(directory, ["switch", "-c", "feature"]);
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("resolve new branch parent"),
+            Some("main".into())
+        );
+        git_command(directory, ["commit", "--allow-empty", "-m", "feature"]);
+        git_command(directory, ["branch", "a-parent", "main"]);
+        git_command(directory, ["branch", "b-parent", "main"]);
+        git_command(
+            directory,
+            ["update-ref", "refs/remotes/origin/a-parent", "main"],
+        );
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("resolve tied parents"),
+            Some("a-parent".into())
+        );
+
+        git_command(directory, ["checkout", "--detach"]);
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("resolve detached parent"),
+            None
         );
     }
 

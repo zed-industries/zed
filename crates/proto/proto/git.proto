@@ -572,6 +572,7 @@ message GetDefaultBranch {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   bool include_remote_name = 3;
+  bool prefer_parent = 4;
 }
 
 message GetDefaultBranchResponse {

@@ -1765,7 +1765,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let mut branch_base = None;
-        if self.diff_base == GitDiffBaseSetting::DefaultBranch
+        if self.diff_base != GitDiffBaseSetting::Head
             && let Some((repo, repo_path)) =
                 self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
             && let Some((buffers, _)) = self
@@ -4209,7 +4209,10 @@ impl GitStore {
 
         let branch = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.default_branch(envelope.payload.include_remote_name)
+                repository_handle.resolve_diff_base_branch(
+                    envelope.payload.include_remote_name,
+                    envelope.payload.prefer_parent,
+                )
             })
             .await??
             .map(Into::into);
@@ -4944,7 +4947,7 @@ impl GitStore {
         }
         self.diff_base = setting;
         self.display_diffs.clear();
-        if setting == GitDiffBaseSetting::DefaultBranch {
+        if setting != GitDiffBaseSetting::Head {
             let repo_ids = self.repositories.keys().copied().collect::<Vec<_>>();
             for repo_id in repo_ids {
                 self.refresh_diff_base_for_repo(repo_id, cx);
@@ -4977,7 +4980,7 @@ impl GitStore {
         repo_path: &RepoPath,
         cx: &App,
     ) -> Option<FileStatus> {
-        if self.diff_base == GitDiffBaseSetting::DefaultBranch
+        if self.diff_base != GitDiffBaseSetting::Head
             && let Some((buffers, _)) = self
                 .display_diffs
                 .get(&repo.read(cx).id)
@@ -5050,10 +5053,14 @@ impl GitStore {
         let Some(repo) = self.repositories.get(&repo_id).cloned() else {
             return;
         };
+        let diff_base = self.diff_base;
 
         let task = cx.spawn(async move |this, cx| {
-            let result: Result<Option<SharedString>> =
-                async { repo.update(cx, |repo, _| repo.default_branch(true)).await? }.await;
+            let result: Result<Option<SharedString>> = async {
+                repo.update(cx, |repository, _| repository.branch_diff_base(diff_base))
+                    .await?
+            }
+            .await;
             this.update(cx, |this, cx| {
                 let Some(state) = this.display_diffs.get_mut(&repo_id) else {
                     return;
@@ -9521,18 +9528,37 @@ impl Repository {
         &mut self,
         include_remote_name: bool,
     ) -> oneshot::Receiver<Result<Option<SharedString>>> {
-        let id = self.id;
-        self.send_job("default_branch", None, move |repo, _| async move {
-            match repo {
+        self.resolve_diff_base_branch(include_remote_name, false)
+    }
+
+    pub fn branch_diff_base(
+        &mut self,
+        diff_base: GitDiffBaseSetting,
+    ) -> oneshot::Receiver<Result<Option<SharedString>>> {
+        self.resolve_diff_base_branch(true, diff_base == GitDiffBaseSetting::ParentBranch)
+    }
+
+    fn resolve_diff_base_branch(
+        &mut self,
+        include_remote_name: bool,
+        prefer_parent: bool,
+    ) -> oneshot::Receiver<Result<Option<SharedString>>> {
+        let repository_id = self.id;
+        self.send_job("default_branch", None, move |repository, _| async move {
+            match repository {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    if prefer_parent && let Some(parent_branch) = backend.parent_branch().await? {
+                        return Ok(Some(parent_branch));
+                    }
                     backend.default_branch(include_remote_name).await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let response = client
                         .request(proto::GetDefaultBranch {
                             project_id: project_id.0,
-                            repository_id: id.to_proto(),
+                            repository_id: repository_id.to_proto(),
                             include_remote_name,
+                            prefer_parent,
                         })
                         .await?;
 
@@ -11742,6 +11768,130 @@ mod tests {
             assert!(git_store.display_diff_for_repo(repository_id).is_none());
         });
         assert!(weak_display_diff_list.upgrade().is_none());
+    }
+
+    #[gpui::test]
+    async fn test_parent_branch_diff_base_refreshes(cx: &mut TestAppContext) {
+        use util::path;
+
+        init_test(cx);
+        let project_root = Path::new(path!("/project"));
+        let dot_git = project_root.join(".git");
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(project_root, json!({ ".git": {}, "file.txt": "head\n" }))
+            .await;
+        fs.set_head_and_index_for_repo(&dot_git, &[("file.txt", "head\n".into())]);
+        fs.set_merge_base_content_for_repo(&dot_git, &[("file.txt", "base\n".into())]);
+        fs.with_git_state(&dot_git, true, |state| {
+            state.parent_branch_name = Some("topic".into());
+        })
+        .expect("set parent branch");
+        let project = Project::test(fs.clone(), [project_root], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository = project.read_with(cx, |project, cx| {
+            project.active_repository(cx).expect("active repository")
+        });
+        let repository_id = repository.read_with(cx, |repository, _| repository.id);
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(project_root.join("file.txt"), cx)
+            })
+            .await
+            .expect("open buffer");
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings
+                    .set_user_settings(r#"{ "git": { "diff_base": "parent_branch" } }"#, cx)
+                    .result()
+                    .expect("parse parent branch setting");
+            });
+        });
+        cx.run_until_parked();
+        let display_diff = git_store.read_with(cx, |git_store, _| {
+            git_store
+                .display_diff_for_repo(repository_id)
+                .expect("parent branch display diff")
+        });
+        display_diff.read_with(cx, |diff, _| {
+            assert_eq!(
+                diff.diff_base(),
+                &diff_buffer_list::DiffBase::Merge {
+                    base_ref: "topic".into()
+                }
+            );
+        });
+        let buffer_diff = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_display_diff(buffer.clone(), cx)
+            })
+            .await
+            .expect("open parent branch gutter diff");
+        buffer_diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.base_text_string(cx).as_deref(), Some("base\n"));
+        });
+        cx.run_until_parked();
+        git_store.read_with(cx, |git_store, cx| {
+            let status = git_store.display_status_for_buffer_id(buffer_id, cx);
+            assert!(
+                status.is_some_and(|status| status.has_changes()),
+                "{status:?}"
+            );
+            assert_eq!(
+                git_store
+                    .display_repo_snapshots(cx)
+                    .get(&repository_id)
+                    .expect("display repository snapshot")
+                    .statuses_by_path
+                    .iter()
+                    .count(),
+                1
+            );
+        });
+
+        fs.with_git_state(&dot_git, true, |state| {
+            state.parent_branch_name = Some("other-topic".into());
+        })
+        .expect("change parent branch");
+        let branches = repository.read_with(cx, |repository, _| {
+            repository.snapshot().branch_list.to_vec()
+        });
+        repository.update(cx, |repository, cx| {
+            repository.set_branch_list_for_test(branches, cx)
+        });
+        cx.run_until_parked();
+        display_diff.read_with(cx, |diff, _| {
+            assert_eq!(
+                diff.diff_base(),
+                &diff_buffer_list::DiffBase::Merge {
+                    base_ref: "other-topic".into()
+                }
+            );
+        });
+
+        fs.with_git_state(&dot_git, true, |state| {
+            state.parent_branch_name = None;
+        })
+        .expect("clear parent branch");
+        let branches = repository.read_with(cx, |repository, _| {
+            repository.snapshot().branch_list.to_vec()
+        });
+        repository.update(cx, |repository, cx| {
+            repository.set_branch_list_for_test(branches, cx)
+        });
+        cx.run_until_parked();
+        display_diff.read_with(cx, |diff, _| {
+            assert_eq!(
+                diff.diff_base(),
+                &diff_buffer_list::DiffBase::Merge {
+                    base_ref: "origin/main".into()
+                }
+            );
+        });
     }
 
     async fn setup_gated_blob_reads(

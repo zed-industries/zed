@@ -327,8 +327,7 @@ impl Render for QuickActionBar {
         let editor_settings_dropdown = {
             let vim_mode_enabled = VimModeSetting::get_global(cx).0;
             let helix_mode_enabled = HelixModeSetting::get_global(cx).0;
-            let diff_against_default_branch =
-                ProjectSettings::get_global(cx).git.diff_base == GitDiffBaseSetting::DefaultBranch;
+            let diff_base_setting = ProjectSettings::get_global(cx).git.diff_base;
             let fs = self
                 .workspace
                 .upgrade()
@@ -644,25 +643,32 @@ impl Render for QuickActionBar {
                             );
 
                             if let Some(fs) = fs.clone() {
-                                menu = menu.toggleable_entry(
-                                    "Diff Against Default Branch",
-                                    diff_against_default_branch,
-                                    IconPosition::Start,
-                                    None,
-                                    {
-                                        move |_window, cx| {
-                                            let diff_base = if diff_against_default_branch {
-                                                GitDiffBaseSetting::Head
-                                            } else {
-                                                GitDiffBaseSetting::DefaultBranch
-                                            };
-                                            update_settings_file(fs.clone(), cx, move |settings, _| {
-                                                settings.git.get_or_insert_default().diff_base =
-                                                    Some(diff_base);
-                                            });
-                                        }
-                                    },
-                                );
+                                for (label, diff_base) in [
+                                    ("Diff Against Default Branch", GitDiffBaseSetting::DefaultBranch),
+                                    ("Diff Against Parent Branch", GitDiffBaseSetting::ParentBranch),
+                                ] {
+                                    let selected = diff_base_setting == diff_base;
+                                    menu = menu.toggleable_entry(
+                                        label,
+                                        selected,
+                                        IconPosition::Start,
+                                        None,
+                                        {
+                                            let fs = fs.clone();
+                                            move |_window, cx| {
+                                                let diff_base = if selected {
+                                                    GitDiffBaseSetting::Head
+                                                } else {
+                                                    diff_base
+                                                };
+                                                update_settings_file(fs.clone(), cx, move |settings, _| {
+                                                    settings.git.get_or_insert_default().diff_base =
+                                                        Some(diff_base);
+                                                });
+                                            }
+                                        },
+                                    );
+                                }
                             }
 
                             menu = menu.separator();
