@@ -210,13 +210,17 @@ pub trait AgentConnection {
         Ok(())
     }
 
-    /// This completion-based path retains a legacy response; receipt transports
-    /// acknowledge acceptance separately through `receipt_submissions`.
+    /// Receipt transports acknowledge acceptance through `receipt_submissions`
+    /// instead of implementing this completion-based path.
     fn prompt(
         &self,
-        params: acp_v2::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>>;
+        _params: acp_v2::PromptRequest,
+        _cx: &mut App,
+    ) -> Task<Result<acp_v1::PromptResponse>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "This agent does not support completion-based prompts"
+        )))
+    }
 
     fn retry(
         &self,
@@ -912,7 +916,7 @@ mod test_support {
     pub struct StubAgentConnection {
         sessions: Arc<Mutex<HashMap<acp_v2::SessionId, Session>>>,
         permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
-        next_prompt_updates: Arc<Mutex<Vec<acp_v1::SessionUpdate>>>,
+        next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
@@ -928,6 +932,13 @@ mod test_support {
         agent_id: AgentId,
         telemetry_id: SharedString,
         prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
+    }
+
+    enum StubPromptUpdate {
+        Legacy(Box<acp_v1::SessionUpdate>),
+        Application(
+            Box<dyn FnOnce(&mut AcpThread, &mut gpui::Context<AcpThread>) -> Result<()> + Send>,
+        ),
     }
 
     struct Session {
@@ -970,7 +981,20 @@ mod test_support {
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
-            *self.next_prompt_updates.lock() = updates;
+            *self.next_prompt_updates.lock() = updates
+                .into_iter()
+                .map(|update| StubPromptUpdate::Legacy(Box::new(update)))
+                .collect();
+        }
+
+        pub fn set_next_prompt_action(
+            &self,
+            update: impl FnOnce(&mut AcpThread, &mut gpui::Context<AcpThread>) -> Result<()>
+            + Send
+            + 'static,
+        ) {
+            *self.next_prompt_updates.lock() =
+                vec![StubPromptUpdate::Application(Box::new(update))];
         }
 
         pub fn defer_next_prompt_response(
@@ -1227,9 +1251,8 @@ mod test_support {
             } else {
                 for update in self.next_prompt_updates.lock().drain(..) {
                     let thread = thread.clone();
-                    let update = update.clone();
-                    let permission_request = if let acp_v1::SessionUpdate::ToolCall(tool_call) =
-                        &update
+                    let permission_request = if let StubPromptUpdate::Legacy(update) = &update
+                        && let acp_v1::SessionUpdate::ToolCall(tool_call) = update.as_ref()
                         && let Some(options) = self
                             .permission_requests
                             .get(&acp_v2::ToolCallId::new(tool_call.tool_call_id.0.clone()))
@@ -1251,9 +1274,12 @@ mod test_support {
                                 })??
                                 .await;
                         }
-                        thread.update(cx, |thread, cx| {
-                            thread.handle_session_update(update.clone(), cx).unwrap();
-                        })?;
+                        thread.update(cx, |thread, cx| match update {
+                            StubPromptUpdate::Legacy(update) => thread
+                                .handle_session_update(*update, cx)
+                                .map_err(anyhow::Error::from),
+                            StubPromptUpdate::Application(update) => update(thread, cx),
+                        })??;
                         anyhow::Ok(())
                     });
                     tasks.push(task);

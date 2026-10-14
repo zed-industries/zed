@@ -772,11 +772,25 @@ impl ElicitationStore {
     }
 
     pub fn cancel_request(&mut self, request_id: &acp_v2::RequestId, cx: &mut Context<Self>) {
+        self.cancel_request_entries(request_id, true, cx);
+    }
+
+    pub fn finish_request(&mut self, request_id: &acp_v2::RequestId, cx: &mut Context<Self>) {
+        self.cancel_request_entries(request_id, false, cx);
+    }
+
+    fn cancel_request_entries(
+        &mut self,
+        request_id: &acp_v2::RequestId,
+        include_accepted_urls: bool,
+        cx: &mut Context<Self>,
+    ) {
         let changes = self.cancel_pending(|elicitation| {
             matches!(
                 elicitation.request.scope(),
                 acp_v2::ElicitationScope::Request(scope) if &scope.request_id == request_id
-            )
+            ) && (include_accepted_urls
+                || matches!(elicitation.status, ElicitationStatus::Pending { .. }))
         });
         for (id, change) in changes {
             Self::emit_change(id, change, cx);
@@ -7958,6 +7972,91 @@ mod tests {
             let mut settings_store = SettingsStore::test(cx);
             settings_store.register_setting::<feature_flags::FeatureFlagsSettings>();
             cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_stub_prompt_action_preserves_current_values_and_propagates_errors(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project,
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("stub session");
+        let source = json!({
+            "messageId": "current-response",
+            "content": [{"type": "_future", "payload": {"retain": [null, 7]},
+                "_meta": {"scope": "content"}}],
+            "_meta": {"scope": "message"}
+        });
+        let message: acp_v2::AgentMessage =
+            serde_json::from_value(source.clone()).expect("current message");
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+            acp_v1::ContentChunk::new("overridden legacy response".into()),
+        )]);
+        connection
+            .set_next_prompt_action(move |thread, cx| thread.upsert_assistant_message(message, cx));
+        thread
+            .update(cx, |thread, cx| thread.send_raw("question", cx))
+            .await
+            .expect("application action completes");
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::AssistantMessage(message)) = thread.entries().last() else {
+                panic!("current assistant message");
+            };
+            let [
+                AssistantMessageChunk::Message {
+                    identity,
+                    meta,
+                    block,
+                },
+            ] = message.chunks.as_slice()
+            else {
+                panic!("one current message chunk");
+            };
+            assert_eq!(identity, &MessageIdentity::Keyed("current-response".into()));
+            assert_eq!(
+                serde_json::to_value(block.source_blocks()).expect("source"),
+                source["content"]
+            );
+            assert_eq!(
+                serde_json::to_value(meta).expect("message metadata"),
+                source["_meta"]
+            );
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+        });
+
+        connection.set_next_prompt_action(|_, _| anyhow::bail!("fixture update failed"));
+        let error = thread
+            .update(cx, |thread, cx| thread.send_raw("failure", cx))
+            .await
+            .expect_err("application action errors propagate");
+        assert!(error.to_string().contains("fixture update failed"));
+
+        connection.set_next_prompt_action(|_, _| anyhow::bail!("overridden application action"));
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+            acp_v1::ContentChunk::new("legacy compatibility response".into()),
+        )]);
+        thread
+            .update(cx, |thread, cx| thread.send_raw("legacy", cx))
+            .await
+            .expect("legacy setter replaces application action");
+        thread.read_with(cx, |thread, cx| {
+            assert!(
+                thread
+                    .to_markdown(cx)
+                    .contains("legacy compatibility response")
+            );
         });
     }
 
