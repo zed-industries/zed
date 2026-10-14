@@ -1571,7 +1571,7 @@ fn resolve_preview_image(
     let path = if let (Some(stripped), Some(root)) = (workspace_relative_path, workspace_directory)
     {
         client_path_style.join_path(root, stripped).ok()?
-    } else if client_path_style.is_absolute(&decoded) {
+    } else if client_path_style.has_root(Path::new(&decoded)) {
         PathBuf::from(decoded)
     } else {
         client_path_style.join_path(base_directory?, decoded).ok()?
@@ -1593,7 +1593,7 @@ fn resolve_project_path_for_preview_image(
         .worktree_for_id(source_project_path.worktree_id, cx)?;
     let path_style = worktree.read(cx).path_style();
 
-    if workspace_relative_path.is_none() && path_style.is_absolute(decoded_path) {
+    if workspace_relative_path.is_none() && path_style.is_absolute(Path::new(decoded_path)) {
         return project
             .read(cx)
             .project_path_for_absolute_path(Path::new(decoded_path), cx);
