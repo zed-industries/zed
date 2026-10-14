@@ -992,6 +992,12 @@
     },
   },
   {
+    "context": "CedianPanel > Editor",
+    "bindings": {
+      "cmd-shift-enter": "cedian_panel::StopAndSend",
+    },
+  },
+  {
     "context": "InlineAssistant > Editor",
     "use_key_equivalents": true,
     "bindings": {

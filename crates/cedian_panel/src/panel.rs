@@ -73,6 +73,9 @@ actions!(
         RevertTurn,
         /// Ask OMP to edit the selection (ADR-0056).
         OpenInlineEdit,
+        /// Stop the running turn and send the composer once it has ended
+        /// (ADR-0064).
+        StopAndSend,
     ]
 );
 
@@ -273,6 +276,29 @@ const REVIEW_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// ADR-0013).
 pub const DIALOG_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// The composer, taken whole by Stop and send.
+struct NextPrompt {
+    text: String,
+    images: Vec<ImageContent>,
+    pressed: Instant,
+}
+
+/// Stop and send (ADR-0064): the next prompt goes out once the stopped
+/// prompt's call has returned and the stopped run is over, so the stopped
+/// turn's review turn ends first and the link's worker is free.
+enum AfterStop {
+    /// `returned` once the stopped prompt's call came back; `settled` once
+    /// OMP settled the stopped run.
+    Armed {
+        next: NextPrompt,
+        returned: bool,
+        settled: bool,
+    },
+    /// Sent before OMP settled the stopped run: a settle seen while the new
+    /// prompt is still queued is the stopped run's.
+    Sent,
+}
+
 /// The running turn, as the panel shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Turn {
@@ -377,6 +403,7 @@ pub struct CedianPanel {
     dialogs: IndexMap<String, OpenDialog>,
     /// Images pasted into the composer, sent with the next prompt.
     images: Vec<ImageContent>,
+    after_stop: Option<AfterStop>,
     /// The OMP settings page, shown instead of the thread when open.
     settings: Option<Entity<OmpSettings>>,
     show_settings: bool,
@@ -578,6 +605,7 @@ impl CedianPanel {
             ledger_error: None,
             dialogs: IndexMap::default(),
             images: Vec::new(),
+            after_stop: None,
             settings: None,
             show_settings: false,
             state_dir: None,
@@ -964,6 +992,12 @@ impl CedianPanel {
     #[cfg(any(test, feature = "test-support"))]
     pub fn hold_omp(&self) -> std::sync::mpsc::Sender<()> {
         self.link.as_ref().expect("OMP runs").hold().unwrap()
+    }
+
+    /// The review's latest turn number, and whether it is still open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn review_turn(&self) -> (u32, bool) {
+        (self.review.current_turn(), self.review.turn_open())
     }
 
     /// Whether the link holds the current prompt in its queue, not yet sent.
@@ -2107,6 +2141,8 @@ impl CedianPanel {
     /// The old OMP's subagents and queue die with it: their rows go, and
     /// what was queued goes back (`take_back`).
     fn forget_old_omp(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.disarm("OMP restarted", window, cx);
+        self.after_stop = None;
         self.forget_subagents();
         let queued = self.queued();
         if !queued.is_empty() {
@@ -2216,6 +2252,19 @@ impl CedianPanel {
     }
 
     fn on_link_event(&mut self, event: LinkEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let LinkEvent::PromptTimed { .. }
+        | LinkEvent::PromptCancelled
+        | LinkEvent::PromptStopped(_)
+        | LinkEvent::PromptFailed(_) = &event
+            && let Some(AfterStop::Armed { returned, .. }) = &mut self.after_stop
+        {
+            *returned = true;
+        }
+        self.handle_link_event(event, window, cx);
+        self.send_next_if_due(window, cx);
+    }
+
+    fn handle_link_event(&mut self, event: LinkEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             LinkEvent::Ready {
                 session_id,
@@ -2245,11 +2294,11 @@ impl CedianPanel {
             }
             LinkEvent::OmpWarning(warning) => self.omp_warning = Some(warning),
             LinkEvent::OmpPolicy(badge) => self.omp_policy = Some(badge),
-            LinkEvent::Failed(reason) => self.stop(reason, cx),
+            LinkEvent::Failed(reason) => self.stop(reason, window, cx),
             LinkEvent::Taken { session_id, reason } => {
                 if self.turn != Turn::Idle {
                     self.thread.withdraw_user();
-                    self.end_turn(None, cx);
+                    self.end_turn(None, window, cx);
                 }
                 self.connection = Connection::Taken { session_id, reason };
             }
@@ -2259,14 +2308,14 @@ impl CedianPanel {
             LinkEvent::PromptCancelled => {
                 self.instruments.abandoned();
                 self.thread.withdraw_user();
-                self.end_turn(None, cx);
+                self.end_turn(None, window, cx);
             }
             LinkEvent::PromptStopped(e) => {
-                self.end_turn(Some(format!("turn stopped: {e}")), cx);
+                self.end_turn(Some(format!("turn stopped: {e}")), window, cx);
             }
             LinkEvent::PromptFailed(e) => {
                 self.instruments.abandoned();
-                self.end_turn(Some(format!("OMP did not run the prompt: {e}")), cx);
+                self.end_turn(Some(format!("OMP did not run the prompt: {e}")), window, cx);
             }
             LinkEvent::AbortFailed(e) => {
                 if self.turn != Turn::Idle {
@@ -2347,7 +2396,7 @@ impl CedianPanel {
             }
             LinkEvent::Event(RouterEvent::Disconnected) => {
                 self.thread.apply(&RouterEvent::Disconnected);
-                self.stop("OMP stopped: its process exited".to_string(), cx);
+                self.stop("OMP stopped: its process exited".to_string(), window, cx);
             }
             LinkEvent::Event(RouterEvent::Unknown { frame_type })
                 if frame_type == "config_update" =>
@@ -2471,16 +2520,55 @@ impl CedianPanel {
     /// The prompt call ended without OMP settling: idle again, a call whose
     /// ToolEnd never came is released, and a failed turn keeps its reason
     /// over `notice`.
-    fn end_turn(&mut self, notice: Option<String>, cx: &mut Context<Self>) {
+    fn end_turn(&mut self, notice: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.retrying = false;
         self.review.end_turn();
         self.release_in_flight(cx);
+        let failed = matches!(self.turn, Turn::Failed(_));
         if let Turn::Failed(reason) = std::mem::replace(&mut self.turn, Turn::Idle) {
             self.notice = Some(format!("turn failed: {reason}"));
         } else if notice.is_some() {
             self.notice = notice;
         }
         self.warn_outside_selection(cx);
+        if failed {
+            self.disarm("the stop failed", window, cx);
+        }
+    }
+
+    /// Stop and send's prompt goes out once the stopped prompt's call has
+    /// returned and the stopped run is over: OMP settled it, or the call's
+    /// end (`end_turn`) already made the turn idle. A failed stop sends
+    /// nothing.
+    fn send_next_if_due(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(AfterStop::Armed {
+            returned, settled, ..
+        }) = &self.after_stop
+        else {
+            return;
+        };
+        if !*returned || !(*settled || self.turn == Turn::Idle) {
+            return;
+        }
+        let settled = *settled;
+        if let Turn::Failed(reason) = std::mem::replace(&mut self.turn, Turn::Idle) {
+            self.notice = Some(format!("turn failed: {reason}"));
+            return self.disarm("the stop failed", window, cx);
+        }
+        let Some(AfterStop::Armed { next, .. }) = self.after_stop.take() else {
+            return;
+        };
+        match self.start_turn(&next.text, next.images.clone(), next.pressed, window, cx) {
+            Ok(()) => self.after_stop = (!settled).then_some(AfterStop::Sent),
+            Err(e) => {
+                self.after_stop = Some(AfterStop::Armed {
+                    next,
+                    returned: true,
+                    settled,
+                });
+                self.disarm(&e, window, cx);
+            }
+        }
     }
 
     /// A follow-up with `text` did not reach OMP's queue: it is forgotten,
@@ -2524,7 +2612,9 @@ impl CedianPanel {
         }
     }
 
-    fn stop(&mut self, reason: String, cx: &mut Context<Self>) {
+    fn stop(&mut self, reason: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.disarm(&reason, window, cx);
+        self.after_stop = None;
         self.link = None;
         self.omp_policy = None;
         self.omp_warning = None;
@@ -2557,23 +2647,90 @@ impl CedianPanel {
                 return;
             }
         }
-        let prompt = Prompt {
-            text: self.with_context(&text, cx),
-            images: self.images.clone(),
-        };
-        if let Err(e) = self.send_prompt(prompt, window, cx) {
-            self.notice = Some(e);
-            cx.notify();
-            return;
+        match self.start_turn(&text, self.images.clone(), started, window, cx) {
+            Ok(()) => {
+                self.input.update(cx, |editor, cx| editor.clear(window, cx));
+                self.images.clear();
+            }
+            Err(e) => self.notice = Some(e),
         }
+        cx.notify();
+    }
+
+    /// A new turn from `Idle`: the prompt with its context goes to OMP, the
+    /// person's row shows, and a review turn begins.
+    fn start_turn(
+        &mut self,
+        text: &str,
+        images: Vec<ImageContent>,
+        started: Instant,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let prompt = Prompt {
+            text: self.with_context(text, cx),
+            images,
+        };
+        self.send_prompt(prompt, window, cx)?;
         self.instruments.sent(started);
-        self.input.update(cx, |editor, cx| editor.clear(window, cx));
-        self.images.clear();
-        self.thread.push_user(&text);
+        self.thread.push_user(text);
         self.review.begin_turn();
         self.notice = None;
         self.set_turn(Turn::Queued);
+        Ok(())
+    }
+
+    /// Stop and send (ADR-0064): the running turn stops as Stop stops it,
+    /// queued messages come back to the composer, and the composer's text
+    /// goes out once the stopped prompt's call has returned.
+    pub fn stop_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.input.read(cx).text(cx);
+        if text.trim().is_empty() {
+            return;
+        }
+        let stop = match self.turn {
+            Turn::Idle => return self.send(window, cx),
+            Turn::Queued | Turn::Streaming => true,
+            Turn::Stopping if self.after_stop.is_none() => false,
+            Turn::Stopping | Turn::Failed(_) => {
+                self.notice = Some("a message already waits for the stop; wait for it".to_string());
+                cx.notify();
+                return;
+            }
+        };
+        let returned = !self.link.as_ref().is_some_and(OmpLink::prompt_open);
+        self.after_stop = Some(AfterStop::Armed {
+            next: NextPrompt {
+                text,
+                images: std::mem::take(&mut self.images),
+                pressed: Instant::now(),
+            },
+            returned,
+            settled: false,
+        });
+        self.input.update(cx, |editor, cx| editor.clear(window, cx));
+        if stop {
+            self.stop_turn(cx);
+        }
         cx.notify();
+    }
+
+    /// The message Stop and send holds goes back to the composer: `why` it
+    /// was not sent joins the notice.
+    fn disarm(&mut self, why: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(AfterStop::Armed { next, .. }) = self.after_stop.take() {
+            self.restore_to_composer(vec![next.text], window, cx);
+            self.images.splice(0..0, next.images);
+            self.add_notice(format!("not sent: {why}"));
+        }
+    }
+
+    /// The message Stop and send holds, while it waits.
+    pub fn next_prompt(&self) -> Option<&str> {
+        match &self.after_stop {
+            Some(AfterStop::Armed { next, .. }) => Some(&next.text),
+            _ => None,
+        }
     }
 
     fn send_prompt(
@@ -2946,6 +3103,12 @@ impl CedianPanel {
     }
 
     fn on_event(&mut self, event: RouterEvent, cx: &mut Context<Self>) {
+        // The new prompt's run started: no settle of the stopped run is due.
+        if matches!(event, RouterEvent::AgentStart)
+            && matches!(self.after_stop, Some(AfterStop::Sent))
+        {
+            self.after_stop = None;
+        }
         match &event {
             RouterEvent::ToolStart {
                 tool_call_id,
@@ -3002,12 +3165,21 @@ impl CedianPanel {
                 steering,
                 follow_up,
             } => self.observe_follow_ups(steering, follow_up, cx),
+            RouterEvent::Settled
+                if self.turn == Turn::Queued
+                    && matches!(self.after_stop, Some(AfterStop::Sent)) =>
+            {
+                self.after_stop = None;
+            }
             RouterEvent::Settled => {
                 self.retrying = false;
                 // OMP holds no follow-up once settled.
                 self.follow_ups.retain(|q| q.shown.is_none());
                 self.review.end_turn();
-                if let Turn::Failed(reason) = std::mem::replace(&mut self.turn, Turn::Idle) {
+                if let Some(AfterStop::Armed { settled, .. }) = &mut self.after_stop {
+                    // `send_next_if_due` ends the turn once the call is back.
+                    *settled = true;
+                } else if let Turn::Failed(reason) = std::mem::replace(&mut self.turn, Turn::Idle) {
                     self.notice = Some(format!("turn failed: {reason}"));
                 }
                 self.warn_outside_selection(cx);
@@ -4908,6 +5080,9 @@ impl Render for CedianPanel {
         v_flex()
             .key_context("CedianPanel")
             .track_focus(&self.focus_handle)
+            .on_action(
+                cx.listener(|this, _: &StopAndSend, window, cx| this.stop_and_send(window, cx)),
+            )
             .capture_action(cx.listener(Self::paste))
             .size_full()
             .p_2()
@@ -5060,6 +5235,20 @@ impl Render for CedianPanel {
                                     .on_click(cx.listener(|this, _, _, cx| this.stop_turn(cx))),
                             ),
                         )
+                        .child(
+                            div()
+                                .debug_selector(|| "cedian-stop-and-send".to_string())
+                                .child(
+                                    Button::new("cedian-stop-and-send", "Stop and send").on_click(
+                                        cx.listener(|this, _, window, cx| {
+                                            this.stop_and_send(window, cx)
+                                        }),
+                                    ),
+                                ),
+                        )
+                    })
+                    .when_some(self.next_prompt(), |row, next| {
+                        row.child(Label::new(format!("next: {next}")).color(Color::Muted))
                     }),
             )
             .child(
@@ -5305,6 +5494,66 @@ mod tests {
                 .map(|c| format!("card {:?} {}", c.status, c.display_line())),
         );
         out.join("\n")
+    }
+
+    /// ADR-0064: Stop and send's prompt waits for the stopped prompt's call
+    /// as well as OMP's settle, in either order, and a failed stop sends
+    /// nothing. No OMP runs here, so a send that is due fails with "OMP is
+    /// not running" and the text comes back with that reason.
+    #[gpui::test]
+    async fn stop_and_send_waits_for_the_call_and_the_settle(cx: &mut TestAppContext) {
+        init(cx);
+        let project = Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
+        let window = cx.add_window(|window, cx| CedianPanel::new(project.clone(), window, cx));
+        let timed = || LinkEvent::PromptTimed {
+            sent: Instant::now(),
+            returned: Instant::now(),
+        };
+        let settled = || LinkEvent::Event(RouterEvent::Settled);
+        window
+            .update(cx, |panel, window, cx| {
+                for (first, second) in [(settled(), timed()), (timed(), settled())] {
+                    panel.turn = Turn::Stopping;
+                    panel.set_prompt("next", window, cx);
+                    panel.stop_and_send(window, cx);
+                    if let Some(AfterStop::Armed { returned, .. }) = &mut panel.after_stop {
+                        *returned = false;
+                    }
+                    panel.on_link_event(first, window, cx);
+                    assert_eq!(panel.turn, Turn::Stopping, "one of the two is not enough");
+                    assert_eq!(panel.next_prompt(), Some("next"));
+                    panel.on_link_event(second, window, cx);
+                    assert_eq!(panel.turn, Turn::Idle);
+                    assert_eq!(panel.next_prompt(), None);
+                    assert_eq!(
+                        panel.prompt_text(cx),
+                        "next",
+                        "due, and refused without OMP"
+                    );
+                    assert!(
+                        panel.notice().is_some_and(|n| n.contains("not sent")),
+                        "{:?}",
+                        panel.notice()
+                    );
+                    panel.set_prompt("", window, cx);
+                    panel.notice = None;
+                }
+
+                panel.turn = Turn::Stopping;
+                panel.set_prompt("after a failed stop", window, cx);
+                panel.stop_and_send(window, cx);
+                panel.on_link_event(LinkEvent::AbortFailed("no".to_string()), window, cx);
+                panel.on_link_event(settled(), window, cx);
+                panel.on_link_event(timed(), window, cx);
+                assert_eq!(panel.turn, Turn::Idle);
+                assert_eq!(panel.prompt_text(cx), "after a failed stop");
+                let notice = panel.notice().unwrap_or_default().to_string();
+                assert!(
+                    notice.starts_with("turn failed: stop: no") && notice.contains("not sent"),
+                    "{notice}"
+                );
+            })
+            .unwrap();
     }
 
     /// ADR-0035: an audit failure fails the turn once, however many rows
@@ -6229,9 +6478,9 @@ mod tests {
         });
         cedian_shell::workflow_store::save(&dir, &state).unwrap();
         f.window
-            .update(cx, |panel, _, cx| {
+            .update(cx, |panel, window, cx| {
                 panel.set_state_dir(dir.clone());
-                panel.stop("OMP exited".to_string(), cx);
+                panel.stop("OMP exited".to_string(), window, cx);
             })
             .unwrap();
         let status = cedian_shell::workflow_store::load(&dir).unwrap().status;
@@ -7010,7 +7259,7 @@ mod tests {
                 panel.on_event(RouterEvent::Settled, cx);
                 assert!(!panel.retrying(), "no Stop retry once settled");
                 panel.retrying = true;
-                panel.stop("gone".to_string(), cx);
+                panel.stop("gone".to_string(), window, cx);
                 assert!(!panel.retrying(), "no Stop retry once stopped");
                 panel.forget_old_omp(window, cx);
                 assert_eq!(panel.picker().model, None);

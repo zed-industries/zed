@@ -1194,7 +1194,6 @@ impl OmpLink {
     }
 
     /// Whether a prompt of ours is still in the link or in OMP.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn prompt_open(&self) -> bool {
         self.gate.turn.lock().phase != Phase::Idle
     }

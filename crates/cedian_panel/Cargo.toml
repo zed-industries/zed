@@ -92,6 +92,10 @@ name = "turn_lifecycle"
 harness = false
 
 [[test]]
+name = "stop_and_send"
+harness = false
+
+[[test]]
 name = "context"
 harness = false
 

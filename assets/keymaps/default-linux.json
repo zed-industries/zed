@@ -941,6 +941,12 @@
     },
   },
   {
+    "context": "CedianPanel > Editor",
+    "bindings": {
+      "ctrl-shift-enter": "cedian_panel::StopAndSend",
+    },
+  },
+  {
     "context": "InlineAssistant",
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
