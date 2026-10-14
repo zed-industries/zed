@@ -6,9 +6,10 @@ use crate::{
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
 };
+use git::FileHistory;
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Window};
-use project::DisableAiSettings;
+use project::{DisableAiSettings, File};
 use std::ops::Range;
 use text::PointUtf16;
 use workspace::OpenInTerminal;
@@ -242,6 +243,13 @@ pub fn deploy_context_menu(
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
             });
+        let is_git_ignored = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())
+            .and_then(|file| File::from_dyn(Some(&file)))
+            .is_some_and(|file| file.worktree.read(cx).is_path_ignored(&file.path));
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
@@ -316,16 +324,12 @@ pub fn deploy_context_menu(
                     "Open in Terminal",
                     Box::new(OpenInTerminal),
                 )
-                .action_disabled_when(
-                    !has_git_repo,
-                    "Copy Permalink to Line",
-                    Box::new(CopyPermalinkToLine),
-                )
-                .action_disabled_when(
-                    !has_git_repo,
-                    "View File History",
-                    Box::new(git::FileHistory),
-                );
+                .when(has_git_repo && !is_git_ignored, |builder| {
+                    builder
+                        .action("Copy Permalink to Line", Box::new(CopyPermalinkToLine))
+                        .action("View File History", Box::new(FileHistory))
+                });
+
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
