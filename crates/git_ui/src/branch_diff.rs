@@ -96,13 +96,14 @@ impl BranchDiff {
         };
 
         let diff_base = project.read(cx).git_store().read(cx).diff_base();
-        let branch_diff_base =
-            intended_repo.update(cx, |repository, _| repository.branch_diff_base(diff_base));
+        let branch_diff_base = intended_repo.update(cx, |repository, cx| {
+            repository.branch_diff_base(diff_base, cx)
+        });
         let workspace = cx.entity();
         let workspace_weak = workspace.downgrade();
         window
             .spawn(cx, async move |cx| {
-                let base_ref = branch_diff_base.await??;
+                let base_ref = branch_diff_base.await?;
                 workspace.update_in(cx, |workspace, window, cx| {
                     let git_store = project.read(cx).git_store().clone();
                     let Some(base_ref) = base_ref else {

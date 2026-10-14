@@ -1039,6 +1039,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_remotes);
         client.add_entity_request_handler(Self::handle_get_branches);
         client.add_entity_request_handler(Self::handle_get_default_branch);
+        client.add_entity_request_handler(Self::handle_get_parent_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_rename_branch);
@@ -4209,15 +4210,30 @@ impl GitStore {
 
         let branch = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.resolve_diff_base_branch(
-                    envelope.payload.include_remote_name,
-                    envelope.payload.prefer_parent,
-                )
+                repository_handle.default_branch(envelope.payload.include_remote_name)
             })
             .await??
             .map(Into::into);
 
         Ok(proto::GetDefaultBranchResponse { branch })
+    }
+
+    async fn handle_get_parent_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetParentBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetParentBranchResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let branch = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.parent_branch()
+            })
+            .await??
+            .map(Into::into);
+
+        Ok(proto::GetParentBranchResponse { branch })
     }
     async fn handle_create_branch(
         this: Entity<Self>,
@@ -5056,11 +5072,11 @@ impl GitStore {
         let diff_base = self.diff_base;
 
         let task = cx.spawn(async move |this, cx| {
-            let result: Result<Option<SharedString>> = async {
-                repo.update(cx, |repository, _| repository.branch_diff_base(diff_base))
-                    .await?
-            }
-            .await;
+            let result = repo
+                .update(cx, |repository, cx| {
+                    repository.branch_diff_base(diff_base, cx)
+                })
+                .await;
             this.update(cx, |this, cx| {
                 let Some(state) = this.display_diffs.get_mut(&repo_id) else {
                     return;
@@ -9528,28 +9544,10 @@ impl Repository {
         &mut self,
         include_remote_name: bool,
     ) -> oneshot::Receiver<Result<Option<SharedString>>> {
-        self.resolve_diff_base_branch(include_remote_name, false)
-    }
-
-    pub fn branch_diff_base(
-        &mut self,
-        diff_base: GitDiffBaseSetting,
-    ) -> oneshot::Receiver<Result<Option<SharedString>>> {
-        self.resolve_diff_base_branch(true, diff_base == GitDiffBaseSetting::ParentBranch)
-    }
-
-    fn resolve_diff_base_branch(
-        &mut self,
-        include_remote_name: bool,
-        prefer_parent: bool,
-    ) -> oneshot::Receiver<Result<Option<SharedString>>> {
         let repository_id = self.id;
         self.send_job("default_branch", None, move |repository, _| async move {
             match repository {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    if prefer_parent && let Some(parent_branch) = backend.parent_branch().await? {
-                        return Ok(Some(parent_branch));
-                    }
                     backend.default_branch(include_remote_name).await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
@@ -9558,11 +9556,50 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: repository_id.to_proto(),
                             include_remote_name,
-                            prefer_parent,
                         })
                         .await?;
 
-                    anyhow::Ok(response.branch.map(SharedString::from))
+                    Ok(response.branch.map(SharedString::from))
+                }
+            }
+        })
+    }
+
+    pub fn branch_diff_base(
+        &mut self,
+        diff_base: GitDiffBaseSetting,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<SharedString>>> {
+        let parent_branch =
+            (diff_base == GitDiffBaseSetting::ParentBranch).then(|| self.parent_branch());
+        cx.spawn(async move |this, cx| {
+            if let Some(parent_branch) = parent_branch
+                && let Some(parent_branch) = parent_branch.await??
+            {
+                return Ok(Some(parent_branch));
+            }
+
+            this.update(cx, |repository, _| repository.default_branch(true))?
+                .await?
+        })
+    }
+
+    pub fn parent_branch(&mut self) -> oneshot::Receiver<Result<Option<SharedString>>> {
+        let repository_id = self.id;
+        self.send_job("parent_branch", None, move |repository, _| async move {
+            match repository {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.parent_branch().await
+                }
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GetParentBranch {
+                            project_id: project_id.0,
+                            repository_id: repository_id.to_proto(),
+                        })
+                        .await?;
+
+                    Ok(response.branch.map(SharedString::from))
                 }
             }
         })

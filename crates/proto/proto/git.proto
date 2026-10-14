@@ -572,10 +572,19 @@ message GetDefaultBranch {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   bool include_remote_name = 3;
-  bool prefer_parent = 4;
+  reserved 4;
 }
 
 message GetDefaultBranchResponse {
+  optional string branch = 1;
+}
+
+message GetParentBranch {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GetParentBranchResponse {
   optional string branch = 1;
 }
 
