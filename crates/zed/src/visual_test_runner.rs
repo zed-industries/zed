@@ -27,6 +27,9 @@
 //! Run the visual tests:
 //!   cargo run -p zed --bin zed_visual_test_runner --features visual-tests
 //!
+//! Run the hex editor's real-Metal smoke test without screenshot baselines:
+//!   cargo run -p zed --bin zed_visual_test_runner --features visual-tests -- --hex-editor
+//!
 //! Update baseline images (when UI intentionally changes):
 //!   UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
 //!
@@ -73,7 +76,13 @@ fn main() {
     // Create test files in the real filesystem
     create_test_files(&project_path);
 
-    let test_result = std::panic::catch_unwind(|| run_visual_tests(project_path, update_baseline));
+    let test_result = std::panic::catch_unwind(|| {
+        if std::env::args().any(|argument| argument == "--hex-editor") {
+            run_hex_editor_smoke_test(project_path)
+        } else {
+            run_visual_tests(project_path, update_baseline)
+        }
+    });
 
     // Note: We don't delete temp_path here because background worktree tasks may still
     // be running. The directory will be cleaned up when the process exits or by the OS.
@@ -144,6 +153,505 @@ mod constants {
 
 #[cfg(target_os = "macos")]
 use constants::*;
+
+#[cfg(target_os = "macos")]
+fn run_hex_editor_smoke_test(project_path: PathBuf) -> Result<()> {
+    use anyhow::ensure;
+    use editor::hex_editor::{
+        CloseComparison, HexEditor, ToggleAsciiMode, ToggleInsertMode, ToggleReadOnly,
+    };
+    use gpui::{ClipboardItem, Focusable as _};
+    use workspace::{Item as _, SaveIntent};
+
+    let path = project_path.join("binary.bin");
+    let original: Vec<u8> = (0..=255).cycle().take(4096).collect();
+    std::fs::write(&path, &original)?;
+    std::fs::write(project_path.join("image.png"), EMBEDDED_TEST_IMAGE)?;
+    std::fs::write(project_path.join("text.bin"), b"plain text\n")?;
+    std::fs::write(project_path.join("empty.bin"), [])?;
+    let output_dir = PathBuf::from(
+        std::env::var("VISUAL_TEST_OUTPUT_DIR")
+            .unwrap_or_else(|_| "target/hex_editor_smoke".into()),
+    );
+    std::fs::create_dir_all(&output_dir)?;
+
+    let mut cx = VisualTestAppContext::with_asset_source(
+        gpui_platform::current_platform(false),
+        Arc::new(Assets),
+    );
+    let app_state = cx.update(|cx| {
+        Assets.load_fonts(cx)?;
+        settings::init(cx);
+        let app_state = init_app_state(cx);
+        gpui_tokio::init(cx);
+        workspace::init(app_state.clone(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+        editor::init(cx);
+        image_viewer::init(cx);
+        // This runner doesn't link all of the main binary's unrelated action types.
+        let bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+            "keymaps/default-macos.json",
+            cx,
+        )?
+        .into_iter()
+        .filter(|binding| {
+            binding
+                .predicate()
+                .is_some_and(|predicate| predicate.to_string() == "HexEditor")
+        })
+        .collect::<Vec<_>>();
+        ensure!(
+            bindings.len() == 20,
+            "Missing default hex editor keybindings"
+        );
+        cx.bind_keys(bindings);
+        anyhow::Ok(app_state)
+    })?;
+    let project = cx.update(|cx| {
+        Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    let window = cx.open_offscreen_window(size(px(1500.), px(600.)), |window, cx| {
+        cx.new(|cx| Workspace::new(None, project.clone(), app_state, window, cx))
+    })?;
+    let worktree = project.update(&mut cx, |project, cx| {
+        project.find_or_create_worktree(&project_path, true, cx)
+    });
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(worktree);
+    cx.background_executor.forbid_parking();
+    let (worktree, _) = result?;
+    let worktree_id = cx.read(|cx| worktree.read(cx).id());
+    for name in ["image.png", "text.bin", "empty.bin", "binary.bin"] {
+        let open = window.update(&mut cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, util::rel_path::rel_path(name)),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })?;
+        cx.background_executor.allow_parking();
+        let result = cx.foreground_executor.block_test(open);
+        cx.background_executor.forbid_parking();
+        let item = result?;
+        match name {
+            "image.png" => ensure!(
+                item.downcast::<image_viewer::ImageView>().is_some(),
+                "A supported image bypassed the image viewer"
+            ),
+            "binary.bin" => ensure!(
+                item.downcast::<HexEditor>().is_some(),
+                "An unsupported binary did not automatically open as hex"
+            ),
+            _ => ensure!(
+                item.downcast::<editor::Editor>().is_some(),
+                "A text file was opened as hex: {name}"
+            ),
+        }
+    }
+    window.update(&mut cx, |workspace, window, cx| {
+        if let Some(view) = workspace.active_item_as::<HexEditor>(cx) {
+            view.focus_handle(cx).focus(window, cx);
+        }
+    })?;
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_open.png"))?;
+
+    cx.simulate_keystrokes(window.into(), "4 2");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_edited.png"))?;
+    let save = window.update(&mut cx, |workspace, window, cx| {
+        workspace.save_active_item(SaveIntent::Save, window, cx)
+    })?;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(save);
+    cx.background_executor.forbid_parking();
+    result?;
+    let mut expected = original.clone();
+    expected[0] = 0x42;
+    ensure!(
+        std::fs::read(&path)? == expected,
+        "Byte overwrite did not save correctly"
+    );
+
+    cx.simulate_keystrokes(window.into(), "cmd-z cmd-z cmd-shift-z cmd-shift-z");
+    window.update(&mut cx, |workspace, _, cx| {
+        ensure!(
+            !workspace
+                .active_item(cx)
+                .context("Missing hex editor")?
+                .is_dirty(cx),
+            "Undo/redo did not return to the saved revision"
+        );
+        anyhow::Ok(())
+    })??;
+    cx.dispatch_action(window.into(), ToggleInsertMode);
+    cx.simulate_keystrokes(window.into(), "home a b");
+    cx.simulate_keystrokes(window.into(), "cmd-a cmd-c cmd-v");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_inserted.png"))?;
+    let save = window.update(&mut cx, |workspace, window, cx| {
+        workspace.save_active_item(SaveIntent::Save, window, cx)
+    })?;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(save);
+    cx.background_executor.forbid_parking();
+    result?;
+    expected.insert(0, 0xab);
+    ensure!(
+        std::fs::read(&path)? == expected,
+        "Insert or clipboard round-trip failed"
+    );
+
+    cx.write_to_clipboard(ClipboardItem::new_string("not hex".into()));
+    cx.simulate_keystrokes(window.into(), "cmd-a cmd-v");
+    window.update(&mut cx, |workspace, _, cx| {
+        ensure!(
+            !workspace
+                .active_item(cx)
+                .context("Missing hex editor")?
+                .is_dirty(cx),
+            "Invalid paste modified the bytes"
+        );
+        anyhow::Ok(())
+    })??;
+
+    std::fs::write(&path, [0xff, 0x80, 0x42])?;
+    cx.simulate_keystrokes(window.into(), "home 0 0");
+    let save = window.update(&mut cx, |workspace, window, cx| {
+        workspace.save_active_item(SaveIntent::Save, window, cx)
+    })?;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(save);
+    cx.background_executor.forbid_parking();
+    ensure!(result.is_err(), "Saving overwrote an external file change");
+    ensure!(
+        std::fs::read(&path)? == [0xff, 0x80, 0x42],
+        "External bytes were lost"
+    );
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_conflict.png"))?;
+    let reload = window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace
+                .active_item(cx)
+                .map(|item| item.reload(project.clone(), window, cx))
+        })?
+        .context("Missing hex editor")?;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(reload);
+    cx.background_executor.forbid_parking();
+    result?;
+    window.update(&mut cx, |workspace, _, cx| {
+        ensure!(
+            !workspace
+                .active_item(cx)
+                .context("Missing hex editor")?
+                .is_dirty(cx),
+            "Reload left the hex editor dirty"
+        );
+        anyhow::Ok(())
+    })??;
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_reloaded.png"))?;
+
+    cx.dispatch_action(window.into(), ToggleInsertMode);
+    cx.dispatch_action(window.into(), ToggleAsciiMode);
+    cx.simulate_keystrokes(window.into(), "home x");
+    cx.simulate_keystrokes(window.into(), "cmd-f 7 8 enter");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_find.png"))?;
+    cx.simulate_keystrokes(window.into(), "escape cmd-shift-h a a space b b enter");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_fill.png"))?;
+    cx.simulate_keystrokes(window.into(), "escape cmd-l 0 x 3 enter");
+    cx.simulate_keystrokes(window.into(), "y");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_ascii_offset.png"))?;
+    let save = window.update(&mut cx, |workspace, window, cx| {
+        workspace.save_active_item(SaveIntent::Save, window, cx)
+    })?;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(save);
+    cx.background_executor.forbid_parking();
+    result?;
+    ensure!(
+        std::fs::read(&path)? == [0xaa, 0x80, 0x42, b'y'],
+        "ASCII editing, byte search, fill, or offset navigation failed"
+    );
+
+    cx.simulate_keystrokes(
+        window.into(),
+        "escape home shift-right shift-right cmd-shift-l enter",
+    );
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_range.png"))?;
+    cx.simulate_keystrokes(window.into(), "cmd-shift-i cmd-a 1 7 enter");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_inspector.png"))?;
+    let save = window.update(&mut cx, |workspace, window, cx| {
+        workspace.save_active_item(SaveIntent::Save, window, cx)
+    })?;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(save);
+    cx.background_executor.forbid_parking();
+    result?;
+    ensure!(
+        std::fs::read(&path)? == [17, 0x80, 0x42, b'y'],
+        "Range selection or numeric inspector editing failed"
+    );
+    cx.simulate_click(
+        window.into(),
+        gpui::point(px(180.), px(82.)),
+        Default::default(),
+    );
+    cx.simulate_keystrokes(window.into(), "cmd-a 4 6 6 0 enter");
+    cx.simulate_click(
+        window.into(),
+        gpui::point(px(60.), px(82.)),
+        Default::default(),
+    );
+    cx.simulate_keystrokes(window.into(), "cmd-a 4 6 6 0 enter");
+    cx.simulate_click(
+        window.into(),
+        gpui::point(px(264.), px(153.)),
+        Default::default(),
+    );
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_inspector_endian_bits.png"))?;
+    let save = window.update(&mut cx, |workspace, window, cx| {
+        workspace.save_active_item(SaveIntent::Save, window, cx)
+    })?;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(save);
+    cx.background_executor.forbid_parking();
+    result?;
+    ensure!(
+        std::fs::read(&path)? == [0x13, 0x34, 0x42, b'y'],
+        "Inspector type selection, endian switch, or bit toggle failed"
+    );
+    cx.simulate_keystrokes(window.into(), "escape home w home");
+    cx.dispatch_action(window.into(), ToggleInsertMode);
+    cx.simulate_keystrokes(window.into(), "z right delete");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_changes.png"))?;
+    cx.simulate_keystrokes(window.into(), "cmd-z cmd-z cmd-z");
+    window.update(&mut cx, |workspace, _, cx| {
+        ensure!(
+            !workspace
+                .active_item(cx)
+                .context("Missing hex editor")?
+                .is_dirty(cx),
+            "Undo did not return to the inspector's saved revision"
+        );
+        anyhow::Ok(())
+    })??;
+
+    cx.write_to_clipboard(ClipboardItem::new_string("?? 34".into()));
+    cx.simulate_keystrokes(window.into(), "cmd-f cmd-a cmd-v enter");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_wildcard_find.png"))?;
+    cx.simulate_keystrokes(window.into(), "escape cmd-c");
+    ensure!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().map(|text| text.to_string()))
+            == Some("\u{13}4".into()),
+        "Wildcard search did not select the matching bytes"
+    );
+    cx.simulate_keystrokes(window.into(), "cmd-alt-b h e a d e r enter");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_bookmarks.png"))?;
+    cx.simulate_keystrokes(window.into(), "escape");
+    cx.dispatch_action(window.into(), ToggleReadOnly);
+    cx.simulate_keystrokes(window.into(), "home x delete cmd-z");
+    window.update(&mut cx, |workspace, _, cx| {
+        let view = workspace
+            .active_item_as::<HexEditor>(cx)
+            .context("Missing hex editor")?;
+        ensure!(
+            !view.read(cx).capability(cx).editable(),
+            "Read-only mode was not enabled"
+        );
+        ensure!(
+            !view.read(cx).is_dirty(cx),
+            "Read-only mode allowed a byte edit"
+        );
+        anyhow::Ok(())
+    })??;
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_read_only.png"))?;
+    let copy_name = format!(
+        "copy-{}.bin",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    );
+    let copy = project_path.join(&copy_name);
+    let save = window.update(&mut cx, |workspace, window, cx| {
+        let view = workspace
+            .active_item_as::<HexEditor>(cx)
+            .context("Missing hex editor")?;
+        anyhow::Ok(view.update(cx, |view, cx| {
+            view.save_as(
+                project.clone(),
+                (worktree_id, util::rel_path::rel_path(&copy_name)).into(),
+                window,
+                cx,
+            )
+        }))
+    })??;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(save);
+    cx.background_executor.forbid_parking();
+    result?;
+    ensure!(
+        std::fs::read(&copy)? == [0x13, 0x34, 0x42, b'y'],
+        "Save As copy differs from the buffer"
+    );
+    cx.dispatch_action(window.into(), ToggleReadOnly);
+    cx.dispatch_action(window.into(), ToggleInsertMode);
+    cx.simulate_keystrokes(window.into(), "home z");
+    let save = window.update(&mut cx, |workspace, window, cx| {
+        workspace.save_active_item(SaveIntent::Save, window, cx)
+    })?;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(save);
+    cx.background_executor.forbid_parking();
+    result?;
+    ensure!(
+        std::fs::read(&path)? == [0x13, 0x34, 0x42, b'y'],
+        "Save As changed the original"
+    );
+    ensure!(
+        std::fs::read(&copy)? == [b'z', 0x34, 0x42, b'y'],
+        "Edits were not saved to the copy"
+    );
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_save_as.png"))?;
+    cx.simulate_keystrokes(
+        window.into(),
+        "home shift-right shift-right cmd-alt-a cmd-a r e c o r d",
+    );
+    cx.simulate_click(
+        window.into(),
+        gpui::point(px(60.), px(124.)),
+        Default::default(),
+    );
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        "Header bytes\nRetained across reopen".into(),
+    ));
+    cx.simulate_keystrokes(window.into(), "cmd-v");
+    cx.simulate_click(
+        window.into(),
+        gpui::point(px(1400.), px(85.)),
+        Default::default(),
+    );
+    window.update(&mut cx, |workspace, _, cx| {
+        let view = workspace
+            .active_item_as::<HexEditor>(cx)
+            .context("Missing hex editor")?;
+        ensure!(
+            view.read(cx).annotation_notes("record")
+                == Some("Header bytes\nRetained across reopen"),
+            "Annotation note was not entered"
+        );
+        anyhow::Ok(())
+    })??;
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_annotation_notes.png"))?;
+    cx.simulate_keystrokes(window.into(), "escape");
+    window.update(&mut cx, |workspace, window, cx| {
+        let item = workspace.active_item(cx).context("Missing hex editor")?;
+        ensure!(!item.is_dirty(cx), "Annotations changed the binary buffer");
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.remove_item(item.item_id(), false, false, window, cx)
+        });
+        editor::hex_editor::open_path(workspace, copy.clone(), window, cx);
+        anyhow::Ok(())
+    })??;
+    cx.background_executor.allow_parking();
+    cx.run_until_parked();
+    cx.background_executor.forbid_parking();
+    cx.simulate_keystrokes(window.into(), "cmd-alt-b");
+    window.update(&mut cx, |workspace, _, cx| {
+        let view = workspace
+            .active_item_as::<HexEditor>(cx)
+            .context("Missing reopened hex editor")?;
+        ensure!(
+            view.read(cx).annotation_notes("record")
+                == Some("Header bytes\nRetained across reopen"),
+            "Annotation note did not survive reopening"
+        );
+        anyhow::Ok(())
+    })??;
+    cx.simulate_click(
+        window.into(),
+        gpui::point(px(180.), px(184.)),
+        Default::default(),
+    );
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_annotations_reopened.png"))?;
+    cx.simulate_keystrokes(window.into(), "escape");
+    let reference = project_path.join("reference.bin");
+    std::fs::write(&reference, [0x13, 0x99, 0x42, b'y', 0xff])?;
+    let compare = window.update(&mut cx, |workspace, _, cx| {
+        let view = workspace
+            .active_item_as::<HexEditor>(cx)
+            .context("Missing reopened hex editor")?;
+        anyhow::Ok(view.update(cx, |view, cx| view.compare_path(reference.clone(), cx)))
+    })??;
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(compare);
+    cx.background_executor.forbid_parking();
+    result?;
+    cx.simulate_keystrokes(window.into(), "alt-down");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_binary_diff.png"))?;
+    cx.simulate_keystrokes(window.into(), "alt-down");
+    cx.capture_screenshot(window.into())?
+        .save(output_dir.join("hex_editor_binary_diff_tail.png"))?;
+    cx.simulate_keystrokes(window.into(), "4 2 delete cmd-z");
+    window.update(&mut cx, |workspace, _, cx| {
+        let view = workspace
+            .active_item_as::<HexEditor>(cx)
+            .context("Missing comparison")?;
+        ensure!(
+            !view.read(cx).capability(cx).editable(),
+            "Comparison is not read-only"
+        );
+        ensure!(!view.read(cx).is_dirty(cx), "Comparison allowed editing");
+        anyhow::Ok(())
+    })??;
+    ensure!(
+        std::fs::read(&copy)? == [b'z', 0x34, 0x42, b'y'],
+        "Comparison changed the current file"
+    );
+    ensure!(
+        std::fs::read(&reference)? == [0x13, 0x99, 0x42, b'y', 0xff],
+        "Comparison changed its reference"
+    );
+    cx.dispatch_action(window.into(), CloseComparison);
+    window.update(&mut cx, |_, window, _| window.remove_window())?;
+    cx.run_until_parked();
+    println!(
+        "Hex editor real-Metal smoke test passed. Screenshots: {}",
+        output_dir.display()
+    );
+    Ok(())
+}
 
 #[cfg(target_os = "macos")]
 fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> {

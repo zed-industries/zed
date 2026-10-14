@@ -1100,12 +1100,26 @@ impl ProjectItemRegistry {
                             ) as Box<_>;
                             Ok((project_entry_id, build_workspace_item))
                         }
-                        Err(e) => {
-                            log::warn!("Failed to open a project item: {e:#}");
+                        Err(mut e) => {
                             if e.error_code() == ErrorCode::Internal {
                                 if let Some(abs_path) =
                                     entry_abs_path.as_deref().filter(|_| is_file)
                                 {
+                                    if let Some(recovery) = cx.update(|window, cx| {
+                                        T::recover_failed_project_item(
+                                            &project, abs_path, &e, window, cx,
+                                        )
+                                    })? {
+                                        match recovery.await {
+                                            Ok(Some(item)) => {
+                                                let build_workspace_item: WorkspaceItemBuilder =
+                                                    Box::new(move |_, _, _| item);
+                                                return Ok((None, build_workspace_item));
+                                            }
+                                            Ok(None) => {}
+                                            Err(error) => e = error,
+                                        }
+                                    }
                                     if let Some(broken_project_item_view) =
                                         cx.update(|window, cx| {
                                             T::for_broken_project_item(
@@ -1113,6 +1127,7 @@ impl ProjectItemRegistry {
                                             )
                                         })?
                                     {
+                                        log::warn!("Failed to open a project item: {e:#}");
                                         let build_workspace_item = Box::new(
                                             move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
                                                 cx.new(|_| broken_project_item_view).boxed_clone()
@@ -1123,6 +1138,7 @@ impl ProjectItemRegistry {
                                     }
                                 }
                             }
+                            log::warn!("Failed to open a project item: {e:#}");
                             Err(e)
                         }
                     }

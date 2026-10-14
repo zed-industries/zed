@@ -2490,24 +2490,32 @@ impl Pane {
                         })
                         .ok()
                 });
-                let save_task = if let Some(project_path) = project_path {
+                let (replaced_item_id, save_task) = if let Some(project_path) = project_path {
                     let (worktree, path) = project_path.await?;
                     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
                     let new_path = ProjectPath { worktree_id, path };
 
                     pane.update_in(cx, |pane, window, cx| {
-                        if let Some(item) = pane.item_for_path(new_path.clone(), cx) {
-                            pane.remove_item(item.item_id(), false, false, window, cx);
-                        }
-
-                        item.save_as(project.clone(), new_path, window, cx)
+                        let replaced_item_id = pane
+                            .item_for_path(new_path.clone(), cx)
+                            .filter(|existing| existing.item_id() != item.item_id())
+                            .map(|existing| existing.item_id());
+                        (
+                            replaced_item_id,
+                            item.save_as(project.clone(), new_path, window, cx),
+                        )
                     })?
                 } else {
                     return Ok(false);
                 };
 
                 save_task.await?;
-                if should_format {
+                if let Some(replaced_item_id) = replaced_item_id {
+                    pane.update_in(cx, |pane, window, cx| {
+                        pane.remove_item(replaced_item_id, false, false, window, cx);
+                    })?;
+                }
+                if should_format && cx.update(|_, cx| item.capability(cx).editable())? {
                     pane.update_in(cx, |pane, window, cx| {
                         pane.unpreview_item_if_preview(item.item_id());
                         item.save(

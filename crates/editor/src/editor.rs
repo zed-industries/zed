@@ -27,6 +27,7 @@ mod emmet_ext;
 mod fold;
 mod folding_ranges;
 mod git;
+pub mod hex_editor;
 mod highlight_matching_bracket;
 pub mod hover_links;
 pub mod hover_popover;
@@ -358,6 +359,7 @@ impl Navigated {
 }
 
 pub fn init(cx: &mut App) {
+    hex_editor::init(cx);
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
     cx.set_global(breadcrumbs::RenderBreadcrumbText(render_breadcrumb_text));
 
@@ -12797,7 +12799,11 @@ impl ui_input::ErasedEditor for ErasedEditorImpl {
             text: text_style,
             ..Default::default()
         };
-        EditorElement::new(&self.0, editor_style).into_any()
+        v_flex()
+            .flex_1()
+            .min_w_0()
+            .child(EditorElement::new(&self.0, editor_style))
+            .into_any()
     }
 
     fn as_any(&self) -> &dyn Any {

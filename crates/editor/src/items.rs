@@ -1231,6 +1231,21 @@ impl Item for Editor {
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
         let mut actions = Vec::new();
 
+        if self
+            .project()
+            .is_some_and(|project| project.read(cx).is_local())
+            && self
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .is_some_and(|buffer| buffer.read(cx).file().is_some())
+        {
+            actions.push((
+                "Open in Hex Editor".into(),
+                Box::new(crate::hex_editor::Open) as Box<dyn gpui::Action>,
+            ));
+        }
+
         let is_markdown = self
             .buffer()
             .read(cx)
@@ -1580,6 +1595,15 @@ pub struct RestorationData {
 
 impl ProjectItem for Editor {
     type Item = Buffer;
+    fn recover_failed_project_item(
+        project: &Entity<Project>,
+        abs_path: &Path,
+        _: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Task<Result<Option<Box<dyn workspace::item::ItemHandle>>>>> {
+        crate::hex_editor::recover_binary_file(project, abs_path, window, cx)
+    }
 
     fn project_item_kind() -> Option<ProjectItemKind> {
         Some(ProjectItemKind("Editor"))

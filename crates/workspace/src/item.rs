@@ -1219,6 +1219,20 @@ pub struct ProjectItemKind(pub &'static str);
 
 pub trait ProjectItem: Item {
     type Item: project::ProjectItem;
+    /// Tries an alternative view after the project item cannot be loaded.
+    /// Returning `None` keeps the existing error-view behavior.
+    fn recover_failed_project_item(
+        _project: &Entity<Project>,
+        _abs_path: &Path,
+        _error: &anyhow::Error,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<Task<Result<Option<Box<dyn ItemHandle>>>>>
+    where
+        Self: Sized,
+    {
+        None
+    }
 
     fn project_item_kind() -> Option<ProjectItemKind> {
         None
