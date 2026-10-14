@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use anyhow::{Context as _, Result};
 use dap::adapters::DebugTaskDefinition;
@@ -167,4 +168,48 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
         },
         configure,
     )
+}
+
+/// The inputs a [`dap::DapLocator`] receives when asked to resolve a debug
+/// scenario, captured by [`FakeLocator`] so tests can assert on them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedScenarioRequest {
+    pub task_template: task::TaskTemplate,
+    pub resolved_label: String,
+    pub adapter: dap::adapters::DebugAdapterName,
+}
+
+/// A [`dap::DapLocator`] used in tests that captures the arguments passed to
+/// `create_scenario` instead of resolving a debug scenario.
+pub struct FakeLocator {
+    pub captured: Arc<Mutex<Option<CapturedScenarioRequest>>>,
+}
+
+#[async_trait::async_trait]
+impl dap::DapLocator for FakeLocator {
+    fn name(&self) -> gpui::SharedString {
+        gpui::SharedString::new_static("fake-locator")
+    }
+
+    async fn create_scenario(
+        &self,
+        build_config: &task::TaskTemplate,
+        resolved_label: &str,
+        adapter: &dap::adapters::DebugAdapterName,
+    ) -> Option<task::DebugScenario> {
+        *self.captured.lock().unwrap() = Some(CapturedScenarioRequest {
+            task_template: build_config.clone(),
+            resolved_label: resolved_label.to_owned(),
+            adapter: adapter.clone(),
+        });
+        None
+    }
+
+    async fn run(
+        &self,
+        _build_config: task::SpawnInTerminal,
+        _executor: gpui::BackgroundExecutor,
+    ) -> anyhow::Result<task::DebugRequest> {
+        anyhow::bail!("fake locator does not run tasks")
+    }
 }

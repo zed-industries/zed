@@ -1,21 +1,103 @@
 #![expect(clippy::result_large_err)]
 use dap::DapRegistry;
 use editor::Editor;
-use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
+use gpui::{BackgroundExecutor, SharedString, TestAppContext, VisualTestContext};
+use language::{Language, LanguageConfig};
 use project::{FakeFs, Fs as _, Project};
 use serde_json::json;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use task::{
     DebugRequest, DebugScenario, LaunchRequest, SharedTaskContext, TaskContext, VariableName,
     ZedDebugConfig,
 };
 use text::Point;
+use ui::VisualContext;
 use util::path;
+use util::rel_path::rel_path;
 
 use crate::NewProcessMode;
 use crate::new_process_modal::NewProcessModal;
-use crate::tests::{init_test, init_test_workspace};
+use crate::tests::{FakeLocator, init_test, init_test_workspace};
+
+#[gpui::test]
+async fn test_one_off_debug_task_inherits_working_directory(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "fn main() {}"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let captured = Arc::new(Mutex::new(None));
+    cx.update(|_, cx| {
+        dap::DapRegistry::global(cx).add_locator(Arc::new(FakeLocator {
+            captured: captured.clone(),
+        }));
+    });
+
+    let workspace = workspace.read_with(cx, |multi, _| multi.workspace().clone()).unwrap();
+
+    // Open a Rust buffer so `confirm_input` can derive a debug adapter from the
+    // active buffer's language and reach the DAP locators.
+    let rust_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            debuggers: [SharedString::from("CodeLLDB")].into_iter().collect(),
+            ..Default::default()
+        },
+        None,
+    ));
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let buffer = workspace
+        .update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+            })
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_language), cx));
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_center(Box::new(editor), window, cx);
+    });
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+    });
+
+    cx.run_until_parked();
+
+    cx.simulate_input("cargo run");
+    cx.dispatch_action(picker::ConfirmInput { secondary: false });
+    cx.run_until_parked();
+
+    let captured = captured.lock().unwrap();
+    let input = captured
+        .as_ref()
+        .expect("the one-off debug task should be resolved by a DAP locator");
+    assert!(
+        input.task_template.cwd.is_some(),
+        "one-off debug tasks must inherit the working directory from their task context"
+    );
+}
 
 #[gpui::test]
 async fn test_debug_session_substitutes_variables_and_relativizes_paths(
