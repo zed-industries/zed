@@ -3028,24 +3028,60 @@ impl Pane {
                     .icon_color(Color::Muted)
                     .size(ButtonSize::None)
                     .icon_size(IconSize::Small)
-                    .on_click(cx.listener(move |pane, _, window, cx| {
-                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                            .detach_and_log_err(cx);
-                    }))
+                    .on_click(cx.listener(
+                        move |pane, event: &ClickEvent, window, cx| {
+                            if event.modifiers().shift {
+                                pane.close_all_items(
+                                    &CloseAllItems {
+                                        save_intent: None,
+                                        close_pinned: false,
+                                    },
+                                    window,
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
+                            } else {
+                                pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                                    .detach_and_log_err(cx);
+                            }
+                        },
+                    ))
                 }
                 .map(|this| {
-                    if is_active {
+                    if is_pinned {
+                        if is_active {
+                            let focus_handle = focus_handle.clone();
+                            this.tooltip(move |window, cx| {
+                                Tooltip::for_action_in(
+                                    end_slot_tooltip_text,
+                                    end_slot_action,
+                                    &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
+                                    cx,
+                                )
+                            })
+                        } else {
+                            this.tooltip(Tooltip::text(end_slot_tooltip_text))
+                        }
+                    } else if is_active {
                         let focus_handle = focus_handle.clone();
                         this.tooltip(move |window, cx| {
-                            Tooltip::for_action_in(
+                            Tooltip::with_meta_in(
                                 end_slot_tooltip_text,
-                                end_slot_action,
+                                Some(end_slot_action),
+                                "Shift-click to Close All",
                                 &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
                                 cx,
                             )
                         })
                     } else {
-                        this.tooltip(Tooltip::text(end_slot_tooltip_text))
+                        this.tooltip(move |_, cx| {
+                            Tooltip::with_meta(
+                                end_slot_tooltip_text,
+                                None,
+                                "Shift-click to Close All",
+                                cx,
+                            )
+                        })
                     }
                 });
                 this.end_slot(end_slot)
@@ -7124,6 +7160,46 @@ mod tests {
             click_count: 1,
         });
 
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["A*!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_shift_click_close_button_closes_all_unpinned_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update_global::<SettingsStore, ()>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.tabs.get_or_insert_default().show_close_button =
+                    Some(ShowCloseButton::Always);
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_a.item_id()).unwrap(),
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A!", "B", "C*"], cx);
+        cx.run_until_parked();
+
+        let close_button_bounds = cx
+            .debug_bounds("ICON-Close")
+            .expect("Tab close button should have debug bounds");
+
+        cx.simulate_click(close_button_bounds.center(), Modifiers::shift());
         cx.run_until_parked();
 
         assert_item_labels(&pane, ["A*!"], cx);
