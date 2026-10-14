@@ -1406,21 +1406,37 @@ impl OmpLink {
     /// that owns the log: the person answered, or the 5-minute lease ran
     /// out and cedian denied it (ADR-0012, ADR-0013).
     pub fn worktree_decision(&self, id: &str, goal: &str, allow: bool, abstained: bool) {
-        let record = DialogRecord {
-            label: format!("{id}: {goal}"),
-            tool: Some(cedian_worker::WORKTREE_REQUEST_TOOL.to_string()),
-            decision: if abstained {
+        self.tool_decision(
+            cedian_worker::WORKTREE_REQUEST_TOOL,
+            format!("{id}: {goal}"),
+            if abstained {
                 GateDecision::Abstain
             } else if allow {
                 GateDecision::Allow
             } else {
                 GateDecision::Deny
             },
-            answered_by: if abstained {
+            if abstained {
                 Answerer::Cedian
             } else {
                 Answerer::User
             },
+        );
+    }
+
+    /// The audit row for cedian's own gate on one host tool call.
+    pub fn tool_decision(
+        &self,
+        tool: &str,
+        label: String,
+        decision: GateDecision,
+        answered_by: Answerer,
+    ) {
+        let record = DialogRecord {
+            label,
+            tool: Some(tool.to_string()),
+            decision,
+            answered_by,
             at_ms: cedian_omp::now_ms(),
         };
         if let Err(e) = self.gate.state.lock().record(record) {

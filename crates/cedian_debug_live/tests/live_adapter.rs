@@ -68,6 +68,7 @@ async fn scenario(cx: &mut TestAppContext, ws: &std::path::Path, lldb_dap: std::
                 .unwrap(),
         ),
         window: Some(window.into()),
+        agent_sessions: Default::default(),
     };
     let call = async |op: Op| {
         let task = cx.update(|cx| debug_tool::answer(&op, &debugger, cx));
@@ -87,7 +88,8 @@ async fn scenario(cx: &mut TestAppContext, ws: &std::path::Path, lldb_dap: std::
         Ok(Reply::Breakpoint {
             path: "main.c".into(),
             line: support::BREAK_LINE,
-            set: true
+            set: true,
+            condition: None,
         })
     );
     let stop = call(Op::Start {

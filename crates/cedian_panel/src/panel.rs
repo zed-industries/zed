@@ -30,7 +30,7 @@ use crate::worker_trees::{self, WorkerTreeRow};
 use crate::workflow_view::WorkflowView;
 use cedian_agent::{Thread, ThreadEvent};
 use cedian_agent_ui::{SubagentRow, SubagentTree, ToolCard};
-use cedian_omp::{RouterEvent, SubagentStatus, TextBefore, UserAnswer};
+use cedian_omp::{Answerer, GateDecision, RouterEvent, SubagentStatus, TextBefore, UserAnswer};
 use cedian_review::{AttachedFinding, FindingSeverity, HunkKey, HunkStatus};
 use cedian_worker::{Brief, Registry, WorkerScope, WorkerStatus};
 use cedian_workflow::{
@@ -51,10 +51,15 @@ use gpui::{
 use language::{Buffer, BufferEvent};
 use omp_rpc::{ExtensionUiRequest, ImageContent};
 
+/// The Approve option of cedian's own Asks.
+const APPROVE: &str = "Approve";
+
 /// The gate every panel browser capture is evidence for.
 pub const BROWSER_GATE: &str = "browser";
 use project::Project;
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -421,6 +426,14 @@ pub struct CedianPanel {
     _context: Option<Task<()>>,
     /// Answers `cedian_debug` calls against Zed's debugger.
     _debug: Option<Task<()>>,
+    /// cedian's verdict on each `cedian_debug` call (ADR-0073 decision 5).
+    _debug_gate: Option<Task<()>>,
+    /// The sessions the agent's `start` launched; any other is the person's.
+    agent_sessions: Rc<RefCell<HashSet<u32>>>,
+    /// cedian's own Asks among `dialogs` (a `cedian_debug` start or run
+    /// control), by dialog id: who waits on the answer, and the audit label.
+    local_asks: HashMap<String, (std::sync::mpsc::Sender<bool>, String)>,
+    next_local_ask: u64,
     /// The workspace's state dir (ADR-0044), once known.
     state_dir: Option<PathBuf>,
     /// The task's workflow as last read, when one was started.
@@ -635,6 +648,10 @@ impl CedianPanel {
             browser_evidence: Vec::new(),
             _context: None,
             _debug: None,
+            _debug_gate: None,
+            agent_sessions: Default::default(),
+            local_asks: HashMap::default(),
+            next_local_ask: 0,
             _worktree_changes: None,
             unsaved: Default::default(),
             _unsaved_watch: Vec::new(),
@@ -1524,6 +1541,7 @@ impl CedianPanel {
         self.notice = None;
         self.forget_old_omp(window, cx);
         self.dialogs.clear();
+        self.abstain_local_asks();
         self.worktree_ask = None;
         self._worktree_expiry = None;
         self.release_in_flight(cx);
@@ -1580,8 +1598,43 @@ impl CedianPanel {
             cx,
         ));
         let (debug_tx, debug_rx) = mpsc::unbounded::<crate::debug_tool::DebugCall>();
-        spec.tools.push(crate::debug_tool::tool(debug_tx));
+        let (gate_tx, gate_rx) = mpsc::unbounded::<crate::debug_tool::GateCall>();
+        spec.tools.push(crate::debug_tool::tool(gate_tx, debug_tx));
         let (this, window_handle) = (cx.entity().downgrade(), window.window_handle());
+        self._debug_gate = Some(context::serve(
+            gate_rx,
+            |op| {
+                format!(
+                    "{} {} gate",
+                    crate::debug_tool::TOOL,
+                    crate::debug_tool::op_name(op)
+                )
+            },
+            {
+                let this = this.clone();
+                move |op, cx| {
+                    let gate = this
+                        .update(cx, |this, cx| {
+                            crate::debug_tool::gate(op, &this.debugger(window_handle), cx)
+                        })
+                        .ok()?;
+                    let label = format!("{} {:?}", crate::debug_tool::TOOL, op);
+                    let this = this.clone();
+                    Some(cx.spawn(async move |cx| {
+                        let gate = gate.await?;
+                        window_handle
+                            .update(cx, |_, window, cx| {
+                                this.update(cx, |this, cx| {
+                                    this.debug_verdict(label, gate, window, cx)
+                                })
+                            })
+                            .map_err(|e| e.to_string())?
+                            .map_err(|e| e.to_string())
+                    }))
+                }
+            },
+            cx,
+        ));
         self._debug = Some(context::serve(
             debug_rx,
             |op| {
@@ -1593,12 +1646,7 @@ impl CedianPanel {
             },
             move |op, cx| {
                 this.update(cx, |this, cx| {
-                    let debugger = crate::debug_tool::Debugger {
-                        project: this.project.clone(),
-                        workspace: this.workspace.clone(),
-                        window: Some(window_handle),
-                    };
-                    crate::debug_tool::answer(op, &debugger, cx)
+                    crate::debug_tool::answer(op, &this.debugger(window_handle), cx)
                 })
                 .ok()
             },
@@ -2912,6 +2960,7 @@ impl CedianPanel {
         self.omp_warning = None;
         self.retrying = false;
         self.dialogs.clear();
+        self.abstain_local_asks();
         self.subagents.apply(&RouterEvent::Disconnected);
         for (id, call) in std::mem::take(&mut self.calls) {
             self.release(&id, call, cx);
@@ -4235,6 +4284,7 @@ impl CedianPanel {
         self.set_turn(Turn::Stopping);
         let closed = self.link.as_ref().map(OmpLink::close_dialogs);
         self.dialogs.clear();
+        self.abstain_local_asks();
         match closed {
             Some(Err(e)) => self.audit_failed(e, cx),
             _ => self.cancel(),
@@ -4266,6 +4316,19 @@ impl CedianPanel {
     /// Answer dialog `id` as its buttons do. An answer OMP did not get
     /// leaves the dialog open with the reason on it.
     pub fn answer(&mut self, id: &str, answer: UserAnswer, cx: &mut Context<Self>) {
+        if let Some((reply, label)) = self.local_asks.remove(id) {
+            let allow = answer == UserAnswer::Choice(APPROVE.to_string());
+            let decision = if allow {
+                GateDecision::Allow
+            } else {
+                GateDecision::Deny
+            };
+            self.debug_decision(label, decision, Answerer::User);
+            reply.send(allow).ok();
+            self.dialogs.shift_remove(id);
+            cx.notify();
+            return;
+        }
         let sent = match &self.link {
             Some(link) => link.answer(id, answer),
             None => Err(AnswerError::NotSent("OMP is not running".to_string())),
@@ -4293,6 +4356,18 @@ impl CedianPanel {
         let Some(dialog) = self.dialogs.shift_remove(id) else {
             return;
         };
+        if let Some((reply, label)) = self.local_asks.remove(id) {
+            // Nobody answered cedian's own Ask: a denial (ADR-0013).
+            self.debug_decision(label, GateDecision::Abstain, Answerer::Cedian);
+            reply.send(false).ok();
+            self.notice = Some(format!(
+                "\"{}\" got no answer in {} minutes; cedian denied it",
+                dialog.title(),
+                DIALOG_TIMEOUT.as_secs() / 60
+            ));
+            cx.notify();
+            return;
+        }
         let closed = match &self.link {
             Some(link) => link.expire(id),
             None => Ok(false),
@@ -4311,6 +4386,77 @@ impl CedianPanel {
             Err(e) => self.audit_failed(e, cx),
         }
         cx.notify();
+    }
+
+    /// What a `cedian_debug` call acts on.
+    fn debugger(&self, window: gpui::AnyWindowHandle) -> crate::debug_tool::Debugger {
+        crate::debug_tool::Debugger {
+            project: self.project.clone(),
+            workspace: self.workspace.clone(),
+            window: Some(window),
+            agent_sessions: self.agent_sessions.clone(),
+        }
+    }
+
+    /// cedian's gate on one `cedian_debug` call, audited (ADR-0073 decision
+    /// 5): allowed and denied calls get their row now; an Ask opens the
+    /// app's own approval dialog and gets its row when the person answers.
+    fn debug_verdict(
+        &mut self,
+        label: String,
+        gate: crate::debug_tool::Gate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> crate::debug_tool::Verdict {
+        use crate::debug_tool::{Gate, Verdict};
+        match gate {
+            Gate::Allow => {
+                self.debug_decision(label, GateDecision::Allow, Answerer::Cedian);
+                Verdict::Allow
+            }
+            Gate::Deny(why) => {
+                self.debug_decision(label, GateDecision::Deny, Answerer::Cedian);
+                Verdict::Deny(why)
+            }
+            Gate::Ask(title) => {
+                let (reply, answer) = std::sync::mpsc::channel();
+                self.next_local_ask += 1;
+                let id = format!("cedian-debug-{}", self.next_local_ask);
+                let request = ExtensionUiRequest::Select(omp_rpc::SelectUiRequest {
+                    id: id.clone(),
+                    title,
+                    options: vec![APPROVE.to_string(), "Deny".to_string()],
+                    option_details: None,
+                    timeout: None,
+                });
+                // A dialog that cannot open is a denial: `reply` drops.
+                if let Some(mut dialog) = OpenDialog::new(request, window, cx) {
+                    let expiring = id.clone();
+                    dialog.expiry = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(DIALOG_TIMEOUT).await;
+                        this.update(cx, |this, cx| this.expire(&expiring, cx)).ok();
+                    }));
+                    self.local_asks.insert(id.clone(), (reply, label));
+                    self.dialogs.insert(id, dialog);
+                    cx.notify();
+                }
+                Verdict::Ask(answer)
+            }
+        }
+    }
+
+    /// One audit row for cedian's gate on a `cedian_debug` call.
+    fn debug_decision(&mut self, label: String, decision: GateDecision, by: Answerer) {
+        if let Some(link) = &self.link {
+            link.tool_decision(crate::debug_tool::TOOL, label, decision, by);
+        }
+    }
+
+    /// cedian's own Asks closed with the dialogs: each is a denial, audited.
+    fn abstain_local_asks(&mut self) {
+        for (_, (_, label)) in std::mem::take(&mut self.local_asks) {
+            self.debug_decision(label, GateDecision::Abstain, Answerer::Cedian);
+        }
     }
 
     /// The person's Allow/Deny on a worktree request (ADR-0012): audit the

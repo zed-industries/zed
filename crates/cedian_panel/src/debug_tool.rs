@@ -6,6 +6,7 @@
 //! debugger runtime; OMP's own `debug` stays on beside it (ADR-0048 staging).
 
 use crate::context::{self, Call};
+use collections::HashSet;
 use dap::client::SessionId;
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::{FutureExt as _, StreamExt as _};
@@ -19,20 +20,27 @@ use project::debugger::breakpoint_store::{
 use project::debugger::session::{Session, SessionEvent, ThreadId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
-use task::{SharedTaskContext, TaskContext};
+use std::time::{Duration, Instant};
+use task::{DebugScenario, SharedTaskContext, TaskContext};
 use workspace::Workspace;
 
 pub const TOOL: &str = "cedian_debug";
 
 /// How long `continue`, `step_over` and `start` wait for the next stop by
-/// default, and at most: under the app's 20 s bound.
+/// default, and at most.
 const WAIT_DEFAULT_MS: u64 = 10_000;
 const WAIT_MAX_MS: u64 = 15_000;
+/// One op's whole time: every wait inside it draws on this one budget, so
+/// the agent gets the op's own answer before the app's 20 s bound
+/// ([`context::APP_TIMEOUT`]) answers a timeout instead.
+const OP_BUDGET: Duration = Duration::from_secs(18);
+/// How long the person has to answer cedian's Ask before it is a denial:
+/// the dialog lease, plus a margin so the panel's expiry answers first.
+const ASK_WAIT: Duration = Duration::from_secs(5 * 60 + 30);
 const MAX_FRAMES: usize = 32;
 const MAX_VARS: usize = 100;
 const MAX_VALUE: usize = 512;
@@ -116,6 +124,8 @@ pub enum Reply {
         path: String,
         line: u32,
         set: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        condition: Option<String>,
     },
     Stopped {
         session: u32,
@@ -184,9 +194,36 @@ pub struct Var {
 
 pub(crate) type DebugCall = Call<Op, Reply>;
 
+/// cedian's gate for one op (ADR-0073 decision 5, ADR-0012): reads and
+/// breakpoints are allowed, `start` and run control on a session the
+/// person started are asked, an unknown scenario or a path outside the
+/// folder is denied before anything runs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Gate {
+    Allow,
+    /// The question the person sees.
+    Ask(String),
+    /// Why, as the agent reads it.
+    Deny(String),
+}
+
+/// The gate's verdict as it crosses back to OMP's thread: an Ask carries
+/// the person's answer to come.
+pub(crate) enum Verdict {
+    Allow,
+    Deny(String),
+    Ask(std::sync::mpsc::Receiver<bool>),
+}
+
+pub(crate) type GateCall = Call<Op, Verdict>;
+
 /// The tool OMP calls. Each call is parsed here, on OMP's reader thread,
-/// and crosses to the GPUI thread over `calls`.
-pub(crate) fn tool(calls: UnboundedSender<DebugCall>) -> HostTool {
+/// crosses to the GPUI thread over `gates` for cedian's verdict, waits for
+/// the person when it is an Ask, and then crosses over `calls` to run.
+pub(crate) fn tool(
+    gates: UnboundedSender<GateCall>,
+    calls: UnboundedSender<DebugCall>,
+) -> HostTool {
     let parameters = json!({
         "type": "object",
         "properties": {
@@ -211,10 +248,39 @@ pub(crate) fn tool(calls: UnboundedSender<DebugCall>) -> HostTool {
     HostTool::new(TOOL, DESCRIPTION, parameters, move |args, ctx| {
         let op = parse(args)?;
         let what = format!("{TOOL} {}", op_name(&op));
+        match context::cross(&gates, op.clone(), &what, || ctx.is_cancelled())? {
+            Verdict::Allow => {}
+            Verdict::Deny(why) => return Err(format!("denied: {why}").into()),
+            Verdict::Ask(answer) => {
+                if !person_allows(&answer, || ctx.is_cancelled()) {
+                    return Err(format!("denied: the person did not allow {what}").into());
+                }
+            }
+        }
         let reply = context::cross(&calls, op, &what, || ctx.is_cancelled())?;
         let text = serde_json::to_string(&reply).map_err(|e| e.to_string())?;
         Ok(HostToolOutput::Text(text))
     })
+}
+
+/// Block OMP's thread until the person answers cedian's Ask. No answer in
+/// [`ASK_WAIT`], a closed dialog or a cancel is a denial (ADR-0013).
+fn person_allows(
+    answer: &std::sync::mpsc::Receiver<bool>,
+    is_cancelled: impl Fn() -> bool,
+) -> bool {
+    let deadline = Instant::now() + ASK_WAIT;
+    loop {
+        match answer.recv_timeout(Duration::from_millis(50)) {
+            Ok(allow) => return allow,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return false,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if is_cancelled() || Instant::now() >= deadline {
+                    return false;
+                }
+            }
+        }
+    }
 }
 
 pub fn parse(args: Map<String, Value>) -> Result<Op, String> {
@@ -244,12 +310,85 @@ pub struct Debugger {
     pub project: Entity<Project>,
     pub workspace: Option<WeakEntity<Workspace>>,
     pub window: Option<AnyWindowHandle>,
+    /// The sessions the agent's `start` launched; any other is the person's.
+    pub agent_sessions: Rc<RefCell<HashSet<u32>>>,
+}
+
+/// cedian's gate for `op` (see [`Gate`]).
+pub fn gate(op: &Op, debugger: &Debugger, cx: &mut App) -> Task<Result<Gate, String>> {
+    match op {
+        Op::Sessions | Op::Threads { .. } | Op::Stack { .. } | Op::Variables { .. } => {
+            Task::ready(Ok(Gate::Allow))
+        }
+        Op::SetBreakpoint { path, .. } | Op::RemoveBreakpoint { path, .. } => {
+            let project = debugger.project.clone();
+            let Some(host) = context::host(debugger.workspace.as_ref(), &project, cx) else {
+                return Task::ready(Ok(Gate::Deny("no folder is open".to_string())));
+            };
+            let inside = context::inside(&host, &project, path, cx);
+            cx.spawn(async move |_| {
+                Ok(match inside.await {
+                    Ok(_) => Gate::Allow,
+                    Err(why) => Gate::Deny(why),
+                })
+            })
+        }
+        Op::Start { scenario, .. } => {
+            let found = scenario_for(&debugger.project, scenario.clone(), cx);
+            cx.spawn(async move |_| {
+                Ok(match found.await {
+                    Ok((_, scenario)) => Gate::Ask(format!(
+                        "The agent asks to start the debug scenario \"{}\" ({})",
+                        scenario.label, scenario.adapter
+                    )),
+                    Err(why) => Gate::Deny(why),
+                })
+            })
+        }
+        Op::Continue { at, .. } | Op::StepOver { at, .. } | Op::Pause { at } | Op::Stop { at } => {
+            // No session: the op itself answers why.
+            let Ok(session) = pick(&debugger.project, at, cx) else {
+                return Task::ready(Ok(Gate::Allow));
+            };
+            let session = session.read(cx);
+            let id = session.session_id().0;
+            if debugger.agent_sessions.borrow().contains(&id) {
+                return Task::ready(Ok(Gate::Allow));
+            }
+            Task::ready(Ok(Gate::Ask(format!(
+                "The agent asks to {} your debug session {id}{}",
+                op_name(op).replace('_', " "),
+                session
+                    .label()
+                    .map(|l| format!(" (\"{l}\")"))
+                    .unwrap_or_default()
+            ))))
+        }
+    }
+}
+
+/// The deadline one op's waits share (see [`OP_BUDGET`]).
+#[derive(Clone, Copy, Debug)]
+struct Deadline(Instant);
+
+impl Deadline {
+    fn new(cx: &App) -> Self {
+        Self(cx.background_executor().now() + OP_BUDGET)
+    }
+
+    /// A timer for one wait: `cap` at most, and never past the deadline.
+    fn timer(&self, cap: Option<Duration>, cx: &AsyncApp) -> Task<()> {
+        let executor = cx.background_executor();
+        let left = self.0.saturating_duration_since(executor.now());
+        executor.timer(cap.map_or(left, |cap| cap.min(left)))
+    }
 }
 
 /// Answer one op on the GPUI thread.
 pub fn answer(op: &Op, debugger: &Debugger, cx: &mut App) -> Task<Result<Reply, String>> {
     let op = op.clone();
     let root = folder(&debugger.project, cx);
+    let deadline = Deadline::new(cx);
     match op {
         Op::Sessions => Task::ready(Ok(Reply::Sessions {
             sessions: sessions(&debugger.project, cx),
@@ -257,7 +396,14 @@ pub fn answer(op: &Op, debugger: &Debugger, cx: &mut App) -> Task<Result<Reply, 
         Op::Start {
             scenario,
             wait_stopped_ms,
-        } => start(debugger.clone(), scenario, wait(wait_stopped_ms), root, cx),
+        } => start(
+            debugger.clone(),
+            scenario,
+            deadline,
+            wait(wait_stopped_ms),
+            root,
+            cx,
+        ),
         Op::SetBreakpoint {
             path,
             line,
@@ -267,20 +413,36 @@ pub fn answer(op: &Op, debugger: &Debugger, cx: &mut App) -> Task<Result<Reply, 
         Op::Continue {
             at,
             wait_stopped_ms,
-        } => run(debugger, at, Run::Continue, wait(wait_stopped_ms), root, cx),
+        } => run(
+            debugger,
+            at,
+            Run::Continue,
+            deadline,
+            wait(wait_stopped_ms),
+            root,
+            cx,
+        ),
         Op::StepOver {
             at,
             wait_stopped_ms,
-        } => run(debugger, at, Run::StepOver, wait(wait_stopped_ms), root, cx),
-        Op::Pause { at } => run(debugger, at, Run::Pause, wait(None), root, cx),
-        Op::Threads { at } => read(debugger, at, cx, |session, _, cx| {
+        } => run(
+            debugger,
+            at,
+            Run::StepOver,
+            deadline,
+            wait(wait_stopped_ms),
+            root,
+            cx,
+        ),
+        Op::Pause { at } => run(debugger, at, Run::Pause, deadline, wait(None), root, cx),
+        Op::Threads { at } => read(debugger, at, deadline, cx, |session, _, cx| {
             let threads = threads(session, cx);
             (!threads.is_empty()).then(|| Reply::Threads {
                 session: session.session_id().0,
                 threads,
             })
         }),
-        Op::Stack { at } => read(debugger, at, cx, move |session, thread, cx| {
+        Op::Stack { at } => read(debugger, at, deadline, cx, move |session, thread, cx| {
             let thread = thread?;
             let frames = session.stack_frames(thread, cx).ok()?;
             (!frames.is_empty()).then(|| Reply::Stack {
@@ -293,31 +455,33 @@ pub fn answer(op: &Op, debugger: &Debugger, cx: &mut App) -> Task<Result<Reply, 
                     .collect(),
             })
         }),
-        Op::Variables { at, frame } => read(debugger, at, cx, move |session, thread, cx| {
-            let thread = thread?;
-            let frame = match frame {
-                Some(frame) => frame,
-                None => session.stack_frames(thread, cx).ok()?.first()?.dap.id,
-            };
-            let scopes = session.scopes(frame, cx).to_vec();
-            if scopes.is_empty() {
-                return None;
-            }
-            let scopes = scopes
-                .iter()
-                .map(|scope| {
-                    Some(ScopeVars {
-                        scope: scope.name.clone(),
-                        vars: vars(session, scope.variables_reference, cx)?,
+        Op::Variables { at, frame } => {
+            read(debugger, at, deadline, cx, move |session, thread, cx| {
+                let thread = thread?;
+                let frame = match frame {
+                    Some(frame) => frame,
+                    None => session.stack_frames(thread, cx).ok()?.first()?.dap.id,
+                };
+                let scopes = session.scopes(frame, cx).to_vec();
+                if scopes.is_empty() {
+                    return None;
+                }
+                let scopes = scopes
+                    .iter()
+                    .map(|scope| {
+                        Some(ScopeVars {
+                            scope: scope.name.clone(),
+                            vars: vars(session, scope.variables_reference, cx)?,
+                        })
                     })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(Reply::Variables {
+                    session: session.session_id().0,
+                    frame,
+                    scopes,
                 })
-                .collect::<Option<Vec<_>>>()?;
-            Some(Reply::Variables {
-                session: session.session_id().0,
-                frame,
-                scopes,
             })
-        }),
+        }
         Op::Stop { at } => {
             let session = match pick(&debugger.project, &at, cx) {
                 Ok(session) => session,
@@ -467,12 +631,14 @@ fn cut(mut value: String) -> String {
     value
 }
 
-/// Re-run `check` on every change of `session` until it answers, or `bound`
-/// passes (then `None`). Session reads are lazy caches: the first read
-/// sends the request and answers empty, and the answer arrives as a notify.
+/// Re-run `check` on every change of `session` until it answers, or `cap`
+/// or the op's deadline passes (then `None`). Session reads are lazy
+/// caches: the first read sends the request and answers empty, and the
+/// answer arrives as a notify.
 async fn until<T: 'static>(
     session: &Entity<Session>,
-    bound: Duration,
+    deadline: Deadline,
+    cap: Option<Duration>,
     cx: &mut AsyncApp,
     mut check: impl FnMut(&mut Session, &mut gpui::Context<Session>) -> Option<T>,
 ) -> Option<T> {
@@ -488,7 +654,7 @@ async fn until<T: 'static>(
             }),
         )
     });
-    let timeout = cx.background_executor().timer(bound).fuse();
+    let timeout = deadline.timer(cap, cx).fuse();
     futures::pin_mut!(timeout);
     loop {
         if let Some(answer) = session.update(cx, |s, cx| check(s, cx)) {
@@ -507,11 +673,12 @@ async fn next_stop(
     session: Entity<Session>,
     root: Option<Arc<Path>>,
     stopped: Rc<Cell<Option<Option<ThreadId>>>>,
-    bound: Duration,
+    deadline: Deadline,
+    stop_wait: Duration,
     cx: &mut AsyncApp,
 ) -> Result<Reply, String> {
     let id = session.read_with(cx, |s, _| s.session_id().0);
-    let stop = until(&session, bound, cx, |s, _| {
+    let stop = until(&session, deadline, Some(stop_wait), cx, |s, _| {
         if s.is_terminated() {
             return Some(None);
         }
@@ -531,7 +698,7 @@ async fn next_stop(
         top: None,
         locals: Vec::new(),
     };
-    let reply = until(&session, bound, cx, |s, cx| {
+    let reply = until(&session, deadline, None, cx, |s, cx| {
         if s.is_terminated() {
             return Some(Reply::Exited { session: id });
         }
@@ -589,7 +756,8 @@ fn run(
     debugger: &Debugger,
     at: At,
     run: Run,
-    bound: Duration,
+    deadline: Deadline,
+    stop_wait: Duration,
     root: Option<Arc<Path>>,
     cx: &mut App,
 ) -> Task<Result<Reply, String>> {
@@ -611,7 +779,7 @@ fn run(
         Run::Pause => s.pause_thread(thread, cx),
     });
     cx.spawn(async move |cx| {
-        let reply = next_stop(session, root, stopped, bound, cx).await;
+        let reply = next_stop(session, root, stopped, deadline, stop_wait, cx).await;
         drop(subscription);
         reply
     })
@@ -622,6 +790,7 @@ fn run(
 fn read(
     debugger: &Debugger,
     at: At,
+    deadline: Deadline,
     cx: &mut App,
     check: impl Fn(&mut Session, Option<ThreadId>, &mut gpui::Context<Session>) -> Option<Reply>
     + 'static,
@@ -632,7 +801,7 @@ fn read(
     };
     let asked = at.thread;
     cx.spawn(async move |cx| {
-        until(&session, Duration::from_millis(WAIT_MAX_MS), cx, |s, cx| {
+        until(&session, deadline, None, cx, |s, cx| {
             let thread = thread_of(s, asked, cx);
             check(s, thread, cx)
         })
@@ -667,10 +836,16 @@ fn breakpoint(
             .map_err(|e| e.to_string())?;
         let store = project.read_with(cx, |p, _| p.breakpoint_store());
         cx.update(|cx| set(&store, &buffer, &abs, line - 1, condition, cx))?;
-        let set = store.read_with(cx, |s, cx| {
-            s.breakpoint_at_row(&abs, line - 1, cx).is_some()
+        let now = store.read_with(cx, |s, cx| {
+            s.breakpoint_at_row(&abs, line - 1, cx)
+                .map(|(_, bp)| bp.bp.condition.map(|c| c.to_string()))
         });
-        Ok(Reply::Breakpoint { path, line, set })
+        Ok(Reply::Breakpoint {
+            path,
+            line,
+            set: now.is_some(),
+            condition: now.flatten(),
+        })
     })
 }
 
@@ -691,40 +866,45 @@ fn set(
         ));
     }
     let existing = store.read(cx).breakpoint_at_row(abs, row, cx);
-    let wanted = condition.is_some();
-    if existing.is_some() == wanted {
-        // Already as asked: setting twice or removing a missing one is a no-op.
-        return Ok(());
-    }
-    let position = match existing {
-        Some((_, existing)) => existing,
-        None => {
+    let (position, action) = match (existing, condition) {
+        // Removing a missing one is a no-op.
+        (None, None) => return Ok(()),
+        (Some((_, existing)), None) => (existing, BreakpointEditAction::Toggle),
+        (None, Some(condition)) => {
             let mut bp = Breakpoint::new_standard();
-            bp.condition = condition.flatten().map(Into::into);
-            BreakpointWithPosition {
+            bp.condition = condition.map(Into::into);
+            let position = BreakpointWithPosition {
                 position: snapshot.anchor_before(Point::new(row, 0)),
                 bp,
-            }
+            };
+            (position, BreakpointEditAction::Toggle)
         }
+        // Set again with a new condition: the condition changes.
+        (Some((_, existing)), Some(Some(condition)))
+            if existing.bp.condition.as_deref() != Some(condition.as_str()) =>
+        {
+            (
+                existing,
+                BreakpointEditAction::EditCondition(condition.into()),
+            )
+        }
+        // Already as asked.
+        (Some(_), Some(_)) => return Ok(()),
     };
     let buffer = buffer.clone();
     store.update(cx, |store, cx| {
-        store.toggle_breakpoint(buffer, position, BreakpointEditAction::Toggle, cx)
+        store.toggle_breakpoint(buffer, position, action, cx)
     });
     Ok(())
 }
 
-/// Launch the debug.json scenario labelled `label` the way the New Process
-/// modal does, so the session opens in the Debug panel, and wait for its
-/// first stop. An unknown label is refused before any adapter starts.
-fn start(
-    debugger: Debugger,
+/// The debug.json scenario labelled `label` in the folder's worktree, as
+/// the New Process modal lists it, or why there is none.
+fn scenario_for(
+    project: &Entity<Project>,
     label: String,
-    bound: Duration,
-    root: Option<Arc<Path>>,
     cx: &mut App,
-) -> Task<Result<Reply, String>> {
-    let project = debugger.project.clone();
+) -> Task<Result<(project::WorktreeId, DebugScenario), String>> {
     let Some(tree) = project.read(cx).visible_worktrees(cx).next() else {
         return Task::ready(Err("no folder is open".to_string()));
     };
@@ -745,33 +925,63 @@ fn start(
     let listed = inventory.update(cx, |inventory, cx| {
         inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
     });
-    cx.spawn(async move |cx| {
+    cx.spawn(async move |_| {
         let (_, scenarios) = listed.await;
-        let Some(scenario) = scenarios
+        match scenarios
             .iter()
             .map(|(_, s)| s)
             .find(|s| s.label.as_ref() == label)
-            .cloned()
-        else {
-            let known: Vec<&str> = scenarios.iter().map(|(_, s)| s.label.as_ref()).collect();
-            return Err(format!(
-                "denied: no debug.json scenario labelled {label:?} in this worktree (known: {})",
-                if known.is_empty() {
-                    "none".to_string()
-                } else {
-                    known.join(", ")
-                }
-            ));
-        };
+        {
+            Some(scenario) => Ok((tree, scenario.clone())),
+            None => {
+                let known: Vec<&str> = scenarios.iter().map(|(_, s)| s.label.as_ref()).collect();
+                Err(format!(
+                    "no debug.json scenario labelled {label:?} in this worktree (known: {})",
+                    if known.is_empty() {
+                        "none".to_string()
+                    } else {
+                        known.join(", ")
+                    }
+                ))
+            }
+        }
+    })
+}
+
+/// Launch the debug.json scenario labelled `label` the way the New Process
+/// modal does, so the session opens in the Debug panel, and wait for its
+/// first stop. The session is the one this launch made: new since the
+/// call, with the scenario's label. An unknown label is refused before any
+/// adapter starts.
+fn start(
+    debugger: Debugger,
+    label: String,
+    deadline: Deadline,
+    stop_wait: Duration,
+    root: Option<Arc<Path>>,
+    cx: &mut App,
+) -> Task<Result<Reply, String>> {
+    let project = debugger.project.clone();
+    let found = scenario_for(&project, label.clone(), cx);
+    cx.spawn(async move |cx| {
+        let (tree, scenario) = found.await.map_err(|why| format!("denied: {why}"))?;
         let (Some(workspace), Some(window)) = (debugger.workspace.clone(), debugger.window) else {
             return Err("no workspace window to open the Debug panel in".to_string());
         };
-        let (new_tx, mut new_rx) = mpsc::unbounded::<Entity<Session>>();
-        let _observe = cx.update(|cx| {
-            cx.observe_new::<Session>(move |_, _, cx| {
-                new_tx.unbounded_send(cx.entity()).ok();
-            })
-        });
+        let ids = |cx: &App| -> Vec<(u32, Option<String>)> {
+            project
+                .read(cx)
+                .dap_store()
+                .read(cx)
+                .sessions()
+                .map(|s| {
+                    let s = s.read(cx);
+                    (s.session_id().0, s.label().map(|l| l.to_string()))
+                })
+                .collect()
+        };
+        let before: HashSet<u32> = cx.update(|cx| ids(cx).into_iter().map(|(id, _)| id).collect());
+        let adapter = scenario.adapter.clone();
         window
             .update(cx, |_, window, cx| {
                 workspace.update(cx, |workspace, cx| {
@@ -787,22 +997,33 @@ fn start(
             })
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
-        let timeout = cx.background_executor().timer(bound).fuse();
-        futures::pin_mut!(timeout);
-        let session = futures::select_biased! {
-            session = new_rx.next().fuse() => session,
-            _ = timeout => None,
-        }
-        .ok_or_else(|| format!("the debug session for {label:?} did not start"))?;
-        let (stopped, subscription) = cx.update(|cx| watch_stop(&session, cx));
-        let running = until(&session, bound, cx, |s, _| {
-            (s.adapter_client().is_some() || s.is_terminated()).then_some(())
-        })
-        .await;
-        if running.is_none() {
-            return Err(format!("the debug adapter for {label:?} did not start"));
-        }
-        let reply = next_stop(session, root, stopped, bound, cx).await;
+        // Zed makes the launch's session inside that call; a session made
+        // later (the person's, a child) is never this launch's.
+        let session = cx.update(|cx| {
+            let id = ids(cx)
+                .into_iter()
+                .filter(|(id, l)| !before.contains(id) && l.as_deref() == Some(label.as_str()))
+                .map(|(id, _)| id)
+                .max()?;
+            project
+                .read(cx)
+                .dap_store()
+                .read(cx)
+                .session_by_id(SessionId(id))
+        });
+        let Some(session) = session else {
+            return Err(format!(
+                "the debug session for {label:?} did not start (is the {adapter:?} adapter installed?)"
+            ));
+        };
+        let (stopped, subscription) = cx.update(|cx| {
+            debugger
+                .agent_sessions
+                .borrow_mut()
+                .insert(session.read(cx).session_id().0);
+            watch_stop(&session, cx)
+        });
+        let reply = next_stop(session, root, stopped, deadline, stop_wait, cx).await;
         drop(subscription);
         reply
     })
@@ -851,6 +1072,34 @@ mod tests {
     fn the_tool_never_takes_an_omp_tool_name() {
         assert_ne!(TOOL, "debug");
         assert!(TOOL.starts_with("cedian_"));
+    }
+
+    /// F1: the waits inside one op draw on one deadline, so a chain of
+    /// them (start: launch, stop, frame, locals) ends before the app's 20 s
+    /// bound answers OMP a timeout instead of the op's own reply.
+    #[gpui::test]
+    async fn chained_waits_end_by_the_ops_deadline(cx: &mut gpui::TestAppContext) {
+        assert!(OP_BUDGET < context::APP_TIMEOUT);
+        let deadline = cx.update(|cx| Deadline::new(cx));
+        let done = Rc::new(Cell::new(false));
+        let flag = done.clone();
+        cx.spawn(async move |cx| {
+            for _ in 0..4 {
+                deadline
+                    .timer(Some(Duration::from_millis(WAIT_MAX_MS)), &cx)
+                    .await;
+            }
+            flag.set(true);
+        })
+        .detach();
+        let step = Duration::from_millis(500);
+        let mut elapsed = Duration::ZERO;
+        while elapsed < context::APP_TIMEOUT - step {
+            cx.executor().advance_clock(step);
+            cx.run_until_parked();
+            elapsed += step;
+        }
+        assert!(done.get(), "four waits outlived the app's bound");
     }
 
     #[test]

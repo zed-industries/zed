@@ -57,6 +57,7 @@ pub(crate) fn run(
                 frame: placeholders.redact_value(&frame),
                 check_reason: false,
                 check_result: false,
+                check_tools: false,
             };
             if let Ok(mut f) = file.lock() {
                 let _ = writeln!(f, "{}", record.to_line());

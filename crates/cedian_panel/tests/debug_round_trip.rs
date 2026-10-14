@@ -1,22 +1,31 @@
 //! S1's last exit (ARCHITECTURE §22): an agent breakpoint round-trips
 //! through Zed's own debugger. The real panel and Debug panel in one
 //! workspace, Zed's fake debug adapter, and fake-omp replaying
-//! `debug_round_trip.jsonl` (a hand-made turn: OMP asks the person before
-//! each `cedian_debug` call, as `cedian_debug: prompt` makes it). Checked:
+//! `debug_round_trip.jsonl` (a hand-made turn: OMP's own approval select
+//! before each call is guessed, and the test approves every one). cedian's
+//! own gate (ADR-0073 decision 5) runs on every call. Checked:
 //!
 //! 1. the agent's breakpoint is in Zed's `BreakpointStore` (the gutter's)
-//!    and reaches the adapter's SetBreakpoints;
-//! 2. `start` (approved) launches the debug.json scenario in the Debug
-//!    panel, and its reply is the stop: `src/main.rs:3`, `x = 42`;
+//!    and reaches the adapter's SetBreakpoints; set again with a condition,
+//!    the condition changes;
+//! 2. `start` opens cedian's own approval dialog, and no adapter starts
+//!    before the person approves; then the debug.json scenario launches in
+//!    the Debug panel, and its reply is the stop: `src/main.rs:3`, `x = 42`;
 //! 3. the Debug panel's active session is the agent's session;
-//! 4. the agent's `continue` reaches the adapter;
+//! 4. the agent's `continue` on its own session is not asked, and reaches
+//!    the adapter;
 //! 5. the person continues from the Debug panel, and the agent reads that
 //!    the session runs;
-//! 6. refused: an unknown scenario (no adapter starts), `../x.c`, and a
-//!    `continue` on a person-started session the person denies (no
-//!    Continue reaches its adapter).
+//! 6. denied by cedian with no dialog: an unknown scenario (no adapter
+//!    starts) and `../x.c` (the reason checked);
+//! 7. a scenario whose adapter is missing: `start` answers that it did not
+//!    start, and binds no other session;
+//! 8. the person denies a `start` (no adapter starts) and a `continue` on
+//!    their own session (no Continue reaches its adapter);
+//! 9. every call has one gate row in the audit log.
 //!
-//! fake-omp checks each reply's text whole and exits on any difference.
+//! fake-omp checks each reply's text whole and the host tools registered,
+//! and exits on any difference.
 //!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
@@ -41,10 +50,17 @@ const FIXTURE: &str = concat!(
     "/tests/fixtures/debug_round_trip.jsonl"
 );
 const MAIN: &str = "fn main() {\n    let x = 42;\n    println!(\"{x}\");\n}\n";
-const DEBUG_JSON: &str =
-    r#"[{"label": "main", "adapter": "fake-adapter", "request": "launch", "program": "main"}]"#;
-/// The dialog the person denies: the agent's `continue` on their session.
-const DENIED_DIALOG: usize = 7;
+const DEBUG_JSON: &str = r#"[
+  {"label": "main", "adapter": "fake-adapter", "request": "launch", "program": "main"},
+  {"label": "ghost", "adapter": "no-such-adapter", "request": "launch", "program": "main"}
+]"#;
+/// OMP's approval selects in the fixture, one per call.
+const OMP_DIALOGS: usize = 10;
+/// cedian's own Asks: start main (approved), start ghost (approved), start
+/// main again (denied), continue on the person's session (denied).
+const CEDIAN_DIALOGS: usize = 4;
+/// The OMP select on the person's session: the test starts it then.
+const PERSON_CONTINUE: usize = 10;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -158,19 +174,21 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     })
     .unwrap();
 
-    let mut answered = 0;
+    let mut omp = 0;
+    let mut asked = 0;
     let mut stops = 0;
+    let mut launched_before_denied_start = None;
     let mut person: Option<Entity<Session>> = None;
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         cx.run_until_parked();
         let (idle, dialogs) = panel.read_with(cx, |p, _| (p.turn() == &Turn::Idle, p.dialog_ids()));
-        if idle && answered == DENIED_DIALOG {
+        if idle && omp == OMP_DIALOGS && asked == CEDIAN_DIALOGS {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "stuck after {answered} dialogs, {stops} stops: {}",
+            "stuck after {omp} OMP dialogs, {asked} cedian dialogs, {stops} stops: {}",
             panel.read_with(cx, |p, _| format!(
                 "{:?} · {:?}",
                 p.connection(),
@@ -194,22 +212,50 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
             }
         }
 
-        if let Some(id) = dialogs.first().cloned() {
-            let n = answered + 1;
-            if n == 2 {
-                assert!(agent.is_none(), "no session before the approved start");
+        let Some(id) = dialogs.first().cloned() else {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        };
+        let choice = if id.starts_with("cedian-debug-") {
+            // cedian's own Ask.
+            asked += 1;
+            match asked {
+                1 => {
+                    assert!(
+                        agent.is_none(),
+                        "no session before the person approves start"
+                    );
+                    assert_eq!(seen.sessions.load(Ordering::SeqCst), 0, "no adapter either");
+                    "Approve"
+                }
+                2 => "Approve",
+                3 => {
+                    launched_before_denied_start = Some(seen.sessions.load(Ordering::SeqCst));
+                    "Deny"
+                }
+                _ => "Deny",
             }
-            if n == 3 {
+        } else {
+            omp += 1;
+            if omp == 4 {
                 let session = agent.clone().expect("the agent's session");
-                // 2. The breakpoint is the editor's, and the adapter has it.
+                // 1. The breakpoint is the editor's, and the adapter has it.
                 let store = project.read_with(cx, |p, _| p.breakpoint_store());
-                let rows: Vec<u32> = store.read_with(cx, |s, cx| {
+                let rows: Vec<(u32, Option<String>)> = store.read_with(cx, |s, cx| {
                     s.all_source_breakpoints(cx)
                         .get(main_rs.as_path())
-                        .map(|bps| bps.iter().map(|b| b.row).collect())
+                        .map(|bps| {
+                            bps.iter()
+                                .map(|b| (b.row, b.condition.as_deref().map(str::to_string)))
+                                .collect()
+                        })
                         .unwrap_or_default()
                 });
-                assert_eq!(rows, [2], "the agent's breakpoint is in Zed's store");
+                assert_eq!(
+                    rows,
+                    [(2, Some("x > 1".to_string()))],
+                    "the agent's breakpoint, with its new condition, is in Zed's store"
+                );
                 assert_eq!(*seen.breakpoints.lock(), [3], "and reached SetBreakpoints");
                 // 3. The Debug panel shows the agent's session.
                 let shown = debug_panel.read_with(cx, |panel, cx| {
@@ -219,7 +265,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
                 });
                 assert_eq!(shown.as_ref(), Some(&session), "the Debug panel's session");
             }
-            if n == 4 {
+            if omp == 5 {
                 // 4. The agent's continue reached the adapter. 5. The person
                 // continues from the Debug panel before the agent reads.
                 assert_eq!(seen.continues[0].load(Ordering::SeqCst), 1);
@@ -236,27 +282,22 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
                 let session = agent.clone().unwrap();
                 assert!(!session.read_with(cx, |s, _| s.any_stopped_thread()));
             }
-            if n == 6 {
+            if omp == 7 {
                 assert_eq!(
                     sessions(&project, cx).len(),
                     1,
                     "the unknown scenario started no adapter"
                 );
             }
-            if n == DENIED_DIALOG {
+            if omp == PERSON_CONTINUE {
                 person = Some(person_session(&window, cx).await);
             }
-            let choice = if n == DENIED_DIALOG {
-                "Deny"
-            } else {
-                "Approve"
-            };
-            let button: &'static str = format!("cedian-dialog-{id}-{choice}").leak();
-            click(&mut vcx, button);
-            answered = n;
-            continue;
-        }
-        std::thread::sleep(Duration::from_millis(20));
+            // OMP's own select (hand-made): always approved here, so every
+            // refusal below is cedian's.
+            "Approve"
+        };
+        let button: &'static str = format!("cedian-dialog-{id}-{choice}").leak();
+        click(&mut vcx, button);
     }
 
     let (connection, notice) = panel.read_with(cx, |p, _| {
@@ -267,6 +308,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
         "fake-omp replayed to the end (no divergence): {connection:?} · {notice:?}"
     );
     assert!(person.is_some());
+    // 8. What the person denied never reached an adapter.
     assert_eq!(
         seen.continues[0].load(Ordering::SeqCst),
         2,
@@ -275,8 +317,51 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     assert_eq!(
         seen.continues[1].load(Ordering::SeqCst),
         0,
-        "the denied continue never reached the person's session"
+        "cedian sent no Continue to the person's session after the Deny"
     );
+    assert_eq!(
+        launched_before_denied_start,
+        Some(1),
+        "only the agent's approved launch had started an adapter"
+    );
+    assert_eq!(
+        seen.sessions.load(Ordering::SeqCst),
+        2,
+        "the denied start launched nothing: the agent's session and the person's"
+    );
+    // 9. One gate row per call, in order.
+    let audit = std::fs::read_to_string(state.join(cedian_shell::audit::AUDIT_FILE)).unwrap();
+    let gate: Vec<(String, String)> = audit
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .map(|row| row["item"].clone())
+        .filter(|row| {
+            row["kind"] == "gate"
+                && row["command"]
+                    .as_str()
+                    .is_some_and(|c| c.starts_with("cedian_debug "))
+        })
+        .map(|row| {
+            (
+                row["decision"].as_str().unwrap_or_default().to_string(),
+                row["answered_by"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    let want = [
+        ("allow", "cedian"),
+        ("allow", "cedian"),
+        ("allow", "user"),
+        ("allow", "cedian"),
+        ("allow", "cedian"),
+        ("deny", "cedian"),
+        ("deny", "cedian"),
+        ("allow", "user"),
+        ("deny", "user"),
+        ("deny", "user"),
+    ]
+    .map(|(d, a)| (d.to_string(), a.to_string()));
+    assert_eq!(gate, want, "cedian's gate rows in the audit log");
 }
 
 /// Zed's fake adapter, answering as a program stopped in `main` at line 3

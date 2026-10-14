@@ -119,6 +119,28 @@ pub(crate) fn run(fixture: &Path, cwd: &Path, placeholders: &Placeholders) -> i3
                 }
                 // A prompt must be the recorded one, not merely a prompt.
                 let expected = placeholders.expand_value(&record.frame);
+                if got_type == Some("set_host_tools") && record.check_tools {
+                    let names = |v: &Value| {
+                        let mut names: Vec<String> = v
+                            .get("tools")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|t| t.get("name").and_then(Value::as_str))
+                            .map(str::to_string)
+                            .collect();
+                        names.sort();
+                        names
+                    };
+                    if names(&got) != names(&expected) {
+                        eprintln!(
+                            "fake-omp replay: divergence at record {n}: expected host tools {:?}, host sent {:?}",
+                            names(&expected),
+                            names(&got)
+                        );
+                        return crate::EXIT_DIVERGED;
+                    }
+                }
                 if got_type == Some("prompt") && got.get("message") != expected.get("message") {
                     eprintln!(
                         "fake-omp replay: divergence at record {n}: expected prompt {:?}, host sent {:?}",

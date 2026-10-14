@@ -29,7 +29,7 @@ use workspace::Workspace;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long the app works on one read before it answers an error: under
 /// OMP's own 30 s, so OMP gets the reason rather than its timeout.
-const APP_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const APP_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// One call OMP made (a `cedian://` read, a host tool), answered on the
 /// GPUI thread.
