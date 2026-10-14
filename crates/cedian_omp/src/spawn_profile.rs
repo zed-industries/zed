@@ -143,11 +143,6 @@ const REVIEWER_FLAGS: &[&str] = &[
     "",
 ];
 
-/// Host tools the person approves call by call: `cedian_debug` launches
-/// processes and moves the session the person is debugging (ADR-0012,
-/// ADR-0020). Every other host tool is allowed and gated by cedian itself.
-pub const ASKED_HOST_TOOLS: &[&str] = &["cedian_debug"];
-
 /// The policy half of the profile, mapped from cedian settings by the caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnPolicy {
@@ -220,12 +215,7 @@ impl SpawnPolicy {
                     "host tool {tool:?} shadows an OMP exec tool"
                 )));
             }
-            let policy = if ASKED_HOST_TOOLS.contains(&tool.as_str()) {
-                ToolPolicy::Prompt
-            } else {
-                ToolPolicy::Allow
-            };
-            record.insert(tool.clone(), json!(policy.as_str()));
+            record.insert(tool.clone(), json!(ToolPolicy::Allow.as_str()));
         }
         let pin = match self.approvals {
             Approvals::Cedian(_) => Some(ToolPolicy::Prompt),
@@ -818,7 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn cedian_debug_is_asked_and_never_shadows_an_omp_tool() {
+    fn cedian_debug_is_gated_by_cedian_not_omp() {
         let mut policy = SpawnPolicy::default();
         policy.host_tools.insert("cedian_debug".to_string());
         policy
@@ -826,7 +816,10 @@ mod tests {
             .insert("cedian_worktree_request".to_string());
         let overlay = policy.overlay().unwrap();
         let approval = &overlay["tools"]["approval"];
-        assert_eq!(approval["cedian_debug"], "prompt");
+        assert_eq!(
+            approval["cedian_debug"], "allow",
+            "cedian's own gate asks, so OMP must not ask again (ADR-0073)"
+        );
         assert_eq!(approval["cedian_worktree_request"], "allow");
         assert!(
             approval.get("debug").is_none(),
@@ -836,9 +829,7 @@ mod tests {
             overlay.get("debug").is_none(),
             "OMP's debug is never switched off"
         );
-        for tool in ASKED_HOST_TOOLS {
-            assert!(!EXEC_TOOLS.contains(tool) && *tool != "debug", "{tool}");
-        }
+        assert!(!EXEC_TOOLS.contains(&"cedian_debug"));
     }
 
     #[test]

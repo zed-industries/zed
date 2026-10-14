@@ -1,8 +1,9 @@
 //! S1's live turn (ADR-0070): one model turn on the pinned OMP in which
 //! OMP is asked to debug a C program on the real `lldb-dap`, in the app's
 //! panel beside Zed's Debug panel, without being told which tool to use
-//! (ADR-0073 decision 4); the run prints which it picked. Every dialog is
-//! approved. The recording becomes
+//! (ADR-0073 decision 4); the run prints which it picked. cedian's own gate
+//! asks where ADR-0073 says to; OMP's overlay allows `cedian_debug`. Every
+//! dialog is approved. The recording becomes
 //! `cedian_panel/tests/fixtures/debug_live.jsonl`, which
 //! `cedian_panel/tests/debug_live_replay.rs` replays hermetically.
 //!
