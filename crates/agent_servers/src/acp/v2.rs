@@ -458,17 +458,27 @@ impl AcpV2Connection {
                 .await
                 .context("ACP ordered response callback ended")?
                 .map_err(map_acp_error)?;
-            let output = apply(response, cx);
-            if output.is_ok() {
-                enqueue_notification(&dispatch_tx, request_id, finish_request);
-                guard.abort();
+            match apply(response, cx) {
+                Ok(output) => {
+                    enqueue_notification(&dispatch_tx, request_id, finish_request);
+                    // Keep abandonment cleanup armed until the result can be returned without yielding.
+                    drain_foreground_queue(&dispatch_tx).await?;
+                    applied.send(()).map_err(|_| {
+                        anyhow!("ACP response ordering callback ended before application")
+                    })?;
+                    guard.abort();
+                    Ok(output)
+                }
+                Err(error) => {
+                    enqueue_notification(&dispatch_tx, request_id, cancel_request_elicitations);
+                    // A rejected duplicate ID belongs to an existing owner, not an abandoned creation.
+                    applied.send(()).map_err(|_| {
+                        anyhow!("ACP response ordering callback ended before application")
+                    })?;
+                    guard.abort();
+                    Err(error)
+                }
             }
-            applied
-                .send(())
-                .map_err(|_| anyhow!("ACP response ordering callback ended before application"))?;
-            let output = output?;
-            drain_foreground_queue(&dispatch_tx).await?;
-            Ok(output)
         })
     }
 }
@@ -1319,6 +1329,44 @@ mod tests {
         bounded(drain_foreground_queue(&harness.client.dispatch_tx), cx)
             .await
             .expect("dispatch released");
+    }
+
+    #[gpui::test]
+    async fn v2_session_sdk_drop_after_registration_closes_undelivered_session(
+        cx: &mut TestAppContext,
+    ) {
+        let harness = SessionHarness::new(session_capabilities(), Vec::new(), Vec::new(), cx).await;
+        let creation = harness.create(cx);
+        bounded(harness.new_requests.recv(), cx)
+            .await
+            .expect("creation request");
+        harness
+            .new_responses
+            .try_send(Ok(initial_response()))
+            .expect("creation response");
+        let executor = cx.executor();
+        let dispatcher = executor
+            .dispatcher()
+            .as_test()
+            .expect("deterministic dispatcher");
+        for _ in 0..1000 {
+            dispatcher.tick(true);
+            dispatcher.tick(false);
+            if !harness.client.sessions.borrow().is_empty() {
+                break;
+            }
+        }
+        assert_eq!(harness.client.sessions.borrow().len(), 1);
+        drop(creation);
+        assert_eq!(
+            bounded(harness.closes.recv(), cx)
+                .await
+                .expect("close undelivered session"),
+            acp::SessionId::new("session")
+        );
+        cx.run_until_parked();
+        cx.update(|_| ());
+        assert!(harness.client.sessions.borrow().is_empty());
     }
 
     #[gpui::test]
