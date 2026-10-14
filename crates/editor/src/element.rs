@@ -11407,6 +11407,7 @@ mod tests {
     use text::PointUtf16;
     use util::test::sample_text;
 
+    // Regression test for https://github.com/zed-industries/zed/issues/65453.
     #[gpui::test]
     fn test_ime_underlines_with_diagnostics_disabled(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
@@ -11488,6 +11489,7 @@ mod tests {
         }
     }
 
+    // Regression test for https://github.com/zed-industries/zed/pull/48510.
     #[gpui::test]
     fn test_minimap_filters_semantic_token_underlines(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
