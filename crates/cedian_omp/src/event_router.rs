@@ -241,15 +241,23 @@ impl EventRouter {
     /// Classify one notification frame, append to the log, broadcast. Dead
     /// subscribers are pruned. Never fails on unknown input.
     pub fn dispatch_notification(&self, frame: &RpcNotification) {
-        if let RpcNotification::RpcAgentEvent(RpcAgentEvent::MessageEnd(end)) = frame {
-            if let AgentMessage::Assistant(message) = &end.message {
-                if let Some(model) = &message.model {
-                    let id = match &message.provider {
-                        Some(provider) => format!("{provider}/{model}"),
-                        None => model.clone(),
-                    };
-                    self.inner.lock().answered.insert(id);
-                }
+        // From the message's start too: OMP's Cursor provider runs a whole
+        // tool loop inside one assistant message, so its end comes after a
+        // review the implementer asked for in that loop.
+        let answering = match frame {
+            RpcNotification::RpcAgentEvent(RpcAgentEvent::MessageStart(start)) => {
+                Some(&start.message)
+            }
+            RpcNotification::RpcAgentEvent(RpcAgentEvent::MessageEnd(end)) => Some(&end.message),
+            _ => None,
+        };
+        if let Some(AgentMessage::Assistant(message)) = answering {
+            if let Some(model) = &message.model {
+                let id = match &message.provider {
+                    Some(provider) => format!("{provider}/{model}"),
+                    None => model.clone(),
+                };
+                self.inner.lock().answered.insert(id);
             }
         }
         let classified = classify_notification(frame);
@@ -977,6 +985,22 @@ mod tests {
             ["opencode-go/glm-5.3", "opencode-go/muse-spark-1.3"],
             "each model once, sorted"
         );
+    }
+
+    /// OMP's Cursor provider (`api: cursor-agent`) calls tools inside one
+    /// assistant message: a review asked for mid-message must already know
+    /// the model (tests/fixtures/s3_same_model.jsonl, records 24 and 237).
+    #[test]
+    fn a_model_answers_from_its_messages_start() {
+        let router = EventRouter::new();
+        router.dispatch_notification(&RpcNotification::RpcAgentEvent(agent_event(
+            serde_json::json!({
+                "type": "message_start",
+                "message": {"role": "assistant", "content": [], "timestamp": 0,
+                            "api": "cursor-agent", "provider": "cursor", "model": "default"},
+            }),
+        )));
+        assert_eq!(router.answered_models(), ["cursor/default"]);
     }
 
     #[test]

@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 /// The env var naming the OMP a record lane proxies to.
 pub const RECORD_OMP_ENV: &str = "CEDIAN_RECORD_OMP";
 
+/// The pinned OMP itself, not the pass's wrapper: what a sandboxed reviewer
+/// records against (ADR-0066), since its profile cannot exec the wrapper.
+pub const RECORD_OMP_REAL_ENV: &str = "CEDIAN_RECORD_OMP_REAL";
+
 /// The env var naming the app's record lane to arm (one per run).
 pub const APP_RECORD_ENV: &str = "CEDIAN_U12_RECORD";
 
@@ -278,8 +282,14 @@ pub fn model_turns(recorded: &str) -> usize {
 pub fn write_fixture(recorded: &Path, fixture: &Path) {
     let model = std::env::var(RECORD_MODEL_ENV)
         .unwrap_or_else(|_| panic!("{RECORD_MODEL_ENV}: the model this recording must run on"));
+    write_fixture_on(recorded, fixture, &model);
+}
+
+/// [`write_fixture`] for a recording that runs on `model` rather than the
+/// pass's: the independent reviewer's (ADR-0066).
+pub fn write_fixture_on(recorded: &Path, fixture: &Path, model: &str) {
     let text = std::fs::read_to_string(recorded).unwrap_or_default();
-    match try_write_fixture(recorded, fixture, &Owner::current(), &model) {
+    match try_write_fixture(recorded, fixture, &Owner::current(), model) {
         Ok(turns) => println!(
             "fixture written: {} (model turns: {turns})",
             fixture.display()

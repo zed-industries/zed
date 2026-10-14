@@ -2,7 +2,9 @@
 //! resume a session another live process holds, and both then append to one
 //! file (measured on OMP 18.6.1). cedian refuses instead: before it drives a
 //! session it lists the processes holding the session's files, and any
-//! process but its own OMP is another driver.
+//! process outside its own OMP's process group is another driver (OMP is
+//! spawned as a group leader, so a proxy's OMP, such as a recording's,
+//! stays one of its own).
 //!
 //! The files: the session `.jsonl`, which a process keeps open for writing
 //! once it has written to the session, and the owner lease OMP's creating
@@ -47,9 +49,14 @@ pub fn state_root() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".omp"))
 }
 
-/// The holders that are not `own`, the app's OMP: other drivers.
-pub fn other_drivers(holders: &[u32], own: u32) -> Vec<u32> {
-    let mut others: Vec<u32> = holders.iter().copied().filter(|pid| *pid != own).collect();
+/// The holders outside `own`'s process group (`own` is the app's OMP, a
+/// group leader; `group_of` answers a pid's group): other drivers.
+pub fn other_drivers(holders: &[u32], own: u32, group_of: impl Fn(u32) -> Option<u32>) -> Vec<u32> {
+    let mut others: Vec<u32> = holders
+        .iter()
+        .copied()
+        .filter(|pid| *pid != own && group_of(*pid) != Some(own))
+        .collect();
     others.sort_unstable();
     others.dedup();
     others
@@ -140,6 +147,13 @@ pub fn holders_with(
     ))
 }
 
+fn process_group(pid: u32) -> Option<u32> {
+    let pid = libc::pid_t::try_from(pid).ok()?;
+    // SAFETY: getpgid reads another process's group id and touches no memory.
+    let group = unsafe { libc::getpgid(pid) };
+    u32::try_from(group).ok().filter(|g| *g > 0)
+}
+
 /// SIGKILL the process group led by `pid`, a driver of the app's own that
 /// did not exit (OMP is spawned as a group leader, so this reaches every
 /// process it started).
@@ -163,7 +177,7 @@ pub fn other_drivers_of(
     if must_see && !files.iter().any(|f| f.exists()) {
         return Err("none of the session's files could be found".to_string());
     }
-    holders(files).map(|pids| other_drivers(&pids, own))
+    holders(files).map(|pids| other_drivers(&pids, own, process_group))
 }
 
 #[cfg(test)]
@@ -172,8 +186,28 @@ mod tests {
 
     #[test]
     fn the_apps_own_omp_is_not_another_driver() {
-        assert_eq!(other_drivers(&[7, 9, 7, 3], 7), [3, 9]);
-        assert!(other_drivers(&[7], 7).is_empty());
+        let alone = |pid: u32| Some(pid);
+        assert_eq!(other_drivers(&[7, 9, 7, 3], 7, alone), [3, 9]);
+        assert!(other_drivers(&[7], 7, alone).is_empty());
+    }
+
+    /// A recording's proxy is the app's OMP and the real OMP its child, in
+    /// the group the proxy leads: that child holds the session, and is ours.
+    #[test]
+    fn a_process_in_the_apps_omp_group_is_not_another_driver() {
+        let group_of = |pid: u32| match pid {
+            8 => Some(7),
+            9 => Some(9),
+            _ => None,
+        };
+        assert_eq!(other_drivers(&[8, 9, 3], 7, group_of), [3, 9]);
+    }
+
+    #[test]
+    fn the_real_process_group_of_this_test_is_read() {
+        let me = std::process::id();
+        let group = process_group(me).expect("this process has a group");
+        assert!(other_drivers(&[me], group, process_group).is_empty());
     }
 
     fn scratch(name: &str) -> PathBuf {

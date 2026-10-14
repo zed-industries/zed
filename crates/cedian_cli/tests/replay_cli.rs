@@ -353,10 +353,11 @@ fn s3_review_scenario(record: bool) {
     let root = root.canonicalize().unwrap();
     let sessions = root.join("sessions");
     let reviewer = sessions.join("reviewer");
-    roles(&sessions, Some("opencode-go/glm-5.3"));
+    let implementer = implementer_model(record, S3_IMPLEMENTER_MODEL);
+    roles(&sessions, &implementer, Some(REVIEWER_MODEL));
     if record {
         arm(&sessions, &root);
-        arm(&reviewer, &root);
+        std::fs::write(root.join("cedian.toml"), arm_reviewer(&reviewer)).unwrap();
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(S3_FIXTURE)).unwrap();
         cedian_fake_omp::install_replay(&reviewer, Path::new(S3_REVIEWER_FIXTURE)).unwrap();
@@ -380,11 +381,12 @@ fn s3_review_scenario(record: bool) {
             &sessions.join(cedian_fake_omp::RECORDED_FILE),
             Path::new(S3_FIXTURE),
         );
-        cedian_fake_omp::recording::write_fixture(
+        cedian_fake_omp::recording::write_fixture_on(
             &reviewer
                 .join("run/session")
                 .join(cedian_fake_omp::RECORDED_FILE),
             Path::new(S3_REVIEWER_FIXTURE),
+            REVIEWER_MODEL,
         );
     }
     let edited = std::fs::read_to_string(root.join("ws/add.py")).unwrap();
@@ -461,13 +463,10 @@ fn s3_review_scenario(record: bool) {
         .find(|r| r["item"]["kind"] == "review")
         .unwrap_or_else(|| panic!("review audited: {rows:?}"));
     assert_eq!(review_row["item"]["independent"], true);
-    assert_eq!(
-        review_row["item"]["reviewer_models"][0],
-        "opencode-go/glm-5.3"
-    );
+    assert_eq!(review_row["item"]["reviewer_models"][0], REVIEWER_MODEL);
     assert_eq!(
         review_row["item"]["implementer_models"][0],
-        "opencode-go/muse-spark-1.3-contributor"
+        implementer.as_str()
     );
     let evidence = workflow["evidence"]
         .as_object()
@@ -480,7 +479,7 @@ fn s3_review_scenario(record: bool) {
         evidence["provenance"]["attributed"].is_object(),
         "{evidence}"
     );
-    assert_eq!(blocker["reviewer_model"], "opencode-go/glm-5.3");
+    assert_eq!(blocker["reviewer_model"], REVIEWER_MODEL);
 
     let review = cedian(&root, &["review"]);
     assert!(review.contains(&format!("{id} [open blocker]")), "{review}");
@@ -517,10 +516,14 @@ fn s3_same_model_scenario(record: bool) {
     let root = root.canonicalize().unwrap();
     let sessions = root.join("sessions");
     let reviewer = sessions.join("reviewer");
-    roles(&sessions, None);
+    roles(
+        &sessions,
+        &implementer_model(record, S3_IMPLEMENTER_MODEL),
+        None,
+    );
     if record {
         arm(&sessions, &root);
-        arm(&reviewer, &root);
+        std::fs::write(root.join("cedian.toml"), arm_reviewer(&reviewer)).unwrap();
     } else {
         cedian_fake_omp::install_replay(&sessions, Path::new(S3_SAME_FIXTURE)).unwrap();
         cedian_fake_omp::install_replay(&reviewer, Path::new(S3_SAME_REVIEWER_FIXTURE)).unwrap();
@@ -541,6 +544,7 @@ fn s3_same_model_scenario(record: bool) {
             &sessions.join(cedian_fake_omp::RECORDED_FILE),
             Path::new(S3_SAME_FIXTURE),
         );
+        // Same-model review: the reviewer runs on the pass's model.
         cedian_fake_omp::recording::write_fixture(
             &reviewer
                 .join("run/session")
@@ -581,10 +585,10 @@ fn s3_same_model_scenario(record: bool) {
 
 /// The user's OMP model roles as cedian reads them: from the cedian-owned
 /// roles dir under the session dir (ADR-0039 decision 3).
-fn roles(sessions: &Path, review: Option<&str>) {
+fn roles(sessions: &Path, default: &str, review: Option<&str>) {
     let dir = sessions.join("roles/.omp");
     std::fs::create_dir_all(&dir).unwrap();
-    let mut text = "modelRoles:\n  default: opencode-go/muse-spark-1.3-contributor\n".to_string();
+    let mut text = format!("modelRoles:\n  default: {default}\n");
     if let Some(model) = review {
         text.push_str(&format!("  review: {model}\n"));
     }
@@ -596,13 +600,48 @@ fn roles(sessions: &Path, review: Option<&str>) {
 fn arm(sessions: &Path, root: &Path) {
     let omp = cedian_fake_omp::recording::pinned_omp().unwrap_or_else(|e| panic!("{e}"));
     cedian_fake_omp::arm_record(sessions, &omp).unwrap();
-    // A review spawns the reviewer's own OMP from the same binary, which in a
-    // record lane is this test's: without a marker where the reviewer's spawn
-    // looks, it proxies nothing and the review fails with "server closed". The
-    // reviewer's session dir is fixed per implementer session (`reviewer_dir`,
-    // `<sessions>/reviewer/run/session`).
-    cedian_fake_omp::arm_record(&sessions.join("reviewer/run/session"), &omp).unwrap();
     std::fs::write(root.join(RECORD_HOME), "").unwrap();
+}
+
+/// The model the reviewer lanes' roles config gives the reviewer, which its
+/// fixture is checked against (ADR-0066).
+const REVIEWER_MODEL: &str = "opencode-go/glm-5.3";
+
+/// The model the s3 fixtures' implementer ran on, which a replay expects.
+const S3_IMPLEMENTER_MODEL: &str = "cursor/default";
+
+/// The shell lane's fixtures' implementer model.
+const SHELL_IMPLEMENTER_MODEL: &str = "opencode-go/muse-spark-1.3-contributor";
+
+/// The implementer's model: a recording's is the pass's (the wrapper pins
+/// it; ADR-0067 lets u12b record the s3 lanes on another), a replay's is
+/// the one its fixture ran on.
+fn implementer_model(record: bool, replayed: &str) -> String {
+    if record {
+        std::env::var(cedian_fake_omp::recording::RECORD_MODEL_ENV)
+            .unwrap_or_else(|_| replayed.to_string())
+    } else {
+        replayed.to_string()
+    }
+}
+
+/// Arm the reviewer's recording in `reviewer` (`<sessions>/reviewer`, beside
+/// its overlay, where a replay's fixture goes too: each panel slot resets
+/// `run/`, so a marker there is gone before the reviewer starts). Its
+/// sandbox may exec the pinned OMP only, not the pass's wrapper, so the
+/// marker names the pinned OMP and the returned `cedian.toml` allows it
+/// (ADR-0066). The recording lands in `run/session`.
+fn arm_reviewer(reviewer: &Path) -> String {
+    let real = std::env::var_os(cedian_fake_omp::recording::RECORD_OMP_REAL_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            cedian_fake_omp::recording::pinned_omp().unwrap_or_else(|e| panic!("{e}"))
+        });
+    cedian_fake_omp::arm_record(reviewer, &real).unwrap();
+    format!(
+        "schema = 1\nreviewer_allow_list = [\"{}\"]\n",
+        real.display()
+    )
 }
 
 /// Marks a test root whose CLI keeps the person's HOME.
@@ -642,18 +681,15 @@ fn shell_scenario(record: bool) {
     // turn is recorded on its own (`CEDIAN_P2_RECORD=shellreview`); recording
     // proxies to real OMP, so the allow-list names `omp`.
     let reviewer = sessions.join("reviewer");
-    roles(&sessions, Some("opencode-go/glm-5.3"));
+    roles(&sessions, SHELL_IMPLEMENTER_MODEL, Some(REVIEWER_MODEL));
     let record_reviewer = std::env::var("CEDIAN_P2_RECORD").as_deref() == Ok("shellreview");
-    if record_reviewer {
-        arm(&reviewer, &root);
+    let toml = if record_reviewer {
+        arm_reviewer(&reviewer)
     } else {
         cedian_fake_omp::install_replay(&reviewer, Path::new(SHELL_REVIEWER_FIXTURE)).unwrap();
-    }
-    std::fs::write(
-        root.join("cedian.toml"),
-        "schema = 1\nreviewer_allow_list = [\"omp\"]\n",
-    )
-    .unwrap();
+        "schema = 1\nreviewer_allow_list = [\"omp\"]\n".to_string()
+    };
+    std::fs::write(root.join("cedian.toml"), toml).unwrap();
 
     let mut shell = cli(&root)
         .arg("shell")
@@ -737,11 +773,12 @@ fn shell_scenario(record: bool) {
         "{out}"
     );
     if record_reviewer {
-        cedian_fake_omp::recording::write_fixture(
+        cedian_fake_omp::recording::write_fixture_on(
             &reviewer
                 .join("run/session")
                 .join(cedian_fake_omp::RECORDED_FILE),
             Path::new(SHELL_REVIEWER_FIXTURE),
+            REVIEWER_MODEL,
         );
     }
     let findings = std::fs::read_to_string(state_dir(&root).join("findings.json")).unwrap();

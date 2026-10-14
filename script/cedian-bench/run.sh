@@ -418,7 +418,7 @@ record() {
   omp=$(wrapper on "$tap")
   out=$WORK/logs/record-$name.log
   # shellcheck disable=SC2086
-  (cd "$ROOT" && env $LANE_ENV CEDIAN_RECORD_OMP="$omp" CEDIAN_RECORD_MODEL="$BENCH_MODEL" \
+  (cd "$ROOT" && env $LANE_ENV CEDIAN_RECORD_OMP="$omp" CEDIAN_RECORD_OMP_REAL="$OMP" CEDIAN_RECORD_MODEL="$BENCH_MODEL" \
      CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -j4 $LANE_TEST) 2>&1 |
     tee "$out"
   # The lane's own tests decide the step: a recording whose test fails is

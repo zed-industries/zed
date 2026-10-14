@@ -1,13 +1,7 @@
 //! S9 U10d (ADR-0056): the P6 replay through the app. The real panel; OMP
-//! is fake-omp replaying `inline_edit.jsonl`, spliced from recordings and
-//! never added to: the app's preamble is `review.jsonl` records 1-17; the
-//! two `prompt` records are the app's own messages (the inline edit's,
-//! then the person's prompt with the app's context snapshot); after each
-//! come OMP's recorded frames from the P6 fixture `p6_revert.jsonl`
-//! (`git show c41e5623c8^:crates/cedian_cli/tests/fixtures/p6_revert.jsonl`),
-//! records 18-69 (the inline edit of line 2, its `fs_write` at record 52)
-//! and 71-122 (the prompt turn changing lines 1 and 4, `fs_write` at 105),
-//! unchanged.
+//! is fake-omp replaying `inline_edit.jsonl`, recorded against the pinned
+//! OMP 18.8.6 in the live pass u12b (ADR-0065): the inline edit's turn and
+//! the person's prompt turn, scrubbed.
 //!
 //! P6's checks, through the app:
 //! 1. the inline edit of line 2, asked for with ctrl-enter in the editor
@@ -21,8 +15,7 @@
 //!
 //! Record (`CEDIAN_U12_RECORD=inline_edit CEDIAN_RECORD_OMP=<pinned omp>`,
 //! two model turns): the same two turns against the pinned OMP; the
-//! scrubbed recording replaces `inline_edit.jsonl`, so it is no longer
-//! spliced.
+//! scrubbed recording replaces `inline_edit.jsonl`.
 //!
 //! Harness off: invoked with `--mode` (or `config`) this binary is fake-omp.
 
@@ -169,8 +162,14 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     wcx.simulate_input("make this line uppercase");
     wcx.simulate_keystrokes("enter");
     wcx.run_until_parked();
+    // The task's own end, not a reply word: the inline edit's message asks
+    // for an edit, not for "done", so a live take need not say it.
     wait(cx, &window, "the inline edit to settle", |p| {
-        p.turn() == &Turn::Idle && p.transcript().iter().any(|l| l.contains("done"))
+        p.turn() == &Turn::Idle
+            && p.review()
+                .files()
+                .first()
+                .is_some_and(|f| !f.agent_txns().is_empty())
     });
     assert_connected(cx, &window);
     let text = |cx: &mut TestAppContext| buffer.read_with(cx, |b, _| b.text());
