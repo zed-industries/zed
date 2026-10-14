@@ -827,6 +827,7 @@ impl std::fmt::Display for Model {
 mod tests {
     use super::*;
     use serde_json::json;
+    use strum::IntoEnumIterator;
 
     #[test]
     fn test_gemini_3_6_flash_model_metadata() {
@@ -933,6 +934,21 @@ mod tests {
         assert_eq!(serialized, json!("gemini-4-argon"));
         let deserialized: Model = serde_json::from_value(json!("gemini-4-argon")).unwrap();
         assert_eq!(deserialized, Model::Gemini4Argon);
+    }
+
+    #[test]
+    fn test_max_output_tokens_leave_room_for_input() {
+        // The agent reserves `max_output_tokens` from the shared context window,
+        // so an output limit equal to the window leaves no room for input.
+        for model in Model::iter() {
+            if let Some(max_output_tokens) = model.max_output_tokens() {
+                assert!(
+                    max_output_tokens < model.max_token_count(),
+                    "{} reserves its whole context window for output",
+                    model.id()
+                );
+            }
+        }
     }
 
     #[test]
