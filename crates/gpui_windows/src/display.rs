@@ -159,6 +159,13 @@ impl PlatformDisplay for WindowsDisplay {
     }
 }
 
+/// The refresh interval of `hmonitor`'s current mode.
+pub(crate) fn monitor_refresh_interval(hmonitor: HMONITOR) -> Option<std::time::Duration> {
+    get_monitor_info(hmonitor)
+        .ok()
+        .and_then(|info| refresh_interval_for_device(&info.szDevice))
+}
+
 /// The refresh rate of the monitor's current mode. With variable refresh
 /// rate, the mode's rate is the maximum.
 fn refresh_interval_for_device(device_name: &[u16; 32]) -> Option<std::time::Duration> {
@@ -183,6 +190,22 @@ fn refresh_interval_for_device(device_name: &[u16; 32]) -> Option<std::time::Dur
         return None;
     }
     refresh_interval_from_hz(f64::from(mode.dmDisplayFrequency))
+}
+
+/// The monitors that `rect` (screen pixels) overlaps.
+pub(crate) fn monitors_under(rect: RECT) -> SmallVec<[HMONITOR; 4]> {
+    let mut monitors: SmallVec<[HMONITOR; 4]> = SmallVec::new();
+    unsafe {
+        EnumDisplayMonitors(
+            None,
+            Some(&rect),
+            Some(monitor_enum_proc),
+            LPARAM(&mut monitors as *mut _ as _),
+        )
+        .ok()
+        .log_err();
+    }
+    monitors
 }
 
 fn available_monitors() -> SmallVec<[HMONITOR; 4]> {
