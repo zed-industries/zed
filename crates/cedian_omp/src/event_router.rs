@@ -193,8 +193,21 @@ pub struct FinishedToolCall {
     pub tool_call_id: String,
     pub tool_name: String,
     pub args_preview: String,
-    pub is_error: bool,
+    pub outcome: CallOutcome,
 }
+
+/// How a finished call ended. OMP marks both a refused approval and a bash
+/// that ran and exited non-zero as `isError`; only the refusal never ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallOutcome {
+    Ok,
+    Failed,
+    Denied,
+}
+
+/// The result text OMP's tool wrapper gives a call whose approval was
+/// refused (`extensibility/extensions/wrapper.ts`, pinned 18.8.6).
+const DENIED_PREFIX: &str = "Tool call denied by user: ";
 
 /// Single fan-out point: classifies session events, appends to the log, and
 /// broadcasts to subscribers. Reader-thread safe (`parking_lot::Mutex`, no await).
@@ -295,7 +308,7 @@ impl EventRouter {
     }
 
     /// Every call the log saw start and end, in completion order: name and
-    /// args preview from its `ToolStart`, `is_error` from its `ToolEnd`.
+    /// args preview from its `ToolStart`, the outcome from its `ToolEnd`.
     /// Host-tool evidence binds to these (P5, ADR-0031) — the log is the
     /// only witness, never the agent.
     pub fn finished_tool_calls(&self) -> Vec<FinishedToolCall> {
@@ -315,17 +328,23 @@ impl EventRouter {
                 RouterEvent::ToolEnd {
                     tool_call_id,
                     tool_name,
+                    result_summary,
                     is_error,
                     ..
                 } => {
                     let (name, preview) = started
                         .remove(tool_call_id.as_str())
                         .unwrap_or((tool_name, ""));
+                    let outcome = match (*is_error, result_summary.starts_with(DENIED_PREFIX)) {
+                        (false, _) => CallOutcome::Ok,
+                        (true, true) => CallOutcome::Denied,
+                        (true, false) => CallOutcome::Failed,
+                    };
                     done.push(FinishedToolCall {
                         tool_call_id: tool_call_id.clone(),
                         tool_name: name.to_string(),
                         args_preview: preview.to_string(),
-                        is_error: *is_error,
+                        outcome,
                     });
                 }
                 _ => {}
@@ -717,6 +736,9 @@ fn summarize_result(name: &str, result: Option<&serde_json::Value>) -> String {
         })
         .unwrap_or_default();
     let joined = content_texts.join("\n");
+    if joined.starts_with(DENIED_PREFIX) {
+        return joined.lines().next().unwrap_or("").to_string();
+    }
     let line_count = joined.lines().count();
     match name {
         "bash" | "eval" => {
@@ -867,11 +889,41 @@ mod tests {
                 tool_call_id: "ok".into(),
                 tool_name: "bash".into(),
                 args_preview: "bash args".into(),
-                is_error: false,
+                outcome: CallOutcome::Ok,
             }
         );
-        assert!(done[1].is_error);
+        assert_eq!(done[1].outcome, CallOutcome::Failed);
         assert_eq!(done.len(), 2, "a started-only call is not finished");
+    }
+
+    #[test]
+    fn a_refused_approval_is_denied_and_a_nonzero_exit_failed() {
+        let end = |id: &str, tool: &str, text: &str| {
+            classify_agent_event(&agent_event(serde_json::json!({
+                "type": "tool_execution_end", "toolCallId": id, "toolName": tool,
+                "result": {"content": [{"type": "text", "text": text}], "details": {}},
+                "isError": true,
+            })))
+        };
+        let router = EventRouter::new();
+        router.push(end("denied", "edit", "Tool call denied by user: edit"));
+        router.push(end(
+            "failed",
+            "bash",
+            "wrote out.txt\n\nCommand exited with code 1",
+        ));
+        let outcomes: Vec<_> = router
+            .finished_tool_calls()
+            .into_iter()
+            .map(|call| (call.tool_call_id, call.outcome))
+            .collect();
+        assert_eq!(
+            outcomes,
+            vec![
+                ("denied".to_string(), CallOutcome::Denied),
+                ("failed".to_string(), CallOutcome::Failed),
+            ]
+        );
     }
 
     #[test]

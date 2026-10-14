@@ -5,7 +5,7 @@
 
 use crate::workflow_store::{self, DiskWorkflowStore};
 use crate::{corrections, verify_store, workspace_files};
-use cedian_omp::FinishedToolCall;
+use cedian_omp::{CallOutcome, FinishedToolCall};
 use cedian_workflow::{BoundCall, CurrentState, WorkflowChannel, WorkflowStatus};
 use std::path::Path;
 use std::sync::Arc;
@@ -43,20 +43,23 @@ pub fn channel(
 
 /// The most recent call of `tool` (args containing `needle`) that finished
 /// without error and is not itself a channel report, with the first later
-/// successful call that may have changed files.
+/// call that ran and may have changed files.
 pub fn bound_call(calls: &[FinishedToolCall], tool: &str, needle: &str) -> Option<BoundCall> {
     let at = calls.iter().rposition(|call| {
-        !call.is_error
+        call.outcome == CallOutcome::Ok
             && call.tool_name == tool
             && call.args_preview.contains(needle)
             && !cedian_workflow::is_channel_call(&call.tool_name, &call.args_preview)
     })?;
     // ADR-0024: a later call that may have changed files means the
-    // workspace hashed now is not what this call saw. A denied or failed
-    // call changed nothing (S2 finding: headless Deny of bash/eval).
+    // workspace hashed now is not what this call saw. A denied call never
+    // ran; a failed one may have written before it failed.
     let mutated_after = calls[at + 1..]
         .iter()
-        .find(|c| !c.is_error && cedian_workflow::may_mutate(&c.tool_name, &c.args_preview))
+        .find(|c| {
+            c.outcome != CallOutcome::Denied
+                && cedian_workflow::may_mutate(&c.tool_name, &c.args_preview)
+        })
         .map(|c| format!("{} {}", c.tool_name, c.args_preview));
     let call = calls[at].clone();
     Some(BoundCall {
@@ -192,15 +195,14 @@ pub fn end_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cedian_omp::FinishedToolCall;
     use cedian_workflow::{TaskKind, TaskProfile, WorkflowState};
 
-    fn finished(id: &str, tool: &str, args: &str, is_error: bool) -> FinishedToolCall {
+    fn finished(id: &str, tool: &str, args: &str, outcome: CallOutcome) -> FinishedToolCall {
         FinishedToolCall {
             tool_call_id: id.into(),
             tool_name: tool.into(),
             args_preview: args.into(),
-            is_error,
+            outcome,
         }
     }
 
@@ -209,9 +211,9 @@ mod tests {
     #[test]
     fn a_denied_later_call_does_not_make_evidence_born_stale() {
         let calls = [
-            finished("1", "read", "notes.txt", false),
-            finished("2", "bash", "sh check.sh", true),
-            finished("3", "eval", "1+1", true),
+            finished("1", "read", "notes.txt", CallOutcome::Ok),
+            finished("2", "bash", "sh check.sh", CallOutcome::Denied),
+            finished("3", "eval", "1+1", CallOutcome::Denied),
         ];
         let bound = bound_call(&calls, "read", "notes").expect("the read binds");
         assert_eq!(
@@ -224,15 +226,34 @@ mod tests {
     #[test]
     fn a_successful_later_mutator_still_stales() {
         let calls = [
-            finished("1", "read", "notes.txt", false),
-            finished("2", "bash", "sh check.sh", true),
-            finished("3", "edit", "notes.txt", false),
+            finished("1", "read", "notes.txt", CallOutcome::Ok),
+            finished("2", "bash", "sh check.sh", CallOutcome::Denied),
+            finished("3", "edit", "notes.txt", CallOutcome::Ok),
         ];
         let bound = bound_call(&calls, "read", "notes").expect("the read binds");
         assert_eq!(
             bound.mutated_after.as_deref(),
             Some("edit notes.txt"),
             "a successful edit after the denied bash still stales"
+        );
+    }
+
+    #[test]
+    fn a_later_bash_that_ran_and_failed_still_stales() {
+        let calls = [
+            finished("1", "read", "notes.txt", CallOutcome::Ok),
+            finished(
+                "2",
+                "bash",
+                "sed -i s/a/b/ notes.txt && false",
+                CallOutcome::Failed,
+            ),
+        ];
+        let bound = bound_call(&calls, "read", "notes").expect("the read binds");
+        assert_eq!(
+            bound.mutated_after.as_deref(),
+            Some("bash sed -i s/a/b/ notes.txt && false"),
+            "a bash that exits non-zero may have written first"
         );
     }
 
