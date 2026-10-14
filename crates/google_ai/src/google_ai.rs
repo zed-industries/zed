@@ -732,8 +732,8 @@ impl Model {
             | Model::Gemini36Flash
             | Model::Gemini37Flash
             | Model::Gemini38Flash
-            | Model::Gemini31Pro => Some(65_536),
-            Model::Gemini4Argon => Some(1_048_576),
+            | Model::Gemini31Pro
+            | Model::Gemini4Argon => Some(65_536),
             Model::Custom { .. } => None,
         }
     }
@@ -917,7 +917,7 @@ mod tests {
         assert_eq!(model.request_id(), "gemini-4-argon");
         assert_eq!(model.display_name(), "Gemini 4 Argon");
         assert_eq!(model.max_token_count(), 1_048_576);
-        assert_eq!(model.max_output_tokens(), Some(1_048_576));
+        assert_eq!(model.max_output_tokens(), Some(65_536));
         assert!(model.supports_thinking());
         assert_eq!(
             model.supported_thinking_levels(),
