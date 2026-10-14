@@ -247,7 +247,7 @@ pub fn check_class(
             ClassStatus::Documented,
             Some("no proof: give `proof` {fail, pass} evidence ids".to_string()),
         ),
-        (_, Some(proof)) => match prove(proof, evidence, current) {
+        (_, Some(proof)) => match prove(proof, evidence, current, enforcer) {
             Ok(()) => (ClassStatus::Enforced, None),
             Err(why) => (ClassStatus::Documented, Some(why)),
         },
@@ -264,10 +264,12 @@ pub fn check_class(
 
 /// ADR-0032 decision 3: the enforcer failed on the old code (attributed,
 /// `fail`, no longer fresh) and passes now (attributed, `pass`, fresh).
+/// Both runs must carry the enforcer's command (ROADMAP residual closed).
 fn prove(
     proof: &Value,
     evidence: &dyn Fn(&str) -> Option<Evidence>,
     current: &CurrentState,
+    enforcer: &str,
 ) -> Result<(), String> {
     let get = |key: &str| -> Result<Evidence, String> {
         let id = proof
@@ -295,6 +297,24 @@ fn prove(
     }
     if let Some(why) = pass.stale_reason(current) {
         return Err(format!("proof pass {} is stale: {why}", pass.id));
+    }
+    for (side, e) in [("fail", &fail), ("pass", &pass)] {
+        let cmd = e
+            .command
+            .as_deref()
+            .filter(|c| !c.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "proof {side} {} has no command; cannot prove it ran `{enforcer}`",
+                    e.id
+                )
+            })?;
+        if !cmd.contains(enforcer) {
+            return Err(format!(
+                "proof {side} {} command `{cmd}` is not the enforcer `{enforcer}`",
+                e.id
+            ));
+        }
     }
     Ok(())
 }
@@ -549,6 +569,7 @@ mod tests {
             tool_call_id: format!("call-{id}"),
         };
         e.code_state = Some(state.bind(&[]));
+        e.command = Some("cargo clippy".into());
         e
     }
 
@@ -577,6 +598,38 @@ mod tests {
         assert!(on_head.note.unwrap().contains("not the mistake"));
         let swapped = class("e2", "e1");
         assert_eq!(swapped.status, ClassStatus::Documented);
+    }
+
+    #[test]
+    fn proof_without_the_enforcer_command_stays_documented() {
+        let now = CurrentState::from_files([("a.rs".to_string(), b"fixed".as_slice())]);
+        let mut wrong = evidence("e1", Outcome::Fail, "mistake");
+        wrong.command = Some("cargo test".into());
+        let mut bare = evidence("e1b", Outcome::Fail, "mistake");
+        bare.command = None;
+        let ok = evidence("e2", Outcome::Pass, "fixed");
+        let ev = |id: &str| match id {
+            "e1" => Some(wrong.clone()),
+            "e1b" => Some(bare.clone()),
+            "e2" => Some(ok.clone()),
+            _ => None,
+        };
+        let ask = |fail: &str| {
+            check_class(
+                &args(json!({"name": "x", "event_ids": ["c1", "c3"], "level": "lint", "enforcer": "clippy",
+                              "proof": {"fail": fail, "pass": "e2"}})),
+                &rows(),
+                &ev,
+                &now,
+            )
+            .unwrap()
+        };
+        let other = ask("e1");
+        assert_eq!(other.status, ClassStatus::Documented);
+        assert!(other.note.unwrap().contains("not the enforcer"));
+        let missing = ask("e1b");
+        assert_eq!(missing.status, ClassStatus::Documented);
+        assert!(missing.note.unwrap().contains("no command"));
     }
 
     #[test]

@@ -135,6 +135,41 @@ pub fn role_model(record: &Value, role: &str) -> (Option<String>, Option<String>
     }
 }
 
+/// Roles to spawn for a panel after same-model collapse and `max_reviewers`
+/// (ADR-0039 decision 5). Each slot is `(role, resolved model)`.
+pub fn select_panel_slots(
+    panel: &cedian_workflow::ReviewPanel,
+    model_roles: &Value,
+) -> (Vec<(String, Option<String>)>, Vec<String>) {
+    let mut slots = Vec::new();
+    let mut seen_models = Vec::new();
+    let mut notes = Vec::new();
+    for role in &panel.roles {
+        if slots.len() as u32 >= panel.max_reviewers {
+            notes.push(format!(
+                "role `{role}` skipped: floor max_reviewers is {}",
+                panel.max_reviewers
+            ));
+            continue;
+        }
+        let (model, note) = role_model(model_roles, role);
+        if let Some(note) = note {
+            notes.push(note);
+        }
+        if let Some(ref model) = model {
+            if seen_models.iter().any(|seen| seen == model) {
+                notes.push(format!(
+                    "role `{role}` skipped: same model as an earlier panel role ({model})"
+                ));
+                continue;
+            }
+            seen_models.push(model.clone());
+        }
+        slots.push((role.clone(), model));
+    }
+    (slots, notes)
+}
+
 /// Who reviewed and who edited the task, as the audit row, the findings
 /// and the reply record them (ADR-0039).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -284,8 +319,10 @@ fn refuse_review(
     Ok(reply)
 }
 
-/// Run one review of `task`; the reviewer's findings bind to `task_diffs`
-/// as it reports them. Returns the summary the implementing turn sees.
+/// Run the review panel for `task` (ADR-0039 decision 5). Matching floor
+/// `review_roles` run in order, same-model roles count once, capped by
+/// `max_reviewers`. Without floor roles, `[review] role` is the one slot.
+/// Returns the summary the implementing turn sees.
 pub fn run_review(
     place: &ReviewPlace,
     settings: &crate::Settings,
@@ -314,11 +351,8 @@ pub fn run_review(
     let layout = ReviewerLayout {
         dir: reviewer_dir(session_dir, workdir)?,
     };
-    layout
-        .reset()
-        .map_err(|e| format!("reviewer run dir: {e}"))?;
-    // One choice for the whole review: the reviewer runs the binary the
-    // config was read with, and says so when it is off the pin.
+    // One binary for the whole panel: every slot runs the OMP the config
+    // was read with, and says so when it is off the pin.
     let omp = crate::launch::omp_binary()?;
     let binary = std::fs::canonicalize(&omp.binary).map_err(|e| format!("omp binary: {e}"))?;
     let (exec_allow, mut notes) = resolve_allow_list(
@@ -326,115 +360,149 @@ pub fn run_review(
         std::env::var("PATH").ok().as_deref(),
     );
     notes.extend(omp.warning);
-    // ADR-0039 decision 3: read the role from a directory cedian owns, so a
-    // workspace's .omp/config.yml cannot choose who reviews it. The reviewer
-    // cannot write it either: its profile allows only its run dir.
+    // ADR-0039 decision 3: read roles from a directory cedian owns, so a
+    // workspace's .omp/config.yml cannot choose who reviews it.
     let roles_dir = session_dir.join("roles");
     std::fs::create_dir_all(&roles_dir).map_err(|e| format!("roles dir: {e}"))?;
-    let role = settings.review_role.as_str();
-    let model = match cedian_omp::omp_config_get(
+    let panel = match requester.channel.and_then(|ch| ch.task_profile().ok()) {
+        Some(profile) => settings
+            .floor
+            .review_panel_for(&profile, settings.review_role.as_str()),
+        None => cedian_workflow::ReviewPanel {
+            roles: vec![settings.review_role.as_str().to_string()],
+            max_reviewers: 1,
+        },
+    };
+    let (slots, panel_notes) = match cedian_omp::omp_config_get(
         &binary,
         &roles_dir,
         "modelRoles",
         Duration::from_secs(10),
     ) {
-        Ok(record) => {
-            let (model, note) = role_model(&record, role);
-            notes.extend(note);
-            model
-        }
+        Ok(record) => select_panel_slots(&panel, &record),
         Err(e) => {
             notes.push(format!(
-                "cannot read OMP's modelRoles ({e}): the reviewer runs on OMP's routing"
+                "cannot read OMP's modelRoles ({e}): each panel role runs on OMP's routing"
             ));
-            None
+            select_panel_slots(&panel, &json!({}))
         }
     };
+    notes.extend(panel_notes);
+    if slots.is_empty() {
+        return Err("no reviewer roles left after the floor panel was applied".to_string());
+    }
+
     let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME is not set")?);
-    let profile = ReviewerSandbox {
-        omp_binary: binary.clone(),
-        workspace: workdir.to_path_buf(),
-        run_dir: layout.run(),
-        read_deny: credential_paths(&home),
-        exec_allow,
-    }
-    .profile()?;
-    std::fs::write(layout.profile(), profile).map_err(|e| format!("reviewer profile: {e}"))?;
-    // Opened before the reviewer runs: a log that cannot be written stops
-    // the review instead of leaving its tool calls unrecorded.
     let mut audit = crate::audit::AuditLog::open(state_dir, Approvals::Reviewer)?;
+    let config_allows = crate::launch::config_allows(&binary, workdir)?;
+    let mut reply_parts = Vec::new();
+    let mut all_found = Vec::new();
+    let mut any_independent = false;
+    let mut panel_models = Vec::new();
 
-    let mut policy = SpawnPolicy {
-        approvals: Approvals::Reviewer,
-        bash_patterns: allow_patterns(&settings.reviewer_allow_list),
-        config_allows: crate::launch::config_allows(&binary, workdir)?,
-        model,
-        sandbox: Some(layout.clone()),
-        ..SpawnPolicy::default()
+    for (role, model) in slots {
+        layout
+            .reset()
+            .map_err(|e| format!("reviewer run dir: {e}"))?;
+        let profile = ReviewerSandbox {
+            omp_binary: binary.clone(),
+            workspace: workdir.to_path_buf(),
+            run_dir: layout.run(),
+            read_deny: credential_paths(&home),
+            exec_allow: exec_allow.clone(),
+        }
+        .profile()?;
+        std::fs::write(layout.profile(), profile).map_err(|e| format!("reviewer profile: {e}"))?;
+
+        let mut policy = SpawnPolicy {
+            approvals: Approvals::Reviewer,
+            bash_patterns: allow_patterns(&settings.reviewer_allow_list),
+            config_allows: config_allows.clone(),
+            model,
+            sandbox: Some(layout.clone()),
+            ..SpawnPolicy::default()
+        };
+        policy.host_tools.insert(REVIEW_FINDING_TOOL.to_string());
+        let mut rt = OmpRuntime::spawn(RuntimeConfig {
+            binary: OmpBinary::Bundled(binary.clone()),
+            session_dir: layout.session(),
+            sessions: cedian_omp::Sessions::InSessionDir,
+            cwd: workdir.to_path_buf(),
+            ask_dialog: true,
+            prompt_timeout: Duration::from_secs(600),
+            policy,
+        })
+        .map_err(|e| format!("reviewer spawn ({role}): {e}"))?;
+        rt.deny_ui_requests();
+        rt.set_host_tools(vec![review_findings::review_finding_tool(
+            state_dir.to_path_buf(),
+            task_diffs.clone(),
+        )])
+        .map_err(|e| e.to_string())?;
+        let router = rt.router();
+        let (sub, events) = router.subscribe();
+        let before = review_findings::load(state_dir)?.findings.len();
+        let turn = rt.prompt(&prompt(&diff, focus), vec![]);
+
+        let mut audit_result = Ok(());
+        for event in events.try_iter() {
+            audit_result = audit_result.and_then(|()| audit.record(&event));
+        }
+        router.unsubscribe(sub);
+        for refusal in rt.take_refused_ui_requests() {
+            audit_result = audit_result.and_then(|()| audit.dialog(&refusal));
+            notes.push(format!(
+                "refused for the reviewer ({role}): {}",
+                refusal.label
+            ));
+        }
+        let reviewer_models = router.answered_models();
+        let _ = rt.shutdown();
+        audit_result?;
+        turn.map_err(|e| format!("reviewer turn ({role}): {e}"))?;
+
+        let attribution = ReviewAttribution {
+            role: role.clone(),
+            reviewer: reviewer_models,
+            implementer: editors.clone(),
+        };
+        let mut findings = review_findings::load(state_dir)?;
+        for f in findings.findings.iter_mut().skip(before) {
+            f.reviewer_model = Some(attribution.reviewer.join(", "));
+            f.implementer_models = attribution.implementer.clone();
+        }
+        review_findings::save(state_dir, &mut findings)?;
+        let found = findings.findings.split_off(before);
+        audit.review(
+            &attribution.role,
+            &attribution.reviewer,
+            &attribution.implementer,
+            attribution.independent(),
+        )?;
+        any_independent |= attribution.independent();
+        panel_models.extend(attribution.reviewer.iter().cloned());
+        reply_parts.push(review_reply(&attribution, &found));
+        all_found.extend(found);
+    }
+
+    panel_models.sort();
+    panel_models.dedup();
+    let mut reply = if reply_parts.len() == 1 {
+        reply_parts.remove(0)
+    } else {
+        format!(
+            "review panel ({} role(s)):\n{}",
+            reply_parts.len(),
+            reply_parts.join("\n")
+        )
     };
-    policy.host_tools.insert(REVIEW_FINDING_TOOL.to_string());
-    let mut rt = OmpRuntime::spawn(RuntimeConfig {
-        binary: OmpBinary::Bundled(binary),
-        session_dir: layout.session(),
-        sessions: cedian_omp::Sessions::InSessionDir,
-        cwd: workdir.to_path_buf(),
-        ask_dialog: true,
-        prompt_timeout: Duration::from_secs(600),
-        policy,
-    })
-    .map_err(|e| format!("reviewer spawn: {e}"))?;
-    rt.deny_ui_requests();
-    rt.set_host_tools(vec![review_findings::review_finding_tool(
-        state_dir.to_path_buf(),
-        task_diffs,
-    )])
-    .map_err(|e| e.to_string())?;
-    let router = rt.router();
-    let (sub, events) = router.subscribe();
-    let before = review_findings::load(state_dir)?.findings.len();
-    let turn = rt.prompt(&prompt(&diff, focus), vec![]);
-
-    let mut audit_result = Ok(());
-    for event in events.try_iter() {
-        audit_result = audit_result.and_then(|()| audit.record(&event));
-    }
-    router.unsubscribe(sub);
-    for refusal in rt.take_refused_ui_requests() {
-        audit_result = audit_result.and_then(|()| audit.dialog(&refusal));
-        notes.push(format!("refused for the reviewer: {}", refusal.label));
-    }
-    let reviewer_models = router.answered_models();
-    // Shut down before any `?`: an error must not leave the reviewer running.
-    let _ = rt.shutdown();
-    audit_result?;
-    turn.map_err(|e| format!("reviewer turn: {e}"))?;
-
-    let attribution = ReviewAttribution {
-        role: role.to_string(),
-        reviewer: reviewer_models,
-        implementer: editors,
-    };
-    let mut findings = review_findings::load(state_dir)?;
-    for f in findings.findings.iter_mut().skip(before) {
-        f.reviewer_model = Some(attribution.reviewer.join(", "));
-        f.implementer_models = attribution.implementer.clone();
-    }
-    review_findings::save(state_dir, &mut findings)?;
-    let found = findings.findings.split_off(before);
-    audit.review(
-        &attribution.role,
-        &attribution.reviewer,
-        &attribution.implementer,
-        attribution.independent(),
-    )?;
-
-    let mut reply = review_reply(&attribution, &found);
     if let Some(channel) = requester.channel {
-        let outcome = review_outcome(attribution.independent(), found.iter().any(is_blocker));
+        let outcome = review_outcome(any_independent, all_found.iter().any(is_blocker));
         let summary = format!(
-            "review: {} finding(s), {}",
-            found.len(),
-            attribution.models()
+            "review: {} finding(s), reviewer {}, implementer {}",
+            all_found.len(),
+            or_unknown(&panel_models),
+            or_unknown(&editors)
         );
         if let Some(id) = channel.cedian_evidence(
             "review",
@@ -634,6 +702,34 @@ mod tests {
         assert_eq!(model.as_deref(), Some("opencode-go/muse"));
         assert!(note.unwrap().contains("runs on `default`"));
         assert_eq!(role_model(&json!({}), "review").0, None);
+    }
+
+    #[test]
+    fn panel_slots_dedupe_same_model_and_respect_max_reviewers() {
+        let panel = cedian_workflow::ReviewPanel {
+            roles: vec!["review".into(), "review-alt".into(), "security".into()],
+            max_reviewers: 2,
+        };
+        let roles = json!({
+            "review": "opencode-go/glm",
+            "review-alt": "opencode-go/glm",
+            "security": "opencode-go/muse",
+            "default": "opencode-go/muse"
+        });
+        let (slots, notes) = select_panel_slots(&panel, &roles);
+        assert_eq!(
+            slots,
+            vec![
+                ("review".into(), Some("opencode-go/glm".into())),
+                ("security".into(), Some("opencode-go/muse".into())),
+            ]
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("review-alt") && n.contains("same model")),
+            "{notes:?}"
+        );
     }
 
     #[test]

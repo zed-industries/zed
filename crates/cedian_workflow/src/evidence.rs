@@ -126,6 +126,11 @@ pub struct Evidence {
     /// navigation makes it `stale-frame`.
     #[serde(default)]
     pub frame_seq: Option<u64>,
+    /// The producing call's command / args preview (bash, eval, …). Class
+    /// proof (ADR-0032) requires both proof runs to carry the enforcer's
+    /// command. Absent on old rows and on non-exec observations.
+    #[serde(default)]
+    pub command: Option<String>,
 }
 
 impl Evidence {
@@ -154,6 +159,7 @@ impl Evidence {
             measurement: None,
             feature: None,
             frame_seq: None,
+            command: None,
         }
     }
 
@@ -177,12 +183,20 @@ impl Evidence {
             measurement: None,
             feature: None,
             frame_seq: None,
+            command: None,
         }
     }
 
     /// Bind to the code state the producing call saw.
     pub fn with_code_state(mut self, state: CodeState) -> Self {
         self.code_state = Some(state);
+        self
+    }
+
+    /// Record the producing call's command / args preview.
+    pub fn with_command(mut self, command: impl Into<String>) -> Self {
+        let c = command.into();
+        self.command = if c.is_empty() { None } else { Some(c) };
         self
     }
 

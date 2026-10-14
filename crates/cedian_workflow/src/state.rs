@@ -557,6 +557,7 @@ mod tests {
             frame_seq: None,
             measurement: None,
             feature: None,
+            command: None,
         }
     }
 
@@ -656,6 +657,8 @@ mod tests {
                 kind: TaskKind::BugFix,
                 min_risk: Risk::Low,
                 gates: vec![gate("verify"), gate("lint")],
+                review_roles: Vec::new(),
+                max_reviewers: None,
             }],
         };
         let mut w = WorkflowState::start_with_floor(bugfix_task(Risk::Low), &floor).unwrap();
@@ -751,6 +754,7 @@ mod tests {
             frame_seq: None,
             measurement: None,
             feature: None,
+            command: None,
         })
         .unwrap();
         w.advance(true, &ws()).unwrap();

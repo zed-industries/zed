@@ -501,6 +501,29 @@ mod tests {
     }
 
     #[test]
+    fn floor_review_roles_and_max_reviewers_load() {
+        let s = parse(
+            "schema = 1\n[[workflow.floor]]\nkind = \"feature\"\nmin_risk = \"low\"\n\
+             review_roles = [\"review\", \"review-alt\"]\nmax_reviewers = 2\n\
+             gates = [{ id = \"tests\", gate_kind = \"test\" }]",
+        )
+        .unwrap();
+        let rule = &s.floor.rules[0];
+        assert_eq!(rule.review_roles, vec!["review", "review-alt"]);
+        assert_eq!(rule.max_reviewers, Some(2));
+        let err = parse(
+            "schema = 1\n[[workflow.floor]]\nkind = \"feature\"\nmin_risk = \"low\"\n\
+             review_roles = [\"opencode-go/muse\"]\n\
+             gates = [{ id = \"tests\", gate_kind = \"test\" }]",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, SettingsError::BadFloor(e) if e.contains("model id")),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn project_policy_must_be_cedian_or_omp() {
         assert!(matches!(
             parse("schema = 1\n[projects.\"/x\"]\npolicy = \"yolo\""),

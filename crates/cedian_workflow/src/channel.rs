@@ -271,7 +271,8 @@ impl WorkflowChannel {
                             &self.task_id,
                             &call.tool_call_id,
                         )
-                        .with_code_state(current.bind(&named_paths(&call.args_preview, &current)));
+                        .with_code_state(current.bind(&named_paths(&call.args_preview, &current)))
+                        .with_command(call.args_preview.clone());
                         let mut origin = format!(
                             "attributed to {} call `{}`",
                             call.tool_name, call.args_preview
@@ -603,6 +604,12 @@ impl WorkflowChannel {
     /// The state gates are judged against now.
     pub fn current(&self) -> CurrentState {
         (self.current)()
+    }
+
+    /// The active workflow's task profile, when a workflow is running.
+    pub fn task_profile(&self) -> Result<crate::TaskProfile, String> {
+        let _guard = store_lock();
+        Ok(self.active()?.task)
     }
 
     /// Evidence cedian produced itself, such as a review it ran (ADR-0039):
@@ -949,6 +956,7 @@ mod tests {
                 tool_call_id: "bash-1".into()
             }
         );
+        assert_eq!(attributed[0].command.as_deref(), Some("cargo test"));
     }
 
     #[test]
@@ -1197,6 +1205,8 @@ mod tests {
                 kind: TaskKind::BugFix,
                 min_risk: Risk::Low,
                 gates: vec![floor_gate],
+                review_roles: Vec::new(),
+                max_reviewers: None,
             }],
         };
         let store = Arc::new(MemStore::default());

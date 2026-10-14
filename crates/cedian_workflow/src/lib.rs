@@ -35,7 +35,7 @@ pub use channel::{
 };
 pub use code_state::{CodeState, CurrentState, content_hash};
 pub use evidence::{Evidence, EvidenceKind, Measurement, Outcome, Provenance};
-pub use floor::{FloorRule, FloorRuleSpec, GateFloor};
+pub use floor::{FloorRule, FloorRuleSpec, GateFloor, ReviewPanel};
 pub use gate::{
     Gate, GateError, GateId, GateKind, GatePredicate, GateResult, GateSpec, GateStatus,
     MAX_CONTINUE,
