@@ -272,10 +272,9 @@ impl Render for AnimationExample {
                                     ),
                             )
                             .child(
-                                svg()
+                                svg(ARROW_CIRCLE_SVG)
                                     .size_20()
                                     .overflow_hidden()
-                                    .path(ARROW_CIRCLE_SVG)
                                     .text_color(gpui::black())
                                     .with_animation(
                                         "image_circle",
