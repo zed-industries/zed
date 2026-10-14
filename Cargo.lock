@@ -15043,7 +15043,6 @@ dependencies = [
  "util",
  "uuid",
  "watch",
- "windows 0.62.2",
  "workspace",
  "worktree",
  "zlog",
