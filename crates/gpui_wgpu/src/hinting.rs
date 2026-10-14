@@ -4,6 +4,7 @@
 const LILEX_UNHINTED_GLYPHS: &[&str] = &[
     "bar_hyphen_start.seq",  // | at the start of |- or |--
     "bar_hyphen_middle.seq", // | between hyphens in -|- or --|--
+    "bar_hyphen_end.seq",    // | at the end of -| or --|
     "hyphen_start.seq",      // first - in -|- or --|--
     "hyphen_middle.seq",     // an interior - in |-- or --|--
     "hyphen_end.seq",        // final - in |-, -|-, or --|--

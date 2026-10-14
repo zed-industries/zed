@@ -1312,7 +1312,7 @@ mod tests {
                 .context("glyph has no raster rows")?;
             Ok(image.placement.top - row as i32)
         };
-        for text in ["|-", "-|-", "--|--"] {
+        for text in ["|-", "-|", "--|", "-----|", "-|-", "--|--"] {
             let layout = text_system.layout_line(
                 text,
                 gpui::px(12.0),
