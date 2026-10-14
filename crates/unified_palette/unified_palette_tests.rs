@@ -26,6 +26,7 @@ fn mode_from_query_strips_the_prefix() {
         mode_from_query("%search"),
         Some((Mode::TextFinder, "search"))
     );
+    assert_eq!(mode_from_query("?"), Some((Mode::Help, "")));
     assert_eq!(mode_from_query("file.rs"), None);
 }
 
@@ -262,6 +263,52 @@ async fn command_prefix_opens_existing_command_palette(cx: &mut TestAppContext) 
     command_palette.read_with(cx, |command_palette, cx| {
         assert_eq!(command_palette.query_with_mode_prefix(cx), ">needle");
         assert_eq!(command_palette.query(cx), "needle");
+    });
+}
+
+#[gpui::test]
+async fn help_prefix_shows_available_modes(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        init(cx);
+        file_finder::init(cx);
+    });
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+    cx.dispatch_action(workspace::ToggleFileFinder::default());
+    cx.run_until_parked();
+    let file_finder = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_modal::<file_finder::FileFinder>(cx)
+            .unwrap()
+    });
+    file_finder.update_in(cx, |file_finder, window, cx| {
+        file_finder.set_query("?", window, cx);
+    });
+    cx.run_until_parked();
+
+    workspace.read_with(cx, |workspace, cx| {
+        assert!(
+            workspace
+                .active_modal::<file_finder::FileFinder>(cx)
+                .is_none()
+        );
+        let help = workspace.active_modal::<ModeHelp>(cx).unwrap();
+        assert_eq!(help.read(cx).picker.read(cx).delegate.match_count(), 6);
+    });
+
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    workspace.read_with(cx, |workspace, cx| {
+        assert!(
+            workspace
+                .active_modal::<file_finder::FileFinder>(cx)
+                .is_some()
+        );
     });
 }
 

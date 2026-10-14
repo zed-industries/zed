@@ -1980,7 +1980,10 @@ impl PickerDelegate for FileFinderDelegate {
         let raw_query = raw_query.trim();
 
         if settings::UnifiedPaletteSettings::get_global(cx).enabled
-            && matches!(raw_query.chars().next(), Some('>' | '#' | '@' | ':' | '%'))
+            && matches!(
+                raw_query.chars().next(),
+                Some('>' | '#' | '@' | ':' | '%' | '?')
+            )
         {
             self.latest_search_id = post_inc(&mut self.search_count);
             self.cancel_flag.store(true, atomic::Ordering::Release);
