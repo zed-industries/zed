@@ -117,6 +117,7 @@ impl TextInput {
         cx: &mut Context<Self>,
     ) {
         self.is_selecting = true;
+        window.request_virtual_keyboard();
 
         if event.modifiers.shift {
             self.select_to(self.index_for_mouse_position(event.position), window, cx);

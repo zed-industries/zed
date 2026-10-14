@@ -753,36 +753,44 @@ pub(super) mod tests {
             ["text-will", "selection-will", "selection-did", "text-did"]
         );
 
-        let mut fields = slotmap::SlotMap::<gpui::FocusId, ()>::with_key();
-        let first_field = fields.insert(());
-        let second_field = fields.insert(());
-        delegate.ivars().borrow_mut().clear();
-        view.set_input_field(Some(first_field));
-        view.reconcile_text_input(sel!(reconcileTextInput));
-        assert_eq!(
-            *delegate.ivars().borrow(),
-            ["text-will", "selection-will", "selection-did", "text-did"]
-        );
+        // Delegate queries may leave autoreleased references on the native pool.
+        objc2::rc::autoreleasepool(|_| {
+            let mut fields = slotmap::SlotMap::<gpui::FocusId, ()>::with_key();
+            let first_field = fields.insert(());
+            let second_field = fields.insert(());
+            delegate.ivars().borrow_mut().clear();
+            view.set_input_field(Some(first_field));
+            view.reconcile_text_input(sel!(reconcileTextInput));
+            assert_eq!(
+                *delegate.ivars().borrow(),
+                ["text-will", "selection-will", "selection-did", "text-did"]
+            );
 
-        view.set_keyboard_visible(false);
-        view.reconcile_text_input(sel!(reconcileTextInput));
-        delegate.ivars().borrow_mut().clear();
-        view.set_input_field(Some(first_field));
-        view.refresh_keyboard();
-        view.reconcile_text_input(sel!(reconcileTextInput));
-        assert!(!view.ivars().keyboard_desired.get());
-        assert!(delegate.ivars().borrow().is_empty());
+            view.set_keyboard_visible(false);
+            view.reconcile_text_input(sel!(reconcileTextInput));
+            assert_eq!(view.ivars().input_field.get(), Some(first_field));
+            delegate.ivars().borrow_mut().clear();
+            view.set_input_field(Some(first_field));
+            view.refresh_keyboard();
+            view.reconcile_text_input(sel!(reconcileTextInput));
+            assert!(!view.ivars().keyboard_desired.get());
+            assert!(delegate.ivars().borrow().is_empty());
 
-        view.set_input_field(Some(second_field));
-        assert!(view.ivars().keyboard_desired.get());
-        view.reconcile_text_input(sel!(reconcileTextInput));
-        assert_eq!(
-            *delegate.ivars().borrow(),
-            ["text-will", "selection-will", "selection-did", "text-did"]
-        );
-        view.state_changed(TextInputStateChange::FocusLost);
-        assert_eq!(view.ivars().input_field.get(), None);
-        assert!(!view.ivars().keyboard_desired.get());
+            view.set_keyboard_visible(true);
+            assert_eq!(view.ivars().input_field.get(), Some(first_field));
+            assert!(view.ivars().keyboard_desired.get());
+
+            view.set_input_field(Some(second_field));
+            assert!(view.ivars().keyboard_desired.get());
+            view.reconcile_text_input(sel!(reconcileTextInput));
+            assert_eq!(
+                *delegate.ivars().borrow(),
+                ["text-will", "selection-will", "selection-did", "text-did"]
+            );
+            view.state_changed(TextInputStateChange::FocusLost);
+            assert_eq!(view.ivars().input_field.get(), None);
+            assert!(!view.ivars().keyboard_desired.get());
+        });
 
         drop(delegate);
         assert!(view.inputDelegate().is_none());

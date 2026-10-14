@@ -2034,14 +2034,6 @@ impl Window {
                     .log_err();
             }
         }));
-        platform_window.set_keyboard_dismiss_handler(Box::new({
-            let mut cx = cx.to_async();
-            move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.blur(cx))
-                    .log_err();
-            }
-        }));
         platform_window.on_input({
             let mut cx = cx.to_async();
             Box::new(move |event| {
@@ -8260,7 +8252,9 @@ mod tests {
         platform_window.simulate_insets_change(insets.clone());
         assert!(platform_window.frame_wake_count() > wakes);
         window
-            .update(cx, |_, window, _| {
+            .update(cx, |_, window, cx| {
+                let focus = cx.focus_handle();
+                window.focus(&focus, cx);
                 assert_eq!(window.insets(), insets);
                 assert_eq!(window.viewport_size(), size(px(400.), px(800.)));
                 assert_eq!(window.visual_viewport_bounds(), visual_bounds);
@@ -8270,6 +8264,7 @@ mod tests {
                 );
                 window.request_virtual_keyboard();
                 window.dismiss_virtual_keyboard();
+                assert!(focus.is_focused(window));
                 assert_eq!(window.viewport_size(), size(px(400.), px(800.)));
             })
             .unwrap();

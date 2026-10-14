@@ -250,7 +250,6 @@ pub(crate) struct IosWindowState {
     /// Callback for appearance changes
     appearance_changed_callback: CallbackSlot<Box<dyn FnMut()>>,
     insets_changed_callback: CallbackSlot<Box<dyn FnMut(WindowInsets)>>,
-    keyboard_dismiss_callback: CallbackSlot<Box<dyn FnMut()>>,
     keyboard_dismiss_touch: Cell<Option<KeyboardDismissTouch>>,
     keyboard_height: Cell<f32>,
     /// Current mouse position (from touch)
@@ -358,7 +357,6 @@ impl IosWindow {
             close_callback: CallbackSlot::default(),
             appearance_changed_callback: CallbackSlot::default(),
             insets_changed_callback: CallbackSlot::default(),
-            keyboard_dismiss_callback: CallbackSlot::default(),
             keyboard_dismiss_touch: Cell::new(None),
             keyboard_height: Cell::new(0.),
             mouse_position: Cell::new(Point::default()),
@@ -488,7 +486,7 @@ impl IosWindowState {
                 let delta = event.position - touch.start_position;
                 if delta.y >= KEYBOARD_DISMISS_DISTANCE && delta.y.abs() > delta.x.abs() * 1.25 {
                     self.keyboard_dismiss_touch.set(None);
-                    self.dismiss_keyboard();
+                    self.hide_keyboard();
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
@@ -572,11 +570,6 @@ impl IosWindowState {
 
     pub fn hide_keyboard(&self) {
         self.text_input_view.set_keyboard_visible(false);
-    }
-
-    fn dismiss_keyboard(&self) {
-        self.hide_keyboard();
-        self.keyboard_dismiss_callback.with(|callback| callback());
     }
 
     pub(super) fn with_input_handler<R>(
@@ -891,10 +884,6 @@ impl PlatformWindow for IosWindow {
 
     fn hide_soft_keyboard(&self) {
         self.hide_keyboard();
-    }
-
-    fn set_keyboard_dismiss_handler(&self, callback: Box<dyn FnMut()>) {
-        self.keyboard_dismiss_callback.set(callback);
     }
 
     fn text_input_state_changed(&self, change: TextInputStateChange) {
