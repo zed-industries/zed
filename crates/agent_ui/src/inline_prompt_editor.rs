@@ -10,8 +10,8 @@ use editor::{
 };
 use fs::Fs;
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, TextStyle, TextStyleRefinement, WeakEntity, Window, actions,
+    AnyElement, App, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, Subscription, TextStyle, TextStyleRefinement, WeakEntity, Window, actions,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
@@ -38,8 +38,8 @@ use crate::buffer_codegen::{BufferCodegen, CodegenAlternative};
 use crate::completion_provider::{
     PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
 };
-use crate::mention_set::paste_images_as_context;
 use crate::mention_set::{MentionSet, crease_for_mention};
+use crate::mention_set::{paste_images_as_context, show_images_not_supported_toast};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{
     CycleFavoriteModels, CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext,
@@ -411,15 +411,22 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if inline_assistant_model_supports_images(cx)
-            && let Some(task) = paste_images_as_context(
-                self.editor.clone(),
-                self.mention_set.clone(),
-                self.workspace.clone(),
-                window,
-                cx,
-            )
-        {
+        if !inline_assistant_model_supports_images(cx) {
+            if cx.read_from_clipboard().is_some_and(|clipboard| {
+                matches!(clipboard.entries().first(), Some(ClipboardEntry::Image(_)))
+            }) {
+                show_images_not_supported_toast(&self.workspace, cx);
+            }
+            return;
+        }
+
+        if let Some(task) = paste_images_as_context(
+            self.editor.clone(),
+            self.mention_set.clone(),
+            self.workspace.clone(),
+            window,
+            cx,
+        ) {
             task.detach();
         }
     }

@@ -1031,6 +1031,24 @@ pub(crate) fn load_external_image_from_path(
     Some((Image::from_bytes(format, content), name))
 }
 
+pub(crate) struct ImagesNotSupportedToast;
+
+/// Lets the user know that pasted images were ignored, rather than dropping them silently.
+pub(crate) fn show_images_not_supported_toast(workspace: &WeakEntity<Workspace>, cx: &mut App) {
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.show_toast(
+                workspace::Toast::new(
+                    workspace::notifications::NotificationId::unique::<ImagesNotSupportedToast>(),
+                    "Images can't be added: the current model or agent doesn't support images",
+                )
+                .autohide(),
+                cx,
+            );
+        })
+        .ok();
+}
+
 pub(crate) fn paste_images_as_context(
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
