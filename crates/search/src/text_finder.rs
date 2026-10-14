@@ -14,7 +14,7 @@ use language::Buffer;
 use picker::Picker;
 
 use project::ProjectPath;
-use settings::SeedQuerySetting;
+use settings::{SeedQuerySetting, Settings as _};
 use text::Anchor;
 use ui::Window;
 use workspace::{DismissDecision, ItemHandle, ModalView, Workspace, WorkspaceDb, WorkspaceId};
@@ -131,15 +131,19 @@ impl TextFinder {
     ) {
         pub use zed_actions::text_finder::Toggle;
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
-            let Some(text_picker) = workspace.active_modal::<Self>(cx) else {
+            if let Some(text_picker) = workspace.active_modal::<Self>(cx) {
+                text_picker.update(cx, |text_picker, cx| {
+                    text_picker.cycle_selection(window, cx);
+                });
+                return;
+            }
+
+            if settings::UnifiedPaletteSettings::get_global(cx).enabled {
+                Self::open_from_workspace_in_unified_mode(workspace, window, cx).detach();
+            } else {
                 let seed_query = Self::seed_query(workspace, window, cx);
                 Self::open(seed_query, window, cx).detach();
-                return;
-            };
-
-            text_picker.update(cx, |text_picker, cx| {
-                text_picker.cycle_selection(window, cx);
-            })
+            }
         });
     }
 
@@ -421,7 +425,30 @@ impl TextFinder {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
-        Self::open(Self::seed_query(workspace, window, cx), window, cx)
+        Self::open_from_workspace_with_query_mode(workspace, picker::QueryMode::Plain, window, cx)
+    }
+
+    pub fn open_from_workspace_in_unified_mode(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<()> {
+        Self::open_from_workspace_with_query_mode(
+            workspace,
+            picker::QueryMode::Prefixed('%'),
+            window,
+            cx,
+        )
+    }
+
+    fn open_from_workspace_with_query_mode(
+        workspace: &mut Workspace,
+        query_mode: picker::QueryMode,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<()> {
+        let seed_query = Self::seed_query(workspace, window, cx);
+        Self::open_with_query_mode(seed_query, query_mode, window, cx)
     }
 
     /// Opens a search query without adding unified-palette mode state.
@@ -529,6 +556,8 @@ impl TextFinder {
                 if query_mode == picker::QueryMode::Plain {
                     picker.select_query(window, cx);
                 }
+            } else if query_mode != picker::QueryMode::Plain {
+                picker.set_query_mode(query_mode, "", window, cx);
             }
         });
         cx.spawn({

@@ -313,6 +313,11 @@ pub struct SettingsContent {
     /// Default: false
     pub vim_mode: Option<bool>,
 
+    /// Whether to enable prefix-based navigation from the file finder and open modal shortcuts in the unified palette.
+    ///
+    /// Default: false
+    pub unified_palette: Option<bool>,
+
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
 
@@ -411,7 +416,7 @@ fallible_options::flattened_deserialize!(SettingsContent {
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
         journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
-        title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
+        title_bar, vim_mode, unified_palette, calls, which_key, vim, modeline_lines, feature_flags,
         instrumentation,
     },
     defaults: {},

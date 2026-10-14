@@ -48,7 +48,10 @@ use workspace::{
     MAX_RECENT_SELECTIONS, ModalView, OpenChannelNotesById, OpenOptions, OpenVisible,
     SplitDirection, Workspace, item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
 };
-use zed_actions::{search::ToggleIncludeIgnored, unified_palette::SwitchModeFromFileFinder};
+use zed_actions::{
+    search::ToggleIncludeIgnored,
+    unified_palette::{SwitchModeFromFileFinder, ToggleFileFinderMode},
+};
 
 actions!(
     file_finder,
@@ -121,6 +124,18 @@ impl FileFinder {
     ) {
         workspace.register_action(
             |workspace, action: &workspace::ToggleFileFinder, window, cx| {
+                if settings::UnifiedPaletteSettings::get_global(cx).enabled {
+                    window.dispatch_action(
+                        ToggleFileFinderMode {
+                            separate_history: action.separate_history,
+                            include_ignored: action.include_ignored,
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                    return;
+                }
+
                 let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
                     let seed_query = Self::seed_query(workspace, window, cx);
                     Self::open(
@@ -1964,7 +1979,9 @@ impl PickerDelegate for FileFinderDelegate {
         let debounce_refresh = mem::take(&mut self.debounce_next_refresh);
         let raw_query = raw_query.trim();
 
-        if matches!(raw_query.chars().next(), Some('>' | '#' | '@' | ':' | '%')) {
+        if settings::UnifiedPaletteSettings::get_global(cx).enabled
+            && matches!(raw_query.chars().next(), Some('>' | '#' | '@' | ':' | '%'))
+        {
             self.latest_search_id = post_inc(&mut self.search_count);
             self.cancel_flag.store(true, atomic::Ordering::Release);
             window.dispatch_action(SwitchModeFromFileFinder.boxed_clone(), cx);

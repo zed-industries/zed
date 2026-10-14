@@ -81,7 +81,11 @@ impl CommandPalette {
         _: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
-            Self::toggle(workspace, "", window, cx)
+            if settings::UnifiedPaletteSettings::get_global(cx).enabled {
+                Self::toggle_in_unified_mode(workspace, '>', "", window, cx);
+            } else {
+                Self::toggle(workspace, "", window, cx);
+            }
         });
     }
 

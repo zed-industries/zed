@@ -22,7 +22,11 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(
                 |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
-                    open_with_query(workspace, String::new(), window, cx);
+                    if settings::UnifiedPaletteSettings::get_global(cx).enabled {
+                        open_in_unified_mode(workspace, '#', String::new(), window, cx);
+                    } else {
+                        open_with_query(workspace, String::new(), window, cx);
+                    }
                 },
             );
         },

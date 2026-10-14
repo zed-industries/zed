@@ -405,17 +405,15 @@ pub mod command_palette {
 }
 
 pub mod unified_palette {
-    use gpui::{Action, actions};
+    use gpui::Action;
 
-    actions!(
-        unified_palette,
-        [
-            /// Opens the command palette.
-            ToggleCommandMode,
-            /// Opens the project symbols picker.
-            ToggleProjectSymbolsMode,
-        ]
-    );
+    /// Opens the file finder and carries over the current palette query.
+    #[derive(PartialEq, Clone, Default, Action)]
+    #[action(namespace = unified_palette, no_json, no_register)]
+    pub struct ToggleFileFinderMode {
+        pub separate_history: bool,
+        pub include_ignored: Option<bool>,
+    }
 
     /// Routes a mode prefix entered in the file finder to the matching picker.
     #[derive(PartialEq, Clone, Default, Action)]

@@ -11,6 +11,7 @@ use gpui::{
     SharedString, Styled, Subscription, div, prelude::*,
 };
 use language::Buffer;
+use settings::Settings as _;
 use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
@@ -114,12 +115,19 @@ impl GoToLine {
                 let Some(workspace) = editor_handle.read(cx).workspace() else {
                     return;
                 };
+                if settings::UnifiedPaletteSettings::get_global(cx).enabled {
+                    workspace.update(cx, |workspace, cx| {
+                        GoToLine::open_in_unified_mode(workspace, ':', String::new(), window, cx);
+                    });
+                    return;
+                }
+
                 let editor = editor_handle.read(cx);
                 let Some(buffer) = editor.active_buffer(cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(window, cx, move |window, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
                         GoToLine::new(editor_handle, buffer, window, cx)
                     });
                 })

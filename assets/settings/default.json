@@ -1549,6 +1549,8 @@
     // Default: medium
     "modal_max_width": "medium",
   },
+  // Whether to enable prefix-based navigation from the file finder and open modal shortcuts in the unified palette.
+  "unified_palette": false,
   // Settings related to the command palette.
   "command_palette": {
     // Whether to use command history ranking for sorting in the command palette.

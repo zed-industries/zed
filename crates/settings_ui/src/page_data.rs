@@ -3905,7 +3905,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn command_palette_section() -> [SettingsPageItem; 2] {
+    fn command_palette_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Command Palette"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3926,6 +3926,20 @@ fn search_and_files_page() -> SettingsPage {
                             .command_palette
                             .get_or_insert_default()
                             .use_command_history = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Unified Palette",
+                description: "Use file finder prefixes and open modal shortcuts in the unified palette.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("unified_palette"),
+                    pick: |settings_content| settings_content.unified_palette.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.unified_palette = value;
                     },
                 }),
                 metadata: None,

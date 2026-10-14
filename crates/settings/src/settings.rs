@@ -55,6 +55,19 @@ pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
 pub use keymap_file::ActionSequence;
 
+#[derive(Clone, Debug, RegisterSetting)]
+pub struct UnifiedPaletteSettings {
+    pub enabled: bool,
+}
+
+impl Settings for UnifiedPaletteSettings {
+    fn from_settings(content: &SettingsContent) -> Self {
+        Self {
+            enabled: content.unified_palette.unwrap_or(false),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, RegisterSetting)]
 pub struct CopilotSettings {
     pub enterprise_uri: Option<String>,

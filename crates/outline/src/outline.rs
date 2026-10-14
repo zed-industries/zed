@@ -11,6 +11,7 @@ use gpui::{
 };
 use language::{OffsetRangeExt, Outline, OutlineItem, OutlineSearchEntry};
 use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
+use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{ListItem, ListItemSpacing, prelude::*, utils::buffer_text_style};
 use workspace::{DismissDecision, ModalView};
@@ -46,7 +47,11 @@ pub fn toggle(
         return;
     }
 
-    open_with_query(editor, String::new(), window, cx);
+    if settings::UnifiedPaletteSettings::get_global(cx).enabled {
+        open_in_unified_mode(editor, '@', String::new(), window, cx);
+    } else {
+        open_with_query(editor, String::new(), window, cx);
+    }
 }
 
 pub fn open_with_query(editor: Entity<Editor>, query: String, window: &mut Window, cx: &mut App) {
