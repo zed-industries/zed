@@ -520,7 +520,7 @@ impl TerminalView {
             } else {
                 // Only set custom_title if the text differs from the terminal's dynamic title.
                 // This prevents subtle layout changes when clicking away without making changes.
-                let terminal_title = self.terminal.read(cx).title(true);
+                let terminal_title = self.terminal.read(cx).title(true, cx);
                 if new_label == terminal_title {
                     None
                 } else {
@@ -546,7 +546,7 @@ impl TerminalView {
         let current_label = self
             .custom_title
             .clone()
-            .unwrap_or_else(|| self.terminal.read(cx).title(true));
+            .unwrap_or_else(|| self.terminal.read(cx).title(true, cx));
 
         let rename_editor = cx.new(|cx| Editor::single_line(window, cx));
         let rename_editor_subscription = cx.subscribe_in(&rename_editor, window, {
@@ -1582,7 +1582,7 @@ impl Item for TerminalView {
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
             let terminal = self.terminal().read(cx);
-            let title = terminal.title(false);
+            let title = terminal.title(false, cx);
             let pid = terminal.pid_getter()?.fallback_pid();
 
             move |_, _| {
@@ -1607,7 +1607,7 @@ impl Item for TerminalView {
             .as_ref()
             .filter(|title| !title.trim().is_empty())
             .cloned()
-            .unwrap_or_else(|| terminal.title(true));
+            .unwrap_or_else(|| terminal.title(true, cx));
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
@@ -1709,7 +1709,7 @@ impl Item for TerminalView {
             return custom_title.clone().into();
         }
         let terminal = self.terminal().read(cx);
-        terminal.title(detail == 0).into()
+        terminal.title(detail == 0, cx).into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

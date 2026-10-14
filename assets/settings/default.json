@@ -2287,6 +2287,12 @@
     "show_count_badge": false,
     // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.
     "bell": "off",
+    // What to show in the title of terminal tabs.
+    // 1. Working directory name followed by the running command and its arguments:
+    //    "cwd_and_command"
+    // 2. Only the name of the running process:
+    //    "process_name"
+    "tab_title": "cwd_and_command",
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

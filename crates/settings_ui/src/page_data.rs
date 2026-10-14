@@ -7723,7 +7723,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn display_settings_section() -> [SettingsPageItem; 6] {
+    fn display_settings_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Display Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7822,6 +7822,20 @@ fn terminal_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .minimum_contrast = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Tab Title",
+                description: "What to show in the title of terminal tabs.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("terminal.tab_title"),
+                    pick: |settings_content| settings_content.terminal.as_ref()?.tab_title.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.terminal.get_or_insert_default().tab_title = value;
                     },
                 }),
                 metadata: None,
