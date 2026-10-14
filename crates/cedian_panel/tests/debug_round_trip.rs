@@ -22,7 +22,10 @@
 //!    start, and binds no other session;
 //! 8. the person denies a `start` (no adapter starts) and a `continue` on
 //!    their own session (no Continue reaches its adapter);
-//! 9. every call has one gate row in the audit log.
+//! 9. every call has one gate row in the audit log;
+//! 10. a `pause` with no session asks about the person's session; the
+//!     person starts another session while the dialog is open, approves,
+//!     and the pause lands on the session the dialog named.
 //!
 //! fake-omp checks each reply's text whole and the host tools registered,
 //! and exits on any difference.
@@ -55,10 +58,11 @@ const DEBUG_JSON: &str = r#"[
   {"label": "ghost", "adapter": "no-such-adapter", "request": "launch", "program": "main"}
 ]"#;
 /// OMP's approval selects in the fixture, one per call.
-const OMP_DIALOGS: usize = 10;
+const OMP_DIALOGS: usize = 11;
 /// cedian's own Asks: start main (approved), start ghost (approved), start
-/// main again (denied), continue on the person's session (denied).
-const CEDIAN_DIALOGS: usize = 4;
+/// main again (denied), continue on the person's session (denied), pause
+/// on the person's session (approved after a second session starts).
+const CEDIAN_DIALOGS: usize = 5;
 /// The OMP select on the person's session: the test starts it then.
 const PERSON_CONTINUE: usize = 10;
 
@@ -68,7 +72,15 @@ fn main() {
         Some("--mode") => std::process::exit(cedian_fake_omp::run(&args)),
         Some("--version") => std::process::exit(cedian_fake_omp::version()),
         Some("config") => std::process::exit(cedian_fake_omp::config_get(&args)),
-        _ => {}
+        // Any other call is not a test run: Zed's environment loader runs
+        // this binary as `--printenv` in a login shell, and running the
+        // scenario there would start another OMP (in a record lane, another
+        // model turn) for every launch.
+        Some(other) => {
+            eprintln!("{other}: not a test run");
+            std::process::exit(2)
+        }
+        None => {}
     }
     let root = std::env::temp_dir().join(format!("cedian-s1-dap-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -108,8 +120,11 @@ fn main() {
 struct Seen {
     /// Lines (1-based) the last SetBreakpoints for `src/main.rs` carried.
     breakpoints: parking_lot::Mutex<Vec<u64>>,
-    /// Continue requests, by session order (0 = the agent's, 1 = the person's).
-    continues: [AtomicUsize; 2],
+    /// Continue requests, by session order (0 = the agent's, 1 = the
+    /// person's, 2 = the person's second).
+    continues: [AtomicUsize; 3],
+    /// Pause requests, by the same order.
+    pauses: [AtomicUsize; 3],
     sessions: AtomicUsize,
 }
 
@@ -211,6 +226,22 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
                 continue;
             }
         }
+        // 10. The approved pause stops whichever session it reached; the
+        // reply names it, and fake-omp checks that it is the dialog's.
+        if stops == 2 {
+            let all = sessions(&project, cx);
+            let paused = (1..3).find(|&i| seen.pauses[i].load(Ordering::SeqCst) == 1);
+            if let Some(i) = paused {
+                let session = if i == 1 {
+                    person.clone().expect("the person's session")
+                } else {
+                    all.last().cloned().expect("the person's second session")
+                };
+                stop(&session, cx).await;
+                stops += 1;
+                continue;
+            }
+        }
 
         let Some(id) = dialogs.first().cloned() else {
             std::thread::sleep(Duration::from_millis(20));
@@ -233,7 +264,13 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
                     launched_before_denied_start = Some(seen.sessions.load(Ordering::SeqCst));
                     "Deny"
                 }
-                _ => "Deny",
+                4 => "Deny",
+                _ => {
+                    // The dialog names session 1; a newer session starts
+                    // before the person answers.
+                    person_session(&window, cx).await;
+                    "Approve"
+                }
             }
         } else {
             omp += 1;
@@ -326,8 +363,13 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
     );
     assert_eq!(
         seen.sessions.load(Ordering::SeqCst),
-        2,
-        "the denied start launched nothing: the agent's session and the person's"
+        3,
+        "the denied start launched nothing: the agent's session and the person's two"
+    );
+    assert_eq!(
+        seen.pauses.each_ref().map(|p| p.load(Ordering::SeqCst)),
+        [0, 1, 0],
+        "the approved pause reached the session the dialog named, not the newer one"
     );
     // 9. One gate row per call, in order.
     let audit = std::fs::read_to_string(state.join(cedian_shell::audit::AUDIT_FILE)).unwrap();
@@ -359,6 +401,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
         ("allow", "user"),
         ("deny", "user"),
         ("deny", "user"),
+        ("allow", "user"),
     ]
     .map(|(d, a)| (d.to_string(), a.to_string()));
     assert_eq!(gate, want, "cedian's gate rows in the audit log");
@@ -367,7 +410,7 @@ async fn scenario(cx: &mut TestAppContext, root: &Path) {
 /// Zed's fake adapter, answering as a program stopped in `main` at line 3
 /// with `x = 42`.
 fn fake_adapter(client: &Arc<DebugAdapterClient>, seen: &Arc<Seen>, main_rs: &Path) {
-    let order = seen.sessions.fetch_add(1, Ordering::SeqCst).min(1);
+    let order = seen.sessions.fetch_add(1, Ordering::SeqCst).min(2);
     let main_rs: PathBuf = main_rs.to_path_buf();
     client.on_request::<dap::requests::Initialize, _>(|_, _| {
         Ok(dap::Capabilities {
@@ -407,6 +450,13 @@ fn fake_adapter(client: &Arc<DebugAdapterClient>, seen: &Arc<Seen>, main_rs: &Pa
             Ok(dap::ContinueResponse {
                 all_threads_continued: Some(true),
             })
+        }
+    });
+    client.on_request::<dap::requests::Pause, _>({
+        let seen = seen.clone();
+        move |_, _| {
+            seen.pauses[order].fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
     });
     client.on_request::<dap::requests::StackTrace, _>(move |_, _| {

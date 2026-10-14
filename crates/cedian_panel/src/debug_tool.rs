@@ -215,7 +215,9 @@ pub(crate) enum Verdict {
     Ask(std::sync::mpsc::Receiver<bool>),
 }
 
-pub(crate) type GateCall = Call<Op, Verdict>;
+/// The verdict, and the op that runs if allowed: the one judged, pinned to
+/// the session the gate resolved.
+pub(crate) type GateCall = Call<Op, (Verdict, Op)>;
 
 /// The tool OMP calls. Each call is parsed here, on OMP's reader thread,
 /// crosses to the GPUI thread over `gates` for cedian's verdict, waits for
@@ -248,7 +250,8 @@ pub(crate) fn tool(
     HostTool::new(TOOL, DESCRIPTION, parameters, move |args, ctx| {
         let op = parse(args)?;
         let what = format!("{TOOL} {}", op_name(&op));
-        match context::cross(&gates, op.clone(), &what, || ctx.is_cancelled())? {
+        let (verdict, op) = context::cross(&gates, op, &what, || ctx.is_cancelled())?;
+        match verdict {
             Verdict::Allow => {}
             Verdict::Deny(why) => return Err(format!("denied: {why}").into()),
             Verdict::Ask(answer) => {
@@ -314,12 +317,57 @@ pub struct Debugger {
     pub agent_sessions: Rc<RefCell<HashSet<u32>>>,
 }
 
-/// cedian's gate for `op` (see [`Gate`]).
-pub fn gate(op: &Op, debugger: &Debugger, cx: &mut App) -> Task<Result<Gate, String>> {
+/// cedian's gate for `op` (see [`Gate`]), with the op that runs if it
+/// passes: run control is pinned to the session the gate judged, so an
+/// approved Ask acts on the session its dialog named, whatever starts
+/// while the person decides.
+pub fn gate(op: &Op, debugger: &Debugger, cx: &mut App) -> Task<Result<(Gate, Op), String>> {
+    let mut pinned = op.clone();
+    if let Some(at) = run_control(&mut pinned)
+        && let Ok(session) = pick(&debugger.project, at, cx)
+    {
+        let session = session.read(cx);
+        let id = session.session_id().0;
+        at.session = Some(id);
+        let gate = if debugger.agent_sessions.borrow().contains(&id) {
+            Gate::Allow
+        } else {
+            Gate::Ask(format!(
+                "The agent asks to {} your debug session {id}{}",
+                op_name(op).replace('_', " "),
+                session
+                    .label()
+                    .map(|l| format!(" (\"{l}\")"))
+                    .unwrap_or_default()
+            ))
+        };
+        return Task::ready(Ok((gate, pinned)));
+    }
+    let gate = verdict(op, debugger, cx);
+    cx.spawn(async move |_| Ok((gate.await?, pinned)))
+}
+
+/// The session and thread a run-control op acts on.
+fn run_control(op: &mut Op) -> Option<&mut At> {
     match op {
-        Op::Sessions | Op::Threads { .. } | Op::Stack { .. } | Op::Variables { .. } => {
-            Task::ready(Ok(Gate::Allow))
+        Op::Continue { at, .. } | Op::StepOver { at, .. } | Op::Pause { at } | Op::Stop { at } => {
+            Some(at)
         }
+        _ => None,
+    }
+}
+
+fn verdict(op: &Op, debugger: &Debugger, cx: &mut App) -> Task<Result<Gate, String>> {
+    match op {
+        // Run control with no session to act on: the op itself answers why.
+        Op::Sessions
+        | Op::Threads { .. }
+        | Op::Stack { .. }
+        | Op::Variables { .. }
+        | Op::Continue { .. }
+        | Op::StepOver { .. }
+        | Op::Pause { .. }
+        | Op::Stop { .. } => Task::ready(Ok(Gate::Allow)),
         Op::SetBreakpoint { path, .. } | Op::RemoveBreakpoint { path, .. } => {
             let project = debugger.project.clone();
             let Some(host) = context::host(debugger.workspace.as_ref(), &project, cx) else {
@@ -344,25 +392,6 @@ pub fn gate(op: &Op, debugger: &Debugger, cx: &mut App) -> Task<Result<Gate, Str
                     Err(why) => Gate::Deny(why),
                 })
             })
-        }
-        Op::Continue { at, .. } | Op::StepOver { at, .. } | Op::Pause { at } | Op::Stop { at } => {
-            // No session: the op itself answers why.
-            let Ok(session) = pick(&debugger.project, at, cx) else {
-                return Task::ready(Ok(Gate::Allow));
-            };
-            let session = session.read(cx);
-            let id = session.session_id().0;
-            if debugger.agent_sessions.borrow().contains(&id) {
-                return Task::ready(Ok(Gate::Allow));
-            }
-            Task::ready(Ok(Gate::Ask(format!(
-                "The agent asks to {} your debug session {id}{}",
-                op_name(op).replace('_', " "),
-                session
-                    .label()
-                    .map(|l| format!(" (\"{l}\")"))
-                    .unwrap_or_default()
-            ))))
         }
     }
 }

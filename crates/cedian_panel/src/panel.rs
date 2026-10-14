@@ -1621,15 +1621,16 @@ impl CedianPanel {
                     let label = format!("{} {:?}", crate::debug_tool::TOOL, op);
                     let this = this.clone();
                     Some(cx.spawn(async move |cx| {
-                        let gate = gate.await?;
-                        window_handle
+                        let (gate, op) = gate.await?;
+                        let verdict = window_handle
                             .update(cx, |_, window, cx| {
                                 this.update(cx, |this, cx| {
                                     this.debug_verdict(label, gate, window, cx)
                                 })
                             })
                             .map_err(|e| e.to_string())?
-                            .map_err(|e| e.to_string())
+                            .map_err(|e| e.to_string())?;
+                        Ok((verdict, op))
                     }))
                 }
             },
@@ -4429,17 +4430,18 @@ impl CedianPanel {
                     option_details: None,
                     timeout: None,
                 });
-                // A dialog that cannot open is a denial: `reply` drops.
-                if let Some(mut dialog) = OpenDialog::new(request, window, cx) {
-                    let expiring = id.clone();
-                    dialog.expiry = Some(cx.spawn(async move |this, cx| {
-                        cx.background_executor().timer(DIALOG_TIMEOUT).await;
-                        this.update(cx, |this, cx| this.expire(&expiring, cx)).ok();
-                    }));
-                    self.local_asks.insert(id.clone(), (reply, label));
-                    self.dialogs.insert(id, dialog);
-                    cx.notify();
-                }
+                let Some(mut dialog) = OpenDialog::new(request, window, cx) else {
+                    self.debug_decision(label, GateDecision::Abstain, Answerer::Cedian);
+                    return Verdict::Deny("cedian could not open its approval dialog".into());
+                };
+                let expiring = id.clone();
+                dialog.expiry = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(DIALOG_TIMEOUT).await;
+                    this.update(cx, |this, cx| this.expire(&expiring, cx)).ok();
+                }));
+                self.local_asks.insert(id.clone(), (reply, label));
+                self.dialogs.insert(id, dialog);
+                cx.notify();
                 Verdict::Ask(answer)
             }
         }

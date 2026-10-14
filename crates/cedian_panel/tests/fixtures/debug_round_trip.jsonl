@@ -60,5 +60,9 @@
 {"dir":"in","frame":{"id":"dlg_10","value":"Approve","type":"extension_ui_response"}}
 {"dir":"out","frame":{"type":"host_tool_call","id":"ht_10","toolCallId":"call_10","toolName":"cedian_debug","arguments":{"op":"continue","session":1}}}
 {"dir":"in","frame":{"id":"ht_10","type":"host_tool_result","result":{"content":[{"type":"text","text":"denied: the person did not allow cedian_debug continue"}]},"isError":true},"checkReason":true}
+{"dir":"out","frame":{"type":"extension_ui_request","id":"dlg_11","method":"select","title":"Allow tool: cedian_debug\n{\"op\": \"pause\"}","options":["Approve","Deny"]}}
+{"dir":"in","frame":{"id":"dlg_11","value":"Approve","type":"extension_ui_response"}}
+{"dir":"out","frame":{"type":"host_tool_call","id":"ht_11","toolCallId":"call_11","toolName":"cedian_debug","arguments":{"op":"pause"}}}
+{"dir":"in","frame":{"id":"ht_11","type":"host_tool_result","result":{"content":[{"type":"text","text":"{\"reply\":\"stopped\",\"session\":1,\"thread\":1,\"top\":{\"id\":1,\"name\":\"main\",\"path\":\"src/main.rs\",\"line\":3},\"locals\":[{\"name\":\"x\",\"value\":\"42\",\"type\":\"int\"}]}"}]}},"checkResult":true}
 {"dir":"out","frame":{"agentInvoked":true,"id":"req_6","sessionSettled":true,"status":"completed","type":"prompt_result"}}
 {"dir":"out","frame":{"type":"session_settled"}}

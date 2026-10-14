@@ -1,7 +1,8 @@
 //! S1's live turn (ADR-0070): one model turn on the pinned OMP in which
-//! OMP itself calls `cedian_debug` against the real `lldb-dap`, in the app's
-//! panel beside Zed's Debug panel. Every `cedian_debug` call is approved in
-//! the panel (`cedian_debug: prompt`). The recording becomes
+//! OMP is asked to debug a C program on the real `lldb-dap`, in the app's
+//! panel beside Zed's Debug panel, without being told which tool to use
+//! (ADR-0073 decision 4); the run prints which it picked. Every dialog is
+//! approved. The recording becomes
 //! `cedian_panel/tests/fixtures/debug_live.jsonl`, which
 //! `cedian_panel/tests/debug_live_replay.rs` replays hermetically.
 //!
@@ -34,7 +35,15 @@ fn main() {
         Some("--mode") => std::process::exit(cedian_fake_omp::run(&args)),
         Some("--version") => std::process::exit(cedian_fake_omp::version()),
         Some("config") => std::process::exit(cedian_fake_omp::config_get(&args)),
-        _ => {}
+        // Any other call is not a test run: Zed's environment loader runs
+        // this binary as `--printenv` in a login shell, and running the
+        // scenario there would start another OMP (in a record lane, another
+        // model turn) for every launch.
+        Some(other) => {
+            eprintln!("{other}: not a test run");
+            std::process::exit(2)
+        }
+        None => {}
     }
     if !cedian_fake_omp::recording::armed(LANE) {
         println!("test live_turn ... skipped (record lane {LANE} only)");
@@ -119,44 +128,48 @@ async fn scenario(cx: &mut TestAppContext, root: &Path, ws: &Path, lldb_dap: std
     })
     .unwrap();
 
+    // The turn ends when it has run and gone idle with no dialog open,
+    // whichever tool the model picked; the recording is written either way.
     let deadline = Instant::now() + cedian_fake_omp::recording::wait_limit(Duration::from_secs(60));
-    let mut approved = 0;
-    loop {
+    let mut ran = false;
+    let ended = loop {
         cx.run_until_parked();
         let (idle, dialogs) = panel.read_with(cx, |p, _| (p.turn() == &Turn::Idle, p.dialog_ids()));
-        if idle && dialogs.is_empty() && approved > 0 {
-            break;
+        ran |= !idle;
+        if ran && idle && dialogs.is_empty() {
+            break true;
         }
-        assert!(Instant::now() < deadline, "the live turn did not end");
+        if Instant::now() >= deadline {
+            break false;
+        }
         if let Some(id) = dialogs.first() {
             let button: &'static str = format!("cedian-dialog-{id}-Approve").leak();
             vcx.run_until_parked();
             if let Some(bounds) = vcx.debug_bounds(button) {
                 vcx.simulate_click(bounds.center(), Modifiers::none());
-                approved += 1;
                 continue;
             }
         }
         std::thread::sleep(Duration::from_millis(50));
-    }
+    };
     let recorded = state.join("omp").join(cedian_fake_omp::RECORDED_FILE);
     let text = std::fs::read_to_string(&recorded).unwrap_or_default();
-    let calls: Vec<&str> = text
-        .lines()
-        .filter(|l| l.contains("\"host_tool_call\""))
-        .collect();
-    println!("cedian_debug calls: {}", calls.len());
+    let tools = |name: &str| {
+        text.lines()
+            .filter(|l| {
+                l.contains("\"tool_execution_start\"")
+                    && l.contains(&format!("\"toolName\":\"{name}\""))
+            })
+            .count()
+    };
+    // ADR-0073 decision 4: which tool the model picks is measured here.
     println!(
-        "OMP's own debug tool called: {}",
-        text.contains("\"toolName\":\"debug\"")
+        "tool picked: cedian_debug calls {}, OMP's own debug {}",
+        tools("cedian_debug"),
+        tools("debug")
     );
     cedian_fake_omp::recording::write_fixture(&recorded, Path::new(FIXTURE));
-    assert!(
-        calls
-            .iter()
-            .any(|l| l.contains("\"toolName\":\"cedian_debug\"")),
-        "OMP called cedian_debug"
-    );
+    assert!(ended, "the live turn did not end");
 }
 
 fn wait(
