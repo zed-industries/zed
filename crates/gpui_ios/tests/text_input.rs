@@ -7,7 +7,18 @@ mod text_input;
 #[cfg(target_os = "ios")]
 mod window {
     use gpui::PlatformInputHandler;
-    use std::{cell::RefCell, rc::Weak};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Weak,
+    };
+
+    thread_local! {
+        static HANDLER_QUERIES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn handler_queries() -> usize {
+        HANDLER_QUERIES.with(Cell::get)
+    }
 
     pub(crate) struct IosWindowState;
 
@@ -28,6 +39,7 @@ mod window {
             &self,
             callback: impl FnOnce(&IosWindowState) -> R,
         ) -> Option<R> {
+            HANDLER_QUERIES.with(|queries| queries.set(queries.get() + 1));
             self.0.borrow().upgrade().map(|window| callback(&window))
         }
     }
@@ -38,6 +50,10 @@ fn main() {
     {
         let main_thread = objc2::MainThreadMarker::new().expect("native test runs on main thread");
         text_input::tests::native_protocol_smoke_test(main_thread);
+        text_input::tests::stale_objects_do_not_route_to_handler(
+            main_thread,
+            window::handler_queries,
+        );
         println!("UIKit text input native protocol smoke test passed");
     }
 }

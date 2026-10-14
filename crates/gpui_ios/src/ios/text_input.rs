@@ -15,63 +15,70 @@ use objc2_ui_kit::*;
 use std::{
     cell::{Cell, RefCell},
     ops::Range,
+    rc::Rc,
 };
+
+struct TextPositionIvars {
+    offset: usize,
+    session: Rc<()>,
+}
 
 define_class!(
     #[unsafe(super = UITextPosition)]
     #[thread_kind = MainThreadOnly]
     #[name = "GPUITextPosition"]
-    #[ivars = usize]
+    #[ivars = TextPositionIvars]
     struct TextPosition;
     unsafe impl NSObjectProtocol for TextPosition {}
 );
 
 impl TextPosition {
-    fn new(offset: usize, main_thread: MainThreadMarker) -> Retained<UITextPosition> {
-        let this = Self::alloc(main_thread).set_ivars(offset);
+    fn new(
+        offset: usize,
+        session: Rc<()>,
+        main_thread: MainThreadMarker,
+    ) -> Retained<UITextPosition> {
+        let this = Self::alloc(main_thread).set_ivars(TextPositionIvars { offset, session });
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
         this.into_super()
     }
+}
 
-    fn offset(position: &UITextPosition) -> Option<usize> {
-        position
-            .downcast_ref::<Self>()
-            .map(|position| *position.ivars())
-    }
+struct TextRangeIvars {
+    range: Range<usize>,
+    session: Rc<()>,
 }
 
 define_class!(
     #[unsafe(super = UITextRange)]
     #[thread_kind = MainThreadOnly]
     #[name = "GPUITextRange"]
-    #[ivars = Range<usize>]
+    #[ivars = TextRangeIvars]
     struct TextRange;
     unsafe impl NSObjectProtocol for TextRange {}
     impl TextRange {
         #[unsafe(method_id(start))]
         fn start(&self) -> Retained<UITextPosition> {
-            TextPosition::new(self.ivars().start, self.mtm())
+            TextPosition::new(self.ivars().range.start, self.ivars().session.clone(), self.mtm())
         }
         #[unsafe(method_id(end))]
         fn end(&self) -> Retained<UITextPosition> {
-            TextPosition::new(self.ivars().end, self.mtm())
+            TextPosition::new(self.ivars().range.end, self.ivars().session.clone(), self.mtm())
         }
         #[unsafe(method(isEmpty))]
-        fn is_empty(&self) -> bool { self.ivars().is_empty() }
+        fn is_empty(&self) -> bool { self.ivars().range.is_empty() }
     }
 );
 
 impl TextRange {
-    fn new(range: Range<usize>, main_thread: MainThreadMarker) -> Retained<UITextRange> {
-        let this = Self::alloc(main_thread).set_ivars(range);
+    fn new(
+        range: Range<usize>,
+        session: Rc<()>,
+        main_thread: MainThreadMarker,
+    ) -> Retained<UITextRange> {
+        let this = Self::alloc(main_thread).set_ivars(TextRangeIvars { range, session });
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
         this.into_super()
-    }
-
-    fn range(range: &UITextRange) -> Option<Range<usize>> {
-        range
-            .downcast_ref::<Self>()
-            .map(|range| range.ivars().clone())
     }
 }
 
@@ -105,6 +112,7 @@ define_class!(
 pub(super) struct TextInputIvars {
     window: WindowReference,
     input_field: Cell<Option<gpui::FocusId>>,
+    session: RefCell<Rc<()>>,
     configuration: RefCell<TextInputConfiguration>,
     delegate: RefCell<Weak<ProtocolObject<dyn UITextInputDelegate>>>,
     marked_style: RefCell<Option<Retained<NSDictionary<NSAttributedStringKey, AnyObject>>>>,
@@ -254,13 +262,13 @@ define_class!(
         #[unsafe(method_id(textInRange:))]
         fn text_in_range(&self, range: &UITextRange) -> Option<Retained<NSString>> {
             (|| {
-            let range = TextRange::range(range)?;
+            let range = self.validated_range(range)?;
             self.with_handler(|handler| read_text(handler, range)).flatten()
             })()
         }
         #[unsafe(method(replaceRange:withText:))]
         fn replace_range(&self, range: &UITextRange, text: &NSString) {
-            if let Some(range) = TextRange::range(range) {
+            if let Some(range) = self.validated_range(range) {
                 self.edit(|handler| {
                     if allowed_range(handler, &range) {
                         handler.replace_text_in_range(Some(range), &text.to_string());
@@ -273,11 +281,11 @@ define_class!(
             self.with_handler(|handler| {
                 let selection = handler.selected_text_range(false)?;
                 allowed_range(handler, &selection.range).then_some(selection)
-            }).flatten().map(|selection| TextRange::new(selection.range, self.mtm()))
+            }).flatten().map(|selection| self.new_range(selection.range))
         }
         #[unsafe(method(setSelectedTextRange:))]
         fn set_selected_text_range(&self, range: Option<&UITextRange>) {
-            if let Some(range) = range.and_then(TextRange::range) {
+            if let Some(range) = range.and_then(|range| self.validated_range(range)) {
                 self.edit(|handler| {
                     if allowed_range(handler, &range) { handler.set_selected_text_range(range); }
                 });
@@ -288,7 +296,7 @@ define_class!(
             self.with_handler(|handler| {
                 let range = handler.marked_text_range()?;
                 allowed_range(handler, &range).then_some(range)
-            }).flatten().map(|range| TextRange::new(range, self.mtm()))
+            }).flatten().map(|range| self.new_range(range))
         }
         #[unsafe(method_id(markedTextStyle))]
         fn marked_text_style(&self) -> Option<Retained<NSDictionary<NSAttributedStringKey, AnyObject>>> {
@@ -308,31 +316,33 @@ define_class!(
         fn unmark_text(&self) { self.edit(PlatformInputHandler::unmark_text); }
         #[unsafe(method_id(beginningOfDocument))]
         fn beginning_of_document(&self) -> Retained<UITextPosition> {
-            TextPosition::new(self.document_range().map_or(0, |range| range.start), self.mtm())
+            self.new_position(self.document_range().map_or(0, |range| range.start))
         }
         #[unsafe(method_id(endOfDocument))]
         fn end_of_document(&self) -> Retained<UITextPosition> {
-            TextPosition::new(self.document_range().map_or(0, |range| range.end), self.mtm())
+            self.new_position(self.document_range().map_or(0, |range| range.end))
         }
         #[unsafe(method_id(textRangeFromPosition:toPosition:))]
         fn text_range(&self, start: &UITextPosition, end: &UITextPosition) -> Option<Retained<UITextRange>> {
             (|| {
-            let start = TextPosition::offset(start)?;
-            let end = TextPosition::offset(end)?;
-            Some(TextRange::new(start.min(end)..start.max(end), self.mtm()))
+            let start = self.validated_offset(start)?;
+            let end = self.validated_offset(end)?;
+            Some(self.new_range(start.min(end)..start.max(end)))
             })()
         }
         #[unsafe(method_id(positionFromPosition:offset:))]
         fn position_offset(&self, position: &UITextPosition, offset: isize) -> Option<Retained<UITextPosition>> {
             (|| {
+            let position = self.validated_offset(position)?;
             let range = self.document_range()?;
-            let offset = checked_offset(TextPosition::offset(position)?, offset, range.end)?;
-            (offset >= range.start).then(|| TextPosition::new(offset, self.mtm()))
+            let offset = checked_offset(position, offset, range.end)?;
+            (offset >= range.start).then(|| self.new_position(offset))
             })()
         }
         #[unsafe(method_id(positionFromPosition:inDirection:offset:))]
         fn position_direction(&self, position: &UITextPosition, direction: UITextLayoutDirection, offset: isize) -> Option<Retained<UITextPosition>> {
             (|| {
+            self.validated_offset(position)?;
             if direction == UITextLayoutDirection::Left {
                 return self.positionFromPosition_offset(position, offset.checked_neg()?);
             }
@@ -346,7 +356,10 @@ define_class!(
         }
         #[unsafe(method(comparePosition:toPosition:))]
         fn compare_position(&self, position: &UITextPosition, other: &UITextPosition) -> NSComparisonResult {
-            match TextPosition::offset(position).cmp(&TextPosition::offset(other)) {
+            let (Some(position), Some(other)) = (self.validated_offset(position), self.validated_offset(other)) else {
+                return NSComparisonResult::Same;
+            };
+            match position.cmp(&other) {
                 std::cmp::Ordering::Less => NSComparisonResult::Ascending,
                 std::cmp::Ordering::Equal => NSComparisonResult::Same,
                 std::cmp::Ordering::Greater => NSComparisonResult::Descending,
@@ -354,8 +367,10 @@ define_class!(
         }
         #[unsafe(method(offsetFromPosition:toPosition:))]
         fn offset_from_position(&self, start: &UITextPosition, end: &UITextPosition) -> isize {
-            let start = TextPosition::offset(start).and_then(|offset| isize::try_from(offset).ok()).unwrap_or(0);
-            let end = TextPosition::offset(end).and_then(|offset| isize::try_from(offset).ok()).unwrap_or(0);
+            let (Some(start), Some(end)) = (
+                self.validated_offset(start).and_then(|offset| isize::try_from(offset).ok()),
+                self.validated_offset(end).and_then(|offset| isize::try_from(offset).ok()),
+            ) else { return 0; };
             end.saturating_sub(start)
         }
         #[unsafe(method_id(inputDelegate))]
@@ -372,34 +387,38 @@ define_class!(
         #[unsafe(method_id(positionWithinRange:farthestInDirection:))]
         fn farthest_position(&self, range: &UITextRange, direction: UITextLayoutDirection) -> Option<Retained<UITextPosition>> {
             (|| {
-            let range = TextRange::range(range)?;
+            let range = self.validated_range(range)?;
             let offset = if direction == UITextLayoutDirection::Left || direction == UITextLayoutDirection::Up { range.start } else { range.end };
-            Some(TextPosition::new(offset, self.mtm()))
+            Some(self.new_position(offset))
             })()
         }
         #[unsafe(method_id(characterRangeByExtendingPosition:inDirection:))]
         fn extending_range(&self, position: &UITextPosition, direction: UITextLayoutDirection) -> Option<Retained<UITextRange>> {
             (|| {
-            let offset = TextPosition::offset(position)?;
+            let offset = self.validated_offset(position)?;
             let backwards = direction == UITextLayoutDirection::Left || direction == UITextLayoutDirection::Up;
             self.character_range(if backwards { offset.checked_sub(1)? } else { offset })
             })()
         }
         #[unsafe(method(baseWritingDirectionForPosition:inDirection:))]
-        fn base_writing_direction(&self, _position: &UITextPosition, _direction: UITextStorageDirection) -> NSWritingDirection { NSWritingDirection::Natural }
+        fn base_writing_direction(&self, position: &UITextPosition, _direction: UITextStorageDirection) -> NSWritingDirection {
+            if self.validated_offset(position).is_none() { return NSWritingDirection::Natural; }
+            NSWritingDirection::Natural
+        }
         #[unsafe(method(setBaseWritingDirection:forRange:))]
-        fn set_base_writing_direction(&self, direction: NSWritingDirection, _range: &UITextRange) {
+        fn set_base_writing_direction(&self, direction: NSWritingDirection, range: &UITextRange) {
+            if self.validated_range(range).is_none() { return; }
             if direction != NSWritingDirection::Natural {
                 log::warn!("GPUI input handlers do not support overriding paragraph writing direction");
             }
         }
         #[unsafe(method(firstRectForRange:))]
         fn first_rect(&self, range: &UITextRange) -> CGRect {
-            TextRange::range(range).and_then(|range| self.bounds(range)).unwrap_or(CGRect::ZERO)
+            self.validated_range(range).and_then(|range| self.bounds(range)).unwrap_or(CGRect::ZERO)
         }
         #[unsafe(method(caretRectForPosition:))]
         fn caret_rect(&self, position: &UITextPosition) -> CGRect {
-            TextPosition::offset(position)
+            self.validated_offset(position)
                 .and_then(|offset| self.bounds(offset..offset))
                 .map(nonempty_caret_rect)
                 .unwrap_or(CGRect::ZERO)
@@ -407,7 +426,7 @@ define_class!(
         #[unsafe(method_id(selectionRectsForRange:))]
         fn selection_rects(&self, range: &UITextRange) -> Retained<NSArray<UITextSelectionRect>> {
             (|| {
-            let Some(range) = TextRange::range(range) else { return NSArray::new(); };
+            let Some(range) = self.validated_range(range) else { return NSArray::new(); };
             let bounds = self.with_handler(|handler| {
                 if !allowed_range(handler, &range) { return Vec::new(); }
                 handler.selection_bounds_for_range(range)
@@ -431,21 +450,21 @@ define_class!(
                 let offset = handler.character_index_for_point(gpui::point(px(point.x as f32), px(point.y as f32)))?;
                 allowed_range(handler, &(offset..offset)).then_some(offset)
             }).flatten()
-                .map(|offset| TextPosition::new(offset, self.mtm()))
+                .map(|offset| self.new_position(offset))
         }
         #[unsafe(method_id(closestPositionToPoint:withinRange:))]
         fn closest_position_within_range(&self, point: CGPoint, range: &UITextRange) -> Option<Retained<UITextPosition>> {
             (|| {
-            let range = TextRange::range(range)?;
+            let range = self.validated_range(range)?;
             let position = self.closestPositionToPoint(point)?;
-            Some(TextPosition::new(TextPosition::offset(&position)?.clamp(range.start, range.end), self.mtm()))
+            Some(self.new_position(self.validated_offset(&position)?.clamp(range.start, range.end)))
             })()
         }
         #[unsafe(method_id(characterRangeAtPoint:))]
         fn character_range_at_point(&self, point: CGPoint) -> Option<Retained<UITextRange>> {
             (|| {
                 let position = self.closestPositionToPoint(point)?;
-                self.character_range(TextPosition::offset(&position)?)
+                self.character_range(self.validated_offset(&position)?)
             })()
         }
         #[unsafe(method_id(textInputView))]
@@ -463,6 +482,7 @@ impl TextInputView {
         let this = Self::alloc(main_thread).set_ivars(TextInputIvars {
             window: WindowReference::default(),
             input_field: Cell::new(None),
+            session: RefCell::new(Rc::new(())),
             configuration: RefCell::new(TextInputConfiguration::default()),
             delegate: RefCell::new(Weak::default()),
             marked_style: RefCell::new(None),
@@ -480,6 +500,32 @@ impl TextInputView {
 
     pub(super) fn set_window(&self, window: std::rc::Weak<IosWindowState>) {
         *self.ivars().window.0.borrow_mut() = window;
+    }
+
+    fn validated_offset(&self, position: &UITextPosition) -> Option<usize> {
+        let position = position.downcast_ref::<TextPosition>()?;
+        Rc::ptr_eq(&position.ivars().session, &self.ivars().session.borrow())
+            .then_some(position.ivars().offset)
+    }
+
+    fn validated_range(&self, range: &UITextRange) -> Option<Range<usize>> {
+        let range = range.downcast_ref::<TextRange>()?;
+        Rc::ptr_eq(&range.ivars().session, &self.ivars().session.borrow())
+            .then(|| range.ivars().range.clone())
+    }
+
+    fn new_position(&self, offset: usize) -> Retained<UITextPosition> {
+        TextPosition::new(offset, self.ivars().session.borrow().clone(), self.mtm())
+    }
+
+    fn new_range(&self, range: Range<usize>) -> Retained<UITextRange> {
+        TextRange::new(range, self.ivars().session.borrow().clone(), self.mtm())
+    }
+
+    fn invalidate_session(&self) {
+        // Retaining the token in native objects prevents identity reuse, even
+        // after returning to a field or destroying and recreating a responder.
+        *self.ivars().session.borrow_mut() = Rc::new(());
     }
 
     fn with_handler<R>(&self, callback: impl FnOnce(&mut PlatformInputHandler) -> R) -> Option<R> {
@@ -522,9 +568,8 @@ impl TextInputView {
     fn character_range(&self, offset: usize) -> Option<Retained<UITextRange>> {
         let (document_range, text) = self.document_text()?;
         let character = composed_character_range(&text, offset.checked_sub(document_range.start)?)?;
-        Some(TextRange::new(
+        Some(self.new_range(
             (document_range.start + character.start)..(document_range.start + character.end),
-            self.mtm(),
         ))
     }
 
@@ -545,10 +590,13 @@ impl TextInputView {
     pub(super) fn set_input_field(&self, field: Option<gpui::FocusId>) {
         // Taking the handler during draw must not clear this identity: the
         // replacement adapter can still represent the same focused document.
-        if self.ivars().input_field.replace(field) != field && field.is_some() {
-            self.ivars().content_changed.set(true);
-            self.ivars().selection_changed.set(true);
-            self.set_keyboard_visible(true);
+        if self.ivars().input_field.replace(field) != field {
+            self.invalidate_session();
+            if field.is_some() {
+                self.ivars().content_changed.set(true);
+                self.ivars().selection_changed.set(true);
+                self.set_keyboard_visible(true);
+            }
         }
     }
 
@@ -581,6 +629,7 @@ impl TextInputView {
                 self.set_keyboard_visible(true);
             }
             TextInputStateChange::FocusLost => {
+                self.invalidate_session();
                 self.ivars().input_field.set(None);
                 self.set_keyboard_visible(false);
             }
@@ -731,13 +780,15 @@ pub(super) mod tests {
         reason = "called by the main-thread integration-test harness"
     )]
     pub(crate) fn native_protocol_smoke_test(main_thread: MainThreadMarker) {
-        let position = TextPosition::new(3, main_thread);
-        assert_eq!(TextPosition::offset(&position), Some(3));
-        let range = TextRange::new(1..3, main_thread);
-        assert_eq!(TextPosition::offset(&range.start()), Some(1));
-        assert_eq!(TextPosition::offset(&range.end()), Some(3));
+        stale_native_objects_test(main_thread);
+        let view = TextInputView::new(CGRect::ZERO, main_thread);
+        let position = view.new_position(3);
+        assert_eq!(view.validated_offset(&position), Some(3));
+        let range = view.new_range(1..3);
+        assert_eq!(view.validated_offset(&range.start()), Some(1));
+        assert_eq!(view.validated_offset(&range.end()), Some(3));
         assert!(!range.isEmpty());
-        assert!(TextRange::new(3..3, main_thread).isEmpty());
+        assert!(view.new_range(3..3).isEmpty());
 
         let text = NSString::from_str("a😀e\u{301}👨‍👩‍👧‍👦");
         assert_eq!(composed_character_range(&text, 1), Some(1..3));
@@ -746,7 +797,6 @@ pub(super) mod tests {
         assert_eq!(composed_character_range(&text, 6), Some(5..16));
         assert_eq!(composed_character_range(&text, 16), None);
 
-        let view = TextInputView::new(CGRect::ZERO, main_thread);
         view.set_window(std::rc::Weak::new());
         assert!(!view.canBecomeFirstResponder());
         view.set_keyboard_visible(true);
@@ -755,8 +805,8 @@ pub(super) mod tests {
         assert!(!view.hasText());
         assert!(view.selectedTextRange().is_none());
         assert!(view.markedTextRange().is_none());
-        assert_eq!(TextPosition::offset(&view.beginningOfDocument()), Some(0));
-        assert_eq!(TextPosition::offset(&view.endOfDocument()), Some(0));
+        assert_eq!(view.validated_offset(&view.beginningOfDocument()), Some(0));
+        assert_eq!(view.validated_offset(&view.endOfDocument()), Some(0));
         assert_eq!(
             view.offsetFromPosition_toPosition(&range.start(), &range.end()),
             2
@@ -897,6 +947,146 @@ pub(super) mod tests {
         view.resignFirstResponder();
         assert!(view.ivars().keyboard_desired.get());
         window.setHidden(true);
+    }
+
+    fn stale_native_objects_test(main_thread: MainThreadMarker) {
+        let view = TextInputView::new(CGRect::ZERO, main_thread);
+        let mut fields = slotmap::SlotMap::<gpui::FocusId, ()>::with_key();
+        let first = fields.insert(());
+        let second = fields.insert(());
+        view.set_input_field(Some(first));
+        let old_start = view.beginningOfDocument();
+        let old_range = view.new_range(1..3);
+        assert_eq!(view.validated_range(&old_range), Some(1..3));
+        assert!(contains_range(&(0..4), &(1..3)));
+
+        // Both documents have the same UTF-16 extent: bounds checks alone
+        // cannot distinguish the old A range from a valid B range.
+        view.set_input_field(Some(second));
+        assert_eq!(
+            view.validated_range(&old_range),
+            None,
+            "A range must be rejected immediately on switching to equally-sized B"
+        );
+        assert!(
+            view.textRangeFromPosition_toPosition(&old_start, &view.endOfDocument())
+                .is_none(),
+            "the native protocol must reject a stale position before reconciliation"
+        );
+        let fresh_start = view.beginningOfDocument();
+        let fresh_range = view.new_range(1..3);
+        assert_eq!(view.validated_offset(&fresh_start), Some(0));
+        assert_eq!(view.validated_range(&fresh_range), Some(1..3));
+        assert_eq!(view.validated_offset(&old_range.start()), None);
+        assert_eq!(view.validated_offset(&old_range.end()), None);
+        assert_eq!(
+            view.comparePosition_toPosition(&old_range.start(), &fresh_start),
+            NSComparisonResult::Same
+        );
+        assert_eq!(
+            view.offsetFromPosition_toPosition(&old_range.start(), &fresh_start),
+            0
+        );
+        assert!(
+            view.positionWithinRange_farthestInDirection(&old_range, UITextLayoutDirection::Right)
+                .is_none()
+        );
+        assert!(
+            view.positionWithinRange_farthestInDirection(
+                &fresh_range,
+                UITextLayoutDirection::Right
+            )
+            .is_some()
+        );
+        assert!(
+            view.positionFromPosition_inDirection_offset(
+                &old_start,
+                UITextLayoutDirection::Down,
+                1
+            )
+            .is_none()
+        );
+        assert!(
+            view.textRangeFromPosition_toPosition(&fresh_start, &view.endOfDocument())
+                .is_some()
+        );
+        view.set_input_field(Some(first));
+        assert_eq!(
+            view.validated_range(&old_range),
+            None,
+            "A→B→A must not revive A objects"
+        );
+        assert_eq!(view.validated_offset(&old_start), None);
+        let returned_start = view.beginningOfDocument();
+        let returned_range = view.new_range(1..3);
+        view.set_input_field(Some(first));
+        view.state_changed(TextInputStateChange::ContentChanged);
+        assert_eq!(view.validated_offset(&returned_start), Some(0));
+        assert_eq!(view.validated_range(&returned_range), Some(1..3));
+        view.state_changed(TextInputStateChange::FocusLost);
+        assert_eq!(view.validated_offset(&returned_start), None);
+        assert_eq!(view.validated_range(&returned_range), None);
+        let foreign = TextInputView::new(CGRect::ZERO, main_thread);
+        assert_eq!(foreign.validated_offset(&view.beginningOfDocument()), None);
+        assert_eq!(foreign.validated_range(&view.new_range(1..3)), None);
+        assert!(
+            foreign
+                .textRangeFromPosition_toPosition(
+                    &view.beginningOfDocument(),
+                    &foreign.endOfDocument()
+                )
+                .is_none()
+        );
+    }
+
+    #[allow(
+        dead_code,
+        reason = "called by the main-thread integration-test harness"
+    )]
+    pub(crate) fn stale_objects_do_not_route_to_handler(
+        main_thread: MainThreadMarker,
+        handler_queries: impl Fn() -> usize,
+    ) {
+        let view = TextInputView::new(CGRect::ZERO, main_thread);
+        let mut fields = slotmap::SlotMap::<gpui::FocusId, ()>::with_key();
+        view.set_input_field(Some(fields.insert(())));
+        let old_range = view.new_range(1..3);
+        let old_position = old_range.start();
+        view.set_input_field(Some(fields.insert(())));
+        let queries_before = handler_queries();
+        let replacement = NSString::from_str("x");
+        view.replaceRange_withText(&old_range, &replacement);
+        view.setSelectedTextRange(Some(&old_range));
+        assert!(view.textInRange(&old_range).is_none());
+        assert_eq!(view.firstRectForRange(&old_range), CGRect::ZERO);
+        assert_eq!(view.caretRectForPosition(&old_position), CGRect::ZERO);
+        assert!(view.selectionRectsForRange(&old_range).is_empty());
+        assert!(view.positionFromPosition_offset(&old_position, 1).is_none());
+        assert!(
+            view.characterRangeByExtendingPosition_inDirection(
+                &old_position,
+                UITextLayoutDirection::Right
+            )
+            .is_none()
+        );
+        assert!(
+            view.closestPositionToPoint_withinRange(CGPoint::ZERO, &old_range)
+                .is_none()
+        );
+        assert_eq!(
+            handler_queries(),
+            queries_before,
+            "stale mutations and reads must be rejected before resolving B's handler"
+        );
+
+        // The fixture has no GPUI document, but counts attempts to resolve one.
+        // Fresh mutations must reach that boundary, so an absent-handler no-op
+        // cannot make the stale-object assertion pass vacuously.
+        let fresh_range = view.new_range(1..3);
+        view.replaceRange_withText(&fresh_range, &replacement);
+        assert_eq!(handler_queries(), queries_before + 1);
+        view.setSelectedTextRange(Some(&fresh_range));
+        assert_eq!(handler_queries(), queries_before + 2);
     }
 
     #[test]
