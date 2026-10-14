@@ -60,8 +60,8 @@ impl GoToLine {
         query: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) {
-        Self::open_with_query_mode(workspace, QueryMode::Plain, query, window, cx);
+    ) -> bool {
+        Self::open_with_query_mode(workspace, QueryMode::Plain, query, window, cx)
     }
 
     pub fn open_in_unified_mode(
@@ -112,21 +112,13 @@ impl GoToLine {
                 let Some(workspace) = editor_handle.read(cx).workspace() else {
                     return;
                 };
-                if settings::UnifiedPaletteSettings::get_global(cx).enabled {
-                    workspace.update(cx, |workspace, cx| {
-                        GoToLine::open_in_unified_mode(workspace, String::new(), window, cx);
-                    });
-                    return;
-                }
-
-                let editor = editor_handle.read(cx);
-                let Some(buffer) = editor.active_buffer(cx) else {
-                    return;
-                };
                 workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        GoToLine::new(editor_handle, buffer, window, cx)
-                    });
+                    let query = String::new();
+                    if settings::UnifiedPaletteSettings::get_global(cx).enabled {
+                        GoToLine::open_in_unified_mode(workspace, query, window, cx);
+                    } else {
+                        GoToLine::open_with_query(workspace, query, window, cx);
+                    }
                 })
             })
             .detach();

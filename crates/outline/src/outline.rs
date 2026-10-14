@@ -24,7 +24,11 @@ pub fn init(cx: &mut App) {
                 return;
             };
 
-            toggle(editor, &Default::default(), window, cx);
+            if settings::UnifiedPaletteSettings::get_global(cx).enabled {
+                toggle_in_unified_mode(editor, String::new(), window, cx);
+            } else {
+                toggle(editor, &Default::default(), window, cx);
+            }
         })
         .ok();
 }
@@ -32,6 +36,25 @@ pub fn init(cx: &mut App) {
 pub fn toggle(
     editor: Entity<Editor>,
     _: &zed_actions::outline::ToggleOutline,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    toggle_with_query_mode(editor, picker::QueryMode::Plain, String::new(), window, cx);
+}
+
+pub fn toggle_in_unified_mode(
+    editor: Entity<Editor>,
+    query: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    toggle_with_query_mode(editor, picker::QueryMode::Prefixed('@'), query, window, cx);
+}
+
+fn toggle_with_query_mode(
+    editor: Entity<Editor>,
+    query_mode: picker::QueryMode,
+    query: String,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -47,15 +70,16 @@ pub fn toggle(
         return;
     }
 
-    if settings::UnifiedPaletteSettings::get_global(cx).enabled {
-        open_in_unified_mode(editor, String::new(), window, cx);
-    } else {
-        open_with_query(editor, String::new(), window, cx);
-    }
+    open_with_query_mode(editor, query_mode, query, window, cx);
 }
 
-pub fn open_with_query(editor: Entity<Editor>, query: String, window: &mut Window, cx: &mut App) {
-    open_with_query_mode(editor, picker::QueryMode::Plain, query, window, cx);
+pub fn open_with_query(
+    editor: Entity<Editor>,
+    query: String,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    open_with_query_mode(editor, picker::QueryMode::Plain, query, window, cx)
 }
 
 pub fn open_in_unified_mode(

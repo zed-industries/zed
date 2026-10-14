@@ -457,20 +457,19 @@ impl TextFinder {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
-        Self::open_seeded_query(query, picker::QueryMode::Plain, window, cx)
+        Self::open_with_query_mode(
+            Some(SearchSeed {
+                query: QuerySeed::Query(query),
+                options: None,
+            }),
+            picker::QueryMode::Plain,
+            window,
+            cx,
+        )
     }
 
     pub fn open_in_unified_mode(
         query: String,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Task<()> {
-        Self::open_seeded_query(query, picker::QueryMode::Prefixed('%'), window, cx)
-    }
-
-    fn open_seeded_query(
-        query: String,
-        query_mode: picker::QueryMode,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
@@ -479,7 +478,7 @@ impl TextFinder {
                 query: QuerySeed::Query(query),
                 options: None,
             }),
-            query_mode,
+            picker::QueryMode::Prefixed('%'),
             window,
             cx,
         )

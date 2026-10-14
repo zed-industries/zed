@@ -53,7 +53,7 @@ pub fn open_with_query(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open(workspace, picker::QueryMode::Plain, query, window, cx);
+    open_with_query_mode(workspace, picker::QueryMode::Plain, query, window, cx);
 }
 
 pub fn open_in_unified_mode(
@@ -62,7 +62,7 @@ pub fn open_in_unified_mode(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open(
+    open_with_query_mode(
         workspace,
         picker::QueryMode::Prefixed('#'),
         query,
@@ -71,7 +71,7 @@ pub fn open_in_unified_mode(
     );
 }
 
-fn open(
+fn open_with_query_mode(
     workspace: &mut Workspace,
     query_mode: picker::QueryMode,
     query: String,
