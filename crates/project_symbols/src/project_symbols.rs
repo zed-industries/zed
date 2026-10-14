@@ -22,13 +22,7 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(
                 |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
-                    let project = workspace.project().clone();
-                    let handle = cx.entity().downgrade();
-                    workspace.toggle_modal(window, cx, move |window, cx| {
-                        let delegate = ProjectSymbolsDelegate::new(handle, project.clone());
-                        let preview = picker_preview::editor_preview(project, window, cx);
-                        Picker::uniform_list_with_preview(delegate, preview, window, cx)
-                    })
+                    open_with_query(workspace, String::new(), window, cx);
                 },
             );
         },
@@ -47,6 +41,49 @@ pub struct ProjectSymbolsDelegate {
     external_match_candidates: Vec<StringMatchCandidate>,
     show_worktree_root_name: bool,
     matches: Vec<StringMatch>,
+}
+
+pub fn open_with_query(
+    workspace: &mut Workspace,
+    query: String,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    open(workspace, picker::QueryMode::Plain, query, window, cx);
+}
+
+pub fn open_in_unified_mode(
+    workspace: &mut Workspace,
+    prefix: char,
+    query: String,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    open(
+        workspace,
+        picker::QueryMode::Prefixed(prefix),
+        query,
+        window,
+        cx,
+    );
+}
+
+fn open(
+    workspace: &mut Workspace,
+    query_mode: picker::QueryMode,
+    query: String,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let project = workspace.project().clone();
+    let handle = cx.entity().downgrade();
+    workspace.toggle_modal(window, cx, move |window, cx| {
+        let delegate = ProjectSymbolsDelegate::new(handle, project.clone());
+        let preview = picker_preview::editor_preview(project, window, cx);
+        let mut picker = Picker::uniform_list_with_preview(delegate, preview, window, cx);
+        picker.set_query_mode(query_mode, &query, window, cx);
+        picker
+    });
 }
 
 impl ProjectSymbolsDelegate {

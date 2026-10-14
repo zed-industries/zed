@@ -48,7 +48,7 @@ use workspace::{
     MAX_RECENT_SELECTIONS, ModalView, OpenChannelNotesById, OpenOptions, OpenVisible,
     SplitDirection, Workspace, item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
 };
-use zed_actions::search::ToggleIncludeIgnored;
+use zed_actions::{search::ToggleIncludeIgnored, unified_palette::SwitchModeFromFileFinder};
 
 actions!(
     file_finder,
@@ -76,6 +76,44 @@ pub fn init(cx: &mut App) {
 }
 
 impl FileFinder {
+    /// Returns the current search query.
+    pub fn query(&self, cx: &App) -> String {
+        self.picker.read(cx).query(cx)
+    }
+
+    /// Replaces the current search query.
+    pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.picker
+            .update(cx, |picker, cx| picker.set_query(query, window, cx));
+    }
+
+    /// Cycles the selected item, matching the file-finder toggle action.
+    pub fn cycle_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.init_modifiers = Some(window.modifiers());
+        self.picker
+            .update(cx, |picker, cx| picker.cycle_selection(window, cx));
+    }
+
+    /// Opens the file finder with action options and an optional prefilled query.
+    pub fn open_with_options(
+        workspace: &mut Workspace,
+        separate_history: bool,
+        include_ignored: Option<bool>,
+        query: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<()> {
+        let seed_query = query.or_else(|| Self::seed_query(workspace, window, cx));
+        Self::open(
+            workspace,
+            separate_history,
+            include_ignored,
+            seed_query,
+            window,
+            cx,
+        )
+    }
+
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
@@ -98,10 +136,7 @@ impl FileFinder {
                 };
 
                 file_finder.update(cx, |file_finder, cx| {
-                    file_finder.init_modifiers = Some(window.modifiers());
-                    file_finder.picker.update(cx, |picker, cx| {
-                        picker.cycle_selection(window, cx);
-                    });
+                    file_finder.cycle_selection(window, cx);
                 });
             },
         );
@@ -1928,6 +1963,13 @@ impl PickerDelegate for FileFinderDelegate {
     ) -> Task<()> {
         let debounce_refresh = mem::take(&mut self.debounce_next_refresh);
         let raw_query = raw_query.trim();
+
+        if matches!(raw_query.chars().next(), Some('>' | '#' | '@' | ':' | '%')) {
+            self.latest_search_id = post_inc(&mut self.search_count);
+            self.cancel_flag.store(true, atomic::Ordering::Release);
+            window.dispatch_action(SwitchModeFromFileFinder.boxed_clone(), cx);
+            return Task::ready(());
+        }
 
         let raw_query = match &raw_query.get(0..2) {
             Some(".\\" | "./") => &raw_query[2..],

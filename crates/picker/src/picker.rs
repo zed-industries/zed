@@ -9,7 +9,8 @@ use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
-    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
+    borrow::Cow, cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc,
+    time::Duration,
 };
 use ui::{
     Checkbox, ContextMenu, Divider, DocumentationAside, KeyBinding, PopoverMenuHandle, Tooltip,
@@ -59,6 +60,47 @@ pub enum Direction {
 pub enum ScrollBehavior {
     RevealSelected,
     PreserveOffset,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryMode {
+    Plain,
+    Prefixed(char),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum QueryEdit<'a> {
+    Filter(&'a str),
+    ReturnToFileFinder,
+}
+
+impl QueryMode {
+    fn display_query(self, query: &str) -> Cow<'_, str> {
+        match self {
+            Self::Plain => Cow::Borrowed(query),
+            Self::Prefixed(prefix) => Cow::Owned(format!(
+                "{prefix}{}",
+                query.strip_prefix(prefix).unwrap_or(query)
+            )),
+        }
+    }
+
+    fn filter_query(self, query: &str) -> &str {
+        match self.edit_query(query) {
+            QueryEdit::Filter(filtered_query) => filtered_query,
+            QueryEdit::ReturnToFileFinder => query,
+        }
+    }
+
+    fn edit_query<'a>(self, input: &'a str) -> QueryEdit<'a> {
+        match self {
+            Self::Plain => QueryEdit::Filter(input),
+            Self::Prefixed(prefix) => match input.strip_prefix(prefix) {
+                Some(query) => QueryEdit::Filter(query),
+                None => QueryEdit::ReturnToFileFinder,
+            },
+        }
+    }
 }
 
 actions!(
@@ -130,6 +172,7 @@ pub struct Picker<D: PickerDelegate> {
     head: Head,
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
+    query_mode: QueryMode,
     confirm_on_update: Option<bool>,
     select_instead_of_open: bool,
     shape: shape::Shape,
@@ -624,6 +667,7 @@ impl<D: PickerDelegate> Picker<D> {
             head,
             element_container,
             pending_update_matches: None,
+            query_mode: QueryMode::Plain,
             confirm_on_update: None,
             select_instead_of_open: false,
             preview,
@@ -909,7 +953,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let query = self.query(cx);
+        let query = self.query_without_mode_prefix(cx);
         if let Some(query) = self
             .delegate
             .select_history(Direction::Down, &query, window, cx)
@@ -936,7 +980,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let query = self.query(cx);
+        let query = self.query_without_mode_prefix(cx);
         if let Some(query) = self
             .delegate
             .select_history(Direction::Up, &query, window, cx)
@@ -1034,7 +1078,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending_update_matches.is_some()
             && !self.delegate.finalize_update_matches(
-                self.query(cx),
+                self.query_without_mode_prefix(cx),
                 Duration::from_millis(16),
                 window,
                 cx,
@@ -1055,7 +1099,7 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         if self.pending_update_matches.is_some()
             && !self.delegate.finalize_update_matches(
-                self.query(cx),
+                self.query_without_mode_prefix(cx),
                 Duration::from_millis(16),
                 window,
                 cx,
@@ -1077,7 +1121,10 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), window, cx) {
+        if let Some(new_query) =
+            self.delegate
+                .confirm_completion(self.query_without_mode_prefix(cx), window, cx)
+        {
             self.set_query(&new_query, window, cx);
         } else {
             cx.propagate()
@@ -1186,7 +1233,18 @@ impl<D: PickerDelegate> Picker<D> {
         match event {
             ErasedEditorEvent::BufferEdited => {
                 let query = editor.text(cx);
-                self.update_matches(query, window, cx);
+                match self.query_mode.edit_query(&query) {
+                    QueryEdit::Filter(query) => self.update_matches(query.to_owned(), window, cx),
+                    QueryEdit::ReturnToFileFinder => {
+                        // Let this picker release its update lease before the router reads its query.
+                        cx.defer_in(window, |_, window, cx| {
+                            window.dispatch_action(
+                                workspace::ToggleFileFinder::default().boxed_clone(),
+                                cx,
+                            );
+                        });
+                    }
+                }
             }
             ErasedEditorEvent::Blurred => {
                 // Opening a footer/search-bar menu blurs the editor; don't
@@ -1223,7 +1281,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let query = self.query(cx);
+        let query = self.query_without_mode_prefix(cx);
         self.update_matches(query, window, cx);
     }
 
@@ -1319,9 +1377,30 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn has_query_mode_prefix(&self) -> bool {
+        matches!(self.query_mode, QueryMode::Prefixed(_))
+    }
+
+    pub fn query_without_mode_prefix(&self, cx: &App) -> String {
+        let query = self.query(cx);
+        self.query_mode.filter_query(&query).to_owned()
+    }
+
+    pub fn set_query_mode(
+        &mut self,
+        query_mode: QueryMode,
+        query: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.query_mode = query_mode;
+        self.set_query(query, window, cx);
+    }
+
     pub fn set_query(&self, query: &str, window: &mut Window, cx: &mut App) {
         if let Head::Editor(editor) = &self.head {
-            editor.set_text(query, window, cx);
+            let query = self.query_mode.display_query(query);
+            editor.set_text(query.as_ref(), window, cx);
             editor.move_selection_to_end(window, cx);
         }
     }
@@ -1643,6 +1722,28 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use std::cell::Cell;
+
+    #[test]
+    fn query_mode_preserves_visible_prefix_and_routes_when_removed() {
+        let query_mode = QueryMode::Prefixed('>');
+
+        assert_eq!(query_mode.display_query("needle"), ">needle");
+        assert_eq!(query_mode.display_query(">needle"), ">needle");
+        assert_eq!(QueryMode::Plain.display_query(">needle"), ">needle");
+        assert_eq!(query_mode.filter_query(">needle"), "needle");
+        assert_eq!(
+            query_mode.edit_query(">needle"),
+            QueryEdit::Filter("needle")
+        );
+        assert_eq!(
+            query_mode.edit_query("needle"),
+            QueryEdit::ReturnToFileFinder
+        );
+        assert_eq!(
+            QueryMode::Plain.edit_query(">needle"),
+            QueryEdit::Filter(">needle")
+        );
+    }
 
     struct TestDelegate {
         items: Vec<bool>,

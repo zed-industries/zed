@@ -91,6 +91,32 @@ impl CommandPalette {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        Self::toggle_with_query_mode(workspace, picker::QueryMode::Plain, query, window, cx);
+    }
+
+    pub fn toggle_in_unified_mode(
+        workspace: &mut Workspace,
+        prefix: char,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::toggle_with_query_mode(
+            workspace,
+            picker::QueryMode::Prefixed(prefix),
+            query,
+            window,
+            cx,
+        );
+    }
+
+    fn toggle_with_query_mode(
+        workspace: &mut Workspace,
+        query_mode: picker::QueryMode,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
         if workspace.active_modal::<CommandPalette>(cx).is_some() {
             workspace.hide_modal(window, cx);
             return;
@@ -106,12 +132,13 @@ impl CommandPalette {
 
         let entity = cx.weak_entity();
         workspace.toggle_modal(window, cx, move |window, cx| {
-            CommandPalette::new(previous_focus_handle, query, entity, window, cx)
+            CommandPalette::new(previous_focus_handle, query_mode, query, entity, window, cx)
         });
     }
 
     fn new(
         previous_focus_handle: FocusHandle,
+        query_mode: picker::QueryMode,
         query: &str,
         entity: WeakEntity<Workspace>,
         window: &mut Window,
@@ -144,11 +171,11 @@ impl CommandPalette {
 
         let picker = cx.new(|cx| {
             // One-shot action; there's nothing to reopen.
-            let picker = Picker::uniform_list(delegate, window, cx)
+            let mut picker = Picker::uniform_list(delegate, window, cx)
                 .initial_width(rems(38.0))
                 .reopenable(false, cx)
                 .show_scrollbar(true);
-            picker.set_query(query, window, cx);
+            picker.set_query_mode(query_mode, query, window, cx);
             picker
         });
         Self { picker }
@@ -157,6 +184,18 @@ impl CommandPalette {
     pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.picker
             .update(cx, |picker, cx| picker.set_query(query, window, cx))
+    }
+
+    pub fn query(&self, cx: &App) -> String {
+        self.picker.read(cx).query_without_mode_prefix(cx)
+    }
+
+    pub fn query_with_mode_prefix(&self, cx: &App) -> String {
+        self.picker.read(cx).query(cx)
+    }
+
+    pub fn is_unified_mode(&self, cx: &App) -> bool {
+        self.picker.read(cx).has_query_mode_prefix()
     }
 
     fn remove_selected(&mut self, _: &RemoveSelected, window: &mut Window, cx: &mut Context<Self>) {

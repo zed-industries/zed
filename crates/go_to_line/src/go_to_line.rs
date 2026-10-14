@@ -7,15 +7,15 @@ use editor::{
     scroll::{Autoscroll, ScrollOffset},
 };
 use gpui::{
-    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Styled,
-    Subscription, div, prelude::*,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
+    SharedString, Styled, Subscription, div, prelude::*,
 };
 use language::Buffer;
 use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{DismissDecision, ModalView};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(GoToLine::register).detach();
@@ -26,6 +26,7 @@ pub struct GoToLine {
     active_editor: Entity<Editor>,
     active_buffer: Entity<Buffer>,
     current_text: SharedString,
+    mode_prefix: Option<char>,
     prev_scroll_position: Option<gpui::Point<ScrollOffset>>,
     current_line: u32,
     _subscriptions: Vec<Subscription>,
@@ -52,6 +53,57 @@ impl EventEmitter<DismissEvent> for GoToLine {}
 enum GoToLineRowHighlights {}
 
 impl GoToLine {
+    pub fn open_with_query(
+        workspace: &mut Workspace,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::open_with_mode_prefix(workspace, None, query, window, cx);
+    }
+
+    pub fn open_in_unified_mode(
+        workspace: &mut Workspace,
+        prefix: char,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::open_with_mode_prefix(workspace, Some(prefix), query, window, cx);
+    }
+
+    fn open_with_mode_prefix(
+        workspace: &mut Workspace,
+        mode_prefix: Option<char>,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(editor) = workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<Editor>())
+        else {
+            return;
+        };
+        let Some(buffer) = editor.read(cx).active_buffer(cx) else {
+            return;
+        };
+
+        workspace.toggle_modal(window, cx, move |window, cx| {
+            let go_to_line =
+                GoToLine::new_with_mode_prefix(editor, buffer, mode_prefix, window, cx);
+            let query = if let Some(prefix) = mode_prefix {
+                format!("{prefix}{query}")
+            } else {
+                query
+            };
+            go_to_line.line_editor.update(cx, |editor, cx| {
+                editor.set_text(query.as_str(), window, cx);
+            });
+            go_to_line
+        });
+    }
+
     fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<Editor>) {
         let handle = cx.entity().downgrade();
         editor
@@ -78,6 +130,16 @@ impl GoToLine {
     pub fn new(
         active_editor: Entity<Editor>,
         active_buffer: Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_mode_prefix(active_editor, active_buffer, None, window, cx)
+    }
+
+    fn new_with_mode_prefix(
+        active_editor: Entity<Editor>,
+        active_buffer: Entity<Buffer>,
+        mode_prefix: Option<char>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -145,6 +207,7 @@ impl GoToLine {
             active_editor,
             active_buffer,
             current_text: current_text.into(),
+            mode_prefix,
             prev_scroll_position: Some(scroll_position),
             current_line: line,
             _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],
@@ -174,7 +237,23 @@ impl GoToLine {
                 self.prev_scroll_position.take();
                 cx.emit(DismissEvent)
             }
-            editor::EditorEvent::BufferEdited => self.highlight_current_line(cx),
+            editor::EditorEvent::BufferEdited => {
+                let query = self.line_editor.read(cx).text(cx);
+                if self
+                    .mode_prefix
+                    .is_some_and(|prefix| !query.starts_with(prefix))
+                {
+                    // Let this view release its update lease before the router reads its query.
+                    cx.defer_in(window, |_, window, cx| {
+                        window.dispatch_action(
+                            workspace::ToggleFileFinder::default().boxed_clone(),
+                            cx,
+                        );
+                    });
+                } else {
+                    self.highlight_current_line(cx);
+                }
+            }
             _ => {}
         }
     }
@@ -235,9 +314,25 @@ impl GoToLine {
             .buffer_point_to_anchor(&self.active_buffer, target_point, cx)
     }
 
+    pub fn query(&self, cx: &App) -> String {
+        let query = self.line_editor.read(cx).text(cx);
+        self.mode_prefix
+            .and_then(|prefix| query.strip_prefix(prefix))
+            .unwrap_or(&query)
+            .to_owned()
+    }
+
+    pub fn query_with_mode_prefix(&self, cx: &App) -> String {
+        self.line_editor.read(cx).text(cx)
+    }
+
+    pub fn is_unified_mode(&self) -> bool {
+        self.mode_prefix.is_some()
+    }
+
     fn relative_line_from_query(&self, cx: &App) -> Option<i32> {
-        let input = self.line_editor.read(cx).text(cx);
-        let trimmed = input.trim();
+        let query = self.query(cx);
+        let trimmed = query.trim();
 
         let mut last_direction_char: Option<char> = None;
         let mut number_start_index = 0;
@@ -271,8 +366,8 @@ impl GoToLine {
     }
 
     fn line_and_char_from_query(&self, cx: &App) -> Option<(u32, Option<u32>)> {
-        let input = self.line_editor.read(cx).text(cx);
-        let mut components = input
+        let query = self.query(cx);
+        let mut components = query
             .splitn(2, FILE_ROW_COLUMN_DELIMITER)
             .map(str::trim)
             .fuse();

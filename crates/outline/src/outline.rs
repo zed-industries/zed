@@ -46,21 +46,59 @@ pub fn toggle(
         return;
     }
 
+    open_with_query(editor, String::new(), window, cx);
+}
+
+pub fn open_with_query(editor: Entity<Editor>, query: String, window: &mut Window, cx: &mut App) {
+    open_with_query_mode(editor, picker::QueryMode::Plain, query, window, cx);
+}
+
+pub fn open_in_unified_mode(
+    editor: Entity<Editor>,
+    prefix: char,
+    query: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    open_with_query_mode(
+        editor,
+        picker::QueryMode::Prefixed(prefix),
+        query,
+        window,
+        cx,
+    );
+}
+
+fn open_with_query_mode(
+    editor: Entity<Editor>,
+    query_mode: picker::QueryMode,
+    query: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(workspace) = editor.read(cx).workspace() else {
+        return;
+    };
     let Some(task) = outline_for_editor(&editor, cx) else {
         return;
     };
-    let editor = editor.clone();
     window
         .spawn(cx, async move |cx| {
             let items = task.await;
-            if items.is_empty() {
+            if items.is_empty() && query.is_empty() && query_mode == picker::QueryMode::Plain {
                 return;
             }
             cx.update(|window, cx| {
                 let outline = Outline::new(items);
                 workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        OutlineView::new(outline, editor, window, cx)
+                    workspace.toggle_modal(window, cx, move |window, cx| {
+                        let outline_view = OutlineView::new(outline, editor, window, cx);
+                        if !query.is_empty() || query_mode != picker::QueryMode::Plain {
+                            outline_view.picker.update(cx, |picker, cx| {
+                                picker.set_query_mode(query_mode, &query, window, cx);
+                            });
+                        }
+                        outline_view
                     });
                 });
             })
@@ -153,6 +191,18 @@ impl Render for OutlineView {
 }
 
 impl OutlineView {
+    pub fn query(&self, cx: &App) -> String {
+        self.picker.read(cx).query_without_mode_prefix(cx)
+    }
+
+    pub fn query_with_mode_prefix(&self, cx: &App) -> String {
+        self.picker.read(cx).query(cx)
+    }
+
+    pub fn is_unified_mode(&self, cx: &App) -> bool {
+        self.picker.read(cx).has_query_mode_prefix()
+    }
+
     fn register(editor: &mut Editor, _: Option<&mut Window>, cx: &mut Context<Editor>) {
         if editor.mode().is_full() {
             let handle = cx.entity().downgrade();

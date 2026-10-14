@@ -138,10 +138,7 @@ impl TextFinder {
             };
 
             text_picker.update(cx, |text_picker, cx| {
-                text_picker.init_modifiers = Some(window.modifiers());
-                text_picker.picker.update(cx, |picker, cx| {
-                    picker.cycle_selection(window, cx);
-                });
+                text_picker.cycle_selection(window, cx);
             })
         });
     }
@@ -161,7 +158,14 @@ impl TextFinder {
                     remove_project_search_tab(project_search_item_id, workspace, window, cx);
                     let workspace_id = workspace.database_id();
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        Self::new(delegate, None, workspace_id, window, cx)
+                        Self::new(
+                            delegate,
+                            None,
+                            picker::QueryMode::Plain,
+                            workspace_id,
+                            window,
+                            cx,
+                        )
                     });
                 })
                 .ok();
@@ -392,8 +396,79 @@ impl TextFinder {
         None
     }
 
+    pub fn query(&self, cx: &App) -> String {
+        self.picker.read(cx).query_without_mode_prefix(cx)
+    }
+
+    /// Returns the current query with its unified-palette prefix, when present.
+    pub fn query_with_mode_prefix(&self, cx: &App) -> String {
+        self.picker.read(cx).query(cx)
+    }
+
+    pub fn is_unified_mode(&self, cx: &App) -> bool {
+        self.picker.read(cx).has_query_mode_prefix()
+    }
+
+    pub fn cycle_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.init_modifiers = Some(window.modifiers());
+        self.picker
+            .update(cx, |picker, cx| picker.cycle_selection(window, cx));
+    }
+
+    /// Opens the TextFinder using its normal selection and search-history seeding.
+    pub fn open_from_workspace(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<()> {
+        Self::open(Self::seed_query(workspace, window, cx), window, cx)
+    }
+
+    /// Opens a search query without adding unified-palette mode state.
+    pub fn open_with_query(
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<()> {
+        Self::open_seeded_query(query, picker::QueryMode::Plain, window, cx)
+    }
+
+    pub fn open_in_unified_mode(
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<()> {
+        Self::open_seeded_query(query, picker::QueryMode::Prefixed('%'), window, cx)
+    }
+
+    fn open_seeded_query(
+        query: String,
+        query_mode: picker::QueryMode,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<()> {
+        Self::open_with_query_mode(
+            Some(SearchSeed {
+                query: QuerySeed::Query(query),
+                options: None,
+            }),
+            query_mode,
+            window,
+            cx,
+        )
+    }
+
     pub(crate) fn open(
         seed_query: Option<SearchSeed>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<()> {
+        Self::open_with_query_mode(seed_query, picker::QueryMode::Plain, window, cx)
+    }
+
+    fn open_with_query_mode(
+        seed_query: Option<SearchSeed>,
+        query_mode: picker::QueryMode,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
@@ -409,7 +484,7 @@ impl TextFinder {
                 .update_in(cx, |workspace, window, cx| {
                     let workspace_id = workspace.database_id();
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        Self::new(delegate, seed_query, workspace_id, window, cx)
+                        Self::new(delegate, seed_query, query_mode, workspace_id, window, cx)
                     });
                 })
                 .ok();
@@ -419,6 +494,7 @@ impl TextFinder {
     fn new(
         delegate: Delegate,
         seed_query: Option<SearchSeed>,
+        query_mode: picker::QueryMode,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -449,8 +525,10 @@ impl TextFinder {
                     picker.delegate.search_options = options;
                 }
                 let query = seed_query.query.into_query(picker.delegate.search_options);
-                picker.set_query(&query, window, cx);
-                picker.select_query(window, cx);
+                picker.set_query_mode(query_mode, &query, window, cx);
+                if query_mode == picker::QueryMode::Plain {
+                    picker.select_query(window, cx);
+                }
             }
         });
         cx.spawn({
@@ -509,7 +587,7 @@ impl ModalView for TextFinder {
         cx: &mut Context<Self>,
     ) -> DismissDecision {
         let picker = self.picker.read(cx);
-        let query = picker.query(cx);
+        let query = picker.query_without_mode_prefix(cx);
         let options = picker.delegate.search_options;
         store_last_search(self.workspace_id, query, options, cx);
         DismissDecision::Dismiss(true)
