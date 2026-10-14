@@ -95,6 +95,23 @@ If you use the command line to open a connection to a host by doing `zed ssh://1
 
 Additionally it's worth noting that while you can pass a password on the command line `zed ssh://user:password@host/~`, we do not support writing a password to your settings file. If you're connecting repeatedly to the same host, you should configure key-based authentication.
 
+## Open files from a remote terminal
+
+In Zed's terminal for a Linux or macOS remote project, including WSL, use `zed` to open files and folders in that terminal's connected project:
+
+```sh
+zed .
+zed src/main.rs:42:7
+zed "folder with spaces/file.txt" another-file.txt
+zed --wait COMMIT_EDITMSG
+```
+
+Relative paths use the terminal's current folder. Line and column numbers start at 1. Files that do not exist yet open as new files.
+
+`--wait` returns after the opened files close. When you open a folder with `--wait`, it waits for the project window to close. Disconnecting the remote session returns an error; cancelling the command leaves opened files in Zed.
+
+Each terminal selects its own remote session through its environment. The command does not guess another session if that session is unavailable. Open a new terminal in the connected project if its session has ended. This command is provided in Zed's remote terminals; it does not configure external SSH terminals.
+
 ## Remote Development on Windows (SSH)
 
 Zed on Windows supports SSH remoting and will prompt for credentials when needed.
@@ -269,10 +286,6 @@ Supported options:
 - And also... `-4`, `-6`, `-A`, `-B`, `-C`, `-D`, `-I`, `-K`, `-P`, `-X`, `-Y`, `-a`, `-b`, `-c`, `-i`, `-k`, `-l`, `-m`, `-o`, `-p`, `-w`, `-x`, `-y`
 
 Note that we deliberately disallow some options (for example `-t` or `-T`) that Zed will set for you.
-
-## Known Limitations
-
-- You can't open files from the remote Terminal by typing the `zed` command.
 
 ## See also
 

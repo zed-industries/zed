@@ -1,3 +1,5 @@
+mod cli_client;
+mod cli_listener;
 mod headless_project;
 
 #[cfg(test)]
@@ -82,12 +84,26 @@ pub enum Commands {
         stdout_socket: PathBuf,
         #[arg(long)]
         stderr_socket: PathBuf,
+        #[arg(long)]
+        cli_socket: PathBuf,
     },
     Proxy {
         #[arg(long)]
         reconnect: bool,
         #[arg(long)]
         identifier: String,
+    },
+    /// Open a file or directory in the connected Zed client.
+    Cli {
+        /// Path to open (file or directory). Supports path:line:column syntax.
+        #[arg(default_value = ".")]
+        paths: Vec<String>,
+        /// The identifier of the running remote server to connect to.
+        #[arg(long, default_value = "")]
+        identifier: String,
+        /// Block until the file is closed in the editor.
+        #[arg(long)]
+        wait: bool,
     },
     Version,
     #[cfg(unix)]
@@ -105,17 +121,25 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
             stdin_socket,
             stdout_socket,
             stderr_socket,
+            cli_socket,
         } => execute_run(
             log_file,
             pid_file,
             stdin_socket,
             stdout_socket,
             stderr_socket,
+            cli_socket,
         ),
         Commands::Proxy {
             identifier,
             reconnect,
         } => execute_proxy(identifier, reconnect).context("running proxy on the remote server"),
+        Commands::Cli {
+            paths,
+            identifier,
+            wait,
+        } => cli_client::execute_cli(paths, identifier, wait)
+            .context("sending open request to remote server"),
         #[cfg(unix)]
         Commands::Exec => execute_command(),
         Commands::Version => {
@@ -672,6 +696,7 @@ pub fn execute_run(
     stdin_socket: PathBuf,
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
+    cli_socket: PathBuf,
 ) -> Result<()> {
     init_paths()?;
 
@@ -708,13 +733,14 @@ pub fn execute_run(
     };
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
-        "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
+        "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}, cli_socket: {:?}",
         pid,
         pid_file,
         log_file,
         stdin_socket,
         stdout_socket,
-        stderr_socket
+        stderr_socket,
+        cli_socket
     );
 
     write_pid_file(&pid_file, pid)
@@ -831,6 +857,12 @@ pub fn execute_run(
 
         handle_crash_files_requests(&project, &session);
 
+        cli_listener::start_cli_listener(cli_socket.clone(), session.clone(), cx);
+        #[cfg(unix)]
+        if let Some(environment) = install_cli_wrapper(&cli_socket).log_err() {
+            project.update(cx, |project, _| project.cli_environment = environment);
+        }
+
         cx.background_spawn(async move {
             cleanup_old_binaries_wsl();
             cleanup_old_binaries()
@@ -875,6 +907,7 @@ struct ServerPaths {
     stdin_socket: PathBuf,
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
+    cli_socket: PathBuf,
 }
 
 impl ServerPaths {
@@ -896,6 +929,7 @@ impl ServerPaths {
         let stdin_socket = server_dir.join("stdin.sock");
         let stdout_socket = server_dir.join("stdout.sock");
         let stderr_socket = server_dir.join("stderr.sock");
+        let cli_socket = server_dir.join("cli.sock");
         let log_file = logs_dir().join(format!("server-{}.log", identifier));
 
         Ok(Self {
@@ -903,6 +937,7 @@ impl ServerPaths {
             stdin_socket,
             stdout_socket,
             stderr_socket,
+            cli_socket,
             log_file,
         })
     }
@@ -1154,6 +1189,9 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     if paths.stderr_socket.exists() {
         std::fs::remove_file(&paths.stderr_socket).map_err(SpawnServerError::RemoveStderrSocket)?;
     }
+    if paths.cli_socket.exists() {
+        std::fs::remove_file(&paths.cli_socket).ok();
+    }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
 
@@ -1193,12 +1231,13 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
 fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
     let binary_path = binary_name.to_string_lossy().to_string();
     let parameters = format!(
-        "run --log-file \"{}\" --pid-file \"{}\" --stdin-socket \"{}\" --stdout-socket \"{}\" --stderr-socket \"{}\"",
+        "run --log-file \"{}\" --pid-file \"{}\" --stdin-socket \"{}\" --stdout-socket \"{}\" --stderr-socket \"{}\" --cli-socket \"{}\"",
         paths.log_file.to_string_lossy(),
         paths.pid_file.to_string_lossy(),
         paths.stdin_socket.to_string_lossy(),
         paths.stdout_socket.to_string_lossy(),
-        paths.stderr_socket.to_string_lossy()
+        paths.stderr_socket.to_string_lossy(),
+        paths.cli_socket.to_string_lossy()
     );
 
     let directory = binary_name
@@ -1229,7 +1268,9 @@ fn spawn_server_normal(binary_name: &Path, paths: &ServerPaths) -> Result<(), Sp
         .arg("--stdout-socket")
         .arg(&paths.stdout_socket)
         .arg("--stderr-socket")
-        .arg(&paths.stderr_socket);
+        .arg(&paths.stderr_socket)
+        .arg("--cli-socket")
+        .arg(&paths.cli_socket);
 
     server_process
         .spawn()
@@ -1423,6 +1464,54 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
                 .ok()
         })
         .or_else(read_proxy_from_env)
+}
+
+#[cfg(unix)]
+fn install_cli_wrapper(cli_socket: &Path) -> Result<HashMap<String, String>> {
+    install_cli_wrapper_at(
+        &paths::remote_server_state_dir().join("bin"),
+        cli_socket,
+        &std::env::current_exe()?,
+    )
+}
+
+#[cfg(unix)]
+fn install_cli_wrapper_at(
+    bin_dir: &Path,
+    cli_socket: &Path,
+    server_binary: &Path,
+) -> Result<HashMap<String, String>> {
+    std::fs::create_dir_all(&bin_dir)?;
+    let wrapper_path = bin_dir.join("zed");
+    let temporary_path = bin_dir.join(format!("zed-{}", uuid::Uuid::new_v4()));
+    std::fs::write(
+        &temporary_path,
+        r#"#!/bin/sh
+: "${ZED_REMOTE_CLI_SOCKET:?Run zed from a connected Zed terminal}"
+: "${ZED_REMOTE_CLI_BINARY:?Remote Zed CLI binary is unavailable}"
+exec "$ZED_REMOTE_CLI_BINARY" cli "$@"
+"#,
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temporary_path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    std::fs::rename(temporary_path, wrapper_path)?;
+    Ok(HashMap::from_iter([
+        (
+            "ZED_REMOTE_CLI_SOCKET".into(),
+            cli_socket.to_string_lossy().into_owned(),
+        ),
+        (
+            "ZED_REMOTE_CLI_BINARY".into(),
+            server_binary.to_string_lossy().into_owned(),
+        ),
+        (
+            "ZED_REMOTE_CLI_BIN".into(),
+            bin_dir.to_string_lossy().into_owned(),
+        ),
+    ]))
 }
 
 fn cleanup_old_binaries() -> Result<()> {
@@ -1802,5 +1891,52 @@ mod tests {
             }
         });
         assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod cli_wrapper_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn cli_wrapper_preserves_each_sessions_socket_and_binary() {
+        let directory = std::env::temp_dir().join(format!("zed-cli-{} λ", uuid::Uuid::new_v4()));
+        let bin_dir = directory.join("custom data root/bin");
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut environments = Vec::new();
+        for version in ["first", "second"] {
+            let binary = directory.join(format!("server {version}"));
+            std::fs::write(
+                &binary,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' '{version}' \"$ZED_REMOTE_CLI_SOCKET\" \"$@\"\n"
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let socket = directory.join(format!("{version}.sock"));
+            environments.push((
+                version,
+                socket.clone(),
+                install_cli_wrapper_at(&bin_dir, &socket, &binary).unwrap(),
+            ));
+        }
+        for (version, socket, environment) in environments {
+            let output = std::process::Command::new(bin_dir.join("zed"))
+                .envs(environment)
+                .args(["--wait", "space λ.txt"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                format!(
+                    "{version}\n{}\ncli\n--wait\nspace λ.txt\n",
+                    socket.display()
+                )
+            );
+        }
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
