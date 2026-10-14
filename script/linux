@@ -212,6 +212,7 @@ if [[ -n $pacman ]]; then
     libgit2
     libxcb
     libxkbcommon-x11
+    llvm
     openssl
     zstd
     pkgconf

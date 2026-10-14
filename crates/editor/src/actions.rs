@@ -427,6 +427,8 @@ actions!(
     [
         /// Accepts the full edit prediction.
         AcceptEditPrediction,
+        /// Amends the editor text with hint's edit (if sent).
+        AcceptInlayHint,
         /// Accepts a partial edit prediction.
         #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptNextWordEditPrediction,
