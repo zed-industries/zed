@@ -2252,7 +2252,7 @@ fn build_command_windows(
     let byte_slice: Vec<u8> = utf16_bytes.iter().flat_map(|&u| u.to_le_bytes()).collect();
     let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&byte_slice);
 
-    args.push(format!("powershell.exe -E {}", base64_encoded));
+    args.push(format!("\"powershell.exe -E {}\"", base64_encoded));
 
     Ok(CommandTemplate {
         program: "ssh".into(),
