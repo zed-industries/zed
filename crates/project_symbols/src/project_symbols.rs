@@ -7,7 +7,7 @@ use gpui::{
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate, PreviewUpdate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
-use settings::Settings;
+use settings::{SeedQuerySetting, Settings};
 use std::{cmp::Reverse, sync::Arc};
 use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
@@ -17,17 +17,57 @@ use workspace::{
     ui::{LabelLike, ListItem, ListItemSpacing, prelude::*},
 };
 
+const MAX_SEED_QUERY_LENGTH: usize = 100;
+
+fn sanitize_symbol_query(selection: &str) -> Option<String> {
+    let query = selection.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!query.is_empty()).then(|| query.chars().take(MAX_SEED_QUERY_LENGTH).collect())
+}
+
+fn seed_query(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Option<String> {
+    let focused_item = workspace.focused_pane(window, cx).read(cx).active_item();
+    let active_item = workspace
+        .active_item(cx)
+        .filter(|active| match &focused_item {
+            Some(focused) => focused.item_id() != active.item_id(),
+            None => true,
+        });
+
+    focused_item
+        .into_iter()
+        .chain(active_item)
+        .find_map(|item| {
+            let query = item.to_searchable_item_handle(cx)?.query_suggestion(
+                Some(SeedQuerySetting::Selection),
+                window,
+                cx,
+            );
+            sanitize_symbol_query(&query)
+        })
+}
+
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(
                 |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
+                    let seed_query = seed_query(workspace, window, cx);
                     let project = workspace.project().clone();
                     let handle = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, move |window, cx| {
                         let delegate = ProjectSymbolsDelegate::new(handle, project.clone());
                         let preview = picker_preview::editor_preview(project, window, cx);
-                        Picker::uniform_list_with_preview(delegate, preview, window, cx)
+                        let picker =
+                            Picker::uniform_list_with_preview(delegate, preview, window, cx);
+                        if let Some(seed_query) = seed_query {
+                            picker.set_query(&seed_query, window, cx);
+                            picker.select_query(window, cx);
+                        }
+                        picker
                     })
                 },
             );
@@ -629,5 +669,83 @@ mod tests {
                 lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
             ),
         }
+    }
+
+    #[test]
+    fn test_sanitize_symbol_query() {
+        assert_eq!(
+            sanitize_symbol_query("  the   quick\nbrown fox\ttabs ").as_deref(),
+            Some("the quick brown fox tabs")
+        );
+        assert_eq!(sanitize_symbol_query("").as_deref(), None);
+        assert_eq!(sanitize_symbol_query("  \n\t ").as_deref(), None);
+
+        let long_selection = "a".repeat(150);
+        let sanitized = sanitize_symbol_query(&long_selection).unwrap();
+        assert_eq!(sanitized.len(), MAX_SEED_QUERY_LENGTH);
+    }
+
+    #[gpui::test]
+    async fn test_seed_query_from_selection(cx: &mut TestAppContext) {
+        use language::Point;
+
+        init_test(cx);
+        cx.update(|cx| {
+            init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "test.rs": "fn my_symbol_name() {}\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/test.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let editor = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_project_item::<Editor>(
+                None,
+                buffer,
+                true,
+                true,
+                true,
+                true,
+                window,
+                cx,
+            )
+        });
+
+        // Select "my_symbol_name" (cols 3..17)
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 3)..Point::new(0, 17)]);
+            });
+        });
+
+        cx.dispatch_action(workspace::ToggleProjectSymbols);
+
+        let modal = workspace.read_with(cx, |workspace, cx| {
+            workspace.active_modal::<Picker<ProjectSymbolsDelegate>>(cx)
+        });
+        assert!(modal.is_some(), "Project symbols modal should be open");
+
+        let modal = modal.unwrap();
+        assert_eq!(
+            modal.read_with(cx, |picker, cx| picker.query(cx)),
+            "my_symbol_name"
+        );
     }
 }
