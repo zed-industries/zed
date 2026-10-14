@@ -1832,7 +1832,7 @@ fn python_lang() -> Language {
         LanguageConfig {
             name: "Python".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["py".to_string()],
+                path_suffixes: vec!["py".into()],
                 ..Default::default()
             })
             .into(),
@@ -1851,7 +1851,7 @@ fn go_lang() -> Arc<Language> {
             LanguageConfig {
                 name: "Go".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["go".to_string()],
+                    path_suffixes: vec!["go".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -2271,7 +2271,7 @@ fn javascript_lang() -> Arc<Language> {
             LanguageConfig {
                 name: "JavaScript".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["js".to_string()],
+                    path_suffixes: vec!["js".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -2291,7 +2291,7 @@ fn typescript_lang() -> Arc<Language> {
             LanguageConfig {
                 name: "TypeScript".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["ts".to_string()],
+                    path_suffixes: vec!["ts".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -2311,7 +2311,7 @@ fn tsx_lang() -> Arc<Language> {
             LanguageConfig {
                 name: "TSX".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["tsx".to_string()],
+                    path_suffixes: vec!["tsx".into()],
                     ..Default::default()
                 })
                 .into(),

@@ -155,7 +155,7 @@ fn test_select_language(cx: &mut App) {
         LanguageConfig {
             name: LanguageName::new_static("Rust"),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -167,7 +167,7 @@ fn test_select_language(cx: &mut App) {
         LanguageConfig {
             name: "Rust with longer extension".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["longer.rs".to_string()],
+                path_suffixes: vec!["longer.rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -179,7 +179,7 @@ fn test_select_language(cx: &mut App) {
         LanguageConfig {
             name: LanguageName::new_static("Make"),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
+                path_suffixes: vec!["Makefile".into(), "mk".into()],
                 ..Default::default()
             })
             .into(),
@@ -293,6 +293,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
                     "Dockerfile".into(),
                     vec!["Dockerfile".into(), "Dockerfile.*".into()].into(),
                 ),
+                ("SSH Config".into(), vec!["**/.ssh/config".into()].into()),
             ]);
         })
     });
@@ -304,7 +305,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         LanguageConfig {
             name: "JavaScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
+                path_suffixes: vec!["js".into()],
                 ..Default::default()
             })
             .into(),
@@ -313,7 +314,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string(), "ts.ecmascript".to_string()],
+                path_suffixes: vec!["ts".into(), "ts.ecmascript".into()],
                 ..Default::default()
             })
             .into(),
@@ -322,7 +323,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         LanguageConfig {
             name: "C++".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["cpp".to_string()],
+                path_suffixes: vec!["cpp".into()],
                 ..Default::default()
             })
             .into(),
@@ -331,7 +332,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         LanguageConfig {
             name: "C".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["c".to_string()],
+                path_suffixes: vec!["c".into()],
                 ..Default::default()
             })
             .into(),
@@ -340,7 +341,20 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         LanguageConfig {
             name: "Dockerfile".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["Dockerfile".to_string()],
+                path_suffixes: vec!["Dockerfile".into()],
+                ..Default::default()
+            })
+            .into(),
+            ..Default::default()
+        },
+        LanguageConfig {
+            name: "SSH Config".into(),
+            ..Default::default()
+        },
+        LanguageConfig {
+            name: "INI".into(),
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["config".into()],
                 ..Default::default()
             })
             .into(),
@@ -396,6 +410,11 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
         .unwrap();
     assert_eq!(language_name(language), "Dockerfile");
+
+    let language = cx
+        .read(|cx| languages.language_for_file(&local_file("/root/.ssh", "config"), None, cx))
+        .unwrap();
+    assert_eq!(language_name(language), "SSH Config");
 }
 
 #[gpui::test]
@@ -407,7 +426,7 @@ async fn test_reregistering_language_during_load_yields_current_language(cx: &mu
     let stale_config = LanguageConfig {
         name: LanguageName::new_static("TheLanguage"),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["stale".to_string()],
+            path_suffixes: vec!["stale".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
@@ -446,7 +465,7 @@ async fn test_reregistering_language_during_load_yields_current_language(cx: &mu
     registry.register_test_language(LanguageConfig {
         name: LanguageName::new_static("TheLanguage"),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["fresh".to_string()],
+            path_suffixes: vec!["fresh".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
@@ -473,7 +492,7 @@ async fn test_reregistering_language_during_failed_load_yields_current_language(
         LanguageName::new_static("TheLanguage"),
         None,
         Arc::new(LanguageMatcher {
-            path_suffixes: vec!["stale".to_string()],
+            path_suffixes: vec!["stale".into()],
             ..LanguageMatcher::default()
         }),
         false,
@@ -499,7 +518,7 @@ async fn test_reregistering_language_during_failed_load_yields_current_language(
     registry.register_test_language(LanguageConfig {
         name: LanguageName::new_static("TheLanguage"),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["fresh".to_string()],
+            path_suffixes: vec!["fresh".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
@@ -527,7 +546,7 @@ async fn test_extension_grammar_cannot_shadow_native_grammar(cx: &mut TestAppCon
         name: LanguageName::new_static("TheLanguage"),
         grammar: Some(Arc::from("rust")),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["the".to_string()],
+            path_suffixes: vec!["the".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
@@ -559,6 +578,14 @@ fn file(path: &str) -> Arc<dyn File> {
         path: Arc::from(rel_path(path)),
         root_name: "zed".into(),
         local_root: None,
+    })
+}
+
+fn local_file(local_root: &str, root_name: &str) -> Arc<dyn File> {
+    Arc::new(TestFile {
+        path: Arc::from(rel_path("")),
+        root_name: root_name.into(),
+        local_root: Some(PathBuf::from(local_root)),
     })
 }
 
@@ -1374,7 +1401,7 @@ fn test_text_objects_with_has_parent_predicate(cx: &mut App) {
         LanguageConfig {
             name: "Rust".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -1424,7 +1451,7 @@ fn test_text_objects_with_not_has_parent_predicate(cx: &mut App) {
         LanguageConfig {
             name: "Rust".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -1758,7 +1785,9 @@ fn test_bracket_ranges_keep_chunk_spanning_pairs_amid_errors(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &mut App) {
+async fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(
+    cx: &mut TestAppContext,
+) {
     let mut text = String::from("void outer(void) {\n");
     for index in 0..56 {
         text.push_str(&format!("  int before_{index:02} = 0;\n"));
@@ -1782,7 +1811,10 @@ fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &m
     text.push_str("  }\n}\n");
 
     let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(c_lang(), cx));
-    let snapshot = buffer.read(cx).snapshot();
+    buffer
+        .read_with(cx, |buffer, _| buffer.parsing_idle())
+        .await;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
     assert_has_syntax_errors(&snapshot);
 
     let open_row = snapshot.offset_to_point(if_open_offset).row;
@@ -3438,6 +3470,80 @@ fn test_language_scope_at_with_rust(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_language_scope_at_end_of_buffer(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    let make_language = || {
+        Language::new(
+            LanguageConfig {
+                name: "C".into(),
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                        BracketPair {
+                            start: "'".into(),
+                            end: "'".into(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                    ],
+                    disabled_scopes_by_bracket_ix: vec![
+                        Vec::new(),
+                        vec!["string".into(), "comment".into()],
+                    ],
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_c::LANGUAGE.into()),
+        )
+        .with_override_query(
+            r#"
+                (comment) @comment.inclusive
+                [(string_literal) (char_literal)] @string
+            "#,
+        )
+        .unwrap()
+    };
+
+    // Comment runs to EOF: the quote pair must be disabled at EOF.
+    cx.new(|cx| {
+        let text = "// it ''";
+        let buffer = Buffer::local(text, cx).with_language(Arc::new(make_language()), cx);
+        let snapshot = buffer.snapshot();
+
+        let eof_config = snapshot.language_scope_at(text.len()).unwrap();
+        assert_eq!(
+            eof_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, false]
+        );
+
+        buffer
+    });
+
+    // Trailing newline: EOF is past the comment, so both pairs stay enabled.
+    cx.new(|cx| {
+        let text = "// it ''\n";
+        let buffer = Buffer::local(text, cx).with_language(Arc::new(make_language()), cx);
+        let snapshot = buffer.snapshot();
+
+        let eof_config = snapshot.language_scope_at(text.len()).unwrap();
+        assert_eq!(
+            eof_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_language_scope_at_with_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -4911,7 +5017,7 @@ fn ruby_lang() -> Language {
         LanguageConfig {
             name: "Ruby".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rb".to_string()],
+                path_suffixes: vec!["rb".into()],
                 ..Default::default()
             })
             .into(),
@@ -4968,7 +5074,7 @@ fn erb_lang() -> Language {
         LanguageConfig {
             name: "HTML+ERB".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["erb".to_string()],
+                path_suffixes: vec!["erb".into()],
                 ..Default::default()
             })
             .into(),
@@ -5458,6 +5564,51 @@ fn test_chunk_highlights_follow_edits_and_theme_changes(cx: &mut TestAppContext)
         )],
         "an edit must invalidate the cached highlights"
     );
+}
+
+#[gpui::test]
+async fn test_snapshot_with_edits_refreshes_chunk_highlights(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let language = keyword_and_function_lang();
+    let theme = keyword_and_function_theme();
+    language.set_theme(&theme);
+
+    let keyword = theme_highlight_id(&theme, "keyword");
+    let function = theme_highlight_id(&theme, "function");
+    let row = "fn replacement() {}\n";
+    let text = row.repeat(MAX_ROWS_IN_A_CHUNK as usize + 1);
+
+    for original_text in ["", "fn original() {}"] {
+        let buffer =
+            cx.new(|cx| Buffer::local(original_text, cx).with_language(language.clone(), cx));
+        cx.run_until_parked();
+        let original_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let original_highlights =
+            merged_highlight_runs(&original_snapshot, 0..original_snapshot.len());
+
+        let edited = buffer
+            .update(cx, |buffer, cx| {
+                buffer.snapshot_with_edits([(0..buffer.len(), text.clone())], cx)
+            })
+            .await;
+        let snapshot = edited.snapshot();
+        let expected = vec![
+            ("fn".to_string(), keyword),
+            ("replacement".to_string(), function),
+        ];
+
+        assert_eq!(merged_highlight_runs(snapshot, 0..row.len()), expected);
+        let last_row_start = row.len() * MAX_ROWS_IN_A_CHUNK as usize;
+        assert_eq!(
+            merged_highlight_runs(snapshot, last_row_start..snapshot.len()),
+            expected,
+        );
+        assert_eq!(
+            merged_highlight_runs(&original_snapshot, 0..original_snapshot.len()),
+            original_highlights,
+        );
+    }
 }
 
 #[gpui::test]

@@ -314,6 +314,7 @@ impl Disableable for Button {
 }
 
 impl Clickable for Button {
+    #[inline(always)]
     fn on_click(
         mut self,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
@@ -393,6 +394,7 @@ impl ButtonCommon for Button {
     /// Button::new("tooltip_button", "Hover Me")
     ///     .tooltip(Tooltip::text("This is a tooltip"));
     /// ```
+    #[inline(always)]
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self

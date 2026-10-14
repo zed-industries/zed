@@ -687,7 +687,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..LanguageMatcher::default()
             })
             .into(),

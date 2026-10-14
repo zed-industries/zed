@@ -19,7 +19,7 @@ use unicode_segmentation::UnicodeSegmentation;
 pub enum CanvasFontFallback {
     /// Use only fonts loaded into GPUI.
     Disabled,
-    /// Use Canvas only for eligible graphemes requesting emoji presentation.
+    /// Use Canvas for eligible emoji, including missing text-presentation symbols.
     #[default]
     Emoji,
     /// Also allow approximate independent rendering of eligible horizontal CJK text.
@@ -28,10 +28,10 @@ pub enum CanvasFontFallback {
 
 impl CanvasFontFallback {
     #[cfg(any(target_family = "wasm", test))]
-    pub(crate) fn allows(self, emoji_presentation: bool) -> bool {
+    pub(crate) fn allows(self, is_emoji: bool) -> bool {
         match self {
             Self::Disabled => false,
-            Self::Emoji => emoji_presentation,
+            Self::Emoji => is_emoji,
             Self::EmojiAndCjk => true,
         }
     }
@@ -40,6 +40,8 @@ impl CanvasFontFallback {
 /// A supported grapheme assumed to be independently renderable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CanvasFallback {
+    /// Whether this is an emoji-capable grapheme, independent of its presentation.
+    pub is_emoji: bool,
     /// Whether to request emoji presentation instead of ordinary text presentation.
     pub emoji_presentation: bool,
 }
@@ -57,10 +59,14 @@ pub fn classify_canvas_fallback(grapheme: &str) -> Option<CanvasFallback> {
 
     if is_cjk(grapheme) {
         Some(CanvasFallback {
+            is_emoji: false,
             emoji_presentation: false,
         })
     } else {
-        classify_emoji(grapheme).map(|emoji_presentation| CanvasFallback { emoji_presentation })
+        classify_emoji(grapheme).map(|emoji_presentation| CanvasFallback {
+            is_emoji: true,
+            emoji_presentation,
+        })
     }
 }
 
@@ -227,15 +233,28 @@ mod tests {
     #[test]
     fn canvas_font_fallback_policy() {
         assert_eq!(CanvasFontFallback::default(), CanvasFontFallback::Emoji);
-        for grapheme in ["😀", "❤️", "1️⃣", "👨‍👩‍👧‍👦", "中", "か\u{3099}", "각", "©", "❤︎"]
-        {
+        for (grapheme, allowed) in [
+            ("😀", true),
+            ("❤️", true),
+            ("1️⃣", true),
+            ("👨‍👩‍👧‍👦", true),
+            ("🕸", true),
+            ("🕸\u{fe0e}", true),
+            ("🕸\u{fe0f}", true),
+            ("©", true),
+            ("❤︎", true),
+            ("中", false),
+            ("か\u{3099}", false),
+            ("각", false),
+        ] {
             let fallback = classify_canvas_fallback(grapheme).expect("eligible grapheme");
-            assert!(!CanvasFontFallback::Disabled.allows(fallback.emoji_presentation));
+            assert!(!CanvasFontFallback::Disabled.allows(fallback.is_emoji));
             assert_eq!(
-                CanvasFontFallback::Emoji.allows(fallback.emoji_presentation),
-                ["😀", "❤️", "1️⃣", "👨‍👩‍👧‍👦"].contains(&grapheme),
+                CanvasFontFallback::Emoji.allows(fallback.is_emoji),
+                allowed,
+                "{grapheme:?}",
             );
-            assert!(CanvasFontFallback::EmojiAndCjk.allows(fallback.emoji_presentation));
+            assert!(CanvasFontFallback::EmojiAndCjk.allows(fallback.is_emoji));
         }
     }
 
@@ -252,6 +271,7 @@ mod tests {
                 assert_eq!(
                     classify_canvas_fallback(&text),
                     Some(CanvasFallback {
+                        is_emoji: true,
                         emoji_presentation: true,
                     }),
                     "{text:?}"
@@ -291,6 +311,7 @@ mod tests {
             assert_eq!(
                 classify_canvas_fallback(text),
                 Some(CanvasFallback {
+                    is_emoji: false,
                     emoji_presentation: false,
                 }),
                 "{text:?}"
@@ -302,6 +323,9 @@ mod tests {
     fn emoji_presentation_is_preserved() {
         for (text, emoji_presentation) in [
             ("😀", true),
+            ("🕸", false),
+            ("🕸\u{fe0e}", false),
+            ("🕸\u{fe0f}", true),
             ("©", false),
             ("©\u{fe0e}", false),
             ("©\u{fe0f}", true),
@@ -335,7 +359,10 @@ mod tests {
         ] {
             assert_eq!(
                 classify_canvas_fallback(text),
-                Some(CanvasFallback { emoji_presentation }),
+                Some(CanvasFallback {
+                    is_emoji: true,
+                    emoji_presentation,
+                }),
                 "{text:?}"
             );
         }

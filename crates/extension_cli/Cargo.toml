@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-clap = { workspace = true, features = ["derive"] }
+clap.workspace = true
 cloud_api_types.workspace = true
 env_logger.workspace = true
 extension.workspace = true
@@ -32,7 +32,7 @@ snippet_provider.workspace = true
 task.workspace = true
 theme_settings.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["full"] }
-toml.workspace = true
+tokio = { workspace = true, features = ["fs", "macros", "parking_lot", "process", "sync", "time"] }
+toml = { workspace = true, features = ["display"] }
 tree-sitter = { workspace = true, features = ["wasm"] }
 wasmtime.workspace = true

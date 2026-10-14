@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 
 use acp_thread::AgentConnection as _;
 use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::{v1 as acp, v2 as acp_v2};
 use anyhow::{Context, Result};
 use clap::Parser;
 use feature_flags::FeatureFlagAppExt as _;
@@ -463,10 +463,7 @@ fn ensure_provider_authenticated(selected: &SelectedModel, cx: &gpui::App) -> Re
     Ok(())
 }
 
-fn find_available_model(
-    selected: &SelectedModel,
-    cx: &gpui::App,
-) -> Option<Arc<dyn LanguageModel>> {
+fn find_available_model(selected: &SelectedModel, cx: &gpui::App) -> Option<LanguageModel> {
     let registry = LanguageModelRegistry::global(cx);
     let models = registry.read(cx).available_models(cx).collect::<Vec<_>>();
 
@@ -619,19 +616,11 @@ async fn run_agent(
         let registry = LanguageModelRegistry::global(cx);
         let model = find_available_model(&selected, cx)
             .ok_or_else(|| model_not_found_error(model_name, cx))?;
-        let provider = registry
-            .read(cx)
-            .provider(&model.provider_id())
-            .context("Provider not found")?;
-
         let supports_thinking = model.supports_thinking();
         let model_id = model.id().0.to_string();
 
         registry.update(cx, |registry, cx| {
-            registry.set_default_model(
-                Some(language_model::ConfiguredModel { provider, model }),
-                cx,
-            );
+            registry.set_default_model(Some(model), cx);
         });
 
         let enable_thinking = thinking_override.unwrap_or(supports_thinking);
@@ -826,7 +815,7 @@ async fn run_agent(
         log_acp_thread_event(&acp_thread, event, cx);
     });
 
-    let message = vec![acp::ContentBlock::Text(acp::TextContent::new(
+    let message = vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
         instruction.to_string(),
     ))];
 
@@ -854,13 +843,16 @@ async fn run_agent(
 
     let outcome = select_biased! {
         result = send_future.fuse() => match result {
-            Ok(Some(response)) => {
+            Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => {
                 eprintln!("[eval-cli] stopped: {:?}", response.stop_reason);
                 if response.stop_reason == acp::StopReason::MaxTokens {
                     Err(anyhow::anyhow!("Model hit maximum token limit"))
                 } else {
                     Ok(AgentOutcome::Completed)
                 }
+            }
+            Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
+                Err(anyhow::anyhow!("Native agent returned acceptance instead of turn completion"))
             }
             Ok(None) => {
                 eprintln!("[eval-cli] completed (no response)");
@@ -970,8 +962,8 @@ fn log_acp_thread_event(
             let entries = acp_thread.read(cx).entries();
             if let Some(acp_thread::AgentThreadEntry::AssistantMessage(message)) = entries.last() {
                 for chunk in &message.chunks {
-                    if let acp_thread::AssistantMessageChunk::Message { id: _, block } = chunk {
-                        if let acp_thread::ContentBlock::Markdown { markdown } = block {
+                    if let acp_thread::AssistantMessageChunk::Message { block, .. } = chunk {
+                        for markdown in block.markdowns() {
                             let text = markdown.read(cx).source().to_string();
                             if !text.is_empty() {
                                 eprint!("{text}");
@@ -985,7 +977,7 @@ fn log_acp_thread_event(
             let entries = acp_thread.read(cx).entries();
             if let Some(acp_thread::AgentThreadEntry::ToolCall(tool_call)) = entries.get(*index) {
                 if let Some(name) = &tool_call.tool_name {
-                    match &tool_call.status {
+                    match tool_call.status() {
                         acp_thread::ToolCallStatus::Completed => {
                             eprintln!("[tool] {name} ✓");
                         }
@@ -1003,8 +995,8 @@ fn log_acp_thread_event(
                 }
             }
         }
-        acp_thread::AcpThreadEvent::Stopped(reason) => {
-            eprintln!("\n[eval-cli] stopped: {reason:?}");
+        acp_thread::AcpThreadEvent::Stopped { stop_reason, .. } => {
+            eprintln!("\n[eval-cli] stopped: {stop_reason:?}");
         }
         acp_thread::AcpThreadEvent::Error => {
             eprintln!("[eval-cli] error event");

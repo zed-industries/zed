@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+doctest = false
+
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
@@ -16,8 +19,10 @@ indoc.workspace = true
 libsqlite3-sys.workspace = true
 log.workspace = true
 parking_lot.workspace = true
-pollster.workspace = true
+path.workspace = true
 sqlformat.workspace = true
 thread_local = "1.1.4"
-util.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true
