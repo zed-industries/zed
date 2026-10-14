@@ -828,7 +828,6 @@ postage = { version = "0.5", default-features = false }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
 profiling = "1"
-# replace this with main when #635 is merged
 pollster = "0.4.0"
 proptest = { version = "1.12.0", features = ["attr-macro"] }
 proptest-derive = "0.8.0"
