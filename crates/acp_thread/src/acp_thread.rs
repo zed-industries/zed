@@ -318,7 +318,7 @@ pub struct UserMessage {
 pub enum MessageIdentity {
     /// Legacy IDs delimit adjacent chunks; they do not identify a global upsert target.
     Legacy(Option<acp_v1::MessageId>),
-    /// Keeps its first kind and transcript position even when updates are non-adjacent.
+    /// Identifies an upsert target within its message kind, retaining its transcript position.
     Keyed(acp_v2::MessageId),
 }
 
@@ -3334,6 +3334,7 @@ pub struct TokenUsage {
 pub struct SessionCost {
     pub amount: f64,
     pub currency: SharedString,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 pub const TOKEN_USAGE_WARNING_THRESHOLD: f32 = 0.8;
@@ -4454,16 +4455,14 @@ impl AcpThread {
                 config_options::from_v1(config_options).map_err(acp_v1::Error::from)?,
             )),
             acp_v1::SessionUpdate::UsageUpdate(update) => {
-                let usage = self.token_usage.get_or_insert_with(Default::default);
-                usage.max_tokens = update.size;
-                usage.used_tokens = update.used;
-                if let Some(cost) = update.cost {
-                    self.cost = Some(SessionCost {
-                        amount: cost.amount,
-                        currency: cost.currency.into(),
-                    });
-                }
-                cx.emit(AcpThreadEvent::TokenUsageUpdated);
+                self.update_usage(
+                    acp_v2::UsageUpdate::new(update.used, update.size)
+                        .cost(update.cost.map(|cost| {
+                            acp_v2::Cost::new(cost.amount, cost.currency).meta(cost.meta)
+                        }))
+                        .meta(update.meta),
+                    cx,
+                );
             }
             _ => {}
         }
@@ -4636,31 +4635,24 @@ impl AcpThread {
         let identity = MessageIdentity::Keyed(id);
         for (entry_index, entry) in self.entries.iter().enumerate().rev() {
             let found = match entry {
-                AgentThreadEntry::UserMessage(message) if message.identity == identity => {
-                    Some((MessageKind::User, MessageLocation::User { entry_index }))
+                AgentThreadEntry::UserMessage(message)
+                    if kind == MessageKind::User && message.identity == identity =>
+                {
+                    Some(MessageLocation::User { entry_index })
                 }
                 AgentThreadEntry::AssistantMessage(message) => message
                     .chunks
                     .iter()
                     .enumerate()
                     .rev()
-                    .find(|(_, chunk)| chunk.identity() == &identity)
-                    .map(|(chunk_index, chunk)| {
-                        (
-                            chunk.kind(),
-                            MessageLocation::Assistant {
-                                entry_index,
-                                chunk_index,
-                            },
-                        )
+                    .find(|(_, chunk)| chunk.kind() == kind && chunk.identity() == &identity)
+                    .map(|(chunk_index, _)| MessageLocation::Assistant {
+                        entry_index,
+                        chunk_index,
                     }),
                 _ => None,
             };
-            if let Some((existing_kind, location)) = found {
-                anyhow::ensure!(
-                    existing_kind == kind,
-                    "message {identity:?} changed kind from {existing_kind:?} to {kind:?}"
-                );
+            if let Some(location) = found {
                 return Ok(location);
             }
         }
@@ -5309,6 +5301,21 @@ impl AcpThread {
             self.cost = None;
         }
         self.token_usage = usage;
+        cx.emit(AcpThreadEvent::TokenUsageUpdated);
+    }
+
+    pub fn update_usage(&mut self, update: acp_v2::UsageUpdate, cx: &mut Context<Self>) {
+        let usage = self.token_usage.get_or_insert_with(Default::default);
+        usage.max_tokens = update.size;
+        usage.used_tokens = update.used;
+        // The schema uses Option for cost, so omission and null both mean no new report.
+        if let Some(cost) = update.cost {
+            self.cost = Some(SessionCost {
+                amount: cost.amount,
+                currency: cost.currency.into(),
+                meta: cost.meta,
+            });
+        }
         cx.emit(AcpThreadEvent::TokenUsageUpdated);
     }
 
@@ -11390,6 +11397,58 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_receipt_echo_uses_only_the_user_message_namespace(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, connection) = new_receipt_test_thread(cx).await;
+        let sender = connection.defer_next_receipt_response();
+        let submission = thread.update(cx, |thread, cx| thread.send(vec!["prompt".into()], cx));
+        let submission_id = submission.id;
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("shared").content(vec!["answer".into()]),
+                    cx,
+                )
+                .expect("assistant before receipt");
+        });
+        sender
+            .send(Ok(acp_v2::PromptResponse::new("shared")))
+            .expect("receipt receiver");
+        assert!(matches!(
+            submission.await.expect("receipt"),
+            Some(SubmissionResponse::Accepted(_))
+        ));
+        thread.update(cx, |thread, cx| {
+            assert!(matches!(
+                thread.submission(submission_id).expect("submission").state,
+                SubmissionState::Accepted { echoed: false, .. }
+            ));
+            thread
+                .upsert_thought(
+                    acp_v2::AgentThought::new("shared").content(vec!["thought".into()]),
+                    cx,
+                )
+                .expect("thought after receipt");
+            assert!(matches!(
+                thread.submission(submission_id).expect("submission").state,
+                SubmissionState::Accepted { echoed: false, .. }
+            ));
+            assert!(thread.has_unsettled_submissions());
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("shared").content(vec!["echo".into()]),
+                    cx,
+                )
+                .expect("user echo has its own namespace");
+            assert!(matches!(
+                thread.submission(submission_id).expect("submission").state,
+                SubmissionState::Accepted { echoed: true, .. }
+            ));
+            assert!(!thread.has_unsettled_submissions());
+        });
+    }
+
+    #[gpui::test]
     async fn test_receipt_and_echo_correlate_by_id_without_owning_history_or_activity(
         cx: &mut TestAppContext,
     ) {
@@ -11999,14 +12058,14 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .upsert_user_message(
-                    acp_v2::UserMessage::new("user").content(vec!["question".into()]),
+                    acp_v2::UserMessage::new("shared").content(vec!["question".into()]),
                     cx,
                 )
                 .expect("user");
             thread
                 .append_message_chunk(
                     MessageKind::Assistant,
-                    acp_v2::ContentChunk::new("old answer".into(), "answer"),
+                    acp_v2::ContentChunk::new("old answer".into(), "shared"),
                     cx,
                 )
                 .expect("answer chunk");
@@ -12015,7 +12074,7 @@ mod tests {
                 .expect("tool");
             thread
                 .upsert_thought(
-                    acp_v2::AgentThought::new("thought").content(vec!["thinking".into()]),
+                    acp_v2::AgentThought::new("shared").content(vec!["thinking".into()]),
                     cx,
                 )
                 .expect("thought");
@@ -12033,7 +12092,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .upsert_assistant_message(
-                    acp_v2::AgentMessage::new("answer")
+                    acp_v2::AgentMessage::new("shared")
                         .content(vec!["new ".into(), "answer".into()]),
                     cx,
                 )
@@ -12041,26 +12100,26 @@ mod tests {
             thread
                 .append_message_chunk(
                     MessageKind::Assistant,
-                    acp_v2::ContentChunk::new(" tail".into(), "answer"),
+                    acp_v2::ContentChunk::new(" tail".into(), "shared"),
                     cx,
                 )
                 .expect("append to replacement");
             thread
                 .upsert_user_message(
-                    acp_v2::UserMessage::new("user").content(None::<Vec<acp_v2::ContentBlock>>),
+                    acp_v2::UserMessage::new("shared").content(None::<Vec<acp_v2::ContentBlock>>),
                     cx,
                 )
                 .expect("clear historical user");
             thread
                 .append_message_chunk(
                     MessageKind::User,
-                    acp_v2::ContentChunk::new("new question".into(), "user"),
+                    acp_v2::ContentChunk::new("new question".into(), "shared"),
                     cx,
                 )
                 .expect("append after clear");
             thread
                 .upsert_thought(
-                    acp_v2::AgentThought::new("thought").content(vec!["revised thought".into()]),
+                    acp_v2::AgentThought::new("shared").content(vec!["revised thought".into()]),
                     cx,
                 )
                 .expect("replace thought");
@@ -12075,7 +12134,7 @@ mod tests {
             else {
                 panic!("updates must retain first-seen rows");
             };
-            assert_eq!(user.identity, MessageIdentity::Keyed("user".into()));
+            assert_eq!(user.identity, MessageIdentity::Keyed("shared".into()));
             assert_eq!(user.content.source_blocks(), &["new question".into()]);
             assert_eq!(tool.id, acp_v2::ToolCallId::new("tool"));
             let [
@@ -12086,7 +12145,7 @@ mod tests {
             else {
                 panic!("one original answer chunk");
             };
-            assert_eq!(identity, &MessageIdentity::Keyed("answer".into()));
+            assert_eq!(identity, &MessageIdentity::Keyed("shared".into()));
             assert_eq!(
                 block.source_blocks(),
                 &["new ".into(), "answer".into(), " tail".into()]
@@ -12105,7 +12164,7 @@ mod tests {
             else {
                 panic!("thought and later answer must retain their chunk positions");
             };
-            assert_eq!(identity, &MessageIdentity::Keyed("thought".into()));
+            assert_eq!(identity, &MessageIdentity::Keyed("shared".into()));
             assert_eq!(block.to_markdown(cx), "revised thought");
             assert_eq!(later_id, &MessageIdentity::Keyed("later".into()));
             assert_eq!(later_block.to_markdown(cx), "later answer");
@@ -12441,7 +12500,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_keyed_kind_conflicts_are_atomic_and_legacy_ids_stay_separate(
+    async fn test_keyed_message_ids_are_scoped_by_kind_and_separate_from_legacy(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -12460,71 +12519,42 @@ mod tests {
                     cx,
                 )
                 .expect("pending keyed text");
-        });
-        let updates = Rc::new(RefCell::new(0));
-        let _subscription = cx.update(|cx| {
-            cx.subscribe(&thread, {
-                let updates = updates.clone();
-                move |_, event, _| {
-                    if matches!(
-                        event,
-                        AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_)
-                    ) {
-                        *updates.borrow_mut() += 1;
-                    }
-                }
-            })
-        });
-        thread.update(cx, |thread, cx| {
-            let version = only_keyed_message(thread).1.source_version();
-            assert!(
-                thread
-                    .upsert_user_message(
-                        acp_v2::UserMessage::new("shared").content(vec!["wrong role".into()]),
-                        cx,
-                    )
-                    .is_err()
-            );
-            assert!(
-                thread
-                    .upsert_thought(
-                        acp_v2::AgentThought::new("shared")
-                            .meta(acp_v2::Meta::from_iter([("wrong".into(), json!(true))])),
-                        cx,
-                    )
-                    .is_err()
-            );
-            for kind in [MessageKind::User, MessageKind::Thought] {
-                assert!(
-                    thread
-                        .append_message_chunk(
-                            kind,
-                            acp_v2::ContentChunk::new("wrong chunk".into(), "shared"),
-                            cx,
-                        )
-                        .is_err()
-                );
-            }
-            let (_, content, meta) = only_keyed_message(thread);
-            assert_eq!(content.source_version(), version);
-            assert_eq!(
-                content.source_blocks(),
-                &["keyed".into(), " buffered".into()]
-            );
-            assert_eq!(content.to_markdown(cx), "keyed");
-            assert_eq!(meta, &None);
+            thread
+                .upsert_thought(
+                    acp_v2::AgentThought::new("shared")
+                        .content(vec!["thought".into()])
+                        .meta(acp_v2::Meta::from_iter([("kind".into(), json!("thought"))])),
+                    cx,
+                )
+                .expect("thought has a separate ID space");
+            thread
+                .append_message_chunk(
+                    MessageKind::Thought,
+                    acp_v2::ContentChunk::new(" tail".into(), "shared"),
+                    cx,
+                )
+                .expect("buffered thought");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("shared")
+                        .content(vec!["replacement".into()])
+                        .meta(acp_v2::Meta::from_iter([(
+                            "kind".into(),
+                            json!("assistant"),
+                        )])),
+                    cx,
+                )
+                .expect("replace message without replacing the same-ID thought");
             assert_eq!(
                 thread
                     .streaming_text_buffer
                     .as_ref()
-                    .expect("buffer survives")
+                    .expect("thought buffer survives message replacement")
                     .cursor
                     .pending_bytes,
-                " buffered".len()
+                " tail".len()
             );
         });
-        cx.run_until_parked();
-        assert_eq!(*updates.borrow(), 0);
 
         thread.update(cx, |thread, cx| {
             for chunk in [
@@ -12548,7 +12578,14 @@ mod tests {
             };
             let [
                 AssistantMessageChunk::Message {
-                    identity, block, ..
+                    identity,
+                    block,
+                    meta,
+                },
+                AssistantMessageChunk::Thought {
+                    identity: thought_id,
+                    block: thought,
+                    meta: thought_meta,
                 },
                 AssistantMessageChunk::Message {
                     identity: legacy_id,
@@ -12560,19 +12597,29 @@ mod tests {
                 panic!("separate keyed and legacy chunks");
             };
             assert_eq!(identity, &MessageIdentity::Keyed("shared".into()));
-            assert_eq!(block.to_markdown(cx), "keyed buffered again");
+            assert_eq!(block.to_markdown(cx), "replacement again");
+            assert_eq!(
+                meta.as_ref().and_then(|meta| meta.get("kind")),
+                Some(&json!("assistant"))
+            );
+            assert_eq!(thought_id, identity);
+            assert_eq!(thought.to_markdown(cx), "thought tail");
+            assert_eq!(
+                thought_meta.as_ref().and_then(|meta| meta.get("kind")),
+                Some(&json!("thought"))
+            );
             assert_eq!(legacy_id, &MessageIdentity::Legacy(Some("shared".into())));
             assert_eq!(legacy_block.to_markdown(cx), "legacy tail");
 
             thread
                 .upsert_user_message(
-                    acp_v2::UserMessage::new("user").content(vec!["keyed user".into()]),
+                    acp_v2::UserMessage::new("shared").content(vec!["keyed user".into()]),
                     cx,
                 )
-                .expect("keyed user");
+                .expect("user has a separate ID space");
             for chunk in [
                 acp_v1::ContentChunk::new("legacy ".into()),
-                acp_v1::ContentChunk::new("user".into()).message_id("user"),
+                acp_v1::ContentChunk::new("user".into()).message_id("shared"),
             ] {
                 thread
                     .handle_session_update(acp_v1::SessionUpdate::UserMessageChunk(chunk), cx)
@@ -12586,11 +12633,11 @@ mod tests {
             else {
                 panic!("legacy user chunks must not merge into keyed user");
             };
-            assert_eq!(keyed.identity, MessageIdentity::Keyed("user".into()));
+            assert_eq!(keyed.identity, MessageIdentity::Keyed("shared".into()));
             assert_eq!(keyed.content.to_markdown(cx), "keyed user");
             assert_eq!(
                 legacy.identity,
-                MessageIdentity::Legacy(Some("user".into()))
+                MessageIdentity::Legacy(Some("shared".into()))
             );
             assert_eq!(legacy.content.to_markdown(cx), "legacy user");
         });
@@ -12602,6 +12649,12 @@ mod tests {
         let thread = new_test_thread(cx).await;
         let client_id = ClientUserMessageId::new();
         let old_markdown = thread.update(cx, |thread, cx| {
+            thread
+                .upsert_thought(
+                    acp_v2::AgentThought::new("reuse").content(vec!["kept thought".into()]),
+                    cx,
+                )
+                .expect("retained same-ID thought");
             thread
                 .upsert_assistant_message(
                     acp_v2::AgentMessage::new("kept").content(vec!["kept".into()]),
@@ -12653,7 +12706,7 @@ mod tests {
                 )
                 .expect("removed ID may identify a new kind");
             let [
-                AgentThreadEntry::AssistantMessage(_),
+                AgentThreadEntry::AssistantMessage(retained),
                 AgentThreadEntry::UserMessage(message),
             ] = thread.entries()
             else {
@@ -12663,6 +12716,21 @@ mod tests {
             assert_eq!(message.content.to_markdown(cx), "fresh user");
             assert_eq!(message.meta, None);
             assert_eq!(test_message_content(thread, 0).to_markdown(cx), "kept");
+            let Some(AssistantMessageChunk::Thought { block, .. }) = retained.chunks.first() else {
+                panic!("retained thought");
+            };
+            assert_eq!(block.to_markdown(cx), "kept thought");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("reuse").content(vec!["fresh answer".into()]),
+                    cx,
+                )
+                .expect("removed assistant ID may be reused independently");
+            assert_eq!(thread.entries().len(), 3);
+            assert_eq!(
+                test_message_content(thread, 2).to_markdown(cx),
+                "fresh answer"
+            );
         });
         cx.run_until_parked();
         cx.executor().advance_clock(Duration::from_secs(1));
