@@ -232,6 +232,7 @@ pub struct TextSystem {
     font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
+    raster_contents: RwLock<FxHashMap<RenderGlyphParams, Option<GlyphRasterContent>>>,
     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
@@ -249,6 +250,7 @@ impl TextSystem {
             platform_text_system,
             font_metrics: RwLock::default(),
             raster_bounds: RwLock::default(),
+            raster_contents: RwLock::default(),
             font_ids_by_font: RwLock::default(),
             wrapper_pool: Mutex::default(),
             font_runs_pool: Mutex::default(),
@@ -569,6 +571,24 @@ impl TextSystem {
             raster_bounds.insert(params.clone(), bounds);
             Ok(bounds)
         }
+    }
+
+    /// Returns how a glyph is stored if the platform can report it, allowing
+    /// callers to distinguish color glyphs such as color emoji from coverage
+    /// masks. Returns `None` when the platform cannot report it, in which case
+    /// callers fall back to the shaping-time `is_emoji` flag.
+    pub(crate) fn glyph_raster_content(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> Option<GlyphRasterContent> {
+        let raster_contents = self.raster_contents.upgradable_read();
+        if let Some(content) = raster_contents.get(params) {
+            return *content;
+        }
+        let mut raster_contents = RwLockUpgradableReadGuard::upgrade(raster_contents);
+        let content = self.platform_text_system.glyph_raster_content(params);
+        raster_contents.insert(params.clone(), content);
+        content
     }
 
     pub(crate) fn rasterize_glyph(
@@ -1285,6 +1305,17 @@ impl Hash for RenderGlyphParams {
         self.subpixel_rendering.hash(state);
         self.dilation.hash(state);
     }
+}
+
+/// How a rasterized glyph is stored, which determines the atlas texture it
+/// belongs to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GlyphRasterContent {
+    /// An alpha coverage mask, stored in the monochrome or subpixel atlas.
+    Mask,
+    /// Full color pixel data, stored in the polychrome atlas. Used by color
+    /// emoji and other color fonts.
+    Color,
 }
 
 /// The configuration details for identifying a specific font.

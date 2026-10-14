@@ -6,9 +6,10 @@ use cosmic_text::{
 };
 use gpui::{
     Bounds, DevicePixels, FallbackFontClass, Font, FontFallbacks, FontFeatures, FontId,
-    FontMetrics, FontRun, GlyphId, IsZero as _, LineLayout, MissingGlyph, MissingGlyphSink, Pixels,
-    PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ShapedGlyph,
-    ShapedRun, SharedString, Size, TextRenderingMode, point, size,
+    FontMetrics, FontRun, GlyphId, GlyphRasterContent, IsZero as _, LineLayout, MissingGlyph,
+    MissingGlyphSink, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point,
+    size,
 };
 
 use itertools::Itertools;
@@ -51,6 +52,9 @@ struct CosmicTextSystemState {
     scratch: ShapeBuffer,
     swash_scale_context: ScaleContext,
     pending_glyph_images: HashMap<RenderGlyphParams, swash::scale::image::Image>,
+    /// Caches whether a glyph rasterizes to a color image, keyed by
+    /// `(font_id, glyph_id)`.
+    glyph_colors: HashMap<(usize, u32), bool>,
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts: Vec<LoadedFont>,
     loaded_font_ids_by_key: HashMap<LoadedFontKey, FontId>,
@@ -65,6 +69,8 @@ struct LoadedFont {
     font: Arc<CosmicTextFont>,
     features: CosmicFontFeatures,
     is_known_emoji_font: bool,
+    /// Whether the font contains any color glyphs (for example, color emoji).
+    is_color_font: bool,
     /// resolved at load time so `layout_line` shares one chain across faces.
     /// `Arc` keeps clone cheap on the per-run hot path.
     user_fallback_chain: Arc<[(FontId, SharedString)]>,
@@ -136,6 +142,7 @@ impl CosmicTextSystem {
             scratch: ShapeBuffer::default(),
             swash_scale_context: ScaleContext::new(),
             pending_glyph_images: HashMap::default(),
+            glyph_colors: HashMap::default(),
             loaded_fonts: Vec::new(),
             loaded_font_ids_by_key: HashMap::default(),
             font_ids_by_family_cache: HashMap::default(),
@@ -155,6 +162,7 @@ impl CosmicTextSystem {
             scratch: ShapeBuffer::default(),
             swash_scale_context: ScaleContext::new(),
             pending_glyph_images: HashMap::default(),
+            glyph_colors: HashMap::default(),
             loaded_fonts: Vec::new(),
             loaded_font_ids_by_key: HashMap::default(),
             font_ids_by_family_cache: HashMap::default(),
@@ -260,6 +268,18 @@ impl PlatformTextSystem for CosmicTextSystem {
 
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         self.0.write().raster_bounds(params)
+    }
+
+    fn glyph_raster_content(&self, params: &RenderGlyphParams) -> Option<GlyphRasterContent> {
+        let mut state = self.0.write();
+        if !state.loaded_font(params.font_id).is_color_font {
+            return None;
+        }
+        Some(if state.glyph_is_color(params) {
+            GlyphRasterContent::Color
+        } else {
+            GlyphRasterContent::Mask
+        })
     }
 
     fn rasterize_glyph(
@@ -432,12 +452,14 @@ impl CosmicTextSystemState {
                 continue;
             };
 
+            let is_color_font = font_has_color_glyphs(&font, &mut self.swash_scale_context);
             let font_id = FontId(self.loaded_fonts.len());
             loaded_font_ids.push(font_id);
             self.loaded_fonts.push(LoadedFont {
                 font,
                 features: cosmic_features.clone(),
                 is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
+                is_color_font,
                 user_fallback_chain: Arc::clone(&user_fallback_chain),
             });
             self.loaded_font_ids_by_key.insert(key, font_id);
@@ -510,6 +532,21 @@ impl CosmicTextSystemState {
         }
     }
 
+    /// Returns whether the given glyph rasterizes to a color image.
+    fn glyph_is_color(&mut self, params: &RenderGlyphParams) -> bool {
+        let key = (params.font_id.0, params.glyph_id.0);
+        if let Some(&is_color) = self.glyph_colors.get(&key) {
+            return is_color;
+        }
+
+        let is_color = self
+            .render_glyph_image(params)
+            .map(|image| image.content == swash::scale::image::Content::Color)
+            .unwrap_or(false);
+        self.glyph_colors.insert(key, is_color);
+        is_color
+    }
+
     fn render_glyph_image(
         &mut self,
         params: &RenderGlyphParams,
@@ -530,15 +567,12 @@ impl CosmicTextSystemState {
             .hint(true)
             .build();
 
-        let sources: &[Source] = if params.is_emoji {
-            &[
-                Source::ColorOutline(0),
-                Source::ColorBitmap(StrikeWith::BestFit),
-                Source::Outline,
-            ]
-        } else {
-            &[Source::Bitmap(StrikeWith::ExactSize), Source::Outline]
-        };
+        let sources: &[Source] = &[
+            Source::ColorOutline(0),
+            Source::ColorBitmap(StrikeWith::BestFit),
+            Source::Bitmap(StrikeWith::ExactSize),
+            Source::Outline,
+        ];
 
         let mut renderer = Render::new(sources);
         if params.subpixel_rendering {
@@ -576,6 +610,7 @@ impl CosmicTextSystemState {
                 .font_system
                 .get_font(id, cosmic_text::Weight::NORMAL)
                 .context("failed to get fallback font from cosmic-text font system")?;
+            let is_color_font = font_has_color_glyphs(&font, &mut self.swash_scale_context);
             let face = self
                 .font_system
                 .db()
@@ -587,6 +622,7 @@ impl CosmicTextSystemState {
                 font,
                 features: CosmicFontFeatures::new(),
                 is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
+                is_color_font,
                 user_fallback_chain: Arc::from(Vec::new()),
             });
 
@@ -1204,6 +1240,13 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
     postscript_name == "NotoColorEmoji"
 }
 
+/// Detects whether a font contains color glyphs (for example, color emoji)
+/// from its tables.
+fn font_has_color_glyphs(font: &CosmicTextFont, scale_context: &mut ScaleContext) -> bool {
+    let scaler = scale_context.builder(font.as_swash()).build();
+    scaler.has_color_outlines() || scaler.has_color_bitmaps()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1287,6 +1330,30 @@ mod tests {
                 (gpui::FontWeight::NORMAL, gpui::FontStyle::Normal)
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn monochrome_fonts_do_not_report_color_glyphs() -> Result<()> {
+        let text_system = text_system()?;
+        let font_id = text_system.font_id(&gpui::font("IBM Plex Sans"))?;
+        let glyph_id = text_system
+            .glyph_for_char(font_id, 'A')
+            .context("IBM Plex Sans should have a glyph for 'A'")?;
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size: gpui::px(14.),
+            subpixel_variant: Default::default(),
+            scale_factor: 1.0,
+            is_emoji: false,
+            subpixel_rendering: false,
+            dilation: 0,
+        };
+
+        // IBM Plex Sans has no color glyphs, so the platform has nothing to
+        // report and callers fall back to the shaping-time emoji hint.
+        assert_eq!(text_system.glyph_raster_content(&params), None);
         Ok(())
     }
 

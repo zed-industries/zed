@@ -38,11 +38,11 @@ pub(crate) type PlatformScreenCaptureFrame =
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
-    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
-    hash, point, px, size,
+    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GlyphRasterContent, GpuSpecs, Hsla,
+    ImageSource, Keymap, LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput,
+    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -1511,6 +1511,12 @@ pub trait PlatformTextSystem: Send + Sync {
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     /// Get raster bounds for a glyph.
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
+    /// Returns whether a glyph is stored as color or as a coverage mask, if the
+    /// platform can report it. Otherwise returns `None` to fall back to the
+    /// shaping-time `is_emoji` flag.
+    fn glyph_raster_content(&self, _params: &RenderGlyphParams) -> Option<GlyphRasterContent> {
+        None
+    }
     /// Rasterize a glyph.
     fn rasterize_glyph(
         &self,
