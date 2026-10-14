@@ -69,8 +69,8 @@ impl GoToLine {
         query: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) {
-        Self::open_with_query_mode(workspace, QueryMode::Prefixed(':'), query, window, cx);
+    ) -> bool {
+        Self::open_with_query_mode(workspace, QueryMode::Prefixed(':'), query, window, cx)
     }
 
     fn open_with_query_mode(
@@ -79,15 +79,16 @@ impl GoToLine {
         query: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) {
+    ) -> bool {
         let Some(editor) = workspace
             .active_item(cx)
             .and_then(|item| item.downcast::<Editor>())
         else {
-            return;
+            return false;
         };
+        // Keep the prefix in the file finder when there is no buffer to navigate.
         let Some(buffer) = editor.read(cx).active_buffer(cx) else {
-            return;
+            return false;
         };
 
         workspace.toggle_modal(window, cx, move |window, cx| {
@@ -98,6 +99,7 @@ impl GoToLine {
             });
             go_to_line
         });
+        true
     }
 
     fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<Editor>) {

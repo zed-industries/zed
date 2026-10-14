@@ -98,8 +98,10 @@ fn handle_file_finder_mode_switch(
         return;
     };
 
-    cx.stop_propagation();
-    open_mode(workspace, mode, query.to_owned(), window, cx);
+    // Let the file finder handle the prefix when this mode cannot open.
+    if open_mode(workspace, mode, query.to_owned(), window, cx) {
+        cx.stop_propagation();
+    }
 }
 
 fn open_mode(
@@ -108,27 +110,29 @@ fn open_mode(
     query: String,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> bool {
     match mode {
         Mode::CommandPalette => {
             command_palette::CommandPalette::open_in_unified_mode(workspace, &query, window, cx);
+            true
         }
         Mode::ProjectSymbols => {
             project_symbols::open_in_unified_mode(workspace, query, window, cx);
+            true
         }
         Mode::Outline => {
-            if let Some(editor) = workspace
+            let Some(editor) = workspace
                 .active_item(cx)
                 .and_then(|item| item.downcast::<editor::Editor>())
-            {
-                outline::open_in_unified_mode(editor, query, window, cx);
-            }
+            else {
+                return false;
+            };
+            outline::open_in_unified_mode(editor, query, window, cx)
         }
-        Mode::GoToLine => {
-            go_to_line::GoToLine::open_in_unified_mode(workspace, query, window, cx);
-        }
+        Mode::GoToLine => go_to_line::GoToLine::open_in_unified_mode(workspace, query, window, cx),
         Mode::TextFinder => {
             search::text_finder::TextFinder::open_in_unified_mode(query, window, cx).detach();
+            true
         }
     }
 }

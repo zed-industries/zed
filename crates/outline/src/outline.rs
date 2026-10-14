@@ -63,8 +63,8 @@ pub fn open_in_unified_mode(
     query: String,
     window: &mut Window,
     cx: &mut App,
-) {
-    open_with_query_mode(editor, picker::QueryMode::Prefixed('@'), query, window, cx);
+) -> bool {
+    open_with_query_mode(editor, picker::QueryMode::Prefixed('@'), query, window, cx)
 }
 
 fn open_with_query_mode(
@@ -73,12 +73,13 @@ fn open_with_query_mode(
     query: String,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> bool {
     let Some(workspace) = editor.read(cx).workspace() else {
-        return;
+        return false;
     };
+    // The file finder should keep the query if this editor has no outline source.
     let Some(task) = outline_for_editor(&editor, cx) else {
-        return;
+        return false;
     };
     window
         .spawn(cx, async move |cx| {
@@ -103,6 +104,7 @@ fn open_with_query_mode(
             .ok();
         })
         .detach();
+    true
 }
 
 fn outline_for_editor(
