@@ -60,7 +60,7 @@ use language::{
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
-use project::{AgentId, DisableAiSettings, Project, ProjectPath};
+use project::{AgentId, DisableAiSettings};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
 use rope::Point;
 use schemars::JsonSchema;
@@ -68,10 +68,6 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
-use util::{
-    paths::SanitizedPath,
-    rel_path::{RelPath, RelPathBuf},
-};
 use workspace::Workspace;
 
 use crate::agent_configuration::ManageProfilesModal;
@@ -142,72 +138,6 @@ fn existing_image_path(path: &Path) -> Option<ImageSource> {
         .then(|| ImageSource::Resource(Resource::Path(Arc::from(path))))
 }
 
-pub(crate) fn project_path_for_file_link(
-    project: &Project,
-    path: &Path,
-    cx: &App,
-) -> Option<ProjectPath> {
-    let path_style = project.path_style(cx);
-    let validate_path = |project_path: ProjectPath, relative_path: &str| {
-        if project.get_open_buffer(&project_path, cx).is_none()
-            && !project.entry_for_path(&project_path, cx)?.is_file()
-        {
-            return None;
-        }
-        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-        let worktree = worktree.read(cx);
-        let mut prefix = RelPathBuf::new();
-        for component in relative_path.split(path_style.separators_ch()) {
-            match component {
-                "" | "." => {}
-                ".." => {
-                    let entry = worktree.entry_for_path(&prefix)?;
-                    if !entry.is_dir() || entry.canonical_path.is_some() || !prefix.pop() {
-                        return None;
-                    }
-                }
-                component => prefix.push_component(component).ok()?,
-            }
-        }
-        Some(project_path)
-    };
-    let path = SanitizedPath::new(path).as_path();
-    if path_style.is_absolute(path) {
-        let project_path = project.project_path_for_absolute_path(path, cx)?;
-        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-        let root = worktree.read(cx).abs_path();
-        let root_length = root
-            .to_str()?
-            .trim_end_matches(path_style.separators_ch())
-            .len();
-        let relative_path = path
-            .to_str()?
-            .get(root_length..)?
-            .trim_start_matches(path_style.separators_ch());
-        validate_path(project_path, relative_path)
-    } else {
-        project.visible_worktrees(cx).find_map(|worktree| {
-            let worktree = worktree.read(cx);
-            [
-                path.strip_prefix(worktree.root_name().as_std_path()).ok(),
-                Some(path),
-            ]
-            .into_iter()
-            .flatten()
-            .find_map(|relative_path| {
-                let path = RelPath::new(relative_path, path_style).ok()?.into_arc();
-                validate_path(
-                    ProjectPath {
-                        worktree_id: worktree.id(),
-                        path,
-                    },
-                    relative_path.to_str()?,
-                )
-            })
-        })
-    }
-}
-
 /// Opens `abs_path` in the workspace, moving the cursor to `point` when one
 /// is given. Paths outside every worktree are only opened when a file exists
 /// there, so broken agent links don't create empty buffers.
@@ -219,7 +149,7 @@ pub(crate) fn open_abs_path_at_point(
     cx: &mut Context<Workspace>,
 ) {
     let project_path = workspace.project().read_with(cx, |project, cx| {
-        project_path_for_file_link(project, &abs_path, cx)
+        project.project_path_for_file_link(&abs_path, cx)
     });
     let project = workspace.project().downgrade();
     let workspace = cx.weak_entity();

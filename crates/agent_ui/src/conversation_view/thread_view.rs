@@ -2,7 +2,7 @@ use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     conversation_view::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent},
     entry_view_state::TERMINAL_CONTENT_TOP_PADDING,
-    open_abs_path_at_point, project_path_for_file_link,
+    open_abs_path_at_point,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema::v2 as acp_v2;
@@ -13431,7 +13431,7 @@ pub(crate) fn open_link(
                     let mut failures = Vec::new();
                     'resolve: for (path, point) in candidates {
                         let Ok(project_path) = project.read_with(cx, |project, cx| {
-                            project_path_for_file_link(project, &path, cx)
+                            project.project_path_for_file_link(&path, cx)
                         }) else {
                             return Ok(());
                         };
@@ -14346,7 +14346,7 @@ mod tests {
                 path!("/two/src/../file.rs"),
             ] {
                 assert_eq!(
-                    project_path_for_file_link(project, Path::new(path), cx),
+                    project.project_path_for_file_link(Path::new(path), cx),
                     Some(expected.clone()),
                     "{path}",
                 );

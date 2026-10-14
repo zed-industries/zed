@@ -148,6 +148,49 @@ pub fn project_image_source(project: WeakEntity<Project>, path: ProjectPath) -> 
     })
 }
 
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct AbsPathImageSource {
+    project: WeakEntity<Project>,
+    paths: Vec<String>,
+}
+
+enum AbsPathImageAsset {}
+
+impl Asset for AbsPathImageAsset {
+    type Source = AbsPathImageSource;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let svg_renderer = cx.svg_renderer();
+        let load_image = cx.spawn(async move |cx| {
+            for path in &source.paths {
+                let load = source
+                    .project
+                    .update(cx, |project, cx| project.load_image_at_abs_path(path, cx))?;
+                if let Some(image) = load.await? {
+                    return anyhow::Ok(image);
+                }
+            }
+            anyhow::bail!("no image file found at {:?}", source.paths)
+        });
+
+        async move {
+            let image = load_image.await?;
+            image.to_image_data(svg_renderer).map_err(Into::into)
+        }
+    }
+}
+
+pub fn abs_path_image_source(project: WeakEntity<Project>, paths: Vec<String>) -> ImageSource {
+    let source = AbsPathImageSource { project, paths };
+    ImageSource::from(move |window: &mut gpui::Window, cx: &mut App| {
+        window.use_asset::<AssetLogger<AbsPathImageAsset>>(&source, cx)
+    })
+}
+
 impl ImageItem {
     pub fn compute_metadata_from_bytes(image_bytes: &[u8]) -> Result<ImageMetadata> {
         let image_format = image::guess_format(image_bytes)?;
@@ -931,7 +974,7 @@ impl LocalImageStore {
     }
 }
 
-fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
+pub(crate) fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
     let format = image::guess_format(&content)?;
 
     Ok(Arc::new(gpui::Image::from_bytes(

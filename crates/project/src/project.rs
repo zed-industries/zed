@@ -142,7 +142,7 @@ use util::{
     ResultExt as _, maybe,
     path_list::PathList,
     paths::{PathStyle, SanitizedPath},
-    rel_path::RelPath,
+    rel_path::{RelPath, RelPathBuf},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
@@ -4991,6 +4991,68 @@ impl Project {
         })
     }
 
+    pub fn project_path_for_file_link(&self, path: &Path, cx: &App) -> Option<ProjectPath> {
+        let path_style = self.path_style(cx);
+        let validate_path = |project_path: ProjectPath, relative_path: &str| {
+            if self.get_open_buffer(&project_path, cx).is_none()
+                && !self.entry_for_path(&project_path, cx)?.is_file()
+            {
+                return None;
+            }
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+            let worktree = worktree.read(cx);
+            let mut prefix = RelPathBuf::new();
+            for component in relative_path.split(path_style.separators_ch()) {
+                match component {
+                    "" | "." => {}
+                    ".." => {
+                        let entry = worktree.entry_for_path(&prefix)?;
+                        if !entry.is_dir() || entry.canonical_path.is_some() || !prefix.pop() {
+                            return None;
+                        }
+                    }
+                    component => prefix.push_component(component).ok()?,
+                }
+            }
+            Some(project_path)
+        };
+        let path = SanitizedPath::new(path).as_path();
+        if path_style.is_absolute(path) {
+            let project_path = self.project_path_for_absolute_path(path, cx)?;
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+            let root = worktree.read(cx).abs_path();
+            let root_length = root
+                .to_str()?
+                .trim_end_matches(path_style.separators_ch())
+                .len();
+            let relative_path = path
+                .to_str()?
+                .get(root_length..)?
+                .trim_start_matches(path_style.separators_ch());
+            validate_path(project_path, relative_path)
+        } else {
+            self.visible_worktrees(cx).find_map(|worktree| {
+                let worktree = worktree.read(cx);
+                [
+                    path.strip_prefix(worktree.root_name().as_std_path()).ok(),
+                    Some(path),
+                ]
+                .into_iter()
+                .flatten()
+                .find_map(|relative_path| {
+                    let path = RelPath::new(relative_path, path_style).ok()?.into_arc();
+                    validate_path(
+                        ProjectPath {
+                            worktree_id: worktree.id(),
+                            path,
+                        },
+                        relative_path.to_str()?,
+                    )
+                })
+            })
+        }
+    }
+
     pub fn resolve_abs_file_link(
         &self,
         path: &str,
@@ -5052,6 +5114,37 @@ impl Project {
                 }))
             } else {
                 Ok(Some(resolved_path))
+            }
+        })
+    }
+
+    pub fn load_image_at_abs_path(
+        &self,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Arc<gpui::Image>>>> {
+        let resolve = self.resolve_abs_file_link(path, cx);
+        cx.spawn(async move |project, cx| {
+            let Some(resolved_path) = resolve.await? else {
+                return Ok(None);
+            };
+            match resolved_path {
+                ResolvedPath::ProjectPath { project_path, .. } => {
+                    let open_image =
+                        project.update(cx, |project, cx| project.open_image(project_path, cx))?;
+                    let image = open_image.await?;
+                    Ok(Some(image.read_with(cx, |image, _| image.image.clone())))
+                }
+                ResolvedPath::AbsPath { path, .. } => {
+                    let (fs, is_local) = project
+                        .read_with(cx, |project, _| (project.fs().clone(), project.is_local()))?;
+                    anyhow::ensure!(
+                        is_local,
+                        "cannot load an image outside the project's worktrees over a remote connection: {path}"
+                    );
+                    let bytes = fs.load_bytes(Path::new(&path)).await?;
+                    Ok(Some(image_store::create_gpui_image(bytes)?))
+                }
             }
         })
     }
