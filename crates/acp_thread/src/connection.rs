@@ -210,13 +210,17 @@ pub trait AgentConnection {
         Ok(())
     }
 
-    /// This completion-based path retains a legacy response; receipt transports
-    /// acknowledge acceptance separately through `receipt_submissions`.
+    /// Receipt transports acknowledge acceptance through `receipt_submissions`
+    /// instead of implementing this completion-based path.
     fn prompt(
         &self,
-        params: acp_v2::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>>;
+        _params: acp_v2::PromptRequest,
+        _cx: &mut App,
+    ) -> Task<Result<acp_v1::PromptResponse>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "This agent does not support completion-based prompts"
+        )))
+    }
 
     fn retry(
         &self,
