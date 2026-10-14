@@ -54,6 +54,17 @@ pub(crate) fn supports_disabling_thinking(model_id: &str) -> bool {
     matches!(model_id, "gemini-2.5-flash" | "gemini-2.5-flash-lite")
 }
 
+/// Models that take tool result media as sibling parts of the function response.
+///
+/// Google documents media nested under `functionResponse.parts` for Gemini 3 and later, which
+/// reject sibling media with "Requests ending with a model turn are not supported".
+pub(crate) fn uses_sibling_function_response_media(model_id: &str) -> bool {
+    matches!(
+        model_id,
+        "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
+    )
+}
+
 /// Level-based models that accept `MINIMAL`; the others reject it and start at `LOW`.
 fn supports_minimal_thinking(model_id: &str) -> bool {
     matches!(
@@ -714,6 +725,8 @@ pub struct FunctionResponse {
     pub response: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<InlineDataPart>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

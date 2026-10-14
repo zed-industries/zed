@@ -22,7 +22,8 @@ pub fn into_google(
     model_id: String,
     mode: GoogleModelMode,
 ) -> Result<crate::GenerateContentRequest> {
-    fn map_content(content: Vec<MessageContent>) -> Result<Vec<Part>> {
+    let nest_function_response_media = !crate::uses_sibling_function_response_media(&model_id);
+    let map_content = |content: Vec<MessageContent>| -> Result<Vec<Part>> {
         let mut mapped_parts = Vec::new();
         for content in content {
             match content {
@@ -95,6 +96,11 @@ pub fn into_google(
                     } else {
                         text_output
                     };
+                    let (nested_images, sibling_images) = if nest_function_response_media {
+                        (images, Vec::new())
+                    } else {
+                        (Vec::new(), images)
+                    };
                     mapped_parts.push(Part::FunctionResponsePart(crate::FunctionResponsePart {
                         function_response: crate::FunctionResponse {
                             name: tool_result.tool_name.to_string(),
@@ -103,14 +109,15 @@ pub fn into_google(
                                 "output": output
                             }),
                             id: Some(tool_result.tool_use_id.to_string()),
+                            parts: nested_images,
                         },
                     }));
-                    mapped_parts.extend(images.into_iter().map(Part::InlineDataPart));
+                    mapped_parts.extend(sibling_images.into_iter().map(Part::InlineDataPart));
                 }
             }
         }
         Ok(mapped_parts)
-    }
+    };
 
     let thinking_config = thinking_config_for_request(&request, &model_id, mode);
     let max_output_tokens = request
@@ -473,7 +480,10 @@ mod tests {
         Content, FunctionCall, FunctionCallPart, GenerateContentCandidate, GenerateContentResponse,
         Part, Role as GoogleRole,
     };
-    use language_model_core::{LanguageModelRequestMessage, LanguageModelRequestTool};
+    use language_model_core::{
+        LanguageModelImage, LanguageModelRequestMessage, LanguageModelRequestTool,
+        LanguageModelToolResult, LanguageModelToolResultContent,
+    };
     use serde_json::json;
 
     #[test]
@@ -657,6 +667,47 @@ mod tests {
 
         assert_eq!(declaration["parametersJsonSchema"], input_schema);
         assert_eq!(declaration.get("parameters"), None);
+    }
+
+    #[test]
+    fn into_google_nests_tool_result_images_in_function_response() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                    tool_use_id: "call-1".into(),
+                    tool_name: "read_file".into(),
+                    is_error: false,
+                    content: vec![
+                        LanguageModelToolResultContent::Text("Read image file shot.png".into()),
+                        LanguageModelToolResultContent::Image(LanguageModelImage {
+                            source: "aW1hZ2U=".into(),
+                        }),
+                    ],
+                    output: None,
+                })],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let request = into_google(
+            request,
+            "gemini-4-argon".to_string(),
+            GoogleModelMode::Default,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        assert_eq!(
+            serialized["contents"][0]["parts"],
+            json!([{"functionResponse": {
+                "name": "read_file",
+                "response": {"output": "Read image file shot.png"},
+                "id": "call-1",
+                "parts": [{"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}}]
+            }}])
+        );
     }
 
     #[test]
