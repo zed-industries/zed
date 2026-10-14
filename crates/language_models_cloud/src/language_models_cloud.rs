@@ -1161,11 +1161,17 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             cloud_llm_client::LanguageModelProvider::Google => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
-                let request =
-                    match into_google(request, config.id.to_string(), GoogleModelMode::Default) {
-                        Ok(request) => request,
-                        Err(error) => return async move { Err(error.into()) }.boxed(),
-                    };
+                let mode = if config.supports_thinking {
+                    GoogleModelMode::Thinking {
+                        budget_tokens: None,
+                    }
+                } else {
+                    GoogleModelMode::Default
+                };
+                let request = match into_google(request, config.id.to_string(), mode) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let auth_context = token_provider.auth_context(cx);
                 let future = request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
@@ -2388,6 +2394,62 @@ mod tests {
                 event.unwrap();
             }
         }
+    }
+
+    #[gpui::test]
+    async fn hosted_google_requests_summaries_using_catalog_thinking_support(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut config = cloud_test_config();
+        config.provider = cloud_llm_client::LanguageModelProvider::Google;
+        config.id = cloud_llm_client::LanguageModelId("future-google-model".into());
+        config.supports_thinking = true;
+        let (provider, model) = bind_test_model(
+            FakeHttpClient::create(|mut request| async move {
+                let mut body = String::new();
+                request.body_mut().read_to_string(&mut body).await?;
+                let body: serde_json::Value = serde_json::from_str(&body)?;
+                assert_eq!(
+                    body["provider_request"]["generationConfig"]["thinkingConfig"],
+                    json!({"thinkingLevel": "MEDIUM", "includeThoughts": true})
+                );
+                let completed = CompletionEvent::Event(json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": "Summary", "thought": true}, {"text": "Answer"}]
+                        },
+                        "finishReason": "STOP"
+                    }]
+                }));
+                let ended = CompletionEvent::<serde_json::Value>::Status(
+                    CompletionRequestStatus::StreamEnded,
+                );
+                Ok(Response::builder()
+                    .status(200)
+                    .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                    .body(AsyncBody::from(format!(
+                        "{}\n{}\n",
+                        serde_json::to_string(&completed)?,
+                        serde_json::to_string(&ended)?,
+                    )))?)
+            }),
+            config,
+        );
+        let mut request = compact_test_request();
+        request.thinking_allowed = true;
+        request.thinking_effort = Some("medium".into());
+        let mut stream = cx
+            .update(|cx| provider.stream_completion(&model, request, cx))
+            .await
+            .unwrap();
+        let mut summaries = Vec::new();
+        while let Some(event) = stream.next().await {
+            if let LanguageModelCompletionEvent::Thinking { text, .. } = event.unwrap() {
+                summaries.push(text);
+            }
+        }
+        assert_eq!(summaries, ["Summary"]);
     }
 
     fn cloud_google_test_model(

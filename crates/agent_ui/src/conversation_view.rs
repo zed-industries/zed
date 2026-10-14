@@ -2,13 +2,14 @@ use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     AuthRequired, ClientUserMessageId, ElicitationEntryId, ElicitationStatus, ElicitationStore,
     ForegroundActivity, LoadError, MaxOutputTokensError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, PermissionRequest, PermissionRequestId, RetryStatus,
-    SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    PermissionOptions, PermissionPattern, PermissionRequest, PermissionRequestId,
+    ProtocolErrorInfo, RetryStatus, SelectedPermissionOutcome, ThreadStatus, ToolCall,
+    ToolCallContent, ToolCallStatus,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NoModelConfiguredError, ThreadStore};
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::schema::v2 as acp_v2;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
@@ -164,14 +165,25 @@ pub(crate) enum ThreadError {
 
 impl From<anyhow::Error> for ThreadError {
     fn from(error: anyhow::Error) -> Self {
+        Self::from(&error)
+    }
+}
+
+impl From<&anyhow::Error> for ThreadError {
+    fn from(error: &anyhow::Error) -> Self {
+        let protocol_error = ProtocolErrorInfo::from_error(error);
         if error.is::<MaxOutputTokensError>() {
             Self::MaxOutputTokens
         } else if error.is::<NoModelConfiguredError>() {
             Self::NoModelSelected
-        } else if let Some(acp_error) = error.downcast_ref::<acp_v1::Error>()
-            && acp_error.code == acp_v1::ErrorCode::AuthRequired
-        {
-            Self::AuthenticationRequired(acp_error.message.clone().into())
+        } else if let Some(auth_error) = AuthRequired::from_error(error) {
+            Self::AuthenticationRequired(
+                auth_error
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| auth_error.to_string())
+                    .into(),
+            )
         } else if let Some(lm_error) = error.downcast_ref::<LanguageModelCompletionError>() {
             use LanguageModelCompletionError::*;
             match lm_error {
@@ -235,10 +247,8 @@ impl From<anyhow::Error> for ThreadError {
         } else {
             let message: SharedString = format!("{:#}", error).into();
 
-            // Extract ACP error code if available
-            let acp_error_code = error
-                .downcast_ref::<acp_v1::Error>()
-                .map(|acp_error| SharedString::from(acp_error.code.to_string()));
+            let acp_error_code =
+                protocol_error.map(|error| SharedString::from(error.code.to_string()));
 
             Self::Other {
                 message,
@@ -284,10 +294,10 @@ impl ProfileProvider for Entity<agent::Thread> {
 
 #[derive(Default)]
 pub(crate) struct Conversation {
-    threads: HashMap<acp_v1::SessionId, Entity<AcpThread>>,
-    permission_requests: IndexMap<acp_v1::SessionId, Vec<PermissionRequestId>>,
+    threads: HashMap<acp_v2::SessionId, Entity<AcpThread>>,
+    permission_requests: IndexMap<acp_v2::SessionId, Vec<PermissionRequestId>>,
     permission_selections: HashMap<PermissionRequestId, thread_view::PermissionSelection>,
-    elicitation_requests: IndexMap<acp_v1::SessionId, Vec<ElicitationEntryId>>,
+    elicitation_requests: IndexMap<acp_v2::SessionId, Vec<ElicitationEntryId>>,
     subscriptions: Vec<Subscription>,
     updated_at: Option<Instant>,
 }
@@ -363,7 +373,7 @@ impl Conversation {
 
     fn set_permission_choice(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         index: usize,
         cx: &mut Context<Self>,
@@ -382,7 +392,7 @@ impl Conversation {
 
     fn toggle_permission_pattern(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         pattern_index: usize,
         cx: &mut Context<Self>,
@@ -415,7 +425,7 @@ impl Conversation {
 
     fn add_permission_request(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: &PermissionRequestId,
     ) {
         let requests = self
@@ -429,7 +439,7 @@ impl Conversation {
 
     fn permission_request<'a>(
         &'a self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         cx: &'a App,
     ) -> Option<&'a PermissionRequest> {
@@ -441,7 +451,7 @@ impl Conversation {
 
     fn pending_permission_request_for_session<'a>(
         &'a self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &'a App,
     ) -> Option<&'a PermissionRequest> {
         self.permission_requests
@@ -452,9 +462,9 @@ impl Conversation {
 
     fn pending_permission_request<'a>(
         &'a self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &'a App,
-    ) -> Option<(acp_v1::SessionId, &'a PermissionRequest)> {
+    ) -> Option<(acp_v2::SessionId, &'a PermissionRequest)> {
         if self
             .threads
             .get(session_id)?
@@ -477,9 +487,9 @@ impl Conversation {
 
     pub fn pending_tool_call<'a>(
         &'a self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &'a App,
-    ) -> Option<(acp_v1::SessionId, acp_v1::ToolCallId, &'a PermissionOptions)> {
+    ) -> Option<(acp_v2::SessionId, acp_v2::ToolCallId, &'a PermissionOptions)> {
         let (result_session_id, request) = self.pending_permission_request(session_id, cx)?;
         Some((
             result_session_id,
@@ -488,7 +498,7 @@ impl Conversation {
         ))
     }
 
-    pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp_v1::SessionId, usize)> {
+    pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp_v2::SessionId, usize)> {
         self.permission_requests
             .iter()
             .filter_map(|(session_id, _)| {
@@ -508,9 +518,9 @@ impl Conversation {
     /// request for non-subagent sessions.
     pub fn pending_tool_call_for_session(
         &self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &App,
-    ) -> Option<acp_v1::ToolCallId> {
+    ) -> Option<acp_v2::ToolCallId> {
         Some(
             self.pending_permission_request_for_session(session_id, cx)?
                 .legacy_tool_call_id()?
@@ -520,7 +530,7 @@ impl Conversation {
 
     pub fn pending_tool_call_count_for_session(
         &self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &App,
     ) -> usize {
         self.permission_requests
@@ -538,7 +548,7 @@ impl Conversation {
 
     pub fn respond_to_elicitation(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         elicitation_id: ElicitationEntryId,
         response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
@@ -552,8 +562,8 @@ impl Conversation {
 
     pub fn authorize_pending_tool_call(
         &mut self,
-        session_id: &acp_v1::SessionId,
-        kind: acp_v1::PermissionOptionKind,
+        session_id: &acp_v2::SessionId,
+        kind: acp_v2::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let (authorize_session_id, request) = self.pending_permission_request(session_id, cx)?;
@@ -561,7 +571,7 @@ impl Conversation {
         self.authorize_permission_request(
             authorize_session_id,
             request.id,
-            SelectedPermissionOutcome::new(option.option_id.clone(), option.kind),
+            SelectedPermissionOutcome::new(option.option_id.clone(), option.kind.clone()),
             cx,
         );
         Some(())
@@ -569,7 +579,7 @@ impl Conversation {
 
     pub fn authorize_with_granularity(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
         is_allow: bool,
         cx: &mut Context<Self>,
@@ -587,8 +597,8 @@ impl Conversation {
     #[cfg(test)]
     fn authorize_tool_call(
         &mut self,
-        session_id: acp_v1::SessionId,
-        tool_call_id: acp_v1::ToolCallId,
+        session_id: acp_v2::SessionId,
+        tool_call_id: acp_v2::ToolCallId,
         outcome: SelectedPermissionOutcome,
         cx: &mut Context<Self>,
     ) {
@@ -604,7 +614,7 @@ impl Conversation {
 
     pub fn authorize_permission_request(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
         outcome: SelectedPermissionOutcome,
         cx: &mut Context<Self>,
@@ -638,7 +648,7 @@ impl Conversation {
 
     fn select_permission_option(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         option_id: acp_v2::PermissionOptionId,
         cx: &mut Context<Self>,
@@ -654,7 +664,7 @@ impl Conversation {
 
     fn cancel_permission_request(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         cx: &mut Context<Self>,
     ) {
@@ -682,9 +692,9 @@ impl EventEmitter<RootThreadUpdated> for ConversationView {}
 
 fn permission_option_for_action(
     options: &PermissionOptions,
-    kind: acp_v1::PermissionOptionKind,
-) -> Option<&acp_v1::PermissionOption> {
-    if kind == acp_v1::PermissionOptionKind::AllowAlways
+    kind: acp_v2::PermissionOptionKind,
+) -> Option<&acp_v2::PermissionOption> {
+    if kind == acp_v2::PermissionOptionKind::AllowAlways
         && let PermissionOptions::Flat(options) = options
         && let Some(option) = options.iter().find(|option| {
             option.option_id.0.as_ref() == acp_thread::SandboxPermission::AllowAlways.as_id()
@@ -710,14 +720,14 @@ fn resolve_outcome_from_selection(
         PermissionOptions::DropdownWithPatterns { choices, .. } => choices.as_slice(),
         PermissionOptions::Flat(_) => {
             let kind = if is_allow {
-                acp_v1::PermissionOptionKind::AllowOnce
+                acp_v2::PermissionOptionKind::AllowOnce
             } else {
-                acp_v1::PermissionOptionKind::RejectOnce
+                acp_v2::PermissionOptionKind::RejectOnce
             };
             let option = options.first_option_of_kind(kind)?;
             return Some(SelectedPermissionOutcome::new(
                 option.option_id.clone(),
-                option.kind,
+                option.kind.clone(),
             ));
         }
     };
@@ -782,7 +792,7 @@ pub struct ConversationView {
     project: Entity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
     pub(crate) thread_id: ThreadId,
-    pub(crate) root_session_id: Option<acp_v1::SessionId>,
+    pub(crate) root_session_id: Option<acp_v2::SessionId>,
     server_state: ServerState,
     pending_selections: Vec<AgentContextSelection>,
     focus_handle: FocusHandle,
@@ -828,7 +838,7 @@ impl ConversationView {
     pub fn pending_tool_call<'a>(
         &'a self,
         cx: &'a App,
-    ) -> Option<(acp_v1::SessionId, acp_v1::ToolCallId, &'a PermissionOptions)> {
+    ) -> Option<(acp_v2::SessionId, acp_v2::ToolCallId, &'a PermissionOptions)> {
         let session_id = self.active_thread()?.read(cx).session_id.clone();
         self.as_connected()?
             .conversation
@@ -861,7 +871,7 @@ impl ConversationView {
             .and_then(|id| self.thread_view(id))
     }
 
-    pub fn thread_view(&self, session_id: &acp_v1::SessionId) -> Option<Entity<ThreadView>> {
+    pub fn thread_view(&self, session_id: &acp_v2::SessionId) -> Option<Entity<ThreadView>> {
         let connected = self.as_connected()?;
         connected.threads.get(session_id).cloned()
     }
@@ -887,7 +897,7 @@ impl ConversationView {
 
     pub fn navigate_to_thread(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -928,8 +938,8 @@ enum ServerState {
 // hashmap of threads, current becomes session_id
 pub struct ConnectedServerState {
     auth_state: AuthState,
-    active_id: Option<acp_v1::SessionId>,
-    pub(crate) threads: HashMap<acp_v1::SessionId, Entity<ThreadView>>,
+    active_id: Option<acp_v2::SessionId>,
+    pub(crate) threads: HashMap<acp_v2::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
     conversation: Entity<Conversation>,
     _connection_entry_subscription: Subscription,
@@ -964,7 +974,7 @@ impl ConnectedServerState {
             .map_or(false, |view| view.read(cx).thread_error.is_some())
     }
 
-    pub fn navigate_to_thread(&mut self, session_id: acp_v1::SessionId) {
+    pub fn navigate_to_thread(&mut self, session_id: acp_v2::SessionId) {
         if self.threads.contains_key(&session_id) {
             self.active_id = Some(session_id);
         }
@@ -991,7 +1001,7 @@ impl ConversationView {
         agent: Rc<dyn AgentServer>,
         connection_store: Entity<AgentConnectionStore>,
         connection_key: Agent,
-        resume_session_id: Option<acp_v1::SessionId>,
+        resume_session_id: Option<acp_v2::SessionId>,
         thread_id: Option<ThreadId>,
         work_dirs: Option<PathList>,
         title: Option<SharedString>,
@@ -1224,7 +1234,7 @@ impl ConversationView {
         agent: Rc<dyn AgentServer>,
         connection_store: Entity<AgentConnectionStore>,
         connection_key: Agent,
-        resume_session_id: Option<acp_v1::SessionId>,
+        resume_session_id: Option<acp_v2::SessionId>,
         work_dirs: Option<PathList>,
         title: Option<SharedString>,
         project: Entity<Project>,
@@ -1347,16 +1357,16 @@ impl ConversationView {
             };
 
             let result = match result.await {
-                Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
-                    Ok(err) => {
+                Err(error) => {
+                    if let Some(auth_required) = AuthRequired::from_error(&error) {
                         cx.update(|window, cx| {
-                            Self::handle_auth_required(this, err, connection, window, cx)
+                            Self::handle_auth_required(this, auth_required, connection, window, cx)
                         })
                         .log_err();
                         return;
                     }
-                    Err(err) => Err(err),
-                },
+                    Err(error)
+                }
                 Ok(thread) => Ok(thread),
             };
 
@@ -1917,6 +1927,9 @@ impl ConversationView {
                         matches!(thread.read(cx).status(), ThreadStatus::Generating);
                     active.update(cx, |active, cx| {
                         if !is_generating {
+                            if thread.read(cx).uses_reported_activity() {
+                                active.sync_follow_agent_state(cx);
+                            }
                             active.thread_retry_status.take();
                             active.clear_auto_expand_tracking(cx);
                             if active.list_state.is_following_tail() {
@@ -1926,48 +1939,85 @@ impl ConversationView {
                         active.sync_generating_indicator(cx);
                     });
                 }
-                if is_subagent {
-                    if *stop_reason == Some(acp_v2::StopReason::EndTurn) {
-                        thread.update(cx, |thread, cx| {
-                            thread.mark_as_subagent_output(cx);
-                        });
-                    }
-                    return;
+                if is_subagent && *stop_reason == Some(acp_v2::StopReason::EndTurn) {
+                    thread.update(cx, |thread, cx| {
+                        thread.mark_as_subagent_output(cx);
+                    });
                 }
 
                 if *stop_reason == Some(acp_v2::StopReason::MaxTokens)
                     && thread.read(cx).uses_reported_activity()
                 {
-                    if let Some(active) = self.root_thread_view() {
+                    if let Some(active) = self.thread_view(&session_id) {
                         active.update(cx, |active, cx| {
                             active.message_queue.pause();
                             active
                                 .handle_thread_error(anyhow::Error::new(MaxOutputTokensError), cx);
                         });
                     }
-                    self.notify_with_sound(
-                        "Agent stopped at the output token limit",
-                        IconName::Warning,
-                        window,
-                        cx,
-                    );
+                    if !is_subagent {
+                        self.notify_with_sound(
+                            "Agent stopped at the output token limit",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
                     return;
                 }
                 if *stop_reason == Some(acp_v2::StopReason::Refusal)
                     && thread.read(cx).uses_reported_activity()
                 {
-                    if let Some(active) = self.root_thread_view() {
+                    if let Some(active) = self.thread_view(&session_id) {
                         active.update(cx, |active, cx| {
                             active.message_queue.pause();
                             active.handle_thread_error(ThreadError::Refusal, cx);
                         });
                     }
-                    self.notify_with_sound(
-                        "Agent refused to respond to this request",
-                        IconName::Warning,
-                        window,
-                        cx,
-                    );
+                    if !is_subagent {
+                        self.notify_with_sound(
+                            "Agent refused to respond to this request",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
+                    return;
+                }
+                if let Some(acp_v2::StopReason::Error(details)) = stop_reason
+                    && thread.read(cx).uses_reported_activity()
+                {
+                    if let Some(active) = self.thread_view(&session_id) {
+                        let error = thread
+                            .read(cx)
+                            .local_execution_error()
+                            .map(|error| ThreadError::from(error.as_ref()))
+                            .unwrap_or_else(|| {
+                                let error = details
+                                    .error
+                                    .as_deref()
+                                    .map(|error| anyhow::Error::new(error.clone()))
+                                    .unwrap_or_else(|| {
+                                        anyhow!("Agent stopped because of an error")
+                                    });
+                                ThreadError::from(error)
+                            });
+                        active.update(cx, |active, cx| {
+                            active.message_queue.pause();
+                            active.handle_thread_error(error, cx);
+                        });
+                    }
+                    if !is_subagent {
+                        self.notify_with_sound(
+                            "Agent stopped because of an error",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
+                    return;
+                }
+                if is_subagent {
                     return;
                 }
 
@@ -2323,8 +2373,8 @@ impl ConversationView {
 
     fn load_subagent_session(
         &mut self,
-        subagent_id: acp_v1::SessionId,
-        parent_session_id: acp_v1::SessionId,
+        subagent_id: acp_v2::SessionId,
+        parent_session_id: acp_v2::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3584,7 +3634,7 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
 
 fn native_available_skills(
     native_connection: &agent::NativeAgentConnection,
-    session_id: &acp_v1::SessionId,
+    session_id: &acp_v2::SessionId,
     cx: &App,
 ) -> Vec<AvailableSkill> {
     native_connection
@@ -3637,7 +3687,7 @@ impl ConversationView {
 impl ConversationView {
     /// Expands a tool call so its content is visible.
     /// This is primarily useful for visual testing.
-    pub fn expand_tool_call(&mut self, tool_call_id: acp_v1::ToolCallId, cx: &mut Context<Self>) {
+    pub fn expand_tool_call(&mut self, tool_call_id: acp_v2::ToolCallId, cx: &mut Context<Self>) {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.entry_view_state.update(cx, |state, _cx| {
@@ -3881,19 +3931,19 @@ impl AgentCodeSpanResolver {
         worktree_abs_path: &Path,
         path_style: PathStyle,
     ) -> Vec<Arc<RelPath>> {
-        let path_text = path.to_string_lossy();
-        let relative_path: Option<Arc<RelPath>> =
-            if util::paths::is_absolute(path_text.as_ref(), path_style) {
-                path_style
-                    .strip_prefix(path, worktree_abs_path)
-                    .map(std::borrow::Cow::into_owned)
-                    .map(Into::into)
-            } else {
-                RelPath::new(path, path_style)
-                    .ok()
-                    .map(std::borrow::Cow::into_owned)
-                    .map(Into::into)
-            };
+        let relative_path: Option<Arc<RelPath>> = if path_style.is_absolute(path) {
+            path_style
+                .strip_prefix(path, worktree_abs_path)
+                .ok()
+                .and_then(|path| RelPath::new(path, path_style).ok())
+                .map(std::borrow::Cow::into_owned)
+                .map(Into::into)
+        } else {
+            RelPath::new(path, path_style)
+                .ok()
+                .map(std::borrow::Cow::into_owned)
+                .map(Into::into)
+        };
 
         let Some(relative_path) = relative_path else {
             return Vec::new();
@@ -3978,10 +4028,11 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
+    use agent_client_protocol::schema::v1 as acp_v1;
     use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
-    use feature_flags::{AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _};
+    use feature_flags::FeatureFlagAppExt as _;
     use fs::FakeFs;
     use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
     use parking_lot::Mutex;
@@ -4000,6 +4051,125 @@ pub(crate) mod tests {
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
+
+    #[test]
+    fn test_thread_error_protocol_codes_preserve_context_and_data() {
+        let data = json!({"detail": {"retry": false, "values": [1, 2]}});
+        for code in [-32603, -32099] {
+            for error in [
+                anyhow!(acp_v2::Error::new(code, "Backend failed").data(data.clone())),
+                anyhow!(
+                    agent_client_protocol::Error::new(code, "Backend failed").data(data.clone())
+                ),
+            ] {
+                let error = error.context("Sending prompt");
+                let protocol = ProtocolErrorInfo::from_error(&error).expect("protocol error");
+                assert_eq!(protocol.message, "Backend failed");
+                assert_eq!(protocol.data, Some(&data));
+                let expected_message = format!("{error:#}");
+                let ThreadError::Other {
+                    message,
+                    acp_error_code,
+                } = ThreadError::from(&error)
+                else {
+                    panic!("expected a generic protocol error");
+                };
+                assert_eq!(message.as_ref(), expected_message);
+                assert!(message.contains("Sending prompt"));
+                assert!(message.contains("retry"));
+                assert_eq!(
+                    acp_error_code.as_ref().map(|code| code.as_ref()),
+                    Some(code.to_string().as_str())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_thread_error_protocol_auth_uses_only_message() {
+        for message in ["Authentication required", "Sign in to continue"] {
+            for error in [
+                anyhow!(
+                    acp_v2::Error::new(-32000, message).data(json!({"private": "auth details"}))
+                ),
+                anyhow!(
+                    agent_client_protocol::Error::new(-32000, message)
+                        .data(json!({"private": "auth details"}))
+                ),
+            ] {
+                let error = error.context("Sending prompt");
+                assert!(matches!(
+                    ThreadError::from(&error),
+                    ThreadError::AuthenticationRequired(description) if description == message
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn test_thread_error_auth_marker_uses_description_or_default() {
+        for (marker, expected) in [
+            (AuthRequired::new(), "Authentication required"),
+            (
+                AuthRequired::new().with_description("Sign in again".to_string()),
+                "Sign in again",
+            ),
+        ] {
+            let error = anyhow!(marker).context("Sending prompt");
+            assert!(matches!(
+                ThreadError::from(&error),
+                ThreadError::AuthenticationRequired(description) if description == expected
+            ));
+        }
+
+        for error in [
+            anyhow!(agent_client_protocol::Error::auth_required()),
+            anyhow!(acp_v2::Error::auth_required()),
+        ] {
+            let error = error.context(
+                AuthRequired::new().with_description("Use the application login".to_string()),
+            );
+            assert_eq!(
+                AuthRequired::from_error(&error)
+                    .expect("authentication required")
+                    .description
+                    .as_deref(),
+                Some("Use the application login")
+            );
+            assert!(matches!(
+                ThreadError::from(&error),
+                ThreadError::AuthenticationRequired(description)
+                    if description == "Use the application login"
+            ));
+        }
+    }
+
+    #[test]
+    fn test_thread_error_preserves_native_error_precedence() {
+        let provider_error = LanguageModelCompletionError::from_provider_response(
+            language_model::OPEN_AI_PROVIDER_NAME,
+            None,
+            None,
+            "Try again later".to_string(),
+            None,
+            ProviderErrorCategory::RateLimit,
+        );
+        let error = anyhow!(acp_v2::Error::internal_error()).context(provider_error);
+        assert!(matches!(
+            ThreadError::from(&error),
+            ThreadError::RateLimitExceeded { provider }
+                if provider.as_ref() == language_model::OPEN_AI_PROVIDER_NAME.to_string().as_str()
+        ));
+        assert!(matches!(
+            ThreadError::from(&error.context(MaxOutputTokensError)),
+            ThreadError::MaxOutputTokens
+        ));
+        let error = anyhow!(AuthRequired::new()).context(NoModelConfiguredError);
+        assert!(matches!(
+            ThreadError::from(&error),
+            ThreadError::NoModelSelected
+        ));
+    }
 
     #[test]
     fn test_data_retention_error_maps_from_provider_error() {
@@ -4100,9 +4270,6 @@ pub(crate) mod tests {
     #[gpui::test]
     async fn test_drop_preserves_shared_pending_request_elicitations(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
 
         let response = Arc::new(Mutex::new(None));
         let server = ReleaseRequestElicitationServer {
@@ -4152,9 +4319,6 @@ pub(crate) mod tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
 
         let response = Arc::new(Mutex::new(None));
         let server = ReleaseRequestElicitationServer {
@@ -4207,9 +4371,6 @@ pub(crate) mod tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
 
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
         let response = Arc::new(Mutex::new(None));
@@ -4985,6 +5146,47 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_hidden_command_marker_keeps_empty_editor_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_local_user_message(acp_thread::ClientUserMessageId::new(), Vec::new(), cx)
+                .expect("retained command marker");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).entries().len(), 1);
+            assert!(!view.can_edit_user_message(0, cx));
+            assert!(matches!(
+                view.message_editor.read(cx).editor().read(cx).mode(),
+                editor::EditorMode::Full { .. }
+            ));
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_local_user_message(
+                    acp_thread::ClientUserMessageId::new(),
+                    vec!["visible prompt".into()],
+                    cx,
+                )
+                .expect("visible prompt");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            assert!(matches!(
+                view.message_editor.read(cx).editor().read(cx).mode(),
+                editor::EditorMode::AutoHeight { .. }
+            ));
+        });
+    }
+
+    #[gpui::test]
     async fn test_reported_stale_stop_and_token_limit_do_not_send_queue(cx: &mut TestAppContext) {
         init_test(cx);
         let connection = StubAgentConnection::new().with_receipt_submissions(true);
@@ -4994,6 +5196,7 @@ pub(crate) mod tests {
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
         thread_view.update_in(cx, |view, window, cx| {
+            view.should_be_following = true;
             view.add_to_queue(vec!["queued".into()], vec![], window, cx);
         });
         thread.update(cx, |thread, cx| {
@@ -5021,7 +5224,10 @@ pub(crate) mod tests {
                 .expect("running B");
         });
         cx.run_until_parked();
-        thread_view.read_with(cx, |view, _| assert_eq!(view.message_queue.len(), 1));
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(view.message_queue.len(), 1);
+            assert!(view.should_be_following);
+        });
         assert!(thread.read_with(cx, |thread, _| thread.activity_generation() > generation_a));
         thread.update(cx, |thread, cx| {
             thread
@@ -5052,6 +5258,7 @@ pub(crate) mod tests {
                 Some(ThreadError::MaxOutputTokens)
             ));
             assert_eq!(view.message_queue.len(), 1);
+            assert!(!view.should_be_following);
             assert!(view.turn_fields.turn_started_at.is_none());
             assert!(view.turn_fields._turn_timer_task.is_none());
             assert_eq!(
@@ -5086,6 +5293,193 @@ pub(crate) mod tests {
                 view.turn_fields.last_turn_duration,
                 thread.read(cx).activity_duration(),
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reported_error_after_acceptance_pauses_queue(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(language_model::init);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let finish_receipt = connection.defer_next_receipt_response();
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("accepted work", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+        finish_receipt
+            .send(Ok(acp_v2::PromptResponse::new("accepted-message")))
+            .expect("pending receipt");
+        cx.run_until_parked();
+        let submission_id =
+            thread_view.read_with(cx, |view, _| view.current_submission.expect("submission"));
+        thread_view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["follow-up".into()], vec![], window, cx);
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running local work");
+            thread
+                .report_local_execution_error(
+                    Arc::new(anyhow!(LanguageModelCompletionError::NoApiKey {
+                        provider: ZED_CLOUD_PROVIDER_NAME,
+                    })),
+                    cx,
+                )
+                .expect("failed local work");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _| {
+            let Some(ThreadError::NoCredentials { provider }) = &view.thread_error else {
+                panic!("local provider error classification should be retained");
+            };
+            assert_eq!(provider.to_string(), ZED_CLOUD_PROVIDER_NAME.to_string());
+            assert_eq!(view.message_queue.len(), 1);
+            assert!(view.message_queue.auto_send_candidate(false).is_none());
+        });
+        for (details, expected_message, expected_code) in [
+            (
+                Some(acp_v2::Error::new(
+                    acp_v2::ErrorCode::AuthRequired.into(),
+                    "Sign in again",
+                )),
+                "Sign in again",
+                None,
+            ),
+            (
+                Some(acp_v2::Error::new(-32099, "Backend failed")),
+                "Backend failed",
+                Some("-32099"),
+            ),
+            (None, "Agent stopped because of an error", None),
+        ] {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                        cx,
+                    )
+                    .expect("running");
+                assert!(thread.local_execution_error().is_none());
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new().stop_reason(
+                            acp_v2::StopReason::Error(
+                                acp_v2::ErrorStopReason::new().error(details),
+                            ),
+                        )),
+                        cx,
+                    )
+                    .expect("failed work");
+            });
+            cx.run_until_parked();
+            thread_view.read_with(cx, |view, cx| {
+                match view.thread_error.as_ref().expect("reported error") {
+                    ThreadError::AuthenticationRequired(message) => {
+                        assert_eq!(message.as_ref(), expected_message);
+                    }
+                    ThreadError::Other {
+                        message,
+                        acp_error_code,
+                    } => {
+                        assert!(message.contains(expected_message));
+                        assert_eq!(acp_error_code.as_deref(), expected_code);
+                    }
+                    error => panic!("unexpected error: {error:?}"),
+                }
+                assert_eq!(view.message_queue.len(), 1);
+                assert!(view.message_queue.auto_send_candidate(false).is_none());
+                assert!(view.turn_fields.turn_started_at.is_none());
+                let thread = view.thread.read(cx);
+                assert!(thread.had_error());
+                assert!(thread.entries().is_empty());
+                assert!(matches!(
+                    thread
+                        .submission(submission_id)
+                        .expect("accepted work")
+                        .state,
+                    acp_thread::SubmissionState::Accepted { echoed: false, .. }
+                ));
+                assert_eq!(
+                    thread
+                        .recoverable_submissions()
+                        .map(|(id, _)| id)
+                        .collect::<Vec<_>>(),
+                    [submission_id],
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reported_subagent_failure_is_scoped_to_its_view(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let root_view = active_thread(&conversation_view, cx);
+        let (root, conversation) = root_view.read_with(cx, |view, _| {
+            (view.thread.clone(), view.conversation.clone())
+        });
+        let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
+        let child_session_id = acp_v2::SessionId::new("reported-child");
+        let child_view = conversation_view.update_in(cx, |view, window, cx| {
+            let child = create_test_acp_thread(
+                Some(root_session_id),
+                child_session_id.0.as_ref(),
+                Rc::new(StubAgentConnection::new().with_receipt_submissions(true)),
+                view.project.clone(),
+                cx,
+            );
+            conversation.update(cx, |conversation, cx| {
+                conversation.register_thread(child.clone(), cx);
+            });
+            let child_view =
+                view.new_thread_view(child, conversation.clone(), false, None, window, cx);
+            view.as_connected_mut()
+                .expect("connected")
+                .threads
+                .insert(child_session_id, child_view.clone());
+            child_view
+        });
+        root_view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["root follow-up".into()], vec![], window, cx);
+        });
+        child_view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["child follow-up".into()], vec![], window, cx);
+            view.thread.update(cx, |thread, cx| {
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                        cx,
+                    )
+                    .expect("child running");
+                thread
+                    .report_local_execution_error(Arc::new(anyhow!(MaxOutputTokensError)), cx)
+                    .expect("child failure");
+            });
+        });
+        cx.run_until_parked();
+        child_view.read_with(cx, |view, _| {
+            assert!(matches!(
+                view.thread_error,
+                Some(ThreadError::MaxOutputTokens)
+            ));
+            assert!(view.message_queue.auto_send_candidate(false).is_none());
+        });
+        root_view.read_with(cx, |view, _| {
+            assert!(view.thread_error.is_none());
+            assert!(view.message_queue.auto_send_candidate(false).is_some());
         });
     }
 
@@ -5419,7 +5813,7 @@ pub(crate) mod tests {
         let root_thread =
             active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
         let root_session_id = root_thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let other_session_id = acp_v1::SessionId::new("other-session");
+        let other_session_id = acp_v2::SessionId::new("other-session");
         conversation_view.update_in(cx, |view, window, cx| {
             view.load_subagent_session(
                 other_session_id.clone(),
@@ -5627,9 +6021,6 @@ pub(crate) mod tests {
     #[gpui::test]
     async fn test_thread_view_seeds_existing_elicitation_form_state(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
 
         let connection = PreloadedElicitationConnection::default();
         let elicitation_id = connection.elicitation_id.clone();
@@ -5669,7 +6060,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(acp_v1::SessionId::new("resume-session")),
+                    Some(acp_v2::SessionId::new("resume-session")),
                     None,
                     None,
                     None,
@@ -5718,7 +6109,7 @@ pub(crate) mod tests {
                 self,
                 project,
                 "RestoredAvailableCommandsConnection",
-                acp_v1::SessionId::new("new-session"),
+                acp_v2::SessionId::new("new-session"),
                 cx,
             );
             Task::ready(Ok(thread))
@@ -5730,7 +6121,7 @@ pub(crate) mod tests {
 
         fn load_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             _work_dirs: PathList,
             title: Option<SharedString>,
@@ -5803,7 +6194,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -5832,7 +6223,7 @@ pub(crate) mod tests {
                     )),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(acp_v1::SessionId::new("restored-session")),
+                    Some(acp_v2::SessionId::new("restored-session")),
                     None,
                     None,
                     None,
@@ -5977,7 +6368,7 @@ pub(crate) mod tests {
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
             let thread_id = ThreadId::new();
-            let session_id = acp_v1::SessionId::new(format!("early-title-{index}"));
+            let session_id = acp_v2::SessionId::new(format!("early-title-{index}"));
             cx.update(|_, cx| {
                 ThreadMetadataStore::global(cx).update(cx, |store, cx| {
                     store.save(
@@ -6103,7 +6494,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(acp_v1::SessionId::new("session-1")),
+                    Some(acp_v2::SessionId::new("session-1")),
                     None,
                     Some(PathList::new(&[PathBuf::from("/project/subdir")])),
                     None,
@@ -6209,7 +6600,7 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         // Simulate a previous run that persisted metadata for this session.
-        let resume_session_id = acp_v1::SessionId::new("persistent-session");
+        let resume_session_id = acp_v2::SessionId::new("persistent-session");
         let stored_title: SharedString = "Persistent chat".into();
         cx.update(|_window, cx| {
             ThreadMetadataStore::global(cx).update(cx, |store, cx| {
@@ -6384,13 +6775,27 @@ pub(crate) mod tests {
     async fn test_auth_required_on_initial_connect(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let connection = AuthGatedAgentConnection::new();
+        for error_source in [
+            AuthErrorSource::Marker,
+            AuthErrorSource::Sdk,
+            AuthErrorSource::V2,
+        ] {
+            assert_auth_required_on_initial_connect(error_source, cx).await;
+        }
+    }
+
+    async fn assert_auth_required_on_initial_connect(
+        error_source: AuthErrorSource,
+        cx: &mut TestAppContext,
+    ) {
+        let mut connection = AuthGatedAgentConnection::new();
+        connection.error_source = error_source;
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
 
         // When new_session returns AuthRequired, the server should transition
         // to Connected + Unauthenticated rather than getting stuck in Loading.
-        conversation_view.read_with(cx, |view, _cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let connected = view
                 .as_connected()
                 .expect("Should be in Connected state even though auth is required");
@@ -6441,10 +6846,22 @@ pub(crate) mod tests {
                     acp_v2::AuthMethodId::new(AuthGatedAgentConnection::TERMINAL_AUTH_METHOD_ID),
                 ]
             );
-            assert!(
-                !connected.auth_state.is_ok(),
-                "Auth state should be Unauthenticated"
+            let AuthState::Unauthenticated {
+                description,
+                pending_auth_method,
+            } = &connected.auth_state
+            else {
+                panic!("Auth state should be Unauthenticated");
+            };
+            assert_eq!(
+                description
+                    .as_ref()
+                    .expect("custom auth message should be preserved")
+                    .read(cx)
+                    .source(),
+                "Sign in to continue"
             );
+            assert!(pending_auth_method.is_none());
             assert!(
                 !view.supports_logout(),
                 "Logout should be hidden while unauthenticated"
@@ -6682,17 +7099,18 @@ pub(crate) mod tests {
     async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Label")
-            .kind(acp_v1::ToolKind::Edit)
-            .content(vec!["hi".into()]);
+        let tool_call_id = acp_v2::ToolCallId::new("1");
+        let tool_call =
+            acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id.0.clone()), "Label")
+                .kind(acp_v1::ToolKind::Edit)
+                .content(vec!["hi".into()]);
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
                 tool_call_id,
-                PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                     "1",
                     "Allow",
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 )]),
             )]));
 
@@ -8056,7 +8474,7 @@ pub(crate) mod tests {
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         name: &'static str,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         cx: &mut App,
     ) -> Entity<AcpThread> {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -8100,7 +8518,7 @@ pub(crate) mod tests {
             _work_dirs: PathList,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let session_id = acp_v1::SessionId::new("new-session");
+            let session_id = acp_v2::SessionId::new("new-session");
             let thread = build_test_thread(
                 self.clone(),
                 project,
@@ -8113,9 +8531,7 @@ pub(crate) mod tests {
                     .request_elicitation(
                         acp_v2::CreateElicitationRequest::new(
                             acp_v2::ElicitationFormMode::new(
-                                acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
-                                    session_id.0,
-                                )),
+                                acp_v2::ElicitationSessionScope::new(session_id),
                                 acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
@@ -8158,7 +8574,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8221,7 +8637,7 @@ pub(crate) mod tests {
                 self.clone(),
                 project,
                 "SessionCreationRequestElicitationConnection",
-                acp_v1::SessionId::new("session-creation-request-elicitation-session"),
+                acp_v2::SessionId::new("session-creation-request-elicitation-session"),
                 cx,
             );
             let first_response_task = self.store.update(cx, |store, cx| {
@@ -8289,7 +8705,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8351,7 +8767,7 @@ pub(crate) mod tests {
                 self.clone(),
                 project,
                 "ReleaseRequestElicitationConnection",
-                acp_v1::SessionId::new("release-request-elicitation-session"),
+                acp_v2::SessionId::new("release-request-elicitation-session"),
                 cx,
             );
             let response_task = self.store.update(cx, |store, cx| {
@@ -8401,7 +8817,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8430,7 +8846,7 @@ pub(crate) mod tests {
                 self,
                 project,
                 "ResumeOnlyAgentConnection",
-                acp_v1::SessionId::new("new-session"),
+                acp_v2::SessionId::new("new-session"),
                 cx,
             );
             Task::ready(Ok(thread))
@@ -8442,7 +8858,7 @@ pub(crate) mod tests {
 
         fn resume_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             _work_dirs: PathList,
             _title: Option<SharedString>,
@@ -8473,11 +8889,18 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
+    }
+
+    #[derive(Clone, Copy)]
+    enum AuthErrorSource {
+        Marker,
+        Sdk,
+        V2,
     }
 
     /// Simulates an agent that requires authentication before a session can be
@@ -8486,6 +8909,7 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct AuthGatedAgentConnection {
         authenticated: Arc<Mutex<bool>>,
+        error_source: AuthErrorSource,
         auth_methods: Vec<acp_v2::AuthMethod>,
         authenticate_calls: Arc<Mutex<Vec<acp_v2::AuthMethodId>>>,
         terminal_auth_calls: Arc<Mutex<Vec<acp_v2::AuthMethodId>>>,
@@ -8499,6 +8923,7 @@ pub(crate) mod tests {
         fn new() -> Self {
             Self {
                 authenticated: Arc::new(Mutex::new(false)),
+                error_source: AuthErrorSource::Marker,
                 auth_methods: vec![
                     acp_v2::AuthMethod::Other(
                         acp_v2::OtherAuthMethod::new(
@@ -8554,12 +8979,25 @@ pub(crate) mod tests {
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             if !*self.authenticated.lock() {
-                return Task::ready(Err(acp_thread::AuthRequired::new()
-                    .with_description("Sign in to continue".to_string())
-                    .into()));
+                let error = match self.error_source {
+                    AuthErrorSource::Marker => anyhow!(
+                        AuthRequired::new().with_description("Sign in to continue".to_string())
+                    ),
+                    AuthErrorSource::Sdk => anyhow!(
+                        agent_client_protocol::Error::new(-32000, "Sign in to continue")
+                            .data(json!({"private": "auth details"}))
+                    )
+                    .context("Creating session"),
+                    AuthErrorSource::V2 => anyhow!(
+                        acp_v2::Error::new(-32000, "Sign in to continue")
+                            .data(json!({"private": "auth details"}))
+                    )
+                    .context("Creating session"),
+                };
+                return Task::ready(Err(error));
             }
 
-            let session_id = acp_v1::SessionId::new("auth-gated-session");
+            let session_id = acp_v2::SessionId::new("auth-gated-session");
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             Task::ready(Ok(cx.new(|cx| {
                 AcpThread::new(
@@ -8625,7 +9063,7 @@ pub(crate) mod tests {
             unimplemented!()
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {
             unimplemented!()
         }
 
@@ -8662,7 +9100,7 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    acp_v1::SessionId::new("test"),
+                    acp_v2::SessionId::new("test"),
                     watch::Receiver::constant(
                         acp_v2::PromptCapabilities::new()
                             .image(acp_v2::PromptImageCapabilities::new())
@@ -8694,7 +9132,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Refusal)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {
             unimplemented!()
         }
 
@@ -8741,7 +9179,7 @@ pub(crate) mod tests {
                     self.clone(),
                     project,
                     action_log,
-                    acp_v1::SessionId::new("new-session"),
+                    acp_v2::SessionId::new("new-session"),
                     watch::Receiver::constant(
                         acp_v2::PromptCapabilities::new()
                             .image(acp_v2::PromptImageCapabilities::new())
@@ -8760,7 +9198,7 @@ pub(crate) mod tests {
 
         fn load_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             work_dirs: PathList,
             _title: Option<SharedString>,
@@ -8809,7 +9247,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -9296,13 +9734,16 @@ pub(crate) mod tests {
     ) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("ask-user-1");
+        let tool_call_id = acp_v2::ToolCallId::new("ask-user-1");
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
-            acp_v1::ToolCall::new(tool_call_id.clone(), "Which directory should we explore?")
-                .kind(acp_v1::ToolKind::Other)
-                .status(acp_v1::ToolCallStatus::InProgress)
-                .meta(acp_thread::meta_with_tool_name("ask_user")),
+            acp_v1::ToolCall::new(
+                acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+                "Which directory should we explore?",
+            )
+            .kind(acp_v1::ToolKind::Other)
+            .status(acp_v1::ToolCallStatus::InProgress)
+            .meta(acp_thread::meta_with_tool_name("ask_user")),
         )]);
 
         let (conversation_view, cx) =
@@ -9328,10 +9769,8 @@ pub(crate) mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
-                                session_id.0.clone(),
-                            ))
-                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationSessionScope::new(session_id.clone())
+                                .tool_call_id(tool_call_id.clone()),
                             acp_v2::ElicitationSchema::new().string("other", true),
                         ),
                         "Which directory should we explore?",
@@ -9372,7 +9811,7 @@ pub(crate) mod tests {
             thread
                 .handle_session_update(
                     acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
-                        tool_call_id.clone(),
+                        acp_v1::ToolCallId::new(tool_call_id.0.clone()),
                         acp_v1::ToolCallUpdateFields::new()
                             .title("Answered: delve into src")
                             .status(acp_v1::ToolCallStatus::Completed),
@@ -9415,12 +9854,15 @@ pub(crate) mod tests {
     async fn test_scroll_to_user_message_skips_accepted_url_elicitation(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("sign-in-1");
+        let tool_call_id = acp_v2::ToolCallId::new("sign-in-1");
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
-            acp_v1::ToolCall::new(tool_call_id.clone(), "Sign in to continue")
-                .kind(acp_v1::ToolKind::Other)
-                .status(acp_v1::ToolCallStatus::InProgress),
+            acp_v1::ToolCall::new(
+                acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+                "Sign in to continue",
+            )
+            .kind(acp_v1::ToolKind::Other)
+            .status(acp_v1::ToolCallStatus::InProgress),
         )]);
 
         let (conversation_view, cx) =
@@ -9446,10 +9888,8 @@ pub(crate) mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationUrlMode::new(
-                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
-                                session_id.0.clone(),
-                            ))
-                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationSessionScope::new(session_id.clone())
+                                .tool_call_id(tool_call_id.clone()),
                             acp_v2::ElicitationId::new("sign-in-url-1"),
                             "https://example.com/sign-in",
                         ),
@@ -10311,13 +10751,16 @@ pub(crate) mod tests {
     async fn test_thread_search_includes_expanded_tool_call_content(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("search-tool-content");
+        let tool_call_id = acp_v2::ToolCallId::new("search-tool-content");
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
-            acp_v1::ToolCall::new(tool_call_id.clone(), "Inspect output")
-                .kind(acp_v1::ToolKind::Other)
-                .status(acp_v1::ToolCallStatus::Completed)
-                .content(vec!["Tool output mentions papaya once.".into()]),
+            acp_v1::ToolCall::new(
+                acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+                "Inspect output",
+            )
+            .kind(acp_v1::ToolKind::Other)
+            .status(acp_v1::ToolCallStatus::Completed)
+            .content(vec!["Tool output mentions papaya once.".into()]),
         )]);
 
         let (conversation_view, cx) =
@@ -10474,7 +10917,7 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::default_response(), cx).await;
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("new-patch");
+        let tool_call_id = acp_v2::ToolCallId::new("new-patch");
 
         let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
             "toolCallId": "new-patch",
@@ -10491,7 +10934,7 @@ pub(crate) mod tests {
         }))
         .expect("new patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("new patch should apply");
         cx.run_until_parked();
 
@@ -10531,7 +10974,7 @@ pub(crate) mod tests {
         }))
         .expect("metadata patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(metadata, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(metadata, cx))
             .expect("metadata patch should apply");
         cx.run_until_parked();
         thread_view.read_with(cx, |view, cx| {
@@ -10564,7 +11007,7 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::default_response(), cx).await;
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("authorization-patch");
+        let tool_call_id = acp_v2::ToolCallId::new("authorization-patch");
         let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
             "toolCallId": "authorization-patch",
             "title": "Review patch",
@@ -10582,20 +11025,20 @@ pub(crate) mod tests {
         }))
         .expect("patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("patch should apply");
         cx.run_until_parked();
         let _authorization = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
                     acp_v1::ToolCallUpdate::new(
-                        tool_call_id.clone(),
+                        acp_v1::ToolCallId::new(tool_call_id.0.clone()),
                         acp_v1::ToolCallUpdateFields::new(),
                     ),
-                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                         "allow-review",
                         "Allow",
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     )]),
                     acp_thread::AuthorizationKind::PermissionGrant,
                     cx,
@@ -10671,7 +11114,7 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("shared-search-tool");
+        let tool_call_id = acp_v2::ToolCallId::new("shared-search-tool");
 
         let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
             "toolCallId": "shared-search-tool",
@@ -10685,7 +11128,7 @@ pub(crate) mod tests {
         }))
         .expect("initial tool patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("initial tool patch should apply");
         cx.run_until_parked();
 
@@ -10747,7 +11190,7 @@ pub(crate) mod tests {
         }))
         .expect("diff patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("diff patch should apply");
         cx.run_until_parked();
         cx.executor()
@@ -10976,7 +11419,7 @@ pub(crate) mod tests {
         }))
         .expect("clear patch should deserialize");
         thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
             .expect("clear patch should apply");
         cx.run_until_parked();
         cx.executor()
@@ -11033,15 +11476,15 @@ pub(crate) mod tests {
         add_to_workspace(conversation_view.clone(), cx);
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("historical-chunks");
-        let later_tool_call_id = acp_v1::ToolCallId::new("later-tool");
+        let tool_call_id = acp_v2::ToolCallId::new("historical-chunks");
+        let later_tool_call_id = acp_v2::ToolCallId::new("later-tool");
         for (id, text) in [
             ("historical-chunks", "Original mango output"),
             ("later-tool", "Unchanged later output"),
         ] {
             thread
                 .update(cx, |thread, cx| {
-                    thread.upsert_tool_call_patch(
+                    thread.upsert_wire_tool_call(
                         acp_v2::ToolCallUpdate::new(id)
                             .title("Inspect output")
                             .status(acp_v2::ToolCallStatus::Completed)
@@ -11428,33 +11871,51 @@ pub(crate) mod tests {
         let search_bar = thread_view
             .read_with(cx, |view, _| view.thread_search_bar.clone())
             .expect("thread search bar should be open");
-        let resource =
-            acp_v1::EmbeddedResource::new(acp_v1::EmbeddedResourceResource::TextResourceContents(
-                acp_v1::TextResourceContents::new("retained resource details", "summary://context")
-                    .mime_type("text/markdown".to_string()),
-            ));
+        let source_json = json!([
+            {
+                "type": "text",
+                "text": "Retained summary",
+                "_meta": {"origin": {"parts": ["context", {"revision": 1}]}}
+            },
+            {
+                "type": "resource",
+                "resource": {
+                    "text": "retained resource details",
+                    "uri": "summary://context",
+                    "mimeType": "text/markdown",
+                    "_meta": {"snapshot": {"revision": 2}}
+                },
+                "_meta": {"origin": {"kind": "summary"}}
+            },
+            {
+                "type": "_future_summary",
+                "payload": {"nested": [1, {"value": "original"}]},
+                "_meta": {"origin": {"kind": "future"}}
+            }
+        ]);
+        let source: Vec<acp_v2::ContentBlock> =
+            serde_json::from_value(source_json.clone()).expect("valid shared summary content");
 
-        for (update, query) in [
+        for (update, query, expected_source) in [
             (
-                acp_v1::CompactionUpdate::new("failed", acp_v1::CompactionStatus::Failed)
+                acp_v2::CompactionUpdate::new("failed", acp_v2::CompactionStatus::Failed)
                     .error("model *still* unavailable <details>"),
                 "model *still* unavailable <details>",
+                Vec::new(),
             ),
             (
-                acp_v1::CompactionUpdate::new("completed", acp_v1::CompactionStatus::Completed)
-                    .summary(vec![
-                        acp_v1::ContentBlock::Text(acp_v1::TextContent::new("Retained summary")),
-                        acp_v1::ContentBlock::Resource(resource),
-                    ]),
+                acp_v2::CompactionUpdate::new("completed", acp_v2::CompactionStatus::Completed)
+                    .summary(source.clone()),
                 "retained resource details",
+                source,
             ),
         ] {
-            thread
-                .update(cx, |thread, cx| {
-                    thread
-                        .handle_session_update(acp_v1::SessionUpdate::CompactionUpdate(update), cx)
-                })
-                .expect("failed to receive compaction details");
+            let compaction_id = update.compaction_id.clone();
+            let status = update.status.clone();
+            let is_error = expected_source.is_empty();
+            thread.update(cx, |thread, cx| {
+                thread.upsert_context_compaction_update(update, cx);
+            });
             cx.run_until_parked();
 
             let (entry_index, markdown) = thread.read_with(cx, |thread, cx| {
@@ -11467,10 +11928,17 @@ pub(crate) mod tests {
                 let AgentThreadEntry::ContextCompaction(compaction) = entry else {
                     panic!("expected a compaction entry");
                 };
+                assert_eq!(compaction.summary.source_blocks(), expected_source);
+                if !is_error {
+                    assert_eq!(
+                        serde_json::to_value(compaction.summary.source_blocks())
+                            .expect("serializable shared summary"),
+                        source_json
+                    );
+                }
                 let markdown = compaction
                     .summary
-                    .iter()
-                    .filter_map(|content| content.markdown())
+                    .markdowns()
                     .chain(compaction.error.iter())
                     .find(|markdown| markdown.read(cx).source().contains(query))
                     .expect("compaction should retain searchable details")
@@ -11497,6 +11965,65 @@ pub(crate) mod tests {
                 "the visible compaction details should be highlighted",
             );
 
+            let replacement_query = "updated searchable details";
+            let replacement_source = if is_error {
+                Vec::new()
+            } else {
+                vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                    replacement_query,
+                ))]
+            };
+            let replacement = acp_v2::CompactionUpdate::new(compaction_id.clone(), status.clone());
+            let replacement = if is_error {
+                replacement.error(replacement_query)
+            } else {
+                replacement.summary(replacement_source.clone())
+            };
+            thread.update(cx, |thread, cx| {
+                thread.upsert_context_compaction_update(replacement, cx);
+            });
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                0,
+                "replacement should refresh search without changing the query"
+            );
+            assert!(markdown.read_with(cx, |markdown, _| markdown.search_highlights().is_empty()));
+            let replacement_markdown = thread.read_with(cx, |thread, cx| {
+                let AgentThreadEntry::ContextCompaction(compaction) = thread
+                    .entries()
+                    .get(entry_index)
+                    .expect("compaction entry should remain")
+                else {
+                    panic!("replacement should retain the compaction entry");
+                };
+                assert_eq!(compaction.summary.source_blocks(), replacement_source);
+                compaction
+                    .summary
+                    .markdowns()
+                    .chain(compaction.error.iter())
+                    .find(|markdown| markdown.read(cx).source().as_ref() == replacement_query)
+                    .expect("replacement should have searchable details")
+                    .clone()
+            });
+            search_bar.update_in(cx, |search_bar, window, cx| {
+                search_bar.query_editor.update(cx, |editor, cx| {
+                    editor.set_text(replacement_query, window, cx);
+                });
+                search_bar.update_matches(window, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                1
+            );
+            assert!(replacement_markdown.read_with(cx, |markdown, _| {
+                !markdown.search_highlights().is_empty()
+            }));
+
             thread_view.update_in(cx, |view, window, cx| {
                 view.toggle_compaction_expansion(entry_index, window, cx);
             });
@@ -11505,7 +12032,50 @@ pub(crate) mod tests {
                 search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
                 0
             );
-            assert!(markdown.read_with(cx, |markdown, _| markdown.search_highlights().is_empty()));
+            assert!(replacement_markdown.read_with(cx, |markdown, _| {
+                markdown.search_highlights().is_empty()
+            }));
+
+            thread_view.update_in(cx, |view, window, cx| {
+                view.toggle_compaction_expansion(entry_index, window, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                1
+            );
+            thread.update(cx, |thread, cx| {
+                thread.upsert_context_compaction_update(
+                    acp_v2::CompactionUpdate::new(compaction_id, status)
+                        .summary(None::<Vec<acp_v2::ContentBlock>>)
+                        .error(None::<String>),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                let AgentThreadEntry::ContextCompaction(compaction) = thread
+                    .entries()
+                    .get(entry_index)
+                    .expect("compaction entry should remain")
+                else {
+                    panic!("clearing details should retain the compaction entry");
+                };
+                assert!(compaction.summary.source_blocks().is_empty());
+                assert_eq!(compaction.summary.blocks().len(), 0);
+                assert!(compaction.error.is_none());
+            });
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                0,
+                "clearing visible details should refresh search"
+            );
+            assert!(replacement_markdown.read_with(cx, |markdown, _| {
+                markdown.search_highlights().is_empty()
+            }));
         }
     }
 
@@ -11567,7 +12137,7 @@ pub(crate) mod tests {
             );
             thread.read_with(cx, |thread, cx| {
                 let (_, call) = thread
-                    .tool_call(&acp_v1::ToolCallId::new("tool"))
+                    .tool_call(&acp_v2::ToolCallId::new("tool"))
                     .expect("tool call should exist");
                 assert_eq!(
                     !call.label.read(cx).search_highlights().is_empty(),
@@ -13365,7 +13935,7 @@ pub(crate) mod tests {
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
         thread.update(cx, |thread, cx| {
             thread
-                .upsert_tool_call_patch(
+                .upsert_wire_tool_call(
                     acp_v2::ToolCallUpdate::new("tool")
                         .title("Run command")
                         .kind(acp_v2::ToolKind::Execute)
@@ -13380,12 +13950,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
         let entry_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
         entry_state.update(cx, |state, cx| {
-            state.expand_tool_call(acp_v1::ToolCallId::new("tool"));
+            state.expand_tool_call(acp_v2::ToolCallId::new("tool"));
             cx.notify();
         });
         let terminal = thread.read_with(cx, |thread, _| {
             thread
-                .terminal(acp_v1::TerminalId::new("display"))
+                .terminal(acp_v2::TerminalId::new("display"))
                 .expect("placeholder")
         });
         let renderer = terminal.read_with(cx, |terminal, _| terminal.inner().clone());
@@ -13511,7 +14081,7 @@ pub(crate) mod tests {
             let thread_view = active_thread(&conversation_view, cx);
             let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
             let terminal_id = acp_v1::TerminalId::new("provider-terminal");
-            let tool_id = acp_v1::ToolCallId::new("provider-tool");
+            let tool_id = acp_v2::ToolCallId::new("provider-tool");
             let terminal = cx.new(|cx| {
                 terminal::TerminalBuilder::new_display_only(
                     Default::default(),
@@ -13538,12 +14108,17 @@ pub(crate) mod tests {
                 thread
                     .handle_session_update(
                         acp_v1::SessionUpdate::ToolCall(
-                            acp_v1::ToolCall::new(tool_id.clone(), "provider command")
-                                .kind(acp_v1::ToolKind::Execute)
-                                .status(acp_v1::ToolCallStatus::InProgress)
-                                .content(vec![acp_v1::ToolCallContent::Terminal(
-                                    acp_v1::Terminal::new(terminal_id.clone()),
-                                )]),
+                            acp_v1::ToolCall::new(
+                                acp_v1::ToolCallId::new(tool_id.0.clone()),
+                                "provider command",
+                            )
+                            .kind(acp_v1::ToolKind::Execute)
+                            .status(acp_v1::ToolCallStatus::InProgress)
+                            .content(vec![
+                                acp_v1::ToolCallContent::Terminal(acp_v1::Terminal::new(
+                                    terminal_id.clone(),
+                                )),
+                            ]),
                         ),
                         cx,
                     )
@@ -13557,7 +14132,7 @@ pub(crate) mod tests {
             });
             let acp_terminal = thread.read_with(cx, |thread, _| {
                 thread
-                    .terminal(terminal_id.clone())
+                    .terminal(acp_v2::TerminalId::new(terminal_id.0.clone()))
                     .expect("terminal tool call should contain a terminal")
             });
             let terminal_view = entry_state.read_with(cx, |state, _| {
@@ -13603,7 +14178,7 @@ pub(crate) mod tests {
                 thread
                     .handle_session_update(
                         acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
-                            tool_id.clone(),
+                            acp_v1::ToolCallId::new(tool_id.0.clone()),
                             acp_v1::ToolCallUpdateFields::new()
                                 .status(acp_v1::ToolCallStatus::Completed),
                         )),
@@ -13642,7 +14217,7 @@ pub(crate) mod tests {
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
         let terminal_id = acp_v1::TerminalId::new("acp-owned-terminal");
-        let tool_id = acp_v1::ToolCallId::new("acp-owned-tool");
+        let tool_id = acp_v2::ToolCallId::new("acp-owned-tool");
         let lower_terminal = cx.new(|cx| {
             terminal::TerminalBuilder::new_display_only(
                 Default::default(),
@@ -13658,7 +14233,7 @@ pub(crate) mod tests {
 
         let acp_terminal = thread.update(cx, |thread, cx| {
             let acp_terminal = thread.register_terminal_created(
-                terminal_id.clone(),
+                acp_v2::TerminalId::new(terminal_id.0.clone()),
                 "client-owned command".into(),
                 None,
                 None,
@@ -13668,12 +14243,15 @@ pub(crate) mod tests {
             thread
                 .handle_session_update(
                     acp_v1::SessionUpdate::ToolCall(
-                        acp_v1::ToolCall::new(tool_id.clone(), "client-owned command")
-                            .kind(acp_v1::ToolKind::Execute)
-                            .status(acp_v1::ToolCallStatus::InProgress)
-                            .content(vec![acp_v1::ToolCallContent::Terminal(
-                                acp_v1::Terminal::new(terminal_id),
-                            )]),
+                        acp_v1::ToolCall::new(
+                            acp_v1::ToolCallId::new(tool_id.0.clone()),
+                            "client-owned command",
+                        )
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::InProgress)
+                        .content(vec![acp_v1::ToolCallContent::Terminal(
+                            acp_v1::Terminal::new(terminal_id),
+                        )]),
                     ),
                     cx,
                 )
@@ -13716,9 +14294,12 @@ pub(crate) mod tests {
     async fn test_tool_permission_buttons_terminal_with_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("terminal-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("terminal-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `cargo build --release`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options = ToolPermissionContext::new(
             TerminalTool::NAME,
@@ -13830,9 +14411,12 @@ pub(crate) mod tests {
     async fn test_tool_permission_buttons_edit_file_with_path_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("edit-file-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("edit-file-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Edit `src/main.rs`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(EditFileTool::NAME, vec!["src/main.rs".to_string()])
@@ -13922,9 +14506,12 @@ pub(crate) mod tests {
     async fn test_tool_permission_buttons_fetch_with_domain_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("fetch-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Fetch `https://docs.rs/gpui`")
-            .kind(acp_v1::ToolKind::Fetch);
+        let tool_call_id = acp_v2::ToolCallId::new("fetch-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Fetch `https://docs.rs/gpui`",
+        )
+        .kind(acp_v1::ToolKind::Fetch);
 
         let permission_options =
             ToolPermissionContext::new(FetchTool::NAME, vec!["https://docs.rs/gpui".to_string()])
@@ -14014,10 +14601,12 @@ pub(crate) mod tests {
     async fn test_tool_permission_buttons_without_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("terminal-no-pattern-1");
-        let tool_call =
-            acp_v1::ToolCall::new(tool_call_id.clone(), "Run `./deploy.sh --production`")
-                .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("terminal-no-pattern-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `./deploy.sh --production`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         // No pattern button since ./deploy.sh doesn't match the alphanumeric pattern
         let permission_options = ToolPermissionContext::new(
@@ -14121,9 +14710,12 @@ pub(crate) mod tests {
     async fn test_authorize_tool_call_action_triggers_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("action-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `cargo test`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("action-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `cargo test`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo test".to_string()])
@@ -14201,9 +14793,12 @@ pub(crate) mod tests {
     async fn test_authorize_tool_call_action_with_pattern_option(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("pattern-action-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `npm install`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("pattern-action-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `npm install`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["npm install".to_string()])
@@ -14282,9 +14877,12 @@ pub(crate) mod tests {
     async fn test_granularity_selection_updates_state(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("granularity-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `cargo build`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("granularity-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `cargo build`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo build".to_string()])
@@ -14384,9 +14982,12 @@ pub(crate) mod tests {
     async fn test_allow_button_uses_selected_granularity(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("allow-granularity-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `npm install`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("allow-granularity-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `npm install`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["npm install".to_string()])
@@ -14483,9 +15084,12 @@ pub(crate) mod tests {
     async fn test_deny_button_uses_selected_granularity(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("deny-granularity-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `git push`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("deny-granularity-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `git push`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["git push".to_string()])
@@ -14599,40 +15203,40 @@ pub(crate) mod tests {
 
     fn flat_allow_deny_options() -> PermissionOptions {
         PermissionOptions::Flat(vec![
-            acp_v1::PermissionOption::new(
-                acp_v1::PermissionOptionId::new("allow"),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new("allow"),
                 "Yes",
-                acp_v1::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
             ),
-            acp_v1::PermissionOption::new(
-                acp_v1::PermissionOptionId::new("deny"),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new("deny"),
                 "No",
-                acp_v1::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
             ),
         ])
     }
 
     fn sandbox_permission_options() -> PermissionOptions {
         PermissionOptions::Flat(vec![
-            acp_v1::PermissionOption::new(
-                acp_v1::PermissionOptionId::new("allow"),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new("allow"),
                 "Allow once",
-                acp_v1::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
             ),
-            acp_v1::PermissionOption::new(
-                acp_v1::PermissionOptionId::new("allow_thread"),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new("allow_thread"),
                 "Allow for this thread",
-                acp_v1::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::AllowAlways,
             ),
-            acp_v1::PermissionOption::new(
-                acp_v1::PermissionOptionId::new("allow_always"),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new("allow_always"),
                 "Allow always",
-                acp_v1::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::AllowAlways,
             ),
-            acp_v1::PermissionOption::new(
-                acp_v1::PermissionOptionId::new("deny"),
+            acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new("deny"),
                 "Deny",
-                acp_v1::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectOnce,
             ),
         ])
     }
@@ -14643,11 +15247,29 @@ pub(crate) mod tests {
 
         let option = super::permission_option_for_action(
             &options,
-            acp_v1::PermissionOptionKind::AllowAlways,
+            acp_v2::PermissionOptionKind::AllowAlways,
         )
         .unwrap();
 
         assert_eq!(option.option_id.0.as_ref(), "allow_always");
+    }
+
+    #[test]
+    fn permission_option_for_action_preserves_other_kind() {
+        let kind = acp_v2::PermissionOptionKind::Other("custom_permission".into());
+        let options = PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+            "custom",
+            "Custom permission",
+            kind.clone(),
+        )]);
+
+        let option = super::permission_option_for_action(&options, kind.clone())
+            .expect("custom permission kind should match");
+        let outcome = SelectedPermissionOutcome::new(option.option_id.clone(), option.kind.clone());
+
+        assert_eq!(outcome.option_id, acp_v2::PermissionOptionId::new("custom"));
+        assert_eq!(outcome.option_kind, kind);
+        assert!(super::resolve_outcome_from_selection(&options, None, true).is_none());
     }
 
     #[test]
@@ -14657,7 +15279,7 @@ pub(crate) mod tests {
         let outcome = super::resolve_outcome_from_selection(&options, None, true).unwrap();
 
         assert_eq!(outcome.option_id.0.as_ref(), "allow");
-        assert_eq!(outcome.option_kind, acp_v1::PermissionOptionKind::AllowOnce);
+        assert_eq!(outcome.option_kind, acp_v2::PermissionOptionKind::AllowOnce);
     }
 
     #[test]
@@ -14669,7 +15291,7 @@ pub(crate) mod tests {
         assert_eq!(outcome.option_id.0.as_ref(), "deny");
         assert_eq!(
             outcome.option_kind,
-            acp_v1::PermissionOptionKind::RejectOnce
+            acp_v2::PermissionOptionKind::RejectOnce
         );
     }
 
@@ -14695,7 +15317,7 @@ pub(crate) mod tests {
 
         // Last choice is "Only this time" → option_id "allow".
         assert_eq!(outcome.option_id.0.as_ref(), "allow");
-        assert_eq!(outcome.option_kind, acp_v1::PermissionOptionKind::AllowOnce);
+        assert_eq!(outcome.option_kind, acp_v2::PermissionOptionKind::AllowOnce);
     }
 
     #[test]
@@ -14712,7 +15334,7 @@ pub(crate) mod tests {
         assert!(outcome.option_id.0.contains("always_allow:terminal"));
         assert_eq!(
             outcome.option_kind,
-            acp_v1::PermissionOptionKind::AllowAlways
+            acp_v2::PermissionOptionKind::AllowAlways
         );
     }
 
@@ -14752,7 +15374,7 @@ pub(crate) mod tests {
             super::resolve_outcome_from_selection(&options, Some(&selection), true).unwrap();
 
         assert_eq!(outcome.option_id.0.as_ref(), "allow");
-        assert_eq!(outcome.option_kind, acp_v1::PermissionOptionKind::AllowOnce);
+        assert_eq!(outcome.option_kind, acp_v2::PermissionOptionKind::AllowOnce);
     }
 
     #[test]
@@ -14773,7 +15395,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             outcome.option_kind,
-            acp_v1::PermissionOptionKind::AllowAlways
+            acp_v2::PermissionOptionKind::AllowAlways
         );
         assert!(
             outcome.params.is_some(),
@@ -14979,7 +15601,7 @@ pub(crate) mod tests {
     }
 
     fn create_test_acp_thread(
-        parent_session_id: Option<acp_v1::SessionId>,
+        parent_session_id: Option<acp_v2::SessionId>,
         session_id: &str,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
@@ -14994,7 +15616,7 @@ pub(crate) mod tests {
                 connection,
                 project,
                 action_log,
-                acp_v1::SessionId::new(session_id),
+                acp_v2::SessionId::new(session_id),
                 watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
                 cx,
             )
@@ -15010,10 +15632,10 @@ pub(crate) mod tests {
         request_test_tool_authorization_with_options(
             thread,
             tool_call_id,
-            PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
-                acp_v1::PermissionOptionId::new(option_id),
+            PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                acp_v2::PermissionOptionId::new(option_id),
                 "Allow",
-                acp_v1::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowOnce,
             )]),
             cx,
         )
@@ -15029,13 +15651,13 @@ pub(crate) mod tests {
         PermissionRequestId,
         Task<acp_thread::RequestPermissionOutcome>,
     ) {
-        let tool_call_id = acp_v1::ToolCallId::new(tool_call_id);
+        let tool_call_id = acp_v2::ToolCallId::new(tool_call_id);
         let label = format!("Tool {tool_call_id}");
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread
                     .request_tool_call_authorization_with_id(
-                        acp_v1::ToolCall::new(tool_call_id, label)
+                        acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id.0), label)
                             .kind(acp_v1::ToolKind::Edit)
                             .into(),
                         options,
@@ -15100,7 +15722,7 @@ pub(crate) mod tests {
             (view.thread.clone(), view.conversation.clone())
         });
         let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
-        let child_session_id = acp_v1::SessionId::new("embedded-permission-child");
+        let child_session_id = acp_v2::SessionId::new("embedded-permission-child");
         let child_view = conversation_view.update_in(cx, |view, window, cx| {
             let child = create_test_acp_thread(
                 Some(root_session_id.clone()),
@@ -15457,6 +16079,73 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_permission_action_rejects_unknown_kinds(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        for (action_kind, option_kind) in [
+            ("AllowOnce", acp_v2::PermissionOptionKind::AllowOnce),
+            ("AllowAlways", acp_v2::PermissionOptionKind::AllowAlways),
+            ("RejectOnce", acp_v2::PermissionOptionKind::RejectOnce),
+            ("RejectAlways", acp_v2::PermissionOptionKind::RejectAlways),
+        ] {
+            let (request_id, response) = request_test_tool_authorization_with_options(
+                &thread,
+                "permission-action",
+                PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                    "selected",
+                    "Select",
+                    option_kind.clone(),
+                )]),
+                cx,
+            );
+            cx.run_until_parked();
+            let action = crate::AuthorizeToolCall {
+                tool_call_id: "permission-action".into(),
+                request_id: Some(request_id),
+                session_id: Some(session_id.0.to_string()),
+                option_id: "selected".into(),
+                option_kind: "UnknownPermissionKind".into(),
+            };
+            conversation_view.update_in(cx, |_, window, cx| {
+                window.dispatch_action(action.boxed_clone(), cx);
+            });
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread.permission_request(request_id).is_some(),
+                    "unknown action kinds must leave the request pending"
+                );
+            });
+
+            conversation_view.update_in(cx, |_, window, cx| {
+                window.dispatch_action(
+                    crate::AuthorizeToolCall {
+                        option_kind: action_kind.into(),
+                        ..action.clone()
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            let acp_thread::RequestPermissionOutcome::Selected(outcome) = response.await else {
+                panic!("known permission action should select an option");
+            };
+            assert_eq!(
+                outcome.option_id,
+                acp_v2::PermissionOptionId::new("selected")
+            );
+            assert_eq!(outcome.option_kind, option_kind);
+        }
+    }
+
+    #[gpui::test]
     async fn test_replaced_permission_ignores_captured_actions(cx: &mut TestAppContext) {
         init_test(cx);
         let (conversation_view, cx) =
@@ -15565,7 +16254,7 @@ pub(crate) mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
 
-        let session_id = acp_v1::SessionId::new("session-1");
+        let session_id = acp_v2::SessionId::new("session-1");
         let (thread, conversation) = cx.update(|cx| {
             let thread =
                 create_test_acp_thread(None, "session-1", connection.clone(), project.clone(), cx);
@@ -15585,17 +16274,17 @@ pub(crate) mod tests {
                 .read(cx)
                 .pending_tool_call(&session_id, cx)
                 .expect("Expected a pending tool call");
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-1"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-1"));
         });
 
         cx.update(|cx| {
             conversation.update(cx, |conversation, cx| {
                 conversation.authorize_tool_call(
                     session_id.clone(),
-                    acp_v1::ToolCallId::new("tc-1"),
+                    acp_v2::ToolCallId::new("tc-1"),
                     SelectedPermissionOutcome::new(
-                        acp_v1::PermissionOptionId::new("allow-1"),
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionId::new("allow-1"),
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     ),
                     cx,
                 );
@@ -15609,17 +16298,17 @@ pub(crate) mod tests {
                 .read(cx)
                 .pending_tool_call(&session_id, cx)
                 .expect("Expected tc-2 to be pending after tc-1 was authorized");
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-2"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-2"));
         });
 
         cx.update(|cx| {
             conversation.update(cx, |conversation, cx| {
                 conversation.authorize_tool_call(
                     session_id.clone(),
-                    acp_v1::ToolCallId::new("tc-2"),
+                    acp_v2::ToolCallId::new("tc-2"),
                     SelectedPermissionOutcome::new(
-                        acp_v1::PermissionOptionId::new("allow-2"),
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionId::new("allow-2"),
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     ),
                     cx,
                 );
@@ -15647,8 +16336,8 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
-        let root_session_id = acp_v1::SessionId::new("root");
-        let child_session_id = acp_v1::SessionId::new("child");
+        let root_session_id = acp_v2::SessionId::new("root");
+        let child_session_id = acp_v2::SessionId::new("child");
         let (root, child) = cx.update(|cx| {
             let root =
                 create_test_acp_thread(None, "root", connection.clone(), project.clone(), cx);
@@ -15766,8 +16455,8 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
-        let root_session_id = acp_v1::SessionId::new("root");
-        let child_session_id = acp_v1::SessionId::new("child");
+        let root_session_id = acp_v2::SessionId::new("root");
+        let child_session_id = acp_v2::SessionId::new("child");
         let (root, child, conversation) = cx.update(|cx| {
             let root =
                 create_test_acp_thread(None, "root", connection.clone(), project.clone(), cx);
@@ -15851,13 +16540,13 @@ pub(crate) mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
 
-        let parent_session_id = acp_v1::SessionId::new("parent");
-        let subagent_session_id = acp_v1::SessionId::new("subagent");
+        let parent_session_id = acp_v2::SessionId::new("parent");
+        let subagent_session_id = acp_v2::SessionId::new("subagent");
         let (parent_thread, subagent_thread, conversation) = cx.update(|cx| {
             let parent_thread =
                 create_test_acp_thread(None, "parent", connection.clone(), project.clone(), cx);
             let subagent_thread = create_test_acp_thread(
-                Some(acp_v1::SessionId::new("parent")),
+                Some(acp_v2::SessionId::new("parent")),
                 "subagent",
                 connection.clone(),
                 project.clone(),
@@ -15885,7 +16574,7 @@ pub(crate) mod tests {
                 .pending_tool_call(&subagent_session_id, cx)
                 .expect("Expected subagent's pending tool call");
             assert_eq!(returned_session_id, subagent_session_id);
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("subagent-tc"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("subagent-tc"));
         });
 
         // Querying with the parent's session ID returns the first pending
@@ -15896,7 +16585,7 @@ pub(crate) mod tests {
                 .pending_tool_call(&parent_session_id, cx)
                 .expect("Expected a pending tool call from parent query");
             assert_eq!(returned_session_id, parent_session_id);
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("parent-tc"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("parent-tc"));
         });
     }
 
@@ -15908,8 +16597,8 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
-        let parent_session_id = acp_v1::SessionId::new("parent");
-        let subagent_session_id = acp_v1::SessionId::new("subagent");
+        let parent_session_id = acp_v2::SessionId::new("parent");
+        let subagent_session_id = acp_v2::SessionId::new("subagent");
         let (subagent_thread, conversation) = cx.update(|cx| {
             let parent_thread =
                 create_test_acp_thread(None, "parent", connection.clone(), project.clone(), cx);
@@ -15932,10 +16621,10 @@ pub(crate) mod tests {
             request_test_tool_authorization(&subagent_thread, "resolved-tool", "allow-child", cx);
         subagent_thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(
-                acp_v1::ToolCallId::new("resolved-tool"),
+                acp_v2::ToolCallId::new("resolved-tool"),
                 SelectedPermissionOutcome::new(
-                    acp_v1::PermissionOptionId::new("allow-child"),
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionId::new("allow-child"),
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -15949,10 +16638,10 @@ pub(crate) mod tests {
                 thread
                     .request_tool_call_authorization(
                         acp_v1::ToolCall::new("queued-tool", "Queued permission").into(),
-                        PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                             "allow-child",
                             "Allow",
-                            acp_v1::PermissionOptionKind::AllowOnce,
+                            acp_v2::PermissionOptionKind::AllowOnce,
                         )]),
                         acp_thread::AuthorizationKind::PermissionGrant,
                         cx,
@@ -15969,7 +16658,7 @@ pub(crate) mod tests {
             request_test_tool_authorization(&subagent_thread, "later-tool", "allow-child", cx);
 
         for (tool_id, pending_count) in [("child-tool", 3), ("queued-tool", 2), ("later-tool", 1)] {
-            let tool_id = acp_v1::ToolCallId::new(tool_id);
+            let tool_id = acp_v2::ToolCallId::new(tool_id);
             conversation.read_with(cx, |conversation, cx| {
                 assert_eq!(
                     conversation.pending_tool_call_for_session(&subagent_session_id, cx),
@@ -15990,8 +16679,8 @@ pub(crate) mod tests {
                     subagent_session_id.clone(),
                     tool_id,
                     SelectedPermissionOutcome::new(
-                        acp_v1::PermissionOptionId::new("allow-child"),
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionId::new("allow-child"),
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     ),
                     cx,
                 );
@@ -16018,8 +16707,8 @@ pub(crate) mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
 
-        let session_id_a = acp_v1::SessionId::new("thread-a");
-        let session_id_b = acp_v1::SessionId::new("thread-b");
+        let session_id_a = acp_v2::SessionId::new("thread-a");
+        let session_id_b = acp_v2::SessionId::new("thread-b");
         let (thread_a, thread_b, conversation) = cx.update(|cx| {
             let thread_a =
                 create_test_acp_thread(None, "thread-a", connection.clone(), project.clone(), cx);
@@ -16045,7 +16734,7 @@ pub(crate) mod tests {
                 .pending_tool_call(&session_id_a, cx)
                 .expect("Expected a pending tool call");
             assert_eq!(returned_session_id, session_id_a);
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-a"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-a"));
         });
 
         // Querying with thread-b also returns thread-a's tool call,
@@ -16059,7 +16748,7 @@ pub(crate) mod tests {
                 returned_session_id, session_id_a,
                 "Non-subagent queries always return the first pending request in FIFO order"
             );
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-a"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-a"));
         });
 
         // After authorizing thread-a's tool call, thread-b's becomes first
@@ -16067,10 +16756,10 @@ pub(crate) mod tests {
             conversation.update(cx, |conversation, cx| {
                 conversation.authorize_tool_call(
                     session_id_a.clone(),
-                    acp_v1::ToolCallId::new("tc-a"),
+                    acp_v2::ToolCallId::new("tc-a"),
                     SelectedPermissionOutcome::new(
-                        acp_v1::PermissionOptionId::new("allow-a"),
-                        acp_v1::PermissionOptionKind::AllowOnce,
+                        acp_v2::PermissionOptionId::new("allow-a"),
+                        acp_v2::PermissionOptionKind::AllowOnce,
                     ),
                     cx,
                 );
@@ -16085,7 +16774,7 @@ pub(crate) mod tests {
                 .pending_tool_call(&session_id_b, cx)
                 .expect("Expected thread-b's tool call after thread-a's was authorized");
             assert_eq!(returned_session_id, session_id_b);
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-b"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-b"));
         });
     }
 
@@ -16473,7 +17162,7 @@ pub(crate) mod tests {
             (view.thread.clone(), view.conversation.clone())
         });
         let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
-        let child_session_id = acp_v1::SessionId::new("generic-child");
+        let child_session_id = acp_v2::SessionId::new("generic-child");
         let child_view = conversation_view.update_in(cx, |view, window, cx| {
             let child = create_test_acp_thread(
                 Some(root_session_id.clone()),
@@ -16581,7 +17270,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         for queued_event in [false, true] {
-            let child_session_id = acp_v1::SessionId::new(if queued_event {
+            let child_session_id = acp_v2::SessionId::new(if queued_event {
                 "queued-generic-child"
             } else {
                 "late-generic-child"
@@ -16672,17 +17361,20 @@ pub(crate) mod tests {
         usize,
         &'a mut VisualTestContext,
     ) {
-        let tool_call_id_value = acp_v1::ToolCallId::new(tool_call_id);
-        let tool_call = acp_v1::ToolCall::new(tool_call_id_value.clone(), "Run something")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id_value = acp_v2::ToolCallId::new(tool_call_id);
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id_value.0.clone()),
+            "Run something",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
                 tool_call_id_value.clone(),
-                PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
                     "allow",
                     "Allow",
-                    acp_v1::PermissionOptionKind::AllowOnce,
+                    acp_v2::PermissionOptionKind::AllowOnce,
                 )]),
             )]));
         connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(tool_call)]);
@@ -16794,8 +17486,8 @@ pub(crate) mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
 
-        let session_id_a = acp_v1::SessionId::new("thread-a");
-        let session_id_b = acp_v1::SessionId::new("thread-b");
+        let session_id_a = acp_v2::SessionId::new("thread-a");
+        let session_id_b = acp_v2::SessionId::new("thread-b");
         let (thread_a, thread_b, conversation) = cx.update(|cx| {
             let thread_a =
                 create_test_acp_thread(None, "thread-a", connection.clone(), project.clone(), cx);
@@ -16820,13 +17512,13 @@ pub(crate) mod tests {
                 .read(cx)
                 .pending_tool_call_for_session(&session_id_a, cx)
                 .expect("Expected a pending tool call in thread A");
-            assert_eq!(tool_call_id_a, acp_v1::ToolCallId::new("tc-a"));
+            assert_eq!(tool_call_id_a, acp_v2::ToolCallId::new("tc-a"));
 
             let tool_call_id_b = conversation
                 .read(cx)
                 .pending_tool_call_for_session(&session_id_b, cx)
                 .expect("Expected a pending tool call in thread B");
-            assert_eq!(tool_call_id_b, acp_v1::ToolCallId::new("tc-b"));
+            assert_eq!(tool_call_id_b, acp_v2::ToolCallId::new("tc-b"));
         });
     }
 
@@ -17610,7 +18302,7 @@ pub(crate) mod tests {
 
     #[derive(Clone)]
     struct CloseCapableConnection {
-        closed_sessions: Arc<Mutex<Vec<acp_v1::SessionId>>>,
+        closed_sessions: Arc<Mutex<Vec<acp_v2::SessionId>>>,
     }
 
     impl CloseCapableConnection {
@@ -17645,7 +18337,7 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    acp_v1::SessionId::new("close-capable-session"),
+                    acp_v2::SessionId::new("close-capable-session"),
                     watch::Receiver::constant(
                         acp_v2::PromptCapabilities::new()
                             .image(acp_v2::PromptImageCapabilities::new())
@@ -17664,7 +18356,7 @@ pub(crate) mod tests {
 
         fn close_session(
             self: Rc<Self>,
-            session_id: &acp_v1::SessionId,
+            session_id: &acp_v2::SessionId,
             _cx: &mut App,
         ) -> Task<Result<()>> {
             self.closed_sessions.lock().push(session_id.clone());
@@ -17691,7 +18383,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
