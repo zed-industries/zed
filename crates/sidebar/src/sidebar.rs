@@ -5385,16 +5385,14 @@ impl Sidebar {
         ) = (
             metadata.as_ref(),
             thread_entry.as_ref().map(|thread| &thread.workspace),
-        )
-            && self.should_load_closed_workspace_for_archive(
-                folder_paths,
-                project_group_key,
-                metadata.remote_connection.as_ref(),
-                Some(metadata.thread_id),
-                None,
-                cx,
-            )
-        {
+        ) && self.should_load_closed_workspace_for_archive(
+            folder_paths,
+            project_group_key,
+            metadata.remote_connection.as_ref(),
+            Some(metadata.thread_id),
+            None,
+            cx,
+        ) {
             let session_id = session_id.clone();
             self.open_workspace_for_archive(
                 folder_paths.clone(),

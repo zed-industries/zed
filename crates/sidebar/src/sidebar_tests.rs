@@ -4207,9 +4207,8 @@ async fn test_archive_thread_with_deleted_closed_linked_worktree(cx: &mut TestAp
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
-    let main_workspace = multi_workspace.read_with(cx, |multi_workspace, _| {
-        multi_workspace.workspace().clone()
-    });
+    let main_workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
 
     // A thread on a linked worktree that no longer exists on disk.
     let worktree_session_id = acp::SessionId::new(Arc::from("worktree-thread"));
