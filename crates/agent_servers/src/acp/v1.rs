@@ -2,8 +2,9 @@ use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions, FlattenAcpResult as _,
     ForegroundWork, UnsupportedVersion, drain_foreground_queue, enqueue_notification,
     enqueue_request, first_class_terminal_auth_task, handle_v2_complete_elicitation,
-    handle_v2_create_elicitation, map_acp_error, respond_err, respond_result, runtime,
-    session_thread, terminal_auth_task_id, transport, with_v2_client_ingress,
+    handle_v2_create_elicitation, map_acp_error, mcp_configurations_for_project, respond_err,
+    respond_result, runtime, session_thread, terminal_auth_task_id, transport,
+    with_v2_client_ingress,
 };
 use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
@@ -8879,49 +8880,39 @@ exit 7
 }
 
 fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpServer> {
-    let context_server_store = project.read(cx).context_server_store().read(cx);
-    let is_local = project.read(cx).is_local();
-    context_server_store
-        .configured_server_ids()
-        .iter()
-        .filter_map(|id| {
-            let configuration = context_server_store.configuration_for_server(id)?;
-            match &*configuration {
-                project::context_server_store::ContextServerConfiguration::Custom {
-                    command,
-                    remote,
-                    ..
-                }
-                | project::context_server_store::ContextServerConfiguration::Extension {
-                    command,
-                    remote,
-                    ..
-                } if is_local || *remote => Some(acp::McpServer::Stdio(
-                    acp::McpServerStdio::new(id.0.to_string(), &command.path)
-                        .args(command.args.clone())
-                        .env(if let Some(env) = command.env.as_ref() {
-                            env.iter()
-                                .map(|(name, value)| acp::EnvVariable::new(name, value))
-                                .collect()
-                        } else {
-                            vec![]
-                        }),
-                )),
-                project::context_server_store::ContextServerConfiguration::Http {
-                    url,
-                    headers,
-                    timeout: _,
-                    oauth: _,
-                } => Some(acp::McpServer::Http(
-                    acp::McpServerHttp::new(id.0.to_string(), url.to_string()).headers(
-                        headers
-                            .iter()
-                            .map(|(name, value)| acp::HttpHeader::new(name, value))
-                            .collect(),
-                    ),
-                )),
-                _ => None,
+    mcp_configurations_for_project(project, cx)
+        .into_iter()
+        .map(|(name, configuration)| match &*configuration {
+            project::context_server_store::ContextServerConfiguration::Custom {
+                command, ..
             }
+            | project::context_server_store::ContextServerConfiguration::Extension {
+                command,
+                ..
+            } => acp::McpServer::Stdio(
+                acp::McpServerStdio::new(name, &command.path)
+                    .args(command.args.clone())
+                    .env(if let Some(env) = command.env.as_ref() {
+                        env.iter()
+                            .map(|(name, value)| acp::EnvVariable::new(name, value))
+                            .collect()
+                    } else {
+                        vec![]
+                    }),
+            ),
+            project::context_server_store::ContextServerConfiguration::Http {
+                url,
+                headers,
+                timeout: _,
+                oauth: _,
+            } => acp::McpServer::Http(
+                acp::McpServerHttp::new(name, url.to_string()).headers(
+                    headers
+                        .iter()
+                        .map(|(name, value)| acp::HttpHeader::new(name, value))
+                        .collect(),
+                ),
+            ),
         })
         .collect()
 }
