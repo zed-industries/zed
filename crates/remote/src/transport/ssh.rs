@@ -47,6 +47,9 @@ pub(crate) struct SshRemoteConnection {
     /// Whether `kill()` has been called. Separate from `master_process` because
     /// reused ControlMaster sessions start with `master_process` as `None`.
     killed: AtomicBool,
+    /// Forwards currently applied on the ControlMaster (via connect-time `-L` or `ssh -O`).
+    applied_port_forwards: Mutex<Vec<SshPortForwardOption>>,
+    sync_lock: futures::lock::Mutex<()>,
     remote_binary_path: Option<Arc<RelPath>>,
     ssh_platform: RemotePlatform,
     ssh_os_version: Option<String>,
@@ -112,6 +115,54 @@ fn bracket_ipv6(host: &str) -> String {
         format!("[{}]", host)
     } else {
         host.to_string()
+    }
+}
+
+/// OpenSSH `-L` argument: `[bind_address:]port:host:hostport`.
+/// Omitted hosts default to `localhost`. IPv6 addresses are bracketed.
+pub fn port_forward_spec(pf: &SshPortForwardOption) -> String {
+    let local_host = pf.local_host.as_deref().unwrap_or("localhost");
+    let remote_host = pf.remote_host.as_deref().unwrap_or("localhost");
+    format!(
+        "{}:{}:{}:{}",
+        bracket_ipv6(local_host),
+        pf.local_port,
+        bracket_ipv6(remote_host),
+        pf.remote_port
+    )
+}
+
+/// Formats one side of a forward for the UI: `8080` or `host:port`.
+pub fn format_host_port(host: Option<&str>, port: u16) -> String {
+    match host {
+        None | Some("") => port.to_string(),
+        Some(host) => format!("{}:{}", bracket_ipv6(host), port),
+    }
+}
+
+/// Parses `port` or `host:port` (IPv6 hosts must be `[bracketed]`).
+pub fn parse_host_port(spec: &str) -> Result<(Option<String>, u16)> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        anyhow::bail!("Expected port or host:port");
+    }
+
+    let tokens = if spec.contains('[') {
+        split_port_forward_tokens(spec)?
+    } else {
+        spec.split(':').map(String::from).collect()
+    };
+
+    match tokens.as_slice() {
+        [port] => Ok((None, parse_port_number(port)?)),
+        [host, port] => {
+            let host = host.trim();
+            if host.is_empty() {
+                anyhow::bail!("Expected port or host:port");
+            }
+            Ok((Some(host.to_string()), parse_port_number(port)?))
+        }
+        _ => anyhow::bail!("Expected port or host:port"),
     }
 }
 
@@ -424,6 +475,14 @@ impl AsMut<Child> for MasterProcess {
 impl RemoteConnection for SshRemoteConnection {
     async fn kill(&self) -> Result<()> {
         self.killed.store(true, Ordering::Release);
+        let is_reused_session = self.master_process.lock().is_none();
+        // Forwards added with `ssh -O` on a reused ControlMaster survive this
+        // process unless we cancel them. Zed-owned masters die with the process.
+        if is_reused_session {
+            if let Err(error) = self.sync_port_forwards(&[]).await {
+                log::error!("Failed to cancel port forwards on reused ControlMaster: {error:#}");
+            }
+        }
         let Some(mut process) = self.master_process.lock().take() else {
             log::debug!("no master process to kill (external ControlMaster session)");
             return Ok(());
@@ -565,37 +624,39 @@ impl RemoteConnection for SshRemoteConnection {
         })
     }
 
-    async fn update_port_forwards(
-        &self,
-        previous_forwards: &[(u16, String, u16)],
-        new_forwards: &[(u16, String, u16)],
-    ) -> Result<()> {
+    async fn sync_port_forwards(&self, new_forwards: &[SshPortForwardOption]) -> Result<()> {
+        let _guard = self.sync_lock.lock().await;
+
+        #[cfg(windows)]
+        {
+            *self.applied_port_forwards.lock() = new_forwards.to_vec();
+            log::debug!("Dynamic port forwarding is not supported on Windows");
+            return Ok(());
+        }
+
         #[cfg(not(windows))]
         {
             use std::collections::HashSet;
 
-            let previous: HashSet<_> = previous_forwards.iter().collect();
-            let current: HashSet<_> = new_forwards.iter().collect();
+            let new_forwards = new_forwards.to_vec();
+            let new_specs: HashSet<String> = new_forwards.iter().map(port_forward_spec).collect();
+            let previous = self.applied_port_forwards.lock().clone();
+            let prev_specs: HashSet<String> = previous.iter().map(port_forward_spec).collect();
 
-            for &&(local_port, ref host, remote_port) in previous.difference(&current) {
-                log::info!(
-                    "Removing port forward: {}:{}:{}",
-                    local_port,
-                    host,
-                    remote_port
-                );
+            if new_specs == prev_specs {
+                *self.applied_port_forwards.lock() = new_forwards;
+                return Ok(());
+            }
+
+            for spec in prev_specs.difference(&new_specs) {
+                log::info!("Removing port forward: {spec}");
                 let mut command = util::command::new_command("ssh");
                 command
                     .args(self.socket.connection_options.additional_args_for_scp())
                     .arg("-O")
                     .arg("cancel")
                     .arg("-L")
-                    .arg(format!(
-                        "{}:{}:{}",
-                        local_port,
-                        bracket_ipv6(host),
-                        remote_port
-                    ))
+                    .arg(spec)
                     .arg("-S")
                     .arg(&self.socket.socket_path)
                     .arg(self.socket.connection_options.ssh_destination());
@@ -609,25 +670,19 @@ impl RemoteConnection for SshRemoteConnection {
                 }
             }
 
-            for &&(local_port, ref host, remote_port) in current.difference(&previous) {
-                log::info!(
-                    "Adding port forward: {}:{}:{}",
-                    local_port,
-                    host,
-                    remote_port
-                );
+            for pf in new_forwards
+                .iter()
+                .filter(|pf| !prev_specs.contains(&port_forward_spec(pf)))
+            {
+                let spec = port_forward_spec(pf);
+                log::info!("Adding port forward: {spec}");
                 let mut command = util::command::new_command("ssh");
                 command
                     .args(self.socket.connection_options.additional_args_for_scp())
                     .arg("-O")
                     .arg("forward")
                     .arg("-L")
-                    .arg(format!(
-                        "{}:{}:{}",
-                        local_port,
-                        bracket_ipv6(host),
-                        remote_port
-                    ))
+                    .arg(&spec)
                     .arg("-S")
                     .arg(&self.socket.socket_path)
                     .arg(self.socket.connection_options.ssh_destination());
@@ -640,14 +695,10 @@ impl RemoteConnection for SshRemoteConnection {
                     );
                 }
             }
-        }
 
-        #[cfg(windows)]
-        {
-            log::warn!("Dynamic port forwarding is not supported on Windows");
+            *self.applied_port_forwards.lock() = new_forwards;
+            Ok(())
         }
-
-        Ok(())
     }
 
     fn upload_directory(
@@ -1071,10 +1122,23 @@ impl SshRemoteConnection {
             _ => (PathStyle::Unix, String::from("/bin/sh")),
         };
 
+        let applied_port_forwards = if master_process_option.is_some() {
+            socket
+                .connection_options
+                .port_forwards
+                .clone()
+                .unwrap_or_default()
+        } else {
+            // Reused ControlMaster did not get connect-time `-L` args.
+            Vec::new()
+        };
+
         let mut this = Self {
             socket,
             master_process: Mutex::new(master_process_option),
             killed: AtomicBool::new(false),
+            applied_port_forwards: Mutex::new(applied_port_forwards),
+            sync_lock: futures::lock::Mutex::new(()),
             _temp_dir: temp_dir,
             remote_binary_path: None,
             ssh_path_style,
@@ -1085,6 +1149,20 @@ impl SshRemoteConnection {
             ssh_default_system_shell,
             ssh_home_dir,
         };
+
+        if this.master_process.lock().is_none() {
+            let desired = this
+                .socket
+                .connection_options
+                .port_forwards
+                .clone()
+                .unwrap_or_default();
+            if !desired.is_empty()
+                && let Err(error) = this.sync_port_forwards(&desired).await
+            {
+                log::warn!("Failed to apply port forwards to reused ControlMaster: {error:#}");
+            }
+        }
 
         let (release_channel, version) =
             cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)));
@@ -2064,24 +2142,11 @@ impl SshConnectionOptions {
         }
 
         if let Some(forwards) = &self.port_forwards {
-            args.extend(forwards.iter().map(|pf| {
-                let local_host = match &pf.local_host {
-                    Some(host) => host,
-                    None => "localhost",
-                };
-                let remote_host = match &pf.remote_host {
-                    Some(host) => host,
-                    None => "localhost",
-                };
-
-                format!(
-                    "-L{}:{}:{}:{}",
-                    bracket_ipv6(local_host),
-                    pf.local_port,
-                    bracket_ipv6(remote_host),
-                    pf.remote_port
-                )
-            }));
+            args.extend(
+                forwards
+                    .iter()
+                    .map(|pf| format!("-L{}", port_forward_spec(pf))),
+            );
         }
 
         args
@@ -3098,5 +3163,72 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_host_port() -> Result<()> {
+        assert_eq!(parse_host_port("8080")?, (None, 8080));
+        assert_eq!(
+            parse_host_port("localhost:8080")?,
+            (Some("localhost".to_string()), 8080)
+        );
+        assert_eq!(
+            parse_host_port("0.0.0.0:8080")?,
+            (Some("0.0.0.0".to_string()), 8080)
+        );
+        assert_eq!(
+            parse_host_port("docker-host:80")?,
+            (Some("docker-host".to_string()), 80)
+        );
+        assert_eq!(
+            parse_host_port("[::1]:8080")?,
+            (Some("::1".to_string()), 8080)
+        );
+
+        assert!(parse_host_port("").is_err());
+        assert!(parse_host_port("abc").is_err());
+        assert!(parse_host_port("host:").is_err());
+        assert!(parse_host_port(":80").is_err());
+        assert!(parse_host_port("::1:8080").is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_host_port() {
+        assert_eq!(format_host_port(None, 8080), "8080");
+        assert_eq!(format_host_port(Some("localhost"), 8080), "localhost:8080");
+        assert_eq!(format_host_port(Some("::1"), 8080), "[::1]:8080");
+    }
+
+    #[test]
+    fn test_port_forward_spec_defaults_and_ipv6() {
+        assert_eq!(
+            port_forward_spec(&SshPortForwardOption {
+                local_host: None,
+                local_port: 8080,
+                remote_host: None,
+                remote_port: 80,
+            }),
+            "localhost:8080:localhost:80"
+        );
+        assert_eq!(
+            port_forward_spec(&SshPortForwardOption {
+                local_host: Some("0.0.0.0".to_string()),
+                local_port: 3000,
+                remote_host: Some("docker-host".to_string()),
+                remote_port: 80,
+            }),
+            "0.0.0.0:3000:docker-host:80"
+        );
+        assert_eq!(
+            port_forward_spec(&SshPortForwardOption {
+                local_host: Some("::1".to_string()),
+                local_port: 8080,
+                remote_host: Some("::1".to_string()),
+                remote_port: 80,
+            }),
+            "[::1]:8080:[::1]:80"
+        );
     }
 }

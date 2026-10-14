@@ -11,13 +11,17 @@ pub use remote_client::OpenWslPath;
 pub use remote_client::{
     CommandTemplate, ConnectionIdentifier, ConnectionState, Interactive, RemoteArch, RemoteClient,
     RemoteClientDelegate, RemoteClientEvent, RemoteConnection, RemoteConnectionOptions, RemoteOs,
-    RemotePlatform, connect, has_active_connection,
+    RemotePlatform, active_connections_matching, active_ssh_connections, connect,
+    has_active_connection,
 };
 pub use remote_identity::{
     RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
 };
 pub use transport::docker::DockerConnectionOptions;
-pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
+pub use transport::ssh::{
+    SshConnectionOptions, SshPortForwardOption, format_host_port, parse_host_port,
+    port_forward_spec,
+};
 pub use transport::wsl::WslConnectionOptions;
 #[cfg(target_os = "windows")]
 pub use transport::wsl::wsl_path_to_windows_path;

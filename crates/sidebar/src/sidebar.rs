@@ -5374,8 +5374,58 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let store = ThreadMetadataStore::global(cx);
-        let metadata = store.read(cx).entry_by_session(session_id).cloned();
+        let (metadata, thread_entry) = self.thread_to_archive(session_id, cx);
+
+        if let (
+            Some(metadata),
+            Some(ThreadEntryWorkspace::Closed {
+                folder_paths,
+                project_group_key,
+            }),
+        ) = (
+            metadata.as_ref(),
+            thread_entry.as_ref().map(|thread| &thread.workspace),
+        ) && self.should_load_closed_workspace_for_archive(
+            folder_paths,
+            project_group_key,
+            metadata.remote_connection.as_ref(),
+            Some(metadata.thread_id),
+            None,
+            cx,
+        ) {
+            let session_id = session_id.clone();
+            self.open_workspace_for_archive(
+                folder_paths.clone(),
+                project_group_key.clone(),
+                window,
+                cx,
+                move |this, _workspace, window, cx| {
+                    this.update_entries(cx);
+                    let (metadata, thread_entry) = this.thread_to_archive(&session_id, cx);
+                    this.archive_thread_in_loaded_workspace(
+                        &session_id,
+                        metadata,
+                        thread_entry,
+                        window,
+                        cx,
+                    );
+                },
+            );
+            return;
+        }
+
+        self.archive_thread_in_loaded_workspace(session_id, metadata, thread_entry, window, cx);
+    }
+
+    fn thread_to_archive(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &App,
+    ) -> (Option<ThreadMetadata>, Option<Arc<ThreadEntry>>) {
+        let metadata = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(session_id)
+            .cloned();
         let metadata_thread_id = metadata.as_ref().map(|metadata| metadata.thread_id);
         let thread_entry = self.contents.entries.iter().find_map(|entry| match entry {
             ListEntry::Thread(thread) => metadata_thread_id
@@ -5386,6 +5436,18 @@ impl Sidebar {
                 .then(|| thread.clone()),
             _ => None,
         });
+        (metadata, thread_entry)
+    }
+
+    fn archive_thread_in_loaded_workspace(
+        &mut self,
+        session_id: &acp::SessionId,
+        metadata: Option<ThreadMetadata>,
+        thread_entry: Option<Arc<ThreadEntry>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let metadata_thread_id = metadata.as_ref().map(|metadata| metadata.thread_id);
         let thread_id = metadata_thread_id.or_else(|| {
             thread_entry
                 .as_ref()
@@ -5413,37 +5475,6 @@ impl Sidebar {
                     .as_ref()
                     .map(|workspace| PathList::new(&workspace.read(cx).root_paths(cx)))
             });
-        let thread_entry_workspace = thread_entry.map(|thread| thread.workspace.clone());
-
-        if let (
-            Some(metadata),
-            Some(ThreadEntryWorkspace::Closed {
-                folder_paths,
-                project_group_key,
-            }),
-        ) = (metadata.as_ref(), thread_entry_workspace)
-            && self.should_load_closed_workspace_for_archive(
-                &folder_paths,
-                &project_group_key,
-                metadata.remote_connection.as_ref(),
-                Some(metadata.thread_id),
-                None,
-                cx,
-            )
-        {
-            let session_id = session_id.clone();
-            self.open_workspace_for_archive(
-                folder_paths,
-                project_group_key,
-                window,
-                cx,
-                move |this, _workspace, window, cx| {
-                    this.update_entries(cx);
-                    this.archive_thread(&session_id, window, cx);
-                },
-            );
-            return;
-        }
 
         // Compute which linked worktree roots should be archived from disk if
         // this thread is archived. This must happen before we remove any
