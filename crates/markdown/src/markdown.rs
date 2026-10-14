@@ -1937,7 +1937,9 @@ impl MarkdownElement {
             .then(|| builder.rendered_links.last())
             .flatten()
             .map(|link| link.destination_url.clone());
-        let fallback_opens_image_url = enclosing_link_url.is_none();
+        // Opening a missing local file only surfaces an OS error dialog.
+        let fallback_opens_image_url = enclosing_link_url.is_none()
+            && (dest_url.starts_with("http://") || dest_url.starts_with("https://"));
 
         let image_element = {
             let image_start = range.start;
@@ -7540,6 +7542,18 @@ mod tests {
             cx.opened_url(),
             Some("https://example.com/image.png".to_string())
         );
+    }
+
+    #[gpui::test]
+    fn test_clicking_local_image_fallback_opens_nothing(cx: &mut TestAppContext) {
+        let cx = open_markdown_image_test_window(
+            "![alt text](/tmp/missing.png)",
+            failing_image_source(),
+            cx,
+        );
+
+        cx.simulate_click(point(px(8.), px(8.)), gpui::Modifiers::default());
+        assert_eq!(cx.opened_url(), None);
     }
 
     #[gpui::test]
