@@ -147,6 +147,7 @@ mod tests {
             dirty_to_present_histogram: Histogram::new(3).unwrap(),
             draw_duration_histogram: draws,
             present_interval_histogram: Histogram::new(3).unwrap(),
+            by_refresh_interval: Vec::new(),
         }
     }
 
