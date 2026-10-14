@@ -2,11 +2,13 @@ mod debug_log;
 mod session_updates;
 mod terminal_updates;
 mod transport;
+mod v2;
 
 use debug_log::AcpDebugLog;
 pub use debug_log::{AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection};
 use session_updates::{InboundSessionNotification, InboundSessionUpdate};
 pub use terminal_updates::{DecodedTerminalNotification, DecodedTerminalUpdate};
+pub use v2::AcpV2Connection;
 
 use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
@@ -829,6 +831,72 @@ fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities 
         .meta(meta)
 }
 
+fn with_v2_client_ingress<Handler: HandleDispatchFrom<Agent>>(
+    builder: V2Builder<Client, Handler>,
+    dispatch_sender: mpsc::UnboundedSender<ForegroundWork>,
+) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
+    let dispatch = {
+        let dispatch_sender = dispatch_sender.clone();
+        move |notification| {
+            enqueue_notification(
+                &dispatch_sender,
+                notification,
+                handle_v2_session_notification,
+            );
+            Ok(())
+        }
+    };
+    let builder = with_v2_terminal_notifications(builder, {
+        let dispatch = dispatch.clone();
+        move |notification| dispatch(notification.into())
+    });
+    with_v2_session_notifications(builder, dispatch)
+        .on_receive_request(
+            {
+                let dispatch_sender = dispatch_sender.clone();
+                async move |request: acp_v2::RequestPermissionRequest, responder, _connection| {
+                    enqueue_request(
+                        &dispatch_sender,
+                        request,
+                        responder,
+                        handle_v2_request_permission,
+                    );
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let dispatch_sender = dispatch_sender.clone();
+                async move |request: acp_v2::CreateElicitationRequest, responder, _connection| {
+                    enqueue_request(
+                        &dispatch_sender,
+                        request,
+                        responder,
+                        handle_v2_create_elicitation,
+                    );
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_notification(
+            {
+                let dispatch_sender = dispatch_sender.clone();
+                async move |notification: acp_v2::CompleteElicitationNotification, _connection| {
+                    enqueue_notification(
+                        &dispatch_sender,
+                        notification,
+                        handle_v2_complete_elicitation,
+                    );
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
+}
+
 impl AcpConnection {
     /// Binds supported v2 client handlers to the existing foreground owners.
     /// This does not change the protocol used by the connection's transport.
@@ -836,69 +904,7 @@ impl AcpConnection {
         &self,
         builder: V2Builder<Client, Handler>,
     ) -> V2Builder<Client, impl HandleDispatchFrom<Agent> + use<Handler>> {
-        let dispatch_sender = self.dispatch_tx.clone();
-        let dispatch = move |notification| {
-            enqueue_notification(
-                &dispatch_sender,
-                notification,
-                handle_v2_session_notification,
-            );
-            Ok(())
-        };
-        let builder = with_v2_terminal_notifications(builder, {
-            let dispatch = dispatch.clone();
-            move |notification| dispatch(notification.into())
-        });
-        with_v2_session_notifications(builder, dispatch)
-            .on_receive_request(
-                {
-                    let dispatch_sender = self.dispatch_tx.clone();
-                    async move |request: acp_v2::RequestPermissionRequest,
-                                responder,
-                                _connection| {
-                        enqueue_request(
-                            &dispatch_sender,
-                            request,
-                            responder,
-                            handle_v2_request_permission,
-                        );
-                        Ok(())
-                    }
-                },
-                agent_client_protocol::on_receive_request!(),
-            )
-            .on_receive_request(
-                {
-                    let dispatch_sender = self.dispatch_tx.clone();
-                    async move |request: acp_v2::CreateElicitationRequest,
-                                responder,
-                                _connection| {
-                        enqueue_request(
-                            &dispatch_sender,
-                            request,
-                            responder,
-                            handle_v2_create_elicitation,
-                        );
-                        Ok(())
-                    }
-                },
-                agent_client_protocol::on_receive_request!(),
-            )
-            .on_receive_notification(
-                {
-                    let dispatch_sender = self.dispatch_tx.clone();
-                    async move |notification: acp_v2::CompleteElicitationNotification,
-                                _connection| {
-                        enqueue_notification(
-                            &dispatch_sender,
-                            notification,
-                            handle_v2_complete_elicitation,
-                        );
-                        Ok(())
-                    }
-                },
-                agent_client_protocol::on_receive_notification!(),
-            )
+        with_v2_client_ingress(builder, self.dispatch_tx.clone())
     }
 
     pub fn subscribe_debug_messages(
@@ -1698,6 +1704,35 @@ fn terminal_auth_task(
     )
 }
 
+fn first_class_terminal_auth_task(
+    agent_id: AgentId,
+    store: WeakEntity<AgentServerStore>,
+    terminal: acp_v2::AuthMethodTerminal,
+    cx: &App,
+) -> Task<Result<SpawnInTerminal>> {
+    cx.spawn(async move |cx| {
+        let command = store
+            .update(cx, |store, cx| {
+                let agent = store
+                    .get_external_agent(&agent_id)
+                    .context("Agent server not found")?;
+                let environment = terminal
+                    .env
+                    .iter()
+                    .map(|variable| (variable.name.clone(), variable.value.clone()))
+                    .collect();
+                anyhow::Ok(agent.get_command(
+                    terminal.args.clone(),
+                    environment,
+                    &mut cx.to_async(),
+                ))
+            })?
+            .context("Failed to get agent command")?
+            .await?;
+        Ok(terminal_auth_task(&command, &agent_id, &terminal))
+    })
+}
+
 /// Used to support the _meta method prior to stabilization
 fn meta_terminal_auth_task(
     agent_id: &AgentId,
@@ -2019,32 +2054,12 @@ impl AgentConnection for AcpConnection {
             .find(|method| method.method_id() == method_id)?;
 
         match method {
-            acp_v2::AuthMethod::Terminal(terminal) => {
-                let agent_id = self.id.clone();
-                let terminal = terminal.clone();
-                let store = self.agent_server_store.clone();
-                Some(cx.spawn(async move |cx| {
-                    let command = store
-                        .update(cx, |store, cx| {
-                            let agent = store
-                                .get_external_agent(&agent_id)
-                                .context("Agent server not found")?;
-                            let environment = terminal
-                                .env
-                                .iter()
-                                .map(|variable| (variable.name.clone(), variable.value.clone()))
-                                .collect();
-                            anyhow::Ok(agent.get_command(
-                                terminal.args.clone(),
-                                environment,
-                                &mut cx.to_async(),
-                            ))
-                        })?
-                        .context("Failed to get agent command")?
-                        .await?;
-                    Ok(terminal_auth_task(&command, &agent_id, &terminal))
-                }))
-            }
+            acp_v2::AuthMethod::Terminal(terminal) => Some(first_class_terminal_auth_task(
+                self.id.clone(),
+                self.agent_server_store.clone(),
+                terminal.clone(),
+                cx,
+            )),
             acp_v2::AuthMethod::Agent(_) => meta_terminal_auth_task(&self.id, method_id, method)
                 .map(|task| Task::ready(Ok(task))),
             _ => None,
