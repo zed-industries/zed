@@ -772,11 +772,25 @@ impl ElicitationStore {
     }
 
     pub fn cancel_request(&mut self, request_id: &acp_v2::RequestId, cx: &mut Context<Self>) {
+        self.cancel_request_entries(request_id, true, cx);
+    }
+
+    pub fn finish_request(&mut self, request_id: &acp_v2::RequestId, cx: &mut Context<Self>) {
+        self.cancel_request_entries(request_id, false, cx);
+    }
+
+    fn cancel_request_entries(
+        &mut self,
+        request_id: &acp_v2::RequestId,
+        include_accepted_urls: bool,
+        cx: &mut Context<Self>,
+    ) {
         let changes = self.cancel_pending(|elicitation| {
             matches!(
                 elicitation.request.scope(),
                 acp_v2::ElicitationScope::Request(scope) if &scope.request_id == request_id
-            )
+            ) && (include_accepted_urls
+                || matches!(elicitation.status, ElicitationStatus::Pending { .. }))
         });
         for (id, change) in changes {
             Self::emit_change(id, change, cx);

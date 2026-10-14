@@ -26,8 +26,26 @@ fn cancel_auth_elicitations(
     cx: &mut AsyncApp,
     context: &ClientContext,
 ) {
+    if let Some(scopes) = &context.active_request_scopes {
+        scopes.borrow_mut().remove(&request_id);
+    }
     context.request_elicitations.update(cx, |store, cx| {
         store.cancel_request(&request_id, cx);
+    });
+}
+
+fn register_auth_request(request_id: acp::RequestId, _cx: &mut AsyncApp, context: &ClientContext) {
+    if let Some(scopes) = &context.active_request_scopes {
+        scopes.borrow_mut().insert(request_id);
+    }
+}
+
+fn finish_auth_request(request_id: acp::RequestId, cx: &mut AsyncApp, context: &ClientContext) {
+    if let Some(scopes) = &context.active_request_scopes {
+        scopes.borrow_mut().remove(&request_id);
+    }
+    context.request_elicitations.update(cx, |store, cx| {
+        store.finish_request(&request_id, cx);
     });
 }
 
@@ -184,6 +202,7 @@ impl AcpV2Connection {
             sessions: Rc::new(RefCell::new(HashMap::default())),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: request_elicitations.clone(),
+            active_request_scopes: Some(RefCell::new(Default::default())),
         };
         let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
         let dispatch_task = cx.spawn(async move |cx| {
@@ -353,14 +372,21 @@ impl AcpV2Connection {
             let request = connection.prepare_request(request);
             let request_id = request.id().clone();
             let cancellation = request.cancellation_handle();
+            enqueue_notification(&dispatch_tx, request_id.clone(), register_auth_request);
             let response = request.block_task();
             // Publication must precede caller-drop cancellation; early SDK cancellation is inert.
-            let guard = util::defer(move || {
-                cancellation.cancel().log_err();
-                enqueue_notification(&dispatch_tx, request_id, cancel_auth_elicitations);
+            let guard = util::defer({
+                let dispatch_tx = dispatch_tx.clone();
+                let request_id = request_id.clone();
+                move || {
+                    cancellation.cancel().log_err();
+                    enqueue_notification(&dispatch_tx, request_id, cancel_auth_elicitations);
+                }
             });
             let response = response.await.map_err(map_acp_error)?;
+            enqueue_notification(&dispatch_tx, request_id, finish_auth_request);
             guard.abort();
+            drain_foreground_queue(&dispatch_tx).await?;
             Ok(response)
         })
     }
@@ -430,18 +456,34 @@ mod tests {
                                         responder: Responder<acp::LoginAuthResponse>,
                                         agent: V2ConnectionTo<Client>| {
                                 let request_id = responder.id().clone();
+                                let method_id = request.method_id.clone();
                                 logins
                                     .lock()
                                     .expect("login log")
                                     .push((request, request_id.clone()));
-                                let elicitation = acp::CreateElicitationRequest::new(
+                                let mode: acp::ElicitationMode = if method_id.0.as_ref() == "url" {
+                                    acp::ElicitationUrlMode::new(
+                                        acp::ElicitationRequestScope::new(request_id),
+                                        "auth-url",
+                                        "https://example.com/login",
+                                    )
+                                    .into()
+                                } else {
                                     acp::ElicitationFormMode::new(
                                         acp::ElicitationRequestScope::new(request_id),
                                         acp::ElicitationSchema::new().string("name", true),
-                                    ),
-                                    "Auth input",
-                                )
-                                .meta(meta("elicitation"));
+                                    )
+                                    .into()
+                                };
+                                let elicitation =
+                                    acp::CreateElicitationRequest::new(mode, "Auth input")
+                                        .meta(meta("elicitation"));
+                                if method_id.0.as_ref() == "early" {
+                                    agent.send_request(elicitation).detach();
+                                    return responder.respond(
+                                        acp::LoginAuthResponse::new().meta(meta("login-response")),
+                                    );
+                                }
                                 // Caller cleanup must work even when the peer ignores auth cancellation.
                                 agent.prepare_request(elicitation).on_receiving_result(
                                     async move |result| match result {
@@ -684,6 +726,42 @@ mod tests {
                 ElicitationStatus::Pending { .. }
             ));
         });
+        let cancelled_parent = harness
+            .logins
+            .lock()
+            .expect("login log")
+            .first()
+            .expect("cancelled login")
+            .1
+            .clone();
+        let late_request = harness
+            .agent
+            .send_request(acp::CreateElicitationRequest::new(
+                acp::ElicitationFormMode::new(
+                    acp::ElicitationRequestScope::new(cancelled_parent.clone()),
+                    acp::ElicitationSchema::new(),
+                ),
+                "Late input for a cancelled auth request",
+            ));
+        let late_response = cx.background_spawn(late_request.block_task());
+        cx.run_until_parked();
+        store.read_with(cx, |store, _| {
+            assert!(
+                !store.elicitations().iter().any(|entry| {
+                    matches!(entry.request.scope(), acp::ElicitationScope::Request(scope)
+                        if scope.request_id == cancelled_parent)
+                        && matches!(entry.status, ElicitationStatus::Pending { .. })
+                }),
+                "cancelled auth must not publish fresh pending input"
+            );
+        });
+        assert_eq!(
+            bounded(late_response, cx)
+                .await
+                .expect_err("closed parent scope")
+                .code,
+            ErrorCode::InvalidParams
+        );
         // The server goes away while the client and its displayed store are retained.
         drop(harness._agent_task);
         drop(harness.agent);
@@ -704,6 +782,93 @@ mod tests {
                     .iter()
                     .all(|entry| matches!(entry.status, ElicitationStatus::Canceled))
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn v2_auth_sdk_success_finishes_pending_input_but_preserves_url_completion(
+        cx: &mut TestAppContext,
+    ) {
+        let offered = acp::InitializeResponse::new(
+            ProtocolVersion::V2,
+            acp::Implementation::new("agent", "1"),
+        )
+        .auth_methods(vec![
+            acp::AuthMethod::Agent(acp::AuthMethodAgent::new("early", "Early")),
+            acp::AuthMethod::Agent(acp::AuthMethodAgent::new("url", "URL")),
+        ]);
+        let harness = Harness::new(offered, cx).await.expect("connect");
+        let early = cx.update(|cx| {
+            harness
+                .client
+                .login(acp::LoginAuthRequest::new("early"), cx)
+        });
+        bounded(early, cx).await.expect("early parent success");
+        cx.run_until_parked();
+        let store = harness.client.request_elicitations();
+        store.read_with(cx, |store, _| {
+            let [entry] = store.elicitations() else {
+                panic!("one unanswered auth input");
+            };
+            assert!(matches!(entry.status, ElicitationStatus::Canceled));
+        });
+        let login = cx.update(|cx| harness.client.login(acp::LoginAuthRequest::new("url"), cx));
+        harness.registered(cx).await;
+        let entry_id = store.read_with(cx, |store, _| {
+            store.elicitations().last().expect("URL entry").id.clone()
+        });
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                ))
+                .meta(meta("elicitation-response")),
+                cx,
+            );
+        });
+        bounded(login, cx).await.expect("URL parent success");
+        store.read_with(cx, |store, _| {
+            assert!(matches!(
+                store.elicitation(&entry_id).expect("URL entry").1.status,
+                ElicitationStatus::Accepted
+            ));
+        });
+        let parent_id = harness
+            .logins
+            .lock()
+            .expect("login log")
+            .last()
+            .expect("URL login")
+            .1
+            .clone();
+        let late = harness
+            .agent
+            .send_request(acp::CreateElicitationRequest::new(
+                acp::ElicitationFormMode::new(
+                    acp::ElicitationRequestScope::new(parent_id),
+                    acp::ElicitationSchema::new(),
+                ),
+                "Input after parent success",
+            ));
+        let late = cx.background_spawn(late.block_task());
+        assert_eq!(
+            bounded(late, cx)
+                .await
+                .expect_err("ended parent scope")
+                .code,
+            ErrorCode::InvalidParams
+        );
+        harness
+            .agent
+            .send_notification(acp::CompleteElicitationNotification::new("auth-url"))
+            .expect("completion after parent success");
+        cx.run_until_parked();
+        store.read_with(cx, |store, _| {
+            assert!(matches!(
+                store.elicitation(&entry_id).expect("URL entry").1.status,
+                ElicitationStatus::Completed
+            ));
         });
     }
 

@@ -119,6 +119,8 @@ struct ClientContext {
     sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
     request_elicitations: Entity<ElicitationStore>,
+    // Legacy and ingress-only contexts do not track caller ownership of outgoing RPCs.
+    active_request_scopes: Option<RefCell<HashSet<acp_v2::RequestId>>>,
 }
 
 fn dispatch_queue_closed_error() -> acp::Error {
@@ -155,6 +157,9 @@ struct ElicitationDisconnectWork {
 
 impl ForegroundWorkItem for ElicitationDisconnectWork {
     fn run(self: Box<Self>, cx: &mut AsyncApp, context: &ClientContext) {
+        if let Some(scopes) = &context.active_request_scopes {
+            scopes.borrow_mut().clear();
+        }
         let threads = context
             .sessions
             .borrow()
@@ -997,6 +1002,7 @@ impl AcpConnection {
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
+            active_request_scopes: None,
         };
         let dispatch_task = cx.spawn({
             let mut dispatch_rx = dispatch_rx;
@@ -2727,6 +2733,7 @@ pub mod test_support {
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
+            active_request_scopes: None,
         };
         let dispatch_task = cx.spawn({
             let mut dispatch_rx = dispatch_rx;
@@ -7688,6 +7695,7 @@ exit 7
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
+            active_request_scopes: None,
         };
         // `TestAppContext::spawn` hands out an `AsyncApp` by value, whereas the
         // production path uses `Context::spawn` which hands out `&mut AsyncApp`.
@@ -8069,6 +8077,7 @@ exit 7
             sessions: Rc::new(RefCell::new(HashMap::default())),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: store.clone(),
+            active_request_scopes: None,
         };
         let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
         let dispatch_task = cx.spawn(move |mut cx| async move {
@@ -8143,6 +8152,7 @@ exit 7
             sessions: Rc::new(RefCell::new(HashMap::default())),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: cx.new(|_| ElicitationStore::default()),
+            active_request_scopes: None,
         };
         let (sender, mut receiver) = mpsc::unbounded::<ForegroundWork>();
         let cleanup = cancel_elicitations_after_disconnect(sender.clone())
@@ -9850,7 +9860,16 @@ fn handle_v2_create_elicitation(
             })
             .detach();
         }
-        acp_v2::ElicitationScope::Request(_) => {
+        acp_v2::ElicitationScope::Request(scope) => {
+            if let Some(scopes) = &ctx.active_request_scopes
+                && !scopes.borrow().contains(&scope.request_id)
+            {
+                return respond_err(
+                    responder,
+                    acp::Error::invalid_params()
+                        .data("Elicitation parent request is not owned by an active caller"),
+                );
+            }
             let store = ctx.request_elicitations.clone();
             let (elicitation_id, task) = match store.update(cx, |store, cx| {
                 store
