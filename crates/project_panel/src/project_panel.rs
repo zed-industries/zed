@@ -1168,7 +1168,7 @@ impl ProjectPanel {
                     || (settings.hide_root && visible_worktrees_count == 1));
             let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
 
-            let (has_git_repo, has_history) = {
+            let (has_git_repo, has_history, is_git_ignored) = {
                 let project_path = project::ProjectPath {
                     worktree_id,
                     path: entry.path.clone(),
@@ -1180,8 +1180,13 @@ impl ProjectPanel {
                 let has_history = has_git_repo
                     && !git_store
                         .project_path_git_status(&project_path, cx)
-                        .is_some_and(|status| status.is_created());
-                (has_git_repo, has_history)
+                        .is_some_and(|status| {
+                            status.is_created() || status.is_untracked() || status.is_ignored()
+                        });
+
+                let is_git_ignored = has_git_repo && worktree.is_path_ignored(&entry.path);
+
+                (has_git_repo, has_history, is_git_ignored)
             };
 
             let has_pasteable_content = self.has_pasteable_content(cx);
@@ -1266,10 +1271,10 @@ impl ProjectPanel {
                                         "Add to .git/info/exclude",
                                         Box::new(git::AddToGitInfoExclude),
                                     )
-                                    .when(has_history, |menu| {
+                                    .when(has_history && !is_git_ignored, |menu| {
                                         menu.action("View History", Box::new(git::FileHistory))
                                     })
-                                    .when(!is_dir, |menu| {
+                                    .when(!is_dir && !is_git_ignored, |menu| {
                                         menu.action(
                                             "Open File Permalink",
                                             git::OpenFilePermalink.boxed_clone(),
