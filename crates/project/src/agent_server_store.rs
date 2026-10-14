@@ -358,8 +358,33 @@ impl AgentServerStore {
 
         for (name, settings) in new_settings.iter() {
             match settings {
-                CustomAgentServerSettings::Custom { command, .. } => {
+                CustomAgentServerSettings::Custom { command, icon, .. } => {
                     let agent_name = AgentId(name.clone().into());
+                    let icon_path = icon.as_ref().and_then(|path| {
+                        if path.is_absolute()
+                            && path
+                                .extension()
+                                .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+                        {
+                            if path.is_file() {
+                                Some(SharedString::from(path.to_string_lossy().into_owned()))
+                            } else {
+                                let cached_icon = crate::agent_icon::external_agents_icons_dir()
+                                    .join(crate::agent_icon::sanitize_icon_filename(name));
+                                if cached_icon.is_file() {
+                                    Some(SharedString::from(cached_icon.to_string_lossy().into_owned()))
+                                } else {
+                                    Some(SharedString::from(path.to_string_lossy().into_owned()))
+                                }
+                            }
+                        } else {
+                            log::warn!(
+                                "Invalid custom agent icon path '{path:?}' for '{name}'. Expected an absolute path to a .svg file."
+                            );
+                            None
+                        }
+                    });
+
                     self.external_agents.insert(
                         agent_name.clone(),
                         ExternalAgentEntry::new(
@@ -368,7 +393,7 @@ impl AgentServerStore {
                                 project_environment: project_environment.clone(),
                             }) as Box<dyn ExternalAgentServer>,
                             ExternalAgentSource::Custom,
-                            None,
+                            icon_path,
                             None,
                         ),
                     );
@@ -1533,6 +1558,8 @@ impl AllAgentServersSettings {
 pub enum CustomAgentServerSettings {
     Custom {
         command: AgentServerCommand,
+        /// Path to a custom SVG icon for this agent.
+        icon: Option<PathBuf>,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.
@@ -1586,6 +1613,13 @@ impl CustomAgentServerSettings {
         }
     }
 
+    pub fn icon(&self) -> Option<&Path> {
+        match self {
+            CustomAgentServerSettings::Custom { icon, .. } => icon.as_deref(),
+            CustomAgentServerSettings::Registry { .. } => None,
+        }
+    }
+
     pub fn default_mode(&self) -> Option<&str> {
         match self {
             CustomAgentServerSettings::Custom { default_mode, .. }
@@ -1629,6 +1663,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 path,
                 args,
                 env,
+                icon,
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
@@ -1638,6 +1673,9 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                     args,
                     env: Some(env),
                 },
+                icon: icon.map(|icon| {
+                    PathBuf::from(shellexpand::tilde(&icon.to_string_lossy()).as_ref())
+                }),
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
@@ -1685,7 +1723,7 @@ mod tests {
         AgentRegistryStore, RegistryAgent, RegistryAgentMetadata, RegistryNpxAgent,
     };
     use crate::worktree_store::{WorktreeIdCounter, WorktreeStore};
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     #[cfg(feature = "test-support")]
     use http_client::{AsyncBody, FakeHttpClient, Response};
     use node_runtime::NodeRuntime;
@@ -2338,4 +2376,76 @@ mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    fn test_custom_agent_icon_resolution(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let valid_svg = temp_dir.path().join("custom-icon.svg");
+        std::fs::write(&valid_svg, b"<svg></svg>").unwrap();
+
+        let invalid_extension = temp_dir.path().join("custom-icon.png");
+        std::fs::write(&invalid_extension, b"png").unwrap();
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    let agent_servers = content.agent_servers.get_or_insert_default();
+                    agent_servers.insert(
+                        "valid-agent".to_string(),
+                        settings::CustomAgentServerSettings::Custom {
+                            path: PathBuf::from("/bin/echo"),
+                            args: Vec::new(),
+                            env: HashMap::default(),
+                            icon: Some(valid_svg.clone()),
+                            default_mode: None,
+                            default_config_options: HashMap::default(),
+                            favorite_config_option_values: HashMap::default(),
+                        },
+                    );
+                    agent_servers.insert(
+                        "invalid-icon-agent".to_string(),
+                        settings::CustomAgentServerSettings::Custom {
+                            path: PathBuf::from("/bin/echo"),
+                            args: Vec::new(),
+                            env: HashMap::default(),
+                            icon: Some(invalid_extension.clone()),
+                            default_mode: None,
+                            default_config_options: HashMap::default(),
+                            favorite_config_option_values: HashMap::default(),
+                        },
+                    );
+                    agent_servers.insert(
+                        "no-icon-agent".to_string(),
+                        settings::CustomAgentServerSettings::Custom {
+                            path: PathBuf::from("/bin/echo"),
+                            args: Vec::new(),
+                            env: HashMap::default(),
+                            icon: None,
+                            default_mode: None,
+                            default_config_options: HashMap::default(),
+                            favorite_config_option_values: HashMap::default(),
+                        },
+                    );
+                });
+            });
+        });
+
+        let store = create_agent_server_store(cx);
+
+        store.read_with(cx, |store, _| {
+            let valid_icon = store.agent_icon(&AgentId::new("valid-agent"));
+            assert_eq!(
+                valid_icon.as_deref(),
+                Some(valid_svg.to_string_lossy().as_ref())
+            );
+
+            let invalid_icon = store.agent_icon(&AgentId::new("invalid-icon-agent"));
+            assert_eq!(invalid_icon, None);
+
+            let no_icon = store.agent_icon(&AgentId::new("no-icon-agent"));
+            assert_eq!(no_icon, None);
+        });
+    }
 }
+

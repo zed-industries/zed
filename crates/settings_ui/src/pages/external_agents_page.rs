@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use collections::HashMap;
@@ -244,6 +245,15 @@ fn remove_agent(id: &AgentId, source: ExternalAgentSource, cx: &mut App) {
             });
         if matches_source {
             agent_servers.remove(id.0.as_ref());
+            if source == ExternalAgentSource::Custom {
+                let cached_icon = project::agent_icon::external_agents_icons_dir()
+                    .join(project::agent_icon::sanitize_icon_filename(&id.0));
+                if cached_icon.is_file() {
+                    if let Err(error) = std::fs::remove_file(&cached_icon) {
+                        log::warn!("Failed to remove cached icon {cached_icon:?}: {error}");
+                    }
+                }
+            }
         }
     });
 }
@@ -332,6 +342,8 @@ pub(crate) struct CustomAgentForm {
     name: Entity<Editor>,
     command: Entity<Editor>,
     args: Entity<Editor>,
+    icon: Entity<Editor>,
+    _icon_subscription: gpui::Subscription,
     env: Vec<KeyValueRow>,
     /// Advanced fields not surfaced by the form. They're preserved verbatim so
     /// editing the basic settings doesn't drop a user's hand-written config.
@@ -357,6 +369,7 @@ impl CustomAgentForm {
 
         let mut command_initial = None;
         let mut args_initial = None;
+        let mut icon_initial = None;
         let mut env = Vec::new();
         let mut default_mode = None;
         let mut default_config_options = HashMap::default();
@@ -370,6 +383,7 @@ impl CustomAgentForm {
                     path,
                     args,
                     env: env_map,
+                    icon,
                     default_mode: mode,
                     default_config_options: config_options,
                     favorite_config_option_values: favorites,
@@ -378,6 +392,7 @@ impl CustomAgentForm {
                     if !args.is_empty() {
                         args_initial = Some(args.join(" "));
                     }
+                    icon_initial = icon.as_ref().map(|p| p.to_string_lossy().to_string());
                     for (key, value) in sorted_pairs(env_map) {
                         env.push(new_kv_row(Some(&key), Some(&value), window, cx));
                     }
@@ -401,11 +416,16 @@ impl CustomAgentForm {
             }
         }
 
+        let icon = new_input("~/.config/zed/icons/my-agent.svg", icon_initial.as_deref(), window, cx);
+        let _icon_subscription = cx.observe(&icon, |_, _, cx| cx.notify());
+
         Self {
             original_id,
             name: new_input("my-agent", name_initial.as_deref(), window, cx),
             command: new_input("/path/to/agent", command_initial.as_deref(), window, cx),
             args: new_input("--flag value", args_initial.as_deref(), window, cx),
+            icon,
+            _icon_subscription,
             env,
             default_mode,
             default_config_options,
@@ -539,6 +559,20 @@ fn render_custom_agent_form_page(
             )
             .into_any_element(),
         )
+        .child(
+            crate::render_settings_item_layout(
+                settings_window,
+                "Icon",
+                "Optional. Upload or specify an absolute path or ~/... to a custom monochrome .svg icon.",
+                render_icon_input(form, cx).into_any_element(),
+                None,
+                None,
+                None,
+                false,
+                cx,
+            )
+            .into_any_element(),
+        )
         .child(render_env_section(settings_window, &form.env, cx))
         .when_some(error, |this, error| this.child(render_form_error(error)))
         .child(render_form_actions(form, window, cx));
@@ -553,6 +587,143 @@ fn render_custom_agent_form_page(
         .overflow_y_scroll()
         .child(fields)
         .into_any_element()
+}
+
+fn render_icon_input(
+    form: &CustomAgentForm,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let icon_path_str = form.icon.read(cx).text(cx).trim().to_string();
+    let expanded_path = if icon_path_str.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(shellexpand::tilde(&icon_path_str).as_ref()))
+    };
+    let has_valid_file = expanded_path.as_ref().is_some_and(|path| path.is_file());
+
+    let preview = if let Some(path) = expanded_path.filter(|path| path.is_file()) {
+        h_flex()
+            .items_center()
+            .justify_center()
+            .size_8()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                Icon::from_external_svg(SharedString::from(path.to_string_lossy().into_owned()))
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .into_any_element()
+    } else {
+        div().into_any_element()
+    };
+
+    let upload_button = Button::new("custom-agent-icon-upload", "Upload")
+        .style(ButtonStyle::Outlined)
+        .start_icon(
+            Icon::new(IconName::ArrowUp)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+        )
+        .tab_index(0isize)
+        .on_click(cx.listener(|_this, _, window, cx| {
+            prompt_and_upload_icon(window, cx);
+        }));
+
+    h_flex()
+        .items_center()
+        .gap_2()
+        .when(has_valid_file, |this| this.child(preview))
+        .child(input_box(&form.icon, cx))
+        .child(upload_button)
+}
+
+fn prompt_and_upload_icon(
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) {
+    let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Choose SVG Icon".into()),
+    });
+
+    let fs = <dyn fs::Fs>::global(cx);
+    cx.spawn_in(window, {
+        let fs = fs.clone();
+        async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths_receiver.await else {
+                return;
+            };
+            let Some(source_path) = paths.into_iter().next() else {
+                return;
+            };
+
+            if !source_path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+            {
+                this.update_in(cx, |this, _window, cx| {
+                    if let Some(form) = this.custom_agent_form.as_mut() {
+                        form.error = Some("Icon must be an SVG file (.svg)".into());
+                    }
+                    cx.notify();
+                })
+                .log_err();
+                return;
+            }
+
+            let agent_name = this
+                .read_with(cx, |this, cx| {
+                    this.custom_agent_form
+                        .as_ref()
+                        .map(|f| f.name.read(cx).text(cx).trim().to_string())
+                })
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+
+            let base_name = if !agent_name.is_empty() {
+                agent_name
+            } else {
+                source_path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("custom-agent")
+                    .to_string()
+            };
+
+            match project::agent_icon::copy_and_cache_custom_icon(&base_name, &source_path, fs).await {
+                Ok(cached_path) => {
+                    let cached_path_str = cached_path.to_string_lossy().into_owned();
+                    this.update_in(cx, |this, window, cx| {
+                        if let Some(form) = this.custom_agent_form.as_mut() {
+                            form.error = None;
+                            form.icon.update(cx, |editor, cx| {
+                                editor.set_text(cached_path_str, window, cx);
+                            });
+                        }
+                        cx.notify();
+                    })
+                    .log_err();
+                }
+                Err(error) => {
+                    let error_message = format!("Failed to load SVG icon: {error:#}");
+                    this.update_in(cx, |this, _window, cx| {
+                        if let Some(form) = this.custom_agent_form.as_mut() {
+                            form.error = Some(error_message.into());
+                        }
+                        cx.notify();
+                    })
+                    .log_err();
+                }
+            }
+        }
+    })
+    .detach();
 }
 
 fn input_box(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
@@ -728,7 +899,7 @@ fn save_custom_agent_form(
         build_settings_from_form(form, cx)
     };
 
-    let (id, original_id, content) = match built {
+    let (id, original_id, mut content) = match built {
         Ok(value) => value,
         Err(error) => {
             if let Some(form) = settings_window.custom_agent_form.as_mut() {
@@ -759,18 +930,60 @@ fn save_custom_agent_form(
     }
 
     let fs = <dyn fs::Fs>::global(cx);
-    update_settings_file(fs, cx, move |settings, _| {
-        let agent_servers = settings.agent_servers.get_or_insert_default();
-        if let Some(original_id) = &original_id
-            && original_id.0 != id.0
-        {
-            agent_servers.remove(original_id.0.as_ref());
-        }
-        agent_servers.insert(id.0.to_string(), content);
-    });
 
-    settings_window.custom_agent_form = None;
-    settings_window.pop_sub_page(window, cx);
+    cx.spawn_in(window, {
+        let fs = fs.clone();
+        async move |this, cx| {
+            if let CustomAgentServerSettings::Custom { ref mut icon, .. } = content {
+                if let Some(source_path) = icon.as_ref() {
+                    let expanded_path =
+                        PathBuf::from(shellexpand::tilde(&source_path.to_string_lossy()).as_ref());
+                    if expanded_path.is_file() {
+                        match project::agent_icon::copy_and_cache_custom_icon(
+                            &id.0,
+                            &expanded_path,
+                            fs.clone(),
+                        )
+                        .await
+                        {
+                            Ok(cached_path) => {
+                                *icon = Some(cached_path);
+                            }
+                            Err(error) => {
+                                let error_message = format!("Failed to save SVG icon: {error:#}");
+                                this.update_in(cx, |this, _window, cx| {
+                                    if let Some(form) = this.custom_agent_form.as_mut() {
+                                        form.error = Some(error_message.into());
+                                    }
+                                    cx.notify();
+                                })
+                                .log_err();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
+            this.update_in(cx, |settings_window, window, cx| {
+                let fs = <dyn fs::Fs>::global(cx);
+                update_settings_file(fs, cx, move |settings, _| {
+                    let agent_servers = settings.agent_servers.get_or_insert_default();
+                    if let Some(original_id) = &original_id
+                        && original_id.0 != id.0
+                    {
+                        agent_servers.remove(original_id.0.as_ref());
+                    }
+                    agent_servers.insert(id.0.to_string(), content);
+                });
+
+                settings_window.custom_agent_form = None;
+                settings_window.pop_sub_page(window, cx);
+            })
+            .log_err();
+        }
+    })
+    .detach();
 }
 
 /// Plain (editor-free) snapshot of the form's contents, so the validation /
@@ -780,6 +993,7 @@ struct CustomAgentFormValues {
     name: String,
     command: String,
     args: String,
+    icon: String,
     env: Vec<(String, String)>,
     default_mode: Option<String>,
     default_config_options: HashMap<String, AgentConfigOptionValue>,
@@ -795,6 +1009,7 @@ fn build_settings_from_form(
         name: form.name.read(cx).text(cx),
         command: form.command.read(cx).text(cx),
         args: form.args.read(cx).text(cx),
+        icon: form.icon.read(cx).text(cx),
         env: read_kv(&form.env, cx),
         default_mode: form.default_mode.clone(),
         default_config_options: form.default_config_options.clone(),
@@ -829,10 +1044,27 @@ fn build_settings_from_values(
         .collect::<Vec<_>>();
     let env = collect_kv(&values.env, "environment variable")?;
 
+    let icon_str = values.icon.trim();
+    let icon = if icon_str.is_empty() {
+        None
+    } else {
+        let is_valid_path = Path::new(icon_str).is_absolute()
+            || icon_str.starts_with("~/")
+            || (cfg!(windows) && icon_str.starts_with("~\\"));
+        if !is_valid_path {
+            return Err("Icon path must be an absolute path or ~/...".into());
+        }
+        if !icon_str.ends_with(".svg") {
+            return Err("Icon must be an SVG file (.svg)".into());
+        }
+        Some(PathBuf::from(icon_str))
+    };
+
     let content = CustomAgentServerSettings::Custom {
         path: command.into(),
         args,
         env,
+        icon,
         default_mode: values.default_mode,
         default_config_options: values.default_config_options,
         favorite_config_option_values: values.favorite_config_option_values,
@@ -945,6 +1177,7 @@ async fn add_custom_agent_settings_entry(
                                 path: "path_to_executable".into(),
                                 args: vec![],
                                 env: HashMap::default(),
+                                icon: None,
                                 default_mode: None,
                                 default_config_options: Default::default(),
                                 favorite_config_option_values: Default::default(),
@@ -1041,6 +1274,7 @@ mod tests {
             name: "my-agent".into(),
             command: "/usr/bin/agent".into(),
             args: String::new(),
+            icon: String::new(),
             env: Vec::new(),
             default_mode: None,
             default_config_options: HashMap::default(),
@@ -1109,6 +1343,7 @@ mod tests {
                 path: "/usr/bin/agent".into(),
                 args: vec!["--flag".into(), "value".into()],
                 env: expected_env,
+                icon: None,
                 default_mode: None,
                 default_config_options: HashMap::default(),
                 favorite_config_option_values: HashMap::default(),
@@ -1163,4 +1398,55 @@ mod tests {
             &existing
         ));
     }
+
+    #[test]
+    fn parses_and_preserves_valid_icon_paths() {
+        let mut values_abs = values();
+        values_abs.icon = "/path/to/icon.svg".into();
+        let (_, _, content) = build_settings_from_values(values_abs).unwrap();
+        match content {
+            CustomAgentServerSettings::Custom { icon, .. } => {
+                assert_eq!(icon, Some(PathBuf::from("/path/to/icon.svg")));
+            }
+            _ => panic!("expected Custom variant"),
+        }
+
+        let mut values_tilde = values();
+        values_tilde.icon = "~/.config/zed/icons/agent.svg".into();
+        let (_, _, content) = build_settings_from_values(values_tilde).unwrap();
+        match content {
+            CustomAgentServerSettings::Custom { icon, .. } => {
+                assert_eq!(icon, Some(PathBuf::from("~/.config/zed/icons/agent.svg")));
+            }
+            _ => panic!("expected Custom variant"),
+        }
+    }
+
+    #[test]
+    fn rejects_relative_icon_paths() {
+        let mut form_values = values();
+        form_values.icon = "relative/icon.svg".into();
+        assert_eq!(
+            build_settings_from_values(form_values).unwrap_err().as_ref(),
+            "Icon path must be an absolute path or ~/...".to_string()
+        );
+
+        let mut form_values_dot = values();
+        form_values_dot.icon = "./icon.svg".into();
+        assert_eq!(
+            build_settings_from_values(form_values_dot).unwrap_err().as_ref(),
+            "Icon path must be an absolute path or ~/...".to_string()
+        );
+    }
+
+    #[test]
+    fn rejects_non_svg_icon_paths() {
+        let mut form_values = values();
+        form_values.icon = "/path/to/icon.png".into();
+        assert_eq!(
+            build_settings_from_values(form_values).unwrap_err().as_ref(),
+            "Icon must be an SVG file (.svg)".to_string()
+        );
+    }
 }
+

@@ -1,3 +1,4 @@
+pub mod agent_icon;
 pub mod agent_registry_store;
 pub mod agent_server_store;
 pub mod bookmark_store;

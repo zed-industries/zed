@@ -5889,6 +5889,7 @@ mod tests {
                             ("BASE".into(), "1".into()),
                             ("SHARED".into(), "base".into()),
                         ]),
+                        icon: None,
                         default_mode: None,
                         default_config_options: HashMap::default(),
                         favorite_config_option_values: HashMap::default(),
@@ -6525,6 +6526,7 @@ mod tests {
                         path: PathBuf::from("test-agent"),
                         args: Vec::new(),
                         env: HashMap::default(),
+                        icon: None,
                         default_mode: Some("manual".to_string()),
                         default_config_options: HashMap::from_iter([(
                             "mode".to_string(),

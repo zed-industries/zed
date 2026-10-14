@@ -851,6 +851,12 @@ pub enum CustomAgentServerSettings {
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         env: HashMap<String, String>,
+        /// Path to a custom SVG icon for this agent.
+        ///
+        /// Must be an absolute filesystem path or a tilde-prefixed home path (`~/...`) to a `.svg` file.
+        ///
+        /// Default: None
+        icon: Option<PathBuf>,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.
@@ -1522,4 +1528,54 @@ mod tests {
             serde_json::json!({ "requested": "/tmp/x", "resolved": "/tmp/real" })
         );
     }
+
+    #[test]
+    fn test_custom_agent_server_settings_icon_serde() {
+        let json_with_icon = serde_json::json!({
+            "type": "custom",
+            "command": "/usr/local/bin/agent",
+            "icon": "/path/to/icon.svg"
+        });
+
+        let settings: CustomAgentServerSettings =
+            serde_json::from_value(json_with_icon).unwrap();
+        assert_eq!(
+            settings,
+            CustomAgentServerSettings::Custom {
+                path: PathBuf::from("/usr/local/bin/agent"),
+                args: Vec::new(),
+                env: HashMap::default(),
+                icon: Some(PathBuf::from("/path/to/icon.svg")),
+                default_mode: None,
+                default_config_options: HashMap::default(),
+                favorite_config_option_values: HashMap::default(),
+            }
+        );
+
+        let serialized = serde_json::to_value(&settings).unwrap();
+        assert_eq!(serialized["icon"], "/path/to/icon.svg");
+
+        let json_without_icon = serde_json::json!({
+            "type": "custom",
+            "command": "/usr/local/bin/agent"
+        });
+        let settings_no_icon: CustomAgentServerSettings =
+            serde_json::from_value(json_without_icon).unwrap();
+        assert_eq!(
+            settings_no_icon,
+            CustomAgentServerSettings::Custom {
+                path: PathBuf::from("/usr/local/bin/agent"),
+                args: Vec::new(),
+                env: HashMap::default(),
+                icon: None,
+                default_mode: None,
+                default_config_options: HashMap::default(),
+                favorite_config_option_values: HashMap::default(),
+            }
+        );
+
+        let serialized_no_icon = serde_json::to_value(&settings_no_icon).unwrap();
+        assert!(serialized_no_icon.get("icon").is_none());
+    }
 }
+
