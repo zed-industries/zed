@@ -48,6 +48,16 @@ pub enum OmpBinary {
     Path(String),
 }
 
+/// One-shot and unattended turns (CLI `prompt`, reviewers). A wall clock
+/// bounds a hung OMP. The interactive app uses [`APP_PROMPT_TIMEOUT`]:
+/// B6 was cut mid-task at 600 s under this budget.
+pub const HEADLESS_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Interactive app turns. The person can Stop; a short wall clock would
+/// cut a live mid-task turn (ROADMAP follow-up). One day is far above any
+/// expected turn and stays inside `Instant` addition.
+pub const APP_PROMPT_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Static config for one runtime.
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -62,7 +72,8 @@ pub struct RuntimeConfig {
     /// Opt in to the `ask` tool dialog (off by default upstream — without it,
     /// approval-needing tools fail closed; plan §10 + spike row).
     pub ask_dialog: bool,
-    /// Prompt round-trip deadline.
+    /// Prompt round-trip deadline ([`APP_PROMPT_TIMEOUT`] in the app,
+    /// [`HEADLESS_PROMPT_TIMEOUT`] for CLI and reviewers).
     pub prompt_timeout: Duration,
     /// Approval mode + overlay policy (ADR-0020). Every spawn goes through it.
     pub policy: SpawnPolicy,

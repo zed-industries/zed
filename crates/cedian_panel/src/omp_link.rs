@@ -1631,7 +1631,7 @@ fn run(
         sessions: spec.sessions,
         cwd: spec.workdir,
         ask_dialog: true,
-        prompt_timeout: Duration::from_secs(600),
+        prompt_timeout: cedian_omp::APP_PROMPT_TIMEOUT,
         policy: spec.policy,
     }) {
         Ok(runtime) => runtime,

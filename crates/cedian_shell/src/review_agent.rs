@@ -429,7 +429,7 @@ pub fn run_review(
             sessions: cedian_omp::Sessions::InSessionDir,
             cwd: workdir.to_path_buf(),
             ask_dialog: true,
-            prompt_timeout: Duration::from_secs(600),
+            prompt_timeout: cedian_omp::HEADLESS_PROMPT_TIMEOUT,
             policy,
         })
         .map_err(|e| format!("reviewer spawn ({role}): {e}"))?;

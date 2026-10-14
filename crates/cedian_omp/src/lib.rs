@@ -35,8 +35,8 @@ pub use protected::{
     default_protected_bash_rules,
 };
 pub use runtime::{
-    NewSession, OmpBinary, OmpRuntime, RuntimeConfig, RuntimeControl, RuntimeState, image_content,
-    last_text,
+    APP_PROMPT_TIMEOUT, HEADLESS_PROMPT_TIMEOUT, NewSession, OmpBinary, OmpRuntime, RuntimeConfig,
+    RuntimeControl, RuntimeState, image_content, last_text,
 };
 pub use session::{
     ResumeState, SNAPSHOT_VERSION, SessionBinding, SnapshotVersionMismatch, validate_binding,
