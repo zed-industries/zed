@@ -362,9 +362,11 @@ impl MetalRenderer {
 
         let command_queue = device.new_command_queue();
         let supports_shared_storage = cfg!(target_os = "ios") || is_apple_gpu;
-        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), supports_shared_storage));
-        // metal and objc2-metal expose the same Objective-C device; the borrowed
-        // protocol object remains valid while `device` owns it.
+        let sprite_atlas = Arc::new(MetalAtlas::new(
+            device.clone(),
+            supports_shared_storage,
+            command_queue.clone(),
+        ));
         let core_video_texture_cache = unsafe {
             let mut cache = ptr::null_mut();
             let status = CVMetalTextureCache::create(
@@ -538,6 +540,11 @@ impl MetalRenderer {
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
     ) -> Result<metal::CommandBuffer> {
+        // Flush dynamic-texture uploads on their own command buffer. Committing
+        // here (rather than encoding into the frame command buffer) guarantees
+        // accepted updates survive a later frame-encoding error, while queue
+        // ordering still places them before the frame that samples the textures.
+        self.sprite_atlas.commit_pending_uploads();
         let mut writer = InstanceBufferWriter::new(
             &self.device,
             &self.instance_buffer_pool,
