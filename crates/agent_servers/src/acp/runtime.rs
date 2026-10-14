@@ -191,7 +191,7 @@ pub(super) fn watch_process(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acp::connect_client_future;
+    use crate::acp::v1::connect_client_future;
     use acp_thread::{ElicitationStatus, ElicitationStore};
     use agent_client_protocol::schema::v2 as acp;
     use collections::HashMap;
