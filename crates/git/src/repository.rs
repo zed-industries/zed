@@ -1,4 +1,5 @@
 use crate::commit::{CommitDiffObject, CommitDiffObjectKind, parse_git_diff_raw};
+use crate::parent_branch::{ParentBranchDistances, ParentBranchGraph};
 use crate::stash::GitStash;
 use crate::status::{
     DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -3258,58 +3259,82 @@ impl GitRepository for RealGitRepository {
                         return Ok(None);
                     };
                     let head_sha = &current_commit.sha;
-                    let mut nearest_branch = None;
+                    let candidates = branches_scan
+                        .branches
+                        .iter()
+                        .filter_map(|branch| {
+                            let remote_branch_name = branch
+                                .ref_name
+                                .strip_prefix("refs/remotes/")
+                                .and_then(|name| name.split_once('/'))
+                                .map(|(_, name)| name);
+                            if branch.is_head
+                                || branch.ref_name.ends_with("/HEAD")
+                                || remote_branch_name == Some(current_branch.name())
+                                || current_branch.upstream.as_ref().is_some_and(|upstream| {
+                                    upstream.is_remote() && upstream.ref_name == branch.ref_name
+                                })
+                            {
+                                return None;
+                            }
+                            branch
+                                .most_recent_commit
+                                .as_ref()
+                                .map(|commit| (branch, &commit.sha))
+                        })
+                        .collect::<Vec<_>>();
+                    if candidates.is_empty() {
+                        return Ok(None);
+                    }
 
-                    for branch in &branches_scan.branches {
-                        let remote_branch_name = branch
-                            .ref_name
-                            .strip_prefix("refs/remotes/")
-                            .and_then(|name| name.split_once('/'))
-                            .map(|(_, name)| name);
-                        if branch.is_head
-                            || branch.ref_name.ends_with("/HEAD")
-                            || remote_branch_name == Some(current_branch.name())
-                            || current_branch.upstream.as_ref().is_some_and(|upstream| {
-                                upstream.is_remote() && upstream.ref_name == branch.ref_name
-                            })
-                        {
-                            continue;
+                    let mut revisions = format!("{head_sha}\n");
+                    let mut included = HashSet::from([head_sha]);
+                    for (_, commit) in &candidates {
+                        if included.insert(*commit) {
+                            revisions.push_str(commit);
+                            revisions.push('\n');
                         }
-                        let Some(commit) = &branch.most_recent_commit else {
-                            continue;
-                        };
-                        let merge_base = match git
-                            .run(&["merge-base", head_sha.as_ref(), commit.sha.as_ref()])
-                            .await
-                        {
-                            Ok(merge_base) => merge_base,
-                            Err(error) => {
-                                if error
-                                    .downcast_ref::<GitBinaryCommandError>()
-                                    .is_some_and(|error| error.status.code() == Some(1))
-                                {
-                                    continue;
-                                }
-                                return Err(error);
+                    }
+                    let mut process = git
+                        .build_command(&["rev-list", "--parents", "--topo-order", "--stdin"])
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .kill_on_drop(true)
+                        .spawn()?;
+                    let mut stdin = process
+                        .stdin
+                        .take()
+                        .context("commit graph process has no stdin")?;
+                    stdin.write_all(revisions.as_bytes()).await?;
+                    drop(stdin);
+                    let output = process.output().await?;
+                    anyhow::ensure!(
+                        output.status.success(),
+                        GitBinaryCommandError {
+                            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                            status: output.status,
+                        }
+                    );
+                    let output = String::from_utf8(output.stdout)?;
+                    let mut graph = ParentBranchGraph::new(&output, head_sha)?;
+                    let mut nearest_branch = None;
+                    for (branch, commit) in candidates {
+                        let (head_distance, branch_distance) = match graph.distances(commit)? {
+                            ParentBranchDistances::NotParent => continue,
+                            ParentBranchDistances::Resolved {
+                                head_distance,
+                                branch_distance,
+                            } => (head_distance, branch_distance),
+                            ParentBranchDistances::MultipleMergeBases => {
+                                // Git's choice among criss-cross merge bases is unspecified.
+                                let base = git
+                                    .run(&["merge-base", head_sha.as_ref(), commit.as_ref()])
+                                    .await?;
+                                graph.distances_from_base(commit, &base)?
                             }
                         };
-
-                        // A child branch would otherwise win with a zero distance.
-                        if merge_base == head_sha.as_ref() && commit.sha != *head_sha {
-                            continue;
-                        }
-                        let head_distance = git
-                            .run(&["rev-list", "--count", &format!("{merge_base}..{head_sha}")])
-                            .await?
-                            .parse::<u64>()?;
-                        let branch_distance = git
-                            .run(&[
-                                "rev-list",
-                                "--count",
-                                &format!("{merge_base}..{}", commit.sha),
-                            ])
-                            .await?
-                            .parse::<u64>()?;
                         let candidate = (
                             head_distance,
                             branch_distance,
@@ -6700,6 +6725,164 @@ mod tests {
         assert_eq!(
             repo.default_branch(true).await.unwrap(),
             Some("origin/main".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parent_branch_graph_matches_git_for_merge_histories(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("create repository directory");
+        git_init_repo(directory.path());
+        let tree = git_command_output(directory.path(), ["mktree"]);
+        let parent_indices: &[&[usize]] = &[
+            &[],
+            &[0],
+            &[1],
+            &[0],
+            &[2, 3],
+            &[3, 2],
+            &[4],
+            &[5],
+            &[2, 0],
+            &[8, 7],
+            &[],
+            &[10],
+            &[6, 9],
+            &[12, 11],
+        ];
+        let mut commits = Vec::<String>::new();
+        for (index, parents) in parent_indices.iter().enumerate() {
+            let mut arguments = vec![
+                "commit-tree".to_owned(),
+                tree.clone(),
+                "-m".to_owned(),
+                format!("commit {index}"),
+            ];
+            for parent in *parents {
+                arguments.push("-p".to_owned());
+                arguments.push(commits.get(*parent).expect("earlier parent commit").clone());
+            }
+            commits.push(git_command_output(directory.path(), arguments));
+        }
+        let repository = RealGitRepository::new(
+            &directory.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("open repository");
+        let git = repository.git_binary();
+        let mut arguments = vec![
+            "rev-list".to_owned(),
+            "--parents".to_owned(),
+            "--topo-order".to_owned(),
+        ];
+        arguments.extend(commits.iter().cloned());
+        let output = git.run(&arguments).await.expect("load commit graph");
+        for head in &commits {
+            let mut graph = ParentBranchGraph::new(&output, head).expect("parse commit graph");
+            for candidate in &commits {
+                let native_base = git.run(&["merge-base", head, candidate]).await;
+                let expected = match native_base {
+                    Ok(base) if base == *head && candidate != head => None,
+                    Ok(base) => {
+                        let head_distance = git
+                            .run(&["rev-list", "--count", &format!("{base}..{head}")])
+                            .await
+                            .expect("count HEAD commits")
+                            .parse::<u64>()
+                            .expect("HEAD count");
+                        let branch_distance = git
+                            .run(&["rev-list", "--count", &format!("{base}..{candidate}")])
+                            .await
+                            .expect("count branch commits")
+                            .parse::<u64>()
+                            .expect("branch count");
+                        Some((base, head_distance, branch_distance))
+                    }
+                    Err(error)
+                        if error
+                            .downcast_ref::<GitBinaryCommandError>()
+                            .is_some_and(|error| error.status.code() == Some(1)) =>
+                    {
+                        None
+                    }
+                    Err(error) => panic!("merge-base failed: {error:#}"),
+                };
+                let actual = match graph.distances(candidate).expect("score graph candidate") {
+                    ParentBranchDistances::NotParent => None,
+                    ParentBranchDistances::Resolved {
+                        head_distance,
+                        branch_distance,
+                    } => Some((head_distance, branch_distance)),
+                    ParentBranchDistances::MultipleMergeBases => {
+                        let (base, _, _) = expected.as_ref().expect("native merge base exists");
+                        Some(
+                            graph
+                                .distances_from_base(candidate, base)
+                                .expect("score native merge base"),
+                        )
+                    }
+                };
+                assert_eq!(
+                    actual,
+                    expected.map(|(_, head_distance, branch_distance)| (
+                        head_distance,
+                        branch_distance
+                    )),
+                    "HEAD {head}, candidate {candidate}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_parent_branch_in_shallow_repository(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("create repository directory");
+        let seed = directory.path().join("seed");
+        git_init_repo(&seed);
+        git_command(&seed, ["commit", "--allow-empty", "-m", "main"]);
+        git_command(&seed, ["switch", "-c", "topic"]);
+        git_command(&seed, ["commit", "--allow-empty", "-m", "topic"]);
+        git_command(&seed, ["switch", "-c", "child"]);
+        git_command(&seed, ["commit", "--allow-empty", "-m", "child"]);
+        let seed_url = url::Url::from_file_path(&seed).expect("repository file URL");
+        git_command(
+            directory.path(),
+            [
+                "clone",
+                "--depth=2",
+                "--branch=child",
+                seed_url.as_str(),
+                "clone",
+            ],
+        );
+        let clone = directory.path().join("clone");
+        git_command(
+            &clone,
+            [
+                "fetch",
+                "--depth=1",
+                "origin",
+                "topic:refs/remotes/origin/topic",
+            ],
+        );
+        assert_eq!(
+            git_command_output(&clone, ["rev-parse", "--is-shallow-repository"]),
+            "true"
+        );
+        let repository =
+            RealGitRepository::new(&clone.join(".git"), None, Some("git".into()), cx.executor())
+                .expect("open shallow repository");
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("resolve shallow parent"),
+            Some("origin/topic".into())
         );
     }
 
