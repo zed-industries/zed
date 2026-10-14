@@ -31,65 +31,84 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// OMP's own 30 s, so OMP gets the reason rather than its timeout.
 const APP_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// One `cedian://` read OMP asked for, answered on the GPUI thread.
-pub(crate) struct Read {
-    pub url: String,
-    /// Set once OMP cancelled the read; the app then skips it.
+/// One call OMP made (a `cedian://` read, a host tool), answered on the
+/// GPUI thread.
+pub(crate) struct Call<Q, A> {
+    pub request: Q,
+    /// Set once OMP cancelled the call; the app then skips it.
     pub cancelled: Arc<AtomicBool>,
-    pub reply: std::sync::mpsc::Sender<Result<HostUriRead, String>>,
+    pub reply: std::sync::mpsc::Sender<Result<A, String>>,
+}
+
+/// One `cedian://` read OMP asked for.
+pub(crate) type Read = Call<String, HostUriRead>;
+
+/// Hand `request` to the GPUI thread over `calls` and block OMP's reader
+/// thread until it answers, OMP cancels, or [`READ_TIMEOUT`] passes.
+/// `what` names the call in the errors.
+pub(crate) fn cross<Q, A>(
+    calls: &UnboundedSender<Call<Q, A>>,
+    request: Q,
+    what: &str,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<A, String> {
+    let (reply, answer) = std::sync::mpsc::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    calls
+        .unbounded_send(Call {
+            request,
+            cancelled: cancelled.clone(),
+            reply,
+        })
+        .map_err(|_| "the cedian panel is closed".to_string())?;
+    let deadline = Instant::now() + READ_TIMEOUT;
+    loop {
+        match answer.recv_timeout(Duration::from_millis(50)) {
+            Ok(answer) => return answer,
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(format!("the app dropped {what}"));
+            }
+            Err(RecvTimeoutError::Timeout) if is_cancelled() => {
+                cancelled.store(true, Ordering::SeqCst);
+                return Err(format!("cancelled: {what}"));
+            }
+            Err(RecvTimeoutError::Timeout) if Instant::now() >= deadline => {
+                return Err(format!("no answer from the app for {what}"));
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+    }
 }
 
 /// The `cedian` scheme: each read crosses to the GPUI thread over `reads`.
 pub(crate) fn scheme(reads: UnboundedSender<Read>) -> HostUri {
     HostUri::new("cedian", move |url, ctx| {
-        let (reply, answer) = std::sync::mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        reads
-            .unbounded_send(Read {
-                url: url.to_string(),
-                cancelled: cancelled.clone(),
-                reply,
-            })
-            .map_err(|_| "the cedian panel is closed")?;
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            match answer.recv_timeout(Duration::from_millis(50)) {
-                Ok(read) => return read.map_err(Into::into),
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err(format!("the app dropped the read of {url}").into());
-                }
-                Err(RecvTimeoutError::Timeout) if ctx.is_cancelled() => {
-                    cancelled.store(true, Ordering::SeqCst);
-                    return Err(format!("cancelled: {url}").into());
-                }
-                Err(RecvTimeoutError::Timeout) if Instant::now() >= deadline => {
-                    return Err(format!("no answer from the app for {url}").into());
-                }
-                Err(RecvTimeoutError::Timeout) => {}
-            }
-        }
+        cross(&reads, url.to_string(), url, || ctx.is_cancelled()).map_err(Into::into)
     })
     .expect("cedian scheme is valid")
 }
 
-/// Answer each `cedian://` read in its own task, with `answer` called when
-/// it arrives, so a slow language server holds up only its own read. A read
-/// gets an error after [`APP_TIMEOUT`]; a cancelled one is skipped. `None`
-/// from `answer` (the panel is gone) stops.
-pub(crate) fn serve(
-    mut reads: UnboundedReceiver<Read>,
-    answer: impl Fn(&str, &mut App) -> Option<Task<Result<HostUriRead, String>>> + 'static,
+/// Answer each call in its own task, with `answer` called when it arrives,
+/// so a slow language server or debug adapter holds up only its own call.
+/// A call gets an error after [`APP_TIMEOUT`]; a cancelled one is skipped.
+/// `None` from `answer` (the panel is gone) stops. `what` names a call in
+/// the timeout error.
+pub(crate) fn serve<Q: 'static, A: 'static>(
+    mut calls: UnboundedReceiver<Call<Q, A>>,
+    what: impl Fn(&Q) -> String + 'static,
+    answer: impl Fn(&Q, &mut App) -> Option<Task<Result<A, String>>> + 'static,
     cx: &mut App,
 ) -> Task<()> {
     cx.spawn(async move |cx| {
-        while let Some(read) = reads.next().await {
-            if read.cancelled.load(Ordering::SeqCst) {
+        while let Some(call) = calls.next().await {
+            if call.cancelled.load(Ordering::SeqCst) {
                 continue;
             }
-            let Some(task) = cx.update(|cx| answer(&read.url, cx)) else {
+            let Some(task) = cx.update(|cx| answer(&call.request, cx)) else {
                 break;
             };
             let timeout = cx.background_executor().timer(APP_TIMEOUT);
+            let what = what(&call.request);
             cx.spawn(async move |_| {
                 let task = task.fuse();
                 let timeout = timeout.fuse();
@@ -97,12 +116,11 @@ pub(crate) fn serve(
                 let answer = futures::select_biased! {
                     answer = task => answer,
                     _ = timeout => Err(format!(
-                        "no answer from Zed within {}s for {}",
+                        "no answer from Zed within {}s for {what}",
                         APP_TIMEOUT.as_secs(),
-                        read.url
                     )),
                 };
-                let _ = read.reply.send(answer);
+                let _ = call.reply.send(answer);
             })
             .detach();
         }
@@ -180,7 +198,7 @@ fn buffer_read(
 /// The absolute path of `file` in the folder. Refused when it is private
 /// (`private_files`), has no entry in Zed's worktree, or resolves,
 /// symlinks followed, outside the folder.
-fn inside(
+pub(crate) fn inside(
     host: &HostTools,
     project: &Entity<Project>,
     file: &str,
@@ -753,13 +771,18 @@ mod tests {
         let (reads, rx) = futures::channel::mpsc::unbounded();
         let _serve = cx.update(|cx| {
             let project = project.clone();
-            serve(rx, move |url, cx| Some(answer(url, None, &project, cx)), cx)
+            serve(
+                rx,
+                String::clone,
+                move |url, cx| Some(answer(url, None, &project, cx)),
+                cx,
+            )
         });
         let send = |url: &str, cancelled: bool| {
             let (reply, answer) = std::sync::mpsc::channel();
             reads
                 .unbounded_send(Read {
-                    url: url.to_string(),
+                    request: url.to_string(),
                     cancelled: Arc::new(AtomicBool::new(cancelled)),
                     reply,
                 })

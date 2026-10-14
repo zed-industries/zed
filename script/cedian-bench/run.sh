@@ -392,6 +392,9 @@ lane() {
   shell|s3review|s3same) LANE_TURNS=2 LANE_ENV="CEDIAN_P2_RECORD=$1" ;;
   workflow|review|turn_lifecycle) LANE_TURNS=1 ;;
   inline_edit) LANE_TURNS=2 ;;
+  # S1-dap (ADR-0070): OMP calls cedian_debug on the real lldb-dap; not in
+  # LANES, it is recorded on its own. Needs `DevToolsSecurity -status` enabled.
+  debug_live) LANE_TURNS=1 LANE_ENV="CEDIAN_U12_RECORD=debug_live" LANE_TEST="-p cedian_debug_live --test live_turn" ;;
   *) echo "unknown lane $1" >&2; exit 2 ;;
   esac
   # A turn of these lanes may spawn a reviewer: one more model run.

@@ -377,6 +377,7 @@ impl LaunchSpec {
             cedian_workflow::WORKFLOW_UPDATE_TOOL,
             cedian_workflow::COMPLETE_TOOL,
             cedian_shell::review_agent::REVIEW_REQUEST_TOOL,
+            crate::debug_tool::TOOL,
         ];
         let mut worktree_ask = None;
         if cedian_shell::launch::registers_worktree_request(&settings) {

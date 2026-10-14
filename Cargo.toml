@@ -29,6 +29,7 @@ members = [
     "crates/cedian_agent",
     "crates/cedian_agent_ui",
     "crates/cedian_cli",
+    "crates/cedian_debug_live",
     "crates/cedian_fake_omp",
     "crates/cedian_omp",
     "crates/cedian_panel",

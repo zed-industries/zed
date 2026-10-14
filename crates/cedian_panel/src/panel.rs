@@ -419,6 +419,8 @@ pub struct CedianPanel {
     browser_evidence: Vec<Evidence>,
     /// Answers OMP's `cedian://` reads.
     _context: Option<Task<()>>,
+    /// Answers `cedian_debug` calls against Zed's debugger.
+    _debug: Option<Task<()>>,
     /// The workspace's state dir (ADR-0044), once known.
     state_dir: Option<PathBuf>,
     /// The task's workflow as last read, when one was started.
@@ -632,6 +634,7 @@ impl CedianPanel {
             _browser_quit: None,
             browser_evidence: Vec::new(),
             _context: None,
+            _debug: None,
             _worktree_changes: None,
             unsaved: Default::default(),
             _unsaved_watch: Vec::new(),
@@ -1567,9 +1570,35 @@ impl CedianPanel {
         let this = cx.entity().downgrade();
         self._context = Some(context::serve(
             read_rx,
+            String::clone,
             move |url, cx| {
                 this.update(cx, |this, cx| {
                     context::answer(url, this.workspace.as_ref(), &this.project, cx)
+                })
+                .ok()
+            },
+            cx,
+        ));
+        let (debug_tx, debug_rx) = mpsc::unbounded::<crate::debug_tool::DebugCall>();
+        spec.tools.push(crate::debug_tool::tool(debug_tx));
+        let (this, window_handle) = (cx.entity().downgrade(), window.window_handle());
+        self._debug = Some(context::serve(
+            debug_rx,
+            |op| {
+                format!(
+                    "{} {}",
+                    crate::debug_tool::TOOL,
+                    crate::debug_tool::op_name(op)
+                )
+            },
+            move |op, cx| {
+                this.update(cx, |this, cx| {
+                    let debugger = crate::debug_tool::Debugger {
+                        project: this.project.clone(),
+                        workspace: this.workspace.clone(),
+                        window: Some(window_handle),
+                    };
+                    crate::debug_tool::answer(op, &debugger, cx)
                 })
                 .ok()
             },

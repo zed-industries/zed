@@ -1,0 +1,50 @@
+{"dir":"out","frame":{"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864,"protocolVersion":1,"supportedProtocolVersions":[1,2],"type":"ready"}}
+{"dir":"in","frame":{"id":"req_1","protocolVersion":2,"type":"negotiate_protocol"}}
+{"dir":"out","frame":{"id":"159c3f6c83cc2319","method":"setWidget","type":"extension_ui_request","widgetKey":"autoresearch"}}
+{"dir":"out","frame":{"type":"advisor_cost_changed"}}
+{"dir":"out","frame":{"command":"negotiate_protocol","data":{"protocolVersion":2},"id":"req_1","success":true,"type":"response"}}
+{"dir":"in","frame":{"enabled":true,"id":"req_2","type":"set_ask_dialog"}}
+{"dir":"out","frame":{"command":"set_ask_dialog","data":{"enabled":true},"id":"req_2","success":true,"type":"response"}}
+{"dir":"in","frame":{"id":"req_tools_1","tools":[{"name":"cedian_worktree_request"}],"type":"set_host_tools"}}
+{"dir":"out","frame":{"command":"set_host_tools","data":{"toolNames":["cedian_worktree_request"]},"id":"req_tools_1","success":true,"type":"response"}}
+{"dir":"in","frame":{"id":"req_uris_1","schemes":[{"immutable":false,"scheme":"cedian","writable":false}],"type":"set_host_uri_schemes"}}
+{"dir":"out","frame":{"command":"set_host_uri_schemes","data":{"schemes":["cedian"]},"id":"req_uris_1","success":true,"type":"response"}}
+{"dir":"in","frame":{"id":"req_sub_1","level":"progress","type":"set_subagent_subscription"}}
+{"dir":"out","frame":{"command":"set_subagent_subscription","data":{"level":"progress"},"id":"req_sub_1","success":true,"type":"response"}}
+{"dir":"in","frame":{"id":"req_3","type":"get_state"}}
+{"dir":"out","frame":{"command":"get_state","id":"req_3","success":true,"type":"response","data":{"sessionId":"01a113c8-6171-72ca-9b6b-1c696dd443e1","sessionFile":"${CEDIAN_SESSION_DIR}/2026-10-07T00-34-21-681Z_01a113c8-6171-72ca-9b6b-1c696dd443e1.jsonl","model":{"id":"claude-x","name":"Claude X","api":"x","provider":"anthropic","baseUrl":"https://x","reasoning":true,"input":["text"],"cost":{"input":1,"output":2,"cacheRead":0,"cacheWrite":0},"contextWindow":200000,"maxTokens":8192}}}}
+{"dir":"in","frame":{"id":"req_5","sessionDir":"${CEDIAN_SESSION_DIR}","type":"open_session"}}
+{"dir":"out","frame":{"command":"open_session","data":{"cancelled":false,"resumed":false,"sessionFile":"${CEDIAN_SESSION_DIR}/2026-10-07T00-34-21-681Z_01a113c8-6171-72ca-9b6b-1c696dd443e1.jsonl","sessionId":"01a113c8-6171-72ca-9b6b-1c696dd443e1"},"id":"req_5","success":true,"type":"response"}}
+{"dir":"in","frame":{"id":"req_ready_state","type":"get_state"}}
+{"dir":"out","frame":{"command":"get_state","id":"req_ready_state","success":true,"type":"response","data":{"sessionId":"01a113c8-6171-72ca-9b6b-1c696dd443e1","sessionFile":"${CEDIAN_SESSION_DIR}/2026-10-07T00-34-21-681Z_01a113c8-6171-72ca-9b6b-1c696dd443e1.jsonl","model":{"id":"claude-x","name":"Claude X","api":"x","provider":"anthropic","baseUrl":"https://x","reasoning":true,"input":["text"],"cost":{"input":1,"output":2,"cacheRead":0,"cacheWrite":0},"contextWindow":200000,"maxTokens":8192}}}}
+{"dir":"in","frame":{"id":"req_6","message":"Debug main","type":"prompt"}}
+{"dir":"out","frame":{"command":"prompt","id":"req_6","success":true,"type":"response"}}
+{"dir":"out","frame":{"type":"agent_start"}}
+{"dir":"out","frame":{"type":"extension_ui_request","id":"dlg_1","method":"select","title":"Allow tool: cedian_debug\n{\"op\": \"set_breakpoint\", \"path\": \"src/main.rs\", \"line\": 3}","options":["Approve","Deny"]}}
+{"dir":"in","frame":{"id":"dlg_1","value":"Approve","type":"extension_ui_response"}}
+{"dir":"out","frame":{"type":"host_tool_call","id":"ht_1","toolCallId":"call_1","toolName":"cedian_debug","arguments":{"op":"set_breakpoint","path":"src/main.rs","line":3}}}
+{"dir":"in","frame":{"id":"ht_1","type":"host_tool_result","result":{"content":[{"type":"text","text":"{\"reply\":\"breakpoint\",\"path\":\"src/main.rs\",\"line\":3,\"set\":true}"}]}},"checkResult":true}
+{"dir":"out","frame":{"type":"extension_ui_request","id":"dlg_2","method":"select","title":"Allow tool: cedian_debug\n{\"op\": \"start\", \"scenario\": \"main\"}","options":["Approve","Deny"]}}
+{"dir":"in","frame":{"id":"dlg_2","value":"Approve","type":"extension_ui_response"}}
+{"dir":"out","frame":{"type":"host_tool_call","id":"ht_2","toolCallId":"call_2","toolName":"cedian_debug","arguments":{"op":"start","scenario":"main"}}}
+{"dir":"in","frame":{"id":"ht_2","type":"host_tool_result","result":{"content":[{"type":"text","text":"{\"reply\":\"stopped\",\"session\":0,\"thread\":1,\"top\":{\"id\":1,\"name\":\"main\",\"path\":\"src/main.rs\",\"line\":3},\"locals\":[{\"name\":\"x\",\"value\":\"42\",\"type\":\"int\"}]}"}]}},"checkResult":true}
+{"dir":"out","frame":{"type":"extension_ui_request","id":"dlg_3","method":"select","title":"Allow tool: cedian_debug\n{\"op\": \"continue\"}","options":["Approve","Deny"]}}
+{"dir":"in","frame":{"id":"dlg_3","value":"Approve","type":"extension_ui_response"}}
+{"dir":"out","frame":{"type":"host_tool_call","id":"ht_3","toolCallId":"call_3","toolName":"cedian_debug","arguments":{"op":"continue"}}}
+{"dir":"in","frame":{"id":"ht_3","type":"host_tool_result","result":{"content":[{"type":"text","text":"{\"reply\":\"stopped\",\"session\":0,\"thread\":1,\"top\":{\"id\":1,\"name\":\"main\",\"path\":\"src/main.rs\",\"line\":3},\"locals\":[{\"name\":\"x\",\"value\":\"42\",\"type\":\"int\"}]}"}]}},"checkResult":true}
+{"dir":"out","frame":{"type":"extension_ui_request","id":"dlg_4","method":"select","title":"Allow tool: cedian_debug\n{\"op\": \"sessions\"}","options":["Approve","Deny"]}}
+{"dir":"in","frame":{"id":"dlg_4","value":"Approve","type":"extension_ui_response"}}
+{"dir":"out","frame":{"type":"host_tool_call","id":"ht_4","toolCallId":"call_4","toolName":"cedian_debug","arguments":{"op":"sessions"}}}
+{"dir":"in","frame":{"id":"ht_4","type":"host_tool_result","result":{"content":[{"type":"text","text":"{\"reply\":\"sessions\",\"sessions\":[{\"id\":0,\"label\":\"main\",\"adapter\":\"fake-adapter\",\"state\":\"running\"}]}"}]}},"checkResult":true}
+{"dir":"out","frame":{"type":"extension_ui_request","id":"dlg_5","method":"select","title":"Allow tool: cedian_debug\n{\"op\": \"start\", \"scenario\": \"nope\"}","options":["Approve","Deny"]}}
+{"dir":"in","frame":{"id":"dlg_5","value":"Approve","type":"extension_ui_response"}}
+{"dir":"out","frame":{"type":"host_tool_call","id":"ht_5","toolCallId":"call_5","toolName":"cedian_debug","arguments":{"op":"start","scenario":"nope"}}}
+{"dir":"in","frame":{"id":"ht_5","type":"host_tool_result","result":{"content":[{"type":"text","text":"denied: no debug.json scenario labelled \"nope\" in this worktree (known: main)"}]},"isError":true},"checkReason":true}
+{"dir":"out","frame":{"type":"extension_ui_request","id":"dlg_6","method":"select","title":"Allow tool: cedian_debug\n{\"op\": \"set_breakpoint\", \"path\": \"../x.c\", \"line\": 1}","options":["Approve","Deny"]}}
+{"dir":"in","frame":{"id":"dlg_6","value":"Approve","type":"extension_ui_response"}}
+{"dir":"out","frame":{"type":"host_tool_call","id":"ht_6","toolCallId":"call_6","toolName":"cedian_debug","arguments":{"op":"set_breakpoint","path":"../x.c","line":1}}}
+{"dir":"in","frame":{"id":"ht_6","type":"host_tool_result","result":{"content":[{"type":"text","text":""}]},"isError":true}}
+{"dir":"out","frame":{"type":"extension_ui_request","id":"dlg_7","method":"select","title":"Allow tool: cedian_debug\n{\"op\": \"continue\", \"session\": 1}","options":["Approve","Deny"]}}
+{"dir":"in","frame":{"id":"dlg_7","value":"Deny","type":"extension_ui_response"}}
+{"dir":"out","frame":{"agentInvoked":true,"id":"req_6","sessionSettled":true,"status":"completed","type":"prompt_result"}}
+{"dir":"out","frame":{"type":"session_settled"}}

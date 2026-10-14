@@ -29,6 +29,8 @@ pub struct Record {
     pub frame: Value,
     /// The host must refuse this host tool call for the recorded reason.
     pub check_reason: bool,
+    /// The host's host tool result must carry the recorded text, whole.
+    pub check_result: bool,
 }
 
 impl Record {
@@ -43,10 +45,12 @@ impl Record {
         };
         let frame = v.get("frame").cloned().ok_or("fixture line has no frame")?;
         let check_reason = v.get("checkReason") == Some(&Value::Bool(true));
+        let check_result = v.get("checkResult") == Some(&Value::Bool(true));
         Ok(Self {
             dir,
             frame,
             check_reason,
+            check_result,
         })
     }
 
@@ -60,6 +64,9 @@ impl Record {
         let mut line = json!({"dir": dir, "frame": self.frame});
         if self.check_reason {
             line["checkReason"] = json!(true);
+        }
+        if self.check_result {
+            line["checkResult"] = json!(true);
         }
         line.to_string()
     }
@@ -193,12 +200,14 @@ mod tests {
             dir: Dir::Out,
             frame: json!({"type": "ready"}),
             check_reason: false,
+            check_result: false,
         };
         assert_eq!(Record::parse(&r.to_line()).unwrap(), r);
         let checked = Record {
             dir: Dir::In,
             frame: json!({"type": "host_tool_result"}),
             check_reason: true,
+            check_result: true,
         };
         assert_eq!(Record::parse(&checked.to_line()).unwrap(), checked);
         assert!(Record::parse(r#"{"dir":"sideways","frame":{}}"#).is_err());

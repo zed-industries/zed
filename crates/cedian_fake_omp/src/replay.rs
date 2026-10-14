@@ -4,7 +4,8 @@
 //! (`in`) frame, replay blocks for the host's next line and checks its `type`
 //! matches, and a dialog answer (and a prompt's text and recorded images,
 //! a steer's, follow-up's or subagent command's id and text, a host URI
-//! read's content, and an opted-in host tool refusal's reason) matches; the host's fresh request id
+//! read's content, an opted-in host tool refusal's reason, and an opted-in
+//! host tool result's text) matches; the host's fresh request id
 //! is mapped onto the recorded one so the recorded `response` frames
 //! correlate.
 //! Any divergence exits with [`crate::EXIT_DIVERGED`] — the host sees a
@@ -178,9 +179,10 @@ pub(crate) fn run(fixture: &Path, cwd: &Path, placeholders: &Placeholders) -> i3
                     if got.get(field) != expected.get(field) {
                         let json = |v: Option<&Value>| v.cloned().unwrap_or(Value::Null);
                         eprintln!(
-                            "fake-omp replay: divergence at record {n}: expected {field} {}, host sent {}",
+                            "fake-omp replay: divergence at record {n}: expected {field} {}, host sent {} {:?}",
                             json(expected.get(field)),
-                            json(got.get(field))
+                            json(got.get(field)),
+                            texts(&got)
                         );
                         return crate::EXIT_DIVERGED;
                     }
@@ -197,6 +199,18 @@ pub(crate) fn run(fixture: &Path, cwd: &Path, placeholders: &Placeholders) -> i3
                         "fake-omp replay: divergence at record {n}: expected refusal {:?}, host sent {:?}",
                         first_lines(&expected),
                         first_lines(&got)
+                    );
+                    return crate::EXIT_DIVERGED;
+                }
+                // An opted-in host tool result must be the recorded text.
+                if record.check_result
+                    && got_type == Some("host_tool_result")
+                    && texts(&got) != texts(&expected)
+                {
+                    eprintln!(
+                        "fake-omp replay: divergence at record {n}: expected result {:?}, host sent {:?}",
+                        texts(&expected),
+                        texts(&got)
                     );
                     return crate::EXIT_DIVERGED;
                 }
@@ -279,6 +293,16 @@ fn write_export(path: &str) -> std::io::Result<()> {
 }
 
 /// The first line of each text item of a host tool result.
+fn texts(frame: &Value) -> Vec<&str> {
+    frame
+        .pointer("/result/content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .collect()
+}
+
 fn first_lines(frame: &Value) -> Vec<&str> {
     frame
         .pointer("/result/content")

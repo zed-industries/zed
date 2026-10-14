@@ -3,6 +3,7 @@
 
 pub mod browser;
 mod context;
+pub mod debug_tool;
 pub mod dialogs;
 pub mod import;
 pub mod instruments;

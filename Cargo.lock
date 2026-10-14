@@ -2849,6 +2849,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "cedian_debug_live"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cedian_fake_omp",
+ "cedian_panel",
+ "cedian_shell",
+ "client",
+ "clock",
+ "collections",
+ "command_palette_hooks",
+ "dap",
+ "debugger_ui",
+ "editor",
+ "fs",
+ "gpui",
+ "http_client",
+ "language",
+ "node_runtime",
+ "project",
+ "serde_json",
+ "session",
+ "settings",
+ "task",
+ "theme",
+ "theme_settings",
+ "workspace",
+ "zlog",
+]
+
+[[package]]
 name = "cedian_fake_omp"
 version = "0.1.0"
 dependencies = [
@@ -2890,6 +2922,10 @@ dependencies = [
  "cedian_workspace",
  "clock",
  "collections",
+ "command_palette_hooks",
+ "dap",
+ "dap_adapters",
+ "debugger_ui",
  "editor",
  "fs",
  "futures 0.3.34",
@@ -2903,8 +2939,11 @@ dependencies = [
  "parking_lot",
  "project",
  "rand 0.9.4",
+ "serde",
  "serde_json",
  "settings",
+ "task",
+ "terminal_view",
  "text",
  "theme",
  "theme_settings",

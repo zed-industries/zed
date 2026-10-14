@@ -32,6 +32,7 @@ cedian_workflow = { path = "../cedian_workflow" }
 cedian_workspace = { path = "../cedian_workspace" }
 clock.workspace = true
 collections.workspace = true
+dap.workspace = true
 editor.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -43,7 +44,9 @@ omp-rpc = { path = "../../vendor/omp-rpc" }
 parking_lot.workspace = true
 project.workspace = true
 rand.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+task.workspace = true
 text.workspace = true
 tungstenite = "0.26"
 ui.workspace = true
@@ -54,6 +57,10 @@ worktree.workspace = true
 [dev-dependencies]
 cedian_panel = { path = ".", features = ["test-support"] }
 cedian_fake_omp = { path = "../cedian_fake_omp" }
+command_palette_hooks.workspace = true
+dap = { workspace = true, features = ["test-support"] }
+dap_adapters = { workspace = true, features = ["test-support"] }
+debugger_ui = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 hdrhistogram.workspace = true
@@ -62,6 +69,7 @@ lsp = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+terminal_view.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 tungstenite = "0.26"
@@ -129,4 +137,8 @@ harness = false
 
 [[test]]
 name = "parity_core"
+harness = false
+
+[[test]]
+name = "debug_round_trip"
 harness = false
