@@ -9,6 +9,10 @@ use std::ops::Range;
 /// Once your view implements this trait, you can use it to construct an [`ElementInputHandler<V>`].
 /// This input handler can then be assigned during paint by calling [`Window::handle_input`].
 ///
+/// Dismissing the software keyboard can leave the component focused. Call
+/// [`Window::request_virtual_keyboard`] from an editing gesture, such as tapping
+/// the field, to reopen it; repainting alone should not undo a dismissal.
+///
 /// After application-driven edits or selection changes, also call
 /// [`Window::notify_text_input_changed`] or [`Window::notify_text_selection_changed`]
 /// so native text services can invalidate their state.

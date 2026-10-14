@@ -110,6 +110,7 @@ pub(super) struct TextInputIvars {
     marked_style: RefCell<Option<Retained<NSDictionary<NSAttributedStringKey, AnyObject>>>>,
     keyboard_desired: Cell<bool>,
     keyboard_eligible: Cell<bool>,
+    reconciling_responder: Cell<bool>,
     update_pending: Cell<bool>,
     configuration_changed: Cell<bool>,
     selection_changed: Cell<bool>,
@@ -133,6 +134,19 @@ define_class!(
                 && self.ivars().keyboard_eligible.get()
         }
 
+        #[unsafe(method(resignFirstResponder))]
+        fn resign_first_responder(&self) -> bool {
+            let was_first_responder = self.isFirstResponder();
+            let resigned: bool = unsafe { msg_send![super(self), resignFirstResponder] };
+            if resigned && was_first_responder && !self.ivars().reconciling_responder.get() {
+                // UIKit can end native editing or transfer it to another view
+                // without changing GPUI focus. A repaint must not reclaim it.
+                self.ivars().keyboard_desired.set(false);
+                self.ivars().keyboard_eligible.set(false);
+            }
+            resigned
+        }
+
         #[unsafe(method(reconcileTextInput))]
         fn reconcile_text_input(&self) {
             self.ivars().update_pending.set(false);
@@ -147,7 +161,9 @@ define_class!(
             if self.canBecomeFirstResponder() {
                 if !self.isFirstResponder() { self.becomeFirstResponder(); }
             } else if self.isFirstResponder() {
+                let previous = self.ivars().reconciling_responder.replace(true);
                 self.resignFirstResponder();
+                self.ivars().reconciling_responder.set(previous);
             }
             if self.ivars().configuration_changed.replace(false) && self.isFirstResponder() {
                 self.reloadInputViews();
@@ -452,6 +468,7 @@ impl TextInputView {
             marked_style: RefCell::new(None),
             keyboard_desired: Cell::new(false),
             keyboard_eligible: Cell::new(false),
+            reconciling_responder: Cell::new(false),
             update_pending: Cell::new(false),
             configuration_changed: Cell::new(false),
             selection_changed: Cell::new(false),
@@ -660,6 +677,20 @@ pub(super) mod tests {
     }
 
     define_class!(
+        #[unsafe(super = UIView)]
+        #[thread_kind = MainThreadOnly]
+        #[name = "GPUICompetingResponderTestView"]
+        struct CompetingResponder;
+
+        unsafe impl NSObjectProtocol for CompetingResponder {}
+
+        impl CompetingResponder {
+            #[unsafe(method(canBecomeFirstResponder))]
+            fn can_become_first_responder(&self) -> bool { true }
+        }
+    );
+
+    define_class!(
         #[unsafe(super = objc2_foundation::NSObject)]
         #[thread_kind = MainThreadOnly]
         #[name = "GPUITextInputTestDelegate"]
@@ -812,6 +843,60 @@ pub(super) mod tests {
         view.set_keyboard_visible(false);
         view.reconcile_text_input(sel!(reconcileTextInput));
         assert!(!view.canBecomeFirstResponder());
+
+        #[allow(deprecated)] // The standalone protocol harness has no UIApplication scene.
+        let window = UIWindow::initWithFrame(
+            UIWindow::alloc(main_thread),
+            CGRect::new(CGPoint::ZERO, CGSize::new(320., 480.)),
+        );
+        let controller = UIViewController::new(main_thread);
+        controller.setView(Some(&view));
+        window.setRootViewController(Some(&controller));
+        window.makeKeyAndVisible();
+        view.set_keyboard_visible(true);
+        // This fixture has no GPUI handler; permit native responder activation
+        // directly to isolate UIKit-driven resignation from document queries.
+        view.ivars().keyboard_eligible.set(true);
+        assert!(view.becomeFirstResponder());
+        assert!(view.isFirstResponder());
+        assert!(view.resignFirstResponder());
+        assert!(!view.isFirstResponder());
+        assert!(
+            !view.ivars().keyboard_desired.get(),
+            "native resignation must cancel the outstanding keyboard request"
+        );
+
+        view.refresh_keyboard();
+        view.reconcile_text_input(sel!(reconcileTextInput));
+        assert!(!view.ivars().keyboard_desired.get());
+        assert!(!view.isFirstResponder());
+
+        view.set_keyboard_visible(true);
+        view.ivars().keyboard_eligible.set(true);
+        assert!(view.becomeFirstResponder());
+        let other = CompetingResponder::alloc(main_thread).set_ivars(());
+        let other: Retained<CompetingResponder> =
+            unsafe { msg_send![super(other), initWithFrame: CGRect::ZERO] };
+        view.addSubview(&other);
+        assert!(other.becomeFirstResponder());
+        assert!(!view.isFirstResponder());
+        assert!(!view.ivars().keyboard_desired.get());
+        view.refresh_keyboard();
+        view.reconcile_text_input(sel!(reconcileTextInput));
+        assert!(other.isFirstResponder());
+
+        view.set_keyboard_visible(true);
+        view.ivars().keyboard_eligible.set(true);
+        assert!(view.becomeFirstResponder());
+        // A temporary lack of an eligible handler during reconciliation must
+        // not discard a still-pending application request to show the keyboard.
+        view.reconcile_text_input(sel!(reconcileTextInput));
+        assert!(!view.isFirstResponder());
+        assert!(view.ivars().keyboard_desired.get());
+        // Resigning an already inactive view must not cancel a queued request.
+        view.resignFirstResponder();
+        assert!(view.ivars().keyboard_desired.get());
+        window.setHidden(true);
     }
 
     #[test]
