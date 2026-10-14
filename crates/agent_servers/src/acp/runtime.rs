@@ -191,7 +191,7 @@ pub(super) fn watch_process(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acp::{connect_client_future, debug_log::AcpDebugMessageDirection};
+    use crate::acp::connect_client_future;
     use acp_thread::{ElicitationStatus, ElicitationStore};
     use agent_client_protocol::schema::v2 as acp;
     use collections::HashMap;
@@ -275,6 +275,7 @@ mod tests {
     async fn shared_runtime_startup_exit_drains_stderr_in_both_arrival_orders(
         cx: &mut TestAppContext,
     ) {
+        use crate::acp::debug_log::AcpDebugMessageDirection;
         use std::os::unix::process::ExitStatusExt as _;
 
         for initialize_fails_first in [false, true] {

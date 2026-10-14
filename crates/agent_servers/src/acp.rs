@@ -30,7 +30,7 @@ use async_channel;
 use collections::{HashMap, HashSet};
 use futures::channel::mpsc;
 use futures::future::Shared;
-use futures::{Future, FutureExt as _, StreamExt as _};
+use futures::{Future, FutureExt as _};
 use project::agent_server_store::{
     AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
 };
@@ -2184,6 +2184,7 @@ pub mod test_support {
     };
 
     use super::*;
+    use futures::StreamExt as _;
 
     #[derive(Clone, Default)]
     pub struct FakeAcpAgentServer {
@@ -2803,6 +2804,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use futures::StreamExt as _;
     use settings::Settings as _;
 
     #[test]
