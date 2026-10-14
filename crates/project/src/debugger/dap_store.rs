@@ -754,6 +754,13 @@ impl DapStore {
             .map(|session_id| self.shutdown_session(*session_id, cx))
             .collect::<Vec<_>>();
 
+        // A parent whose last child just ended is shut down with it, unless
+        // the adapter ended that child and ends its parents itself: it may be
+        // about to start the next child under the same parent (the next step
+        // of `a && b && c` in a JavaScript debug terminal), and will end the
+        // parent when it is done. A child the user stopped still takes an
+        // otherwise empty parent with it.
+        let ended_by_adapter = session.read(cx).ended_by_adapter();
         let shutdown_parent_task = if let Some(parent_session) = session
             .read(cx)
             .parent_id(cx)
@@ -762,7 +769,9 @@ impl DapStore {
             let shutdown_id = parent_session.update(cx, |parent_session, _| {
                 parent_session.remove_child_session_id(session_id);
 
-                if parent_session.child_session_ids().is_empty() {
+                let adapter_ends_parent =
+                    ended_by_adapter && parent_session.quirks().adapter_ends_parent_sessions;
+                if parent_session.child_session_ids().is_empty() && !adapter_ends_parent {
                     Some(parent_session.session_id())
                 } else {
                     None

@@ -175,6 +175,8 @@ pub struct RunningMode {
 pub struct SessionQuirks {
     pub compact: bool,
     pub prefer_thread_name: bool,
+    /// See `DebugAdapter::adapter_ends_parent_sessions`.
+    pub adapter_ends_parent_sessions: bool,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -703,6 +705,9 @@ pub struct Session {
     output: VecDeque<dap::OutputEvent>,
     watchers: HashMap<SharedString, Watcher>,
     is_session_terminated: bool,
+    /// Whether the session ended because the adapter said it had (its
+    /// `terminated` event), as opposed to the user or the editor ending it.
+    ended_by_adapter: bool,
     requests: TypeIdHashMap<HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
@@ -879,6 +884,7 @@ impl Session {
                 background_tasks: Vec::default(),
                 restart_task: None,
                 is_session_terminated: false,
+                ended_by_adapter: false,
                 ignore_breakpoints: false,
                 breakpoint_store,
                 data_breakpoints: Default::default(),
@@ -1089,6 +1095,13 @@ impl Session {
         self.is_session_terminated
     }
 
+    /// Whether the session ended because the adapter reported it had, rather
+    /// than being stopped. See `DapStore::shutdown_session` for what this
+    /// changes.
+    pub fn ended_by_adapter(&self) -> bool {
+        self.ended_by_adapter
+    }
+
     pub fn console_output(&mut self, cx: &mut Context<Self>) -> mpsc::UnboundedSender<String> {
         let (tx, mut rx) = mpsc::unbounded();
 
@@ -1236,10 +1249,16 @@ impl Session {
             })
             .await;
             let (success, body) = match result {
+                // The terminal's process runs the requested command and ends
+                // with it, so it is reported as the debuggee as well as the
+                // shell. Without a debuggee id, js-debug watches the first
+                // Node process that connects instead and ends the session
+                // when that one exits — which, for `a && b && c`, is after
+                // `a`, before the rest of the chain has run.
                 Ok(pid) => (
                     true,
                     serde_json::to_value(dap::RunInTerminalResponse {
-                        process_id: None,
+                        process_id: Some(pid as u64),
                         shell_process_id: Some(pid as u64),
                     })
                     .ok(),
@@ -1552,6 +1571,11 @@ impl Session {
                 self.clear_active_debug_line(cx);
             }
             Events::Terminated(_) => {
+                // Recorded only when nothing else ended the session first: a
+                // stop the user asked for is answered with `terminated` too.
+                if !self.is_session_terminated {
+                    self.ended_by_adapter = true;
+                }
                 self.shutdown(cx).detach();
             }
             Events::Thread(event) => {
@@ -2966,6 +2990,11 @@ impl Session {
 
     pub fn quirks(&self) -> SessionQuirks {
         self.quirks
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_quirks(&mut self, quirks: SessionQuirks) {
+        self.quirks = quirks;
     }
 
     fn launch_browser_for_remote_server(

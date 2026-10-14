@@ -4,7 +4,10 @@ use collections::HashMap;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use serde_json::Value;
-use std::{path::PathBuf, sync::OnceLock};
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 use task::DebugRequest;
 use util::{ResultExt, maybe, shell::Shell, shell_builder::ShellBuilder};
 
@@ -62,6 +65,9 @@ impl JsDebugAdapter {
 
         let mut configuration = task_definition.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
+            // Read before the type is normalized to `pwa-node` below.
+            let is_node_terminal =
+                configuration.get("type").and_then(Value::as_str) == Some("node-terminal");
             maybe!({
                 configuration
                     .get("type")
@@ -121,6 +127,15 @@ impl JsDebugAdapter {
             configuration
                 .entry("cwd")
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
+
+            if is_node_terminal
+                && let Some(cwd) = configuration
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .map(PathBuf::from)
+            {
+                add_project_bins_to_path(configuration, &cwd);
+            }
 
             let is_attach = configuration.get("request").and_then(Value::as_str) == Some("attach");
             if !is_attach {
@@ -572,6 +587,67 @@ impl DebugAdapter for JsDebugAdapter {
     fn prefer_thread_name(&self) -> bool {
         true
     }
+
+    // js-debug ends a parent session itself: it is told the debug terminal's
+    // shell process id, and ends the terminal's session when that shell exits.
+    // Between two steps of a chain run there, the session has no children.
+    fn adapter_ends_parent_sessions(&self) -> bool {
+        true
+    }
+}
+
+/// Puts the project's `node_modules/.bin` folders first on the `PATH` of a
+/// debug terminal's command, nearest folder first, as `npm run` does for a
+/// script. A command written as it would be in `package.json`
+/// (`gulp build && fast-serve`) then finds the project's own tools, and so
+/// do the tools those start by name (fast-serve runs `gulp bundle`).
+///
+/// It goes in the configuration's `env`, which js-debug hands on to the
+/// terminal it asks the editor for. A `PATH` the user set there is kept and
+/// extended; otherwise the terminal's usual one is (the IDE's runtimes
+/// first, see `ide_env`, then this process's).
+fn add_project_bins_to_path(configuration: &mut serde_json::Map<String, Value>, cwd: &Path) {
+    let bins: Vec<PathBuf> = cwd
+        .ancestors()
+        .map(|dir| dir.join("node_modules").join(".bin"))
+        .filter(|dir| dir.is_dir())
+        .collect();
+    if bins.is_empty() {
+        return;
+    }
+
+    let env = configuration
+        .entry("env")
+        .or_insert_with(|| Value::Object(Default::default()));
+    let Some(env) = env.as_object_mut() else {
+        return;
+    };
+    // Windows spells it `Path` as often as `PATH`. Two differently spelled
+    // variables in one environment would leave it to chance which is read,
+    // so the spelling already in use is kept.
+    let key = env
+        .keys()
+        .find(|name| ide_env::is_path_variable(name))
+        .cloned()
+        .or_else(|| {
+            std::env::vars_os().find_map(|(name, _)| {
+                name.to_str()
+                    .filter(|name| ide_env::is_path_variable(name))
+                    .map(str::to_owned)
+            })
+        })
+        .unwrap_or_else(|| "PATH".to_owned());
+    let base = env
+        .get(&key)
+        .and_then(Value::as_str)
+        .map(std::ffi::OsString::from)
+        .or_else(|| ide_env::path_env(Some(cwd)))
+        .or_else(|| std::env::var_os("PATH"));
+    if let Some(path) =
+        ide_env::prepend(&bins, base.as_deref()).and_then(|path| path.into_string().ok())
+    {
+        env.insert(key, Value::String(path));
+    }
 }
 
 fn normalize_task_type(task_type: &mut Value) {
@@ -588,4 +664,77 @@ fn normalize_task_type(task_type: &mut Value) {
     .to_owned();
 
     *task_type = Value::String(new_name);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn path_entries(configuration: &serde_json::Map<String, Value>) -> Vec<PathBuf> {
+        let env = configuration["env"].as_object().unwrap();
+        let (_, path) = env
+            .iter()
+            .find(|(name, _)| ide_env::is_path_variable(name))
+            .expect("a PATH was set");
+        std::env::split_paths(path.as_str().unwrap()).collect()
+    }
+
+    #[test]
+    fn project_bins_come_first_nearest_first() {
+        let root = tempfile::tempdir().unwrap();
+        let app = root.path().join("packages").join("app");
+        for dir in [root.path(), app.as_path()] {
+            std::fs::create_dir_all(dir.join("node_modules").join(".bin")).unwrap();
+        }
+
+        let mut configuration = serde_json::Map::new();
+        add_project_bins_to_path(&mut configuration, &app);
+
+        let entries = path_entries(&configuration);
+        assert_eq!(entries[0], app.join("node_modules").join(".bin"));
+        assert_eq!(entries[1], root.path().join("node_modules").join(".bin"));
+        // What the terminal would otherwise have follows them.
+        assert!(entries.len() > 2);
+    }
+
+    #[test]
+    fn a_path_the_user_set_is_kept_behind_them() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("node_modules").join(".bin")).unwrap();
+        let theirs = std::env::join_paths([root.path().join("tools")]).unwrap();
+
+        let mut configuration = serde_json::Map::new();
+        configuration.insert(
+            "env".into(),
+            serde_json::json!({ "PATH": theirs.to_str().unwrap() }),
+        );
+        add_project_bins_to_path(&mut configuration, root.path());
+
+        let env = configuration["env"].as_object().unwrap();
+        assert_eq!(env.len(), 1, "no second, differently spelled PATH");
+        assert_eq!(
+            path_entries(&configuration),
+            vec![
+                root.path().join("node_modules").join(".bin"),
+                root.path().join("tools"),
+            ]
+        );
+    }
+
+    #[test]
+    fn nothing_changes_without_a_node_modules_folder() {
+        let root = tempfile::tempdir().unwrap();
+        // Only meaningful where nothing above the temp folder is a Node
+        // project of its own.
+        if root
+            .path()
+            .ancestors()
+            .any(|dir| dir.join("node_modules").join(".bin").is_dir())
+        {
+            return;
+        }
+        let mut configuration = serde_json::Map::new();
+        add_project_bins_to_path(&mut configuration, root.path());
+        assert!(!configuration.contains_key("env"));
+    }
 }

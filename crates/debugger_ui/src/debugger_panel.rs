@@ -197,6 +197,7 @@ impl DebugPanel {
         let quirks = SessionQuirks {
             compact: adapter.compact_child_session(),
             prefer_thread_name: adapter.prefer_thread_name(),
+            adapter_ends_parent_sessions: adapter.adapter_ends_parent_sessions(),
         };
         let session = dap_store.update(cx, |dap_store, cx| {
             dap_store.new_session(

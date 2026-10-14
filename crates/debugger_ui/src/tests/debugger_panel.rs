@@ -21,7 +21,7 @@ use editor::{
 use gpui::{AppContext, BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{
     FakeFs, Project,
-    debugger::session::{ThreadId, ThreadStatus},
+    debugger::session::{SessionQuirks, ThreadId, ThreadStatus},
 };
 use serde_json::json;
 use std::{
@@ -347,6 +347,11 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
 
                 assert!(response.success);
                 assert!(response.body.is_some());
+                // The terminal's process is reported as the debuggee too, so
+                // an adapter watches it, not the first program that connects.
+                let body = response.body.clone().unwrap();
+                assert!(body.get("processId").is_some_and(|id| !id.is_null()));
+                assert_eq!(body.get("processId"), body.get("shellProcessId"));
             }
         })
         .await;
@@ -887,6 +892,134 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
             dap_store
                 .session_by_id(second_child_session.read(cx).session_id())
                 .is_none()
+        );
+    });
+}
+
+/// An adapter that ends its own parent sessions (js-debug running
+/// `a && b && c` in a debug terminal) can end a parent's only child and then
+/// start the next one under the same parent. The parent must survive the gap
+/// in between; a child the user stops still takes an empty parent with it.
+#[gpui::test]
+async fn test_parent_session_outlives_children_its_adapter_ended(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let dap_store = project.update(cx, |project, _| project.dap_store());
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let parent_session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    // Child sessions copy their parent's quirks, so these hold for them too.
+    parent_session.update(cx, |session, _| {
+        session.set_quirks(SessionQuirks {
+            adapter_ends_parent_sessions: true,
+            ..session.quirks()
+        })
+    });
+    let client = parent_session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client.on_response::<StartDebugging, _>(move |_| {}).await;
+    let _reverse_request_subscription =
+        project::debugger::test::intercept_debug_sessions(cx, |_| {});
+
+    // The first step of the chain starts.
+    client
+        .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
+            configuration: json!({}),
+            request: StartDebuggingRequestArgumentsRequest::Launch,
+        })
+        .await;
+    cx.run_until_parked();
+
+    let first_child_session = dap_store.read_with(cx, |dap_store, _| {
+        dap_store.session_by_id(SessionId(1)).unwrap()
+    });
+    let first_child_client =
+        first_child_session.update(cx, |session, _| session.adapter_client().unwrap());
+    first_child_client.on_request::<Disconnect, _>(move |_, _| Ok(()));
+    cx.run_until_parked();
+
+    // It finishes: the adapter reports its session as terminated.
+    first_child_client
+        .fake_event(dap::messages::Events::Terminated(None))
+        .await;
+    cx.run_until_parked();
+
+    dap_store.update(cx, |dap_store, cx| {
+        assert!(
+            first_child_session.read(cx).ended_by_adapter(),
+            "the adapter ended the first child"
+        );
+        assert!(
+            dap_store
+                .session_by_id(first_child_session.read(cx).session_id())
+                .is_none(),
+            "the first child is gone"
+        );
+        assert!(
+            dap_store
+                .session_by_id(parent_session.read(cx).session_id())
+                .is_some(),
+            "the parent outlives the child its adapter ended"
+        );
+    });
+
+    // The next step starts under the same parent.
+    client
+        .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
+            configuration: json!({}),
+            request: StartDebuggingRequestArgumentsRequest::Launch,
+        })
+        .await;
+    cx.run_until_parked();
+
+    let second_child_session = dap_store.read_with(cx, |dap_store, _| {
+        dap_store.session_by_id(SessionId(2)).unwrap()
+    });
+    let second_child_client =
+        second_child_session.update(cx, |session, _| session.adapter_client().unwrap());
+    second_child_client.on_request::<Disconnect, _>(move |_, _| Ok(()));
+    cx.run_until_parked();
+
+    parent_session.read_with(cx, |parent, _| {
+        assert!(
+            parent.child_session_ids().contains(&SessionId(2)),
+            "the next child runs under the same parent"
+        );
+    });
+
+    // The user stops that child: an otherwise empty parent goes with it.
+    dap_store
+        .update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(second_child_session.read(cx).session_id(), cx)
+        })
+        .await
+        .unwrap();
+
+    dap_store.update(cx, |dap_store, cx| {
+        assert!(
+            !second_child_session.read(cx).ended_by_adapter(),
+            "the user stopped the second child"
+        );
+        assert!(
+            dap_store
+                .session_by_id(parent_session.read(cx).session_id())
+                .is_none(),
+            "stopping the last child still ends the parent"
         );
     });
 }

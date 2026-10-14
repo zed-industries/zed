@@ -733,6 +733,49 @@ and folded into a commit; keep only what's still open.
   disconnect logic) or live instrumented testing (temporary diagnostic
   logging + rebuild) rather than more black-box reproduction cycles.
 
+- **Update 2026-10-14 — actual root cause found, fix pending test.** Reproduced
+  with a dependency-free project (three `node` scripts chained with `&&`, each
+  with a `debugger;` statement) and js-debug's own message log
+  (`"trace": {"logFile": …}` in the debug config). The log shows the first
+  step's child session working normally — paused, inspected, continued — and
+  ending on js-debug's `terminated` event. The editor then sent `disconnect`
+  to the **parent** session as well (the one owning the debug terminal and
+  its shell), js-debug tore everything down (including a failed `taskkill`
+  of the debuggee), and the second step's child session was created and
+  immediately `terminated` — leaving that process at "Waiting for the
+  debugger to disconnect...".
+
+  The cause is a deliberate rule in `DapStore::shutdown_session`
+  (`crates/project/src/debugger/dap_store.rs`, from upstream): when a
+  parent's last child session ends, the parent is shut down too. Between two
+  steps of a chain the parent briefly has no children, so the rule fires.
+  The duplicate-adapter-spawn and three-connections observations above were
+  side effects, not the cause.
+
+  Fix: a new adapter hook, `DebugAdapter::adapter_ends_parent_sessions`
+  (default `false`; `true` for the JavaScript adapter, carried in
+  `SessionQuirks`), and `Session::ended_by_adapter`, set when the session
+  ends on the adapter's `terminated` event. The parent is now kept when its
+  last child was ended by an adapter that ends parents itself. js-debug does:
+  the editor gives it the debug terminal's shell process id, and it ends that
+  session when the shell exits. A child the user stops still takes an empty
+  parent with it. Test: `test_parent_session_outlives_children_its_adapter_ended`.
+  Gap #14 is expected to share this cause; to be re-checked after the fix.
+
+- **Update 2026-10-14 (second cause).** With the fix above, the editor no
+  longer ends the parent — but js-debug then did, about a second after the
+  first step exited, just after it had announced the second step. js-debug
+  decides "the program has ended" by watching a process: the debuggee
+  `processId` from the editor's `runInTerminal` response, or, when that is
+  absent, the **first Node process that connects** (its terminal-program
+  class, `gotTelemetery`). The editor answered with only `shellProcessId`, so
+  js-debug watched `clean.js` and ended everything when it exited. Fix: the
+  `runInTerminal` response (`Session::handle_run_in_terminal_request`) now
+  reports the terminal's process as `processId` too. That process runs the
+  whole command and ends with it, so a single program behaves as before, a
+  chain keeps its session until the last step, and Stop still kills the
+  process tree. Both fixes are needed.
+
 ### 14. node-terminal auto-attach actively breaks the build: pollutes internal tool subprocesses' stdio (severe)
 
 - **Symptom:** tested a different, simpler scenario than gaps #12/#13 —
@@ -802,6 +845,26 @@ and folded into a commit; keep only what's still open.
   likely resolve #14 as a side effect (subprocesses would get a real,
   functioning debug session that properly continues them instead of
   hanging until timeout).
+
+- **Update 2026-10-14 — cause confirmed, configuration fix found.** Still
+  present after both gap #13 fixes (an SPFx project's `gulp build`: `[tsc]`
+  and `[lint]` failed on "Debugger attached." in their stderr). js-debug's
+  launch sets the bootloader to attach to every Node process in the
+  terminal's tree (`autoAttachMode: "always"`) unless
+  `autoAttachChildProcesses` is `false`, which sets `onlyEntrypoint`: only
+  the first Node process of each tree is attached. Each step a shell chain
+  starts is the first of its own tree, so the steps stay debuggable while
+  the tools they start (`tsc`, ESLint) are left alone. Confirmed: with
+  `"autoAttachChildProcesses": false`, `gulp clean` and `gulp build` both
+  finished cleanly under the debugger. Caveat: with `npm run x`, npm itself
+  is the first process, so the script it runs is not attached — call the
+  tool directly. Possible follow-up: default it to `false` for
+  `node-terminal`.
+- **Related fix:** `node-terminal` commands now get the project's
+  `node_modules/.bin` folders first on `PATH`, as `npm run` gives a
+  script (`add_project_bins_to_path` in `dap_adapters/src/javascript.rs`),
+  so `gulp build && fast-serve` works as written, including tools that call
+  others by name (fast-serve spawns `gulp bundle`).
 
 ## Resolved
 

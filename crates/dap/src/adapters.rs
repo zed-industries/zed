@@ -396,6 +396,18 @@ pub trait DebugAdapter: 'static + Send + Sync {
         false
     }
 
+    /// Whether this adapter ends its own parent sessions. By default the
+    /// editor shuts a parent session down as soon as its last child session
+    /// ends. An adapter that runs several programs in turn under one parent
+    /// (js-debug, for a chain like `a && b && c` in a debug terminal) has no
+    /// child for a moment between them, and would lose the parent, and the
+    /// rest of the chain, in that moment. Such an adapter returns `true` and
+    /// ends the parent itself; a parent is then only shut down with its last
+    /// child when the user stopped that child.
+    fn adapter_ends_parent_sessions(&self) -> bool {
+        false
+    }
+
     /// Lowercased substrings an OS process's executable name must contain
     /// (matching any one of them) to be offered as an Attach target for this
     /// adapter. `None` means "don't filter" (show every process, previous
