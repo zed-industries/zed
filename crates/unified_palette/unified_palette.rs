@@ -1,7 +1,8 @@
 mod unified_palette_tests;
 
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task,
+    Window,
 };
 use gpui_util::ResultExt;
 use picker::{Picker, PickerDelegate, QueryMode};
@@ -168,6 +169,7 @@ fn mode_from_query(query: &str) -> Option<(Mode, &str)> {
 
 struct ModeHelp {
     picker: Entity<Picker<ModeHelpDelegate>>,
+    _subscription: Subscription,
 }
 
 impl ModeHelp {
@@ -177,16 +179,24 @@ impl ModeHelp {
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| {
-            Picker::nonsearchable_uniform_list(
+            let mut picker = Picker::uniform_list(
                 ModeHelpDelegate {
                     workspace,
                     selected_index: 0,
                 },
                 window,
                 cx,
-            )
+            );
+            picker.set_query_mode(QueryMode::Prefixed('?'), "", window, cx);
+            picker
         });
-        Self { picker }
+        let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+            cx.emit(DismissEvent);
+        });
+        Self {
+            picker,
+            _subscription: subscription,
+        }
     }
 }
 
@@ -248,10 +258,16 @@ impl PickerDelegate for ModeHelpDelegate {
 
     fn update_matches(
         &mut self,
-        _query: String,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
+        // Keep the help prefix fixed without preventing the user from deleting it.
+        if !query.is_empty() {
+            cx.defer_in(window, |picker, window, cx| {
+                picker.set_query("?", window, cx);
+            });
+        }
         Task::ready(())
     }
 

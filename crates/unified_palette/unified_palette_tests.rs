@@ -298,17 +298,39 @@ async fn help_prefix_shows_available_modes(cx: &mut TestAppContext) {
                 .is_none()
         );
         let help = workspace.active_modal::<ModeHelp>(cx).unwrap();
-        assert_eq!(help.read(cx).picker.read(cx).delegate.match_count(), 6);
+        let picker = help.read(cx).picker.clone();
+        assert_eq!(picker.read(cx).query(cx), "?");
+        assert_eq!(picker.read(cx).delegate.match_count(), 6);
     });
+    let picker = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_modal::<ModeHelp>(cx)
+            .unwrap()
+            .read(cx)
+            .picker
+            .clone()
+    });
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_query("?extra", window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(picker.read_with(cx, |picker, cx| picker.query(cx)), "?");
 
     cx.dispatch_action(Confirm);
     cx.run_until_parked();
+    let file_finder = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_modal::<file_finder::FileFinder>(cx)
+            .unwrap()
+    });
+    file_finder.update_in(cx, |file_finder, window, cx| {
+        file_finder.set_query("?", window, cx);
+    });
+    cx.run_until_parked();
+    cx.dispatch_action(menu::Cancel);
+    cx.run_until_parked();
     workspace.read_with(cx, |workspace, cx| {
-        assert!(
-            workspace
-                .active_modal::<file_finder::FileFinder>(cx)
-                .is_some()
-        );
+        assert!(workspace.active_modal::<ModeHelp>(cx).is_none());
     });
 }
 
