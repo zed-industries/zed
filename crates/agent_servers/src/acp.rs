@@ -830,9 +830,9 @@ fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities 
 }
 
 impl AcpConnection {
-    /// Binds supported v2 session updates to the existing foreground session registry.
+    /// Binds supported v2 client handlers to the existing foreground owners.
     /// This does not change the protocol used by the connection's transport.
-    pub fn with_v2_session_ingress<Handler: HandleDispatchFrom<Agent>>(
+    pub fn with_v2_client_ingress<Handler: HandleDispatchFrom<Agent>>(
         &self,
         builder: V2Builder<Client, Handler>,
     ) -> V2Builder<Client, impl HandleDispatchFrom<Agent> + use<Handler>> {
@@ -850,6 +850,55 @@ impl AcpConnection {
             move |notification| dispatch(notification.into())
         });
         with_v2_session_notifications(builder, dispatch)
+            .on_receive_request(
+                {
+                    let dispatch_sender = self.dispatch_tx.clone();
+                    async move |request: acp_v2::RequestPermissionRequest,
+                                responder,
+                                _connection| {
+                        enqueue_request(
+                            &dispatch_sender,
+                            request,
+                            responder,
+                            handle_v2_request_permission,
+                        );
+                        Ok(())
+                    }
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                {
+                    let dispatch_sender = self.dispatch_tx.clone();
+                    async move |request: acp_v2::CreateElicitationRequest,
+                                responder,
+                                _connection| {
+                        enqueue_request(
+                            &dispatch_sender,
+                            request,
+                            responder,
+                            handle_v2_create_elicitation,
+                        );
+                        Ok(())
+                    }
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_notification(
+                {
+                    let dispatch_sender = self.dispatch_tx.clone();
+                    async move |notification: acp_v2::CompleteElicitationNotification,
+                                _connection| {
+                        enqueue_notification(
+                            &dispatch_sender,
+                            notification,
+                            handle_v2_complete_elicitation,
+                        );
+                        Ok(())
+                    }
+                },
+                agent_client_protocol::on_receive_notification!(),
+            )
     }
 
     pub fn subscribe_debug_messages(
@@ -3087,7 +3136,86 @@ mod tests {
         acp_v2::Meta::from_iter([("scope".to_owned(), serde_json::json!(scope))])
     }
 
+    async fn v2_response<Response: 'static>(
+        response: Task<Result<Response, acp::Error>>,
+        cx: &mut gpui::TestAppContext,
+        description: &str,
+    ) -> Result<Response, acp::Error> {
+        let timeout = cx
+            .background_executor
+            .timer(std::time::Duration::from_secs(5));
+        futures::pin_mut!(response, timeout);
+        match futures::future::select(response, timeout).await {
+            futures::future::Either::Left((result, _)) => result,
+            futures::future::Either::Right(_) => panic!("timed out waiting for {description}"),
+        }
+    }
+
     impl V2SessionHarness {
+        fn request<Request: agent_client_protocol::JsonRpcRequest>(
+            &self,
+            request: Request,
+            cx: &mut gpui::TestAppContext,
+        ) -> (
+            Task<Result<Request::Response, acp::Error>>,
+            agent_client_protocol::RequestCancellationHandle,
+        )
+        where
+            Request::Response: Send + 'static,
+        {
+            let request = self.agent.send_request(request);
+            let cancellation = request.cancellation_handle();
+            (cx.background_spawn(request.block_task()), cancellation)
+        }
+
+        fn elicitation_id(
+            &self,
+            session_scoped: bool,
+            cx: &gpui::TestAppContext,
+        ) -> acp_thread::ElicitationEntryId {
+            if session_scoped {
+                self.thread.read_with(cx, |thread, _| {
+                    let Some(acp_thread::AgentThreadEntry::Elicitation(id)) =
+                        thread.entries().last()
+                    else {
+                        panic!("session elicitation entry");
+                    };
+                    id.clone()
+                })
+            } else {
+                self.connection
+                    .request_elicitations
+                    .read_with(cx, |store, _| {
+                        store
+                            .elicitations()
+                            .last()
+                            .expect("request elicitation")
+                            .id
+                            .clone()
+                    })
+            }
+        }
+
+        fn respond_to_elicitation(
+            &self,
+            session_scoped: bool,
+            id: &acp_thread::ElicitationEntryId,
+            response: acp_v2::CreateElicitationResponse,
+            cx: &mut gpui::TestAppContext,
+        ) {
+            if session_scoped {
+                self.thread.update(cx, |thread, cx| {
+                    thread.respond_to_elicitation(id, response, cx);
+                });
+            } else {
+                self.connection
+                    .request_elicitations
+                    .update(cx, |store, cx| {
+                        store.respond_to_elicitation(id, response, cx);
+                    });
+            }
+        }
+
         async fn new(cx: &mut gpui::TestAppContext) -> Self {
             let (connection, project, _, _, _, _, legacy_agent_task) =
                 connect_fake_agent(None, cx).await;
@@ -3150,7 +3278,7 @@ mod tests {
                 agent_client_protocol::on_receive_notification!(),
             );
             let client_builder = connection
-                .with_v2_session_ingress(observed_builder)
+                .with_v2_client_ingress(observed_builder)
                 .on_receive_notification(
                     {
                         let fallback = fallback.clone();
@@ -3311,6 +3439,560 @@ mod tests {
             );
             receiver.await.expect("installed session list")
         }
+    }
+
+    #[gpui::test]
+    async fn v2_permission_sdk_preserves_requests_and_returns_offered_outcomes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        for subject in [
+            json!(null),
+            json!({"type": "tool_call", "toolCall": {"toolCallId": "unseen",
+                "title": "Subject title", "kind": "_future", "rawInput": {"retain": [null, 7]},
+                "_meta": {"scope": "tool"}}}),
+            json!({"type": "command", "command": "echo 'opaque'", "cwd": "/a",
+                "toolCallId": "unseen", "terminalId": "unseen", "_meta": {"scope": "subject"}}),
+            json!({"type": "_future", "payload": {"retain": [false, null]},
+                "_meta": {"scope": "subject"}}),
+        ] {
+            let source = json!({"sessionId": "v2-terminal-session", "title": "Permission title",
+                "description": "Separate explanation", "subject": subject,
+                "options": [
+                    {"optionId": "allow", "name": "Allow", "kind": "allow_once",
+                        "_meta": {"scope": "allow"}},
+                    {"optionId": "opaque", "name": "Unknown hint", "kind": "_future",
+                        "_meta": {"scope": "option", "retain": [null, 7]}}
+                ], "_meta": {"scope": "request"}});
+            let request: acp_v2::RequestPermissionRequest =
+                serde_json::from_value(source.clone()).expect("permission request");
+            let (mut response, _cancellation) = harness.request(request.clone(), cx);
+            harness.drain(cx).await;
+            let id = harness.thread.read_with(cx, |thread, _| {
+                let requests = thread.pending_permission_requests().collect::<Vec<_>>();
+                let [permission] = requests.as_slice() else {
+                    panic!("one generic permission");
+                };
+                assert_eq!(permission.generic_request(), Some(&request));
+                assert!(permission.legacy_tool_call_id().is_none());
+                assert!(
+                    thread.entries().is_empty(),
+                    "permission subjects do not create tools"
+                );
+                permission.id
+            });
+            assert!(
+                (&mut response).now_or_never().is_none(),
+                "no inferred approval"
+            );
+            harness.thread.update(cx, |thread, cx| {
+                thread.select_permission_option(id, "not-offered".into(), cx);
+            });
+            cx.run_until_parked();
+            assert!((&mut response).now_or_never().is_none());
+            harness.thread.update(cx, |thread, cx| {
+                thread.select_permission_option(id, "opaque".into(), cx);
+            });
+            let result = v2_response(response, cx, "permission selection")
+                .await
+                .expect("permission response");
+            assert_eq!(
+                result.outcome,
+                acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                    "opaque"
+                ))
+            );
+            assert!(
+                result.meta.is_none(),
+                "request metadata is not response metadata"
+            );
+        }
+        for (session_id, options, expected_code) in [
+            (
+                "unknown",
+                json!([{"optionId": "allow", "name": "Allow", "kind": "allow_once"}]),
+                ErrorCode::InternalError,
+            ),
+            ("v2-terminal-session", json!([]), ErrorCode::InvalidParams),
+            (
+                "v2-terminal-session",
+                json!([
+                {"optionId": "same", "name": "Allow", "kind": "allow_once"},
+                {"optionId": "same", "name": "Reject", "kind": "reject_once"}]),
+                ErrorCode::InvalidParams,
+            ),
+        ] {
+            let request = serde_json::from_value::<acp_v2::RequestPermissionRequest>(
+                json!({"sessionId": session_id, "title": "Invalid", "options": options}),
+            )
+            .expect("typed invalid permission");
+            let (response, _cancellation) = harness.request(request, cx);
+            assert_eq!(
+                v2_response(response, cx, "invalid permission response")
+                    .await
+                    .expect_err("reject invalid permission")
+                    .code,
+                expected_code
+            );
+        }
+        harness.thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+            assert!(thread.entries().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn v2_permission_sdk_cancellation_is_entry_scoped_and_does_not_retain_owner(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let harness = V2SessionHarness::new(cx).await;
+        let request = acp_v2::RequestPermissionRequest::new(
+            "v2-terminal-session",
+            "Same subject",
+            vec![acp_v2::PermissionOption::new(
+                "allow",
+                "Allow",
+                acp_v2::PermissionOptionKind::AllowOnce,
+            )],
+        )
+        .subject(acp_v2::RequestPermissionSubject::Command(
+            acp_v2::CommandPermissionSubject::new("echo test", "/a"),
+        ));
+        let published = Rc::new(RefCell::new(0));
+        let subscription = cx.update(|cx| {
+            cx.subscribe(&harness.thread, {
+                let published = published.clone();
+                move |_, event, _| {
+                    if matches!(
+                        event,
+                        acp_thread::AcpThreadEvent::ToolAuthorizationRequested(_)
+                    ) {
+                        *published.borrow_mut() += 1;
+                    }
+                }
+            })
+        });
+        let (response, cancellation) = harness.request(request.clone(), cx);
+        cancellation
+            .cancel()
+            .expect("cancel before foreground publication");
+        drain_sdk_background_tasks(cx);
+        harness.thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+        });
+        assert_eq!(
+            v2_response(response, cx, "pre-cancelled permission")
+                .await
+                .expect_err("RPC cancellation before registration")
+                .code,
+            ErrorCode::RequestCancelled
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            *published.borrow(),
+            0,
+            "no transient permission publication"
+        );
+        drop(subscription);
+
+        let (first, cancellation) = harness.request(request.clone(), cx);
+        harness.drain(cx).await;
+        let first_id = harness.thread.read_with(cx, |thread, _| {
+            thread
+                .pending_permission_requests()
+                .next()
+                .expect("first permission")
+                .id
+        });
+        let (second, _second_cancellation) = harness.request(request.clone(), cx);
+        harness.drain(cx).await;
+        let second_id = harness.thread.read_with(cx, |thread, _| {
+            thread
+                .pending_permission_requests()
+                .find(|request| request.id != first_id)
+                .expect("same-subject successor")
+                .id
+        });
+        cancellation.cancel().expect("cancel first SDK request");
+        assert_eq!(
+            v2_response(first, cx, "permission RPC cancellation")
+                .await
+                .expect_err("RPC cancellation")
+                .code,
+            ErrorCode::RequestCancelled
+        );
+        harness.thread.update(cx, |thread, cx| {
+            assert!(thread.permission_request(first_id).is_none());
+            assert!(thread.permission_request(second_id).is_some());
+            thread.cancel_permission_request(second_id, cx);
+        });
+        assert_eq!(
+            v2_response(second, cx, "local permission cancellation")
+                .await
+                .expect("local cancellation response")
+                .outcome,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+
+        let (response, _cancellation) = harness.request(request, cx);
+        harness.drain(cx).await;
+        let weak_thread = harness.thread.downgrade();
+        let V2SessionHarness {
+            connection,
+            thread,
+            agent,
+            _client_task,
+            _agent_task,
+            _legacy_agent_task,
+            ..
+        } = harness;
+        let _transports = (
+            connection,
+            agent,
+            _client_task,
+            _agent_task,
+            _legacy_agent_task,
+        );
+        cx.update(|_| drop(thread));
+        assert!(weak_thread.upgrade().is_none());
+        assert_eq!(
+            v2_response(response, cx, "permission owner-drop response")
+                .await
+                .expect("dropped-owner response")
+                .outcome,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_elicitation_sdk_routes_scopes_preserves_source_and_completes_urls(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use acp_thread::{Elicitation, ElicitationStatus};
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        for session_scoped in [false, true] {
+            let scope: acp_v2::ElicitationScope = if session_scoped {
+                acp_v2::ElicitationSessionScope::new("v2-terminal-session")
+                    .tool_call_id("unseen")
+                    .into()
+            } else {
+                acp_v2::ElicitationRequestScope::new(
+                    serde_json::from_value::<acp_v2::RequestId>(json!("auth-request"))
+                        .expect("string request ID"),
+                )
+                .into()
+            };
+            let schema = serde_json::from_value::<acp_v2::ElicitationSchema>(json!({
+                "type": "object", "properties": {"name": {"type": "string",
+                    "_meta": {"scope": "property", "retain": [null, 7]}}},
+                "required": ["name"], "_meta": {"scope": "schema"}
+            }))
+            .expect("form schema");
+            let request = acp_v2::CreateElicitationRequest::new(
+                acp_v2::ElicitationFormMode::new(scope, schema),
+                "Provide a name",
+            )
+            .meta(v2_terminal_meta("request"));
+            let (response, _cancellation) = harness.request(request.clone(), cx);
+            harness.drain(cx).await;
+            let entry_id = harness.elicitation_id(session_scoped, cx);
+            let check = |elicitation: &Elicitation| {
+                assert_eq!(elicitation.request, request);
+                assert!(matches!(
+                    elicitation.status,
+                    ElicitationStatus::Pending { .. }
+                ));
+            };
+            if session_scoped {
+                harness.thread.read_with(cx, |thread, _| {
+                    check(thread.elicitation(&entry_id).expect("session entry").1);
+                });
+            } else {
+                harness
+                    .connection
+                    .request_elicitations
+                    .read_with(cx, |store, _| {
+                        check(store.elicitation(&entry_id).expect("request entry").1);
+                    });
+                harness
+                    .thread
+                    .read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
+            }
+            let expected = acp_v2::CreateElicitationResponse::new(
+                acp_v2::ElicitationAction::Accept(acp_v2::ElicitationAcceptAction::new().content(
+                    std::collections::BTreeMap::from([(
+                        "name".to_owned(),
+                        acp_v2::ElicitationContentValue::from("Ada"),
+                    )]),
+                )),
+            )
+            .meta(v2_terminal_meta("response"));
+            harness.respond_to_elicitation(session_scoped, &entry_id, expected.clone(), cx);
+            assert_eq!(
+                v2_response(response, cx, "form response")
+                    .await
+                    .expect("form response"),
+                expected
+            );
+
+            let scope: acp_v2::ElicitationScope = if session_scoped {
+                acp_v2::ElicitationSessionScope::new("v2-terminal-session").into()
+            } else {
+                acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(99)).into()
+            };
+            let wire_id = if session_scoped {
+                "session-url"
+            } else {
+                "request-url"
+            };
+            let request = acp_v2::CreateElicitationRequest::new(
+                acp_v2::ElicitationUrlMode::new(scope, wire_id, "https://example.com/consent"),
+                "Consent in browser",
+            )
+            .meta(v2_terminal_meta("url-request"));
+            let (mut response, _cancellation) = harness.request(request, cx);
+            harness.drain(cx).await;
+            let entry_id = harness.elicitation_id(session_scoped, cx);
+            let complete = acp_v2::CompleteElicitationNotification::new(wire_id)
+                .meta(v2_terminal_meta("completion"));
+            harness
+                .agent
+                .send_notification(complete.clone())
+                .expect("complete before consent");
+            harness.drain(cx).await;
+            assert!((&mut response).now_or_never().is_none());
+            let expected = acp_v2::CreateElicitationResponse::new(
+                acp_v2::ElicitationAction::Accept(acp_v2::ElicitationAcceptAction::new()),
+            );
+            harness.respond_to_elicitation(session_scoped, &entry_id, expected.clone(), cx);
+            assert_eq!(
+                v2_response(response, cx, "URL consent response")
+                    .await
+                    .expect("URL consent response"),
+                expected
+            );
+            harness
+                .agent
+                .send_notification(complete)
+                .expect("complete after consent");
+            harness.drain(cx).await;
+            let check = |elicitation: &Elicitation| {
+                assert!(matches!(elicitation.status, ElicitationStatus::Completed));
+                assert_eq!(
+                    elicitation.request.meta,
+                    Some(v2_terminal_meta("url-request"))
+                );
+            };
+            if session_scoped {
+                harness.thread.read_with(cx, |thread, _| {
+                    check(thread.elicitation(&entry_id).expect("session URL").1);
+                });
+            } else {
+                harness
+                    .connection
+                    .request_elicitations
+                    .read_with(cx, |store, _| {
+                        check(store.elicitation(&entry_id).expect("request URL").1);
+                    });
+            }
+        }
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_elicitation_sdk_cancellation_validation_and_owner_drop(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use acp_thread::ElicitationStatus;
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        for session_scoped in [false, true] {
+            let scope: acp_v2::ElicitationScope = if session_scoped {
+                acp_v2::ElicitationSessionScope::new("v2-terminal-session").into()
+            } else {
+                acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(99)).into()
+            };
+            let request = acp_v2::CreateElicitationRequest::new(
+                acp_v2::ElicitationUrlMode::new(
+                    scope,
+                    "same-wire-id",
+                    "https://example.com/consent",
+                ),
+                "Same scope and URL ID",
+            );
+            let entry_count = harness
+                .thread
+                .read_with(cx, |thread, _| thread.entries().len());
+            let request_count = harness
+                .connection
+                .request_elicitations
+                .read_with(cx, |store, _| store.elicitations().len());
+            let (response, cancellation) = harness.request(request.clone(), cx);
+            cancellation
+                .cancel()
+                .expect("cancel before foreground publication");
+            drain_sdk_background_tasks(cx);
+            assert_eq!(
+                v2_response(response, cx, "pre-cancelled elicitation")
+                    .await
+                    .expect_err("RPC cancellation before registration")
+                    .code,
+                ErrorCode::RequestCancelled
+            );
+            harness.thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.entries().len(), entry_count);
+            });
+            harness
+                .connection
+                .request_elicitations
+                .read_with(cx, |store, _| {
+                    assert_eq!(store.elicitations().len(), request_count);
+                });
+
+            let (first, cancellation) = harness.request(request.clone(), cx);
+            harness.drain(cx).await;
+            let first_id = harness.elicitation_id(session_scoped, cx);
+            let (mut second, _second_cancellation) = harness.request(request, cx);
+            harness.drain(cx).await;
+            let second_id = harness.elicitation_id(session_scoped, cx);
+            assert_ne!(first_id, second_id);
+            cancellation.cancel().expect("cancel first elicitation RPC");
+            assert_eq!(
+                v2_response(first, cx, "elicitation RPC cancellation")
+                    .await
+                    .expect_err("RPC cancellation")
+                    .code,
+                ErrorCode::RequestCancelled
+            );
+            assert!((&mut second).now_or_never().is_none());
+            let check = |first_status: &ElicitationStatus, second_status: &ElicitationStatus| {
+                assert!(matches!(first_status, ElicitationStatus::Canceled));
+                assert!(matches!(second_status, ElicitationStatus::Pending { .. }));
+            };
+            if session_scoped {
+                harness.thread.read_with(cx, |thread, _| {
+                    check(
+                        &thread.elicitation(&first_id).expect("first entry").1.status,
+                        &thread
+                            .elicitation(&second_id)
+                            .expect("second entry")
+                            .1
+                            .status,
+                    );
+                });
+            } else {
+                harness
+                    .connection
+                    .request_elicitations
+                    .read_with(cx, |store, _| {
+                        check(
+                            &store.elicitation(&first_id).expect("first entry").1.status,
+                            &store
+                                .elicitation(&second_id)
+                                .expect("second entry")
+                                .1
+                                .status,
+                        );
+                    });
+            }
+            let expected =
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline);
+            harness.respond_to_elicitation(session_scoped, &second_id, expected.clone(), cx);
+            assert_eq!(
+                v2_response(second, cx, "successor response")
+                    .await
+                    .expect("successor response"),
+                expected
+            );
+        }
+        for (source, expected_code) in [
+            (
+                json!({"sessionId": "unknown", "mode": "form", "message": "Unknown session",
+                "requestedSchema": {"type": "object", "properties": {}}}),
+                ErrorCode::InternalError,
+            ),
+            (
+                json!({"sessionId": "v2-terminal-session", "mode": "url", "message": "Unsafe URL",
+                "elicitationId": "unsafe", "url": "file:///private/path"}),
+                ErrorCode::InvalidParams,
+            ),
+            (
+                json!({"requestId": 99, "mode": "_future", "message": "Unknown mode",
+                "payload": {"retain": [null, 7]}}),
+                ErrorCode::InvalidParams,
+            ),
+        ] {
+            let request = serde_json::from_value::<acp_v2::CreateElicitationRequest>(source)
+                .expect("typed invalid elicitation");
+            let (response, _cancellation) = harness.request(request, cx);
+            assert_eq!(
+                v2_response(response, cx, "invalid elicitation response")
+                    .await
+                    .expect_err("invalid elicitation")
+                    .code,
+                expected_code
+            );
+        }
+        let (session_response, _session_cancellation) = harness.request(
+            acp_v2::CreateElicitationRequest::new(
+                acp_v2::ElicitationFormMode::new(
+                    acp_v2::ElicitationSessionScope::new("v2-terminal-session"),
+                    acp_v2::ElicitationSchema::new(),
+                ),
+                "Pending session",
+            ),
+            cx,
+        );
+        let (mut request_response, _request_cancellation) = harness.request(
+            acp_v2::CreateElicitationRequest::new(
+                acp_v2::ElicitationFormMode::new(
+                    acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(100)),
+                    acp_v2::ElicitationSchema::new(),
+                ),
+                "Pending request",
+            ),
+            cx,
+        );
+        harness.drain(cx).await;
+        let weak_thread = harness.thread.downgrade();
+        let V2SessionHarness {
+            connection,
+            thread,
+            agent,
+            _client_task,
+            _agent_task,
+            _legacy_agent_task,
+            ..
+        } = harness;
+        let _transports = (agent, _client_task, _agent_task, _legacy_agent_task);
+        cx.update(|_| drop(thread));
+        assert!(weak_thread.upgrade().is_none());
+        assert_eq!(
+            v2_response(session_response, cx, "elicitation owner-drop response")
+                .await
+                .expect("owner-drop response")
+                .action,
+            acp_v2::ElicitationAction::Cancel
+        );
+        assert!(
+            (&mut request_response).now_or_never().is_none(),
+            "session destruction does not cancel request-scoped feedback"
+        );
+        cancel_elicitations_after_disconnect(connection.dispatch_tx.clone())
+            .await
+            .expect("canonical disconnect cleanup");
+        assert_eq!(
+            v2_response(request_response, cx, "elicitation disconnect response")
+                .await
+                .expect("disconnect response")
+                .action,
+            acp_v2::ElicitationAction::Cancel
+        );
     }
 
     #[gpui::test]
@@ -9033,6 +9715,56 @@ fn handle_request_permission(
     .detach();
 }
 
+fn handle_v2_request_permission(
+    request: acp_v2::RequestPermissionRequest,
+    responder: Responder<acp_v2::RequestPermissionResponse>,
+    cx: &mut AsyncApp,
+    context: &ClientContext,
+) {
+    let cancellation = responder.cancellation();
+    if cancellation.is_cancelled() {
+        return respond_err(responder, acp::Error::request_cancelled());
+    }
+    let thread = match session_thread(context, &request.session_id) {
+        Ok(thread) => thread,
+        Err(error) => return respond_err(responder, error),
+    };
+    let (request_id, task) = match thread
+        .update(cx, |thread, cx| {
+            thread
+                .request_permission(request, cx)
+                .map_err(|error| acp::Error::invalid_params().data(error.to_string()))
+        })
+        .flatten_acp()
+    {
+        Ok(request) => request,
+        Err(error) => return respond_err(responder, error),
+    };
+    cx.spawn(async move |cx| {
+        match cancellation
+            .run_until_cancelled(async { Ok(task.await) })
+            .await
+        {
+            Ok(outcome) => {
+                responder
+                    .respond(acp_v2::RequestPermissionResponse::new(outcome))
+                    .log_err();
+            }
+            Err(error) => {
+                if error.code == ErrorCode::RequestCancelled {
+                    thread
+                        .update(cx, |thread, cx| {
+                            thread.cancel_permission_request(request_id, cx)
+                        })
+                        .log_err();
+                }
+                respond_err(responder, error);
+            }
+        }
+    })
+    .detach();
+}
+
 fn handle_create_elicitation(
     args: acp::CreateElicitationRequest,
     responder: Responder<acp::CreateElicitationResponse>,
@@ -9043,6 +9775,24 @@ fn handle_create_elicitation(
         Ok(args) => args,
         Err(error) => return respond_err(responder, acp::Error::from(error)),
     };
+    let responder = responder.wrap_params(|_, response| {
+        response.and_then(|response| {
+            acp_thread::elicitation::response_to_v1(response).map_err(acp::Error::from)
+        })
+    });
+    handle_v2_create_elicitation(args, responder, cx, ctx);
+}
+
+fn handle_v2_create_elicitation(
+    args: acp_v2::CreateElicitationRequest,
+    responder: Responder<acp_v2::CreateElicitationResponse>,
+    cx: &mut AsyncApp,
+    ctx: &ClientContext,
+) {
+    let cancellation = responder.cancellation();
+    if cancellation.is_cancelled() {
+        return respond_err(responder, acp::Error::request_cancelled());
+    }
     match args.scope() {
         acp_v2::ElicitationScope::Session(scope) => {
             let thread = match session_thread(ctx, &scope.session_id) {
@@ -9062,13 +9812,9 @@ fn handle_create_elicitation(
                 Err(e) => return respond_err(responder, e),
             };
 
-            let cancellation = responder.cancellation();
             cx.spawn(async move |cx| {
                 let result: Result<_, acp::Error> = cancellation
-                    .run_until_cancelled(async {
-                        acp_thread::elicitation::response_to_v1(task.await)
-                            .map_err(acp::Error::from)
-                    })
+                    .run_until_cancelled(async { Ok(task.await) })
                     .await;
 
                 match result {
@@ -9101,13 +9847,9 @@ fn handle_create_elicitation(
             };
             let store = store.downgrade();
 
-            let cancellation = responder.cancellation();
             cx.spawn(async move |cx| {
                 let result: Result<_, acp::Error> = cancellation
-                    .run_until_cancelled(async {
-                        acp_thread::elicitation::response_to_v1(task.await)
-                            .map_err(acp::Error::from)
-                    })
+                    .run_until_cancelled(async { Ok(task.await) })
                     .await;
 
                 match result {
@@ -9142,13 +9884,28 @@ fn handle_complete_elicitation(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    handle_v2_complete_elicitation(
+        acp_v2::CompleteElicitationNotification::new(acp_v2::ElicitationId::new(
+            args.elicitation_id.0,
+        ))
+        .meta(args.meta),
+        cx,
+        ctx,
+    );
+}
+
+fn handle_v2_complete_elicitation(
+    args: acp_v2::CompleteElicitationNotification,
+    cx: &mut AsyncApp,
+    ctx: &ClientContext,
+) {
     let threads = ctx
         .sessions
         .borrow()
         .values()
         .map(|session| session.thread.clone())
         .collect::<Vec<_>>();
-    let elicitation_id = acp_v2::ElicitationId::new(args.elicitation_id.0);
+    let elicitation_id = args.elicitation_id;
 
     // Complete accepted notifications in queue order before disconnect cleanup can run.
     for thread in threads {
