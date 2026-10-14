@@ -1189,11 +1189,9 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
 #[cfg(windows)]
 fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
     use smol::process::windows::CommandExt;
-    // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: the daemon has no console and is
-    // in its own process group, so it survives after the parent proxy exits and is
-    // not killed by Ctrl+C/Break broadcast to the parent's group.
+    // Detach from the console and break away from sshd's job so closing the SSH session doesn't kill the daemon.
     const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     smol::process::Command::new(binary_name)
         .stdin(util::command::Stdio::null())
         .stdout(util::command::Stdio::null())
@@ -1209,7 +1207,7 @@ fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), S
         .arg(&paths.stdout_socket)
         .arg("--stderr-socket")
         .arg(&paths.stderr_socket)
-        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+        .creation_flags(DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB)
         .spawn()
         .map_err(SpawnServerError::ProcessStatus)?;
     Ok(())
