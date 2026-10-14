@@ -32,6 +32,9 @@
 //! alongside this panel — see that crate's own doc comment.
 
 mod node_panel_settings;
+mod node_processes;
+
+use node_processes::NodeProcess;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -55,6 +58,7 @@ use gpui_component::{
     panel_header::PanelHeader,
     spinner::Spinner,
     tag::Tag,
+    tooltip::Tooltip,
 };
 use indexmap::IndexMap;
 use node_backend::{
@@ -120,15 +124,6 @@ enum VersionStep {
     Running(VersionAction, String),
     Done(VersionAction, String, String),
     Error(VersionAction, String, String),
-}
-
-/// One Node-related process row — a process whose name contains "node"
-/// (case-insensitive).
-struct NodeProcess {
-    name: String,
-    pid: u32,
-    cpu_percent: f32,
-    memory_mb: f64,
 }
 
 /// A background-loaded package list with its three UI states — mirrors
@@ -269,11 +264,16 @@ pub struct NodePanel {
     /// go to the Script Runner panel, not here.
     script_output: Vec<String>,
 
+    /// Node processes on the machine, heaviest first.
     node_procs: Vec<NodeProcess>,
     /// False until the first background process scan lands, so the
     /// Processes section shows a loading row instead of claiming nothing
     /// is running.
     procs_loaded: bool,
+    /// Whether the processes outside this workspace are listed or folded.
+    show_other_procs: bool,
+    /// The process whose Stop is waiting for confirmation, if any.
+    confirm_stop: Option<u32>,
 
     spfx: SpfxInfo,
     sppkg_files: Vec<String>,
@@ -551,6 +551,8 @@ impl NodePanel {
                 script_output: Vec::new(),
                 node_procs: Vec::new(),
                 procs_loaded: false,
+                show_other_procs: false,
+                confirm_stop: None,
                 spfx: SpfxInfo::default(),
                 sppkg_files: Vec::new(),
                 open,
@@ -566,10 +568,30 @@ impl NodePanel {
         })
     }
 
+    /// Stops `pid` and everything it started, once the user has confirmed
+    /// it. The list shows the result on the next poll tick.
+    fn stop_process(&mut self, pid: u32, cx: &mut Context<Self>) {
+        self.confirm_stop = None;
+        cx.notify();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = cx
+                .background_spawn(async move { node_processes::stop_tree(pid) })
+                .await;
+            this.update(cx, |panel, cx| {
+                if let Err(error) = result {
+                    panel.script_output.push(format!("Error: {error}"));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Refreshes `node_procs` from a locally-owned `sysinfo::System` every
     /// `NODE_PROCS_TICK_INTERVAL`, filtered to process names containing
-    /// "node" — replaces subscribing to a host cockpit panel's broadcast
-    /// tick (see the module doc).
+    /// "node" (see `node_processes::scan`) — replaces subscribing to a host
+    /// cockpit panel's broadcast tick (see the module doc).
     fn spawn_processes_poll(cx: &mut Context<Self>) -> gpui::Task<()> {
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             // Every sysinfo call here walks the whole process table, which
@@ -580,22 +602,7 @@ impl NodePanel {
             loop {
                 let (scanned, procs) = cx
                     .background_spawn(async move {
-                        sys.refresh_cpu_all();
-                        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-                        let cpu_count = sys.cpus().len() as f32;
-                        let procs: Vec<NodeProcess> = sys
-                            .processes()
-                            .iter()
-                            .filter(|(_, p)| {
-                                p.name().to_string_lossy().to_lowercase().contains("node")
-                            })
-                            .map(|(pid, p)| NodeProcess {
-                                name: p.name().to_string_lossy().to_string(),
-                                pid: pid.as_u32(),
-                                cpu_percent: p.cpu_usage() / cpu_count,
-                                memory_mb: p.memory() as f64 / 1_048_576.0,
-                            })
-                            .collect();
+                        let procs = node_processes::scan(&mut sys);
                         (sys, procs)
                     })
                     .await;
@@ -603,6 +610,13 @@ impl NodePanel {
 
                 let alive = this
                     .update(cx, |this, cx| {
+                        // A confirmation for a process that has since exited
+                        // has nothing left to confirm.
+                        if let Some(pid) = this.confirm_stop
+                            && !procs.iter().any(|proc| proc.pid == pid)
+                        {
+                            this.confirm_stop = None;
+                        }
                         this.node_procs = procs;
                         this.procs_loaded = true;
                         cx.notify();
@@ -3164,60 +3178,160 @@ impl NodePanel {
                     .child("No Node processes running"),
             );
         } else {
+            // This workspace's own processes first; the rest of the
+            // machine's, including the IDE's own (language servers), folded
+            // under "Other". Both keep the poll's heaviest-first order.
+            let root = PathBuf::from(&self.cwd);
+            let (mine, others): (Vec<&NodeProcess>, Vec<&NodeProcess>) = self
+                .node_procs
+                .iter()
+                .partition(|proc| !proc.ide_owned && proc.belongs_to(&root));
+
             col = col.child(
-                div()
-                    .flex()
+                h_flex()
+                    .gap_2()
                     .px_3()
                     .py_0p5()
                     .text_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().muted_foreground)
-                    .child(div().w_16().child("PID"))
-                    .child(div().flex_1().child("Name"))
-                    .child(div().w_16().text_right().child("CPU"))
-                    .child(div().w_16().text_right().child("Mem")),
+                    .child(div().flex_1().child("What"))
+                    .child(div().w_12().text_right().child("PID"))
+                    .child(div().w_12().text_right().child("CPU"))
+                    .child(div().w_16().text_right().child("Mem"))
+                    .child(div().w_6()),
             );
 
-            for proc in &self.node_procs {
+            if mine.is_empty() {
                 col = col.child(
                     div()
-                        .flex()
+                        .px_3()
+                        .py_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("None started from this workspace"),
+                );
+            }
+            for proc in &mine {
+                col = col.child(self.render_process_row(proc, cx));
+            }
+
+            if !others.is_empty() {
+                let open = self.show_other_procs;
+                col = col.child(
+                    h_flex()
+                        .id("node-procs-other-toggle")
+                        .gap_1()
                         .px_3()
                         .py_0p5()
                         .text_xs()
-                        .text_color(cx.theme().foreground)
+                        .cursor_pointer()
+                        .text_color(cx.theme().muted_foreground)
+                        .hover(|el| el.bg(cx.theme().list_hover))
                         .child(
-                            div()
-                                .w_16()
-                                .font_family("Cascadia Mono")
-                                .child(proc.pid.to_string()),
+                            Icon::new(if open {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            })
+                            .xsmall(),
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .truncate()
-                                .font_family("Cascadia Mono")
-                                .child(proc.name.clone()),
-                        )
-                        .child(
-                            div()
-                                .w_16()
-                                .text_right()
-                                .font_family("Cascadia Mono")
-                                .child(format!("{:.1}%", proc.cpu_percent)),
-                        )
-                        .child(
-                            div()
-                                .w_16()
-                                .text_right()
-                                .font_family("Cascadia Mono")
-                                .child(format!("{:.0}MB", proc.memory_mb)),
-                        ),
+                        .child(format!("Other ({})", others.len()))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.show_other_procs = !this.show_other_procs;
+                            cx.notify();
+                        })),
                 );
+                if open {
+                    for proc in &others {
+                        col = col.child(self.render_process_row(proc, cx));
+                    }
+                }
             }
         }
 
         col
+    }
+
+    /// One process: what it is (full command line on hover), its id, CPU and
+    /// memory, and Stop. Stop asks first, in the row itself. The IDE's own
+    /// processes have no Stop: ending a language server breaks an editor
+    /// feature, and the IDE would only start it again.
+    fn render_process_row(&self, proc: &NodeProcess, cx: &Context<Self>) -> AnyElement {
+        let pid = proc.pid;
+        let mono = |text: String| div().font_family("Cascadia Mono").child(text);
+        let command_line = proc.command_line.clone();
+
+        let what = h_flex()
+            .id(("node-proc-what", pid as usize))
+            .flex_1()
+            .min_w_0()
+            .gap_1()
+            .child(mono(proc.label.clone()).truncate())
+            .when(proc.ide_owned, |el| {
+                el.child(
+                    Tag::custom(
+                        cx.theme().info.opacity(0.2),
+                        cx.theme().info,
+                        cx.theme().info.opacity(0.3),
+                    )
+                    .xsmall()
+                    .child("IDE"),
+                )
+            })
+            .when(!command_line.is_empty(), |el| {
+                el.tooltip(move |window, cx| Tooltip::new(command_line.clone()).build(window, cx))
+            });
+
+        let action: AnyElement = if proc.ide_owned {
+            div().w_6().into_any_element()
+        } else if self.confirm_stop == Some(pid) {
+            h_flex()
+                .gap_1()
+                .child(
+                    Button::new(("node-proc-stop-confirm", pid as usize))
+                        .danger()
+                        .xsmall()
+                        .label("Stop")
+                        .tooltip("Stop this process and everything it started")
+                        .on_click(cx.listener(move |this, _, _, cx| this.stop_process(pid, cx))),
+                )
+                .child(
+                    Button::new(("node-proc-stop-cancel", pid as usize))
+                        .ghost()
+                        .xsmall()
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_stop = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        } else {
+            Button::new(("node-proc-stop", pid as usize))
+                .custom(ButtonCustomVariant::new(cx).foreground(cx.theme().muted_foreground))
+                .xsmall()
+                .icon(IconName::CircleX)
+                .tooltip("Stop\u{2026}")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.confirm_stop = Some(pid);
+                    cx.notify();
+                }))
+                .into_any_element()
+        };
+
+        h_flex()
+            .gap_2()
+            .px_3()
+            .py_0p5()
+            .text_xs()
+            .text_color(cx.theme().foreground)
+            .child(what)
+            .child(mono(pid.to_string()).w_12().text_right())
+            .child(mono(format!("{:.1}%", proc.cpu_percent)).w_12().text_right())
+            .child(mono(format!("{:.0}MB", proc.memory_mb)).w_16().text_right())
+            .child(action)
+            .into_any_element()
     }
 
     fn render_spfx(&self, cx: &Context<Self>) -> impl IntoElement {

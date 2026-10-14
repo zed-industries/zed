@@ -25,7 +25,7 @@ The panel is a stack of collapsible sections:
 | Outdated | Packages with newer versions, with **Update all (patch)** / **Update all (minor)** |
 | Vulnerabilities | `npm audit` findings for the active project |
 | Scripts | The `scripts` from `package.json`; run, add, edit or delete them |
-| Processes | Running Node processes |
+| Processes | Running Node processes: what each is, this workspace's first, Stop |
 | SPFx | SharePoint Framework actions, shown for SPFx projects |
 
 ### Node versions
@@ -53,6 +53,22 @@ terminal that is already open, at its next command. A program that is already
 running (a dev server) keeps the Node.js it started with. Nothing outside the
 IDE is switched. The versions are kept in a `node_versions` folder in the
 IDE's data directory.
+
+### Processes
+
+- **What** names each process from its command line: `next dev`,
+  `npm run dev`, `gulp build`, `tsserver`, or a project script's file name.
+  Hover it for the full command line.
+- Processes started from this workspace come first. The rest of the
+  machine's are folded under **Other**, including the IDE's own, marked
+  **IDE** (language servers and the like). Both lists are heaviest first.
+- **Stop** asks for confirmation in the row, then stops the process and
+  everything it started (stopping `npm run dev` also stops the server npm
+  ran). The IDE's own processes have no Stop.
+
+"This workspace" means started in the workspace folder or running a file
+from it, so a process started elsewhere that only uses the project is listed
+under Other.
 
 Useful to know:
 
