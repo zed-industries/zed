@@ -69,7 +69,7 @@ pub struct State {
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        !self.api_key_rejected && !self.fetched_models.is_empty()
+        !self.fetched_models.is_empty()
     }
 
     fn api_key_rejected(&self) -> bool {
@@ -133,7 +133,8 @@ impl State {
             // `/api/tags` is public on Ollama Cloud, so a successful listing only
             // proves the server is reachable. When a key is configured, probe an
             // endpoint that actually enforces auth so an expired or revoked key
-            // isn't reported as "Connected".
+            // surfaces as an explicit error instead of failing later on the
+            // first chat request.
             let api_key_check = match api_key.as_deref() {
                 Some(api_key) => {
                     check_api_key(http_client.as_ref(), &api_url, api_key, &extra_headers)
@@ -1313,18 +1314,22 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn rejected_api_key_is_not_connected(cx: &mut TestAppContext) {
+    async fn rejected_api_key_stays_connected_but_flagged(cx: &mut TestAppContext) {
         // Regression test for https://github.com/zed-industries/zed/issues/55475:
-        // `/api/tags` succeeds on Ollama Cloud without a valid key, so "Connected"
-        // must not be derived from model discovery alone.
+        // `/api/tags` succeeds on Ollama Cloud without a valid key, so a rejected
+        // key must be flagged as an error. "Connected" still reflects that the
+        // endpoint itself is reachable.
         let (state, _) = authenticate_with_server(Some(b"expired-key".to_vec()), 401, cx).await;
 
         cx.update(|cx| {
             let state = state.read(cx);
-            assert!(state.api_key_rejected());
             assert!(
-                !state.is_authenticated(),
-                "a key rejected by the server must not report as connected"
+                state.api_key_rejected(),
+                "a key rejected by the server must be flagged"
+            );
+            assert!(
+                state.is_authenticated(),
+                "a reachable endpoint should still report as connected"
             );
         });
     }
