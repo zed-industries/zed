@@ -34,7 +34,6 @@ use acp_thread::{
     AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, ProcessOutput,
     TokenUsageRatio,
 };
-use agent_client_protocol::schema::v1 as acp_v1;
 use agent_client_protocol::schema::v2 as acp_v2;
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup,
@@ -231,6 +230,8 @@ struct Session {
     thread: Entity<Thread>,
     /// The ACP thread that handles protocol communication
     acp_thread: WeakEntity<acp_thread::AcpThread>,
+    execution: Option<NativeExecution>,
+    pending_cancellation: watch::Sender<()>,
     subagents: Vec<Entity<acp_thread::AcpThread>>,
     project_id: EntityId,
     /// Latest snapshot to persist. Overwritten in place on every save request;
@@ -241,6 +242,144 @@ struct Session {
     save_wake: watch::Sender<()>,
     save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
+}
+
+type NativeCompletion =
+    Shared<oneshot::Receiver<std::result::Result<acp_v2::StopReason, Arc<anyhow::Error>>>>;
+
+#[derive(Clone, Copy)]
+enum NativeCancellation {
+    InterruptedByFollowUp,
+    Cancelled,
+}
+
+struct NativeExecution {
+    _driver: Task<()>,
+    message_id: ClientUserMessageId,
+    retry_action: Option<NativeRetryAction>,
+    cancellation: Option<oneshot::Sender<NativeCancellation>>,
+    completion: NativeCompletion,
+}
+
+#[derive(Clone)]
+enum NativeRetryAction {
+    Prompt(Vec<acp_v2::ContentBlock>),
+    Mcp {
+        prompt_name: String,
+        server_id: ContextServerId,
+        arguments: HashMap<String, String>,
+        content: Vec<acp_v2::ContentBlock>,
+    },
+    Skill {
+        skill: Skill,
+        content: Vec<acp_v2::ContentBlock>,
+    },
+    Compact,
+}
+
+impl NativeRetryAction {
+    fn for_prompt(
+        content: Vec<acp_v2::ContentBlock>,
+        project_state: &ProjectState,
+        cx: &App,
+    ) -> Self {
+        if let Some(parsed_command) = Command::parse(&content) {
+            if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
+                return Self::Compact;
+            }
+
+            // Skill scope qualifiers (`/:<name>` and
+            // `/<worktree>:<name>`) use a colon separator that can't
+            // collide with MCP's `/<server>.<name>` grammar. The popup
+            // inserts a qualified form for every skill so picking the
+            // global row unambiguously runs the global skill even when
+            // a same-named project-local one exists.
+            if let Some(scope) = parsed_command.skill_scope
+                && let Some(skill) = project_state.skills.iter().find(|skill| {
+                    skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
+                })
+            {
+                return Self::Skill {
+                    skill: skill.clone(),
+                    content,
+                };
+            }
+
+            // MCP prompts and skills both register slash commands. MCP
+            // prompts are checked first — if a user has both an MCP prompt
+            // and a skill with the same name, the MCP prompt wins (matching
+            // the order they appear in the catalog).
+            let registry = project_state.context_server_registry.read(cx);
+            let explicit_server_id = parsed_command
+                .explicit_server_id
+                .map(|server_id| ContextServerId(server_id.into()));
+
+            if let Some(prompt) =
+                registry.find_prompt(explicit_server_id.as_ref(), parsed_command.prompt_name)
+            {
+                let arguments = if !parsed_command.arg_value.is_empty()
+                    && let Some(arg_name) = prompt
+                        .prompt
+                        .arguments
+                        .as_ref()
+                        .and_then(|args| args.first())
+                        .map(|arg| arg.name.clone())
+                {
+                    HashMap::from_iter([(arg_name, parsed_command.arg_value.to_string())])
+                } else {
+                    Default::default()
+                };
+                return Self::Mcp {
+                    prompt_name: prompt.prompt.name.clone(),
+                    server_id: prompt.server_id.clone(),
+                    arguments,
+                    content,
+                };
+            }
+
+            // Unqualified skill match (`/skill-name` with no scope
+            // prefix and no MCP server prefix). Slash commands work
+            // for *all* skills regardless of `disable_model_invocation`
+            // — that flag only hides the skill from the model's catalog.
+            // The user explicitly typed the name, so they get to invoke
+            // it.
+            //
+            // Inlined rather than calling `apply_skill_overrides` so
+            // we don't clone the entire skill list on every prompt
+            // (including prompts like `/help` that aren't skills at
+            // all). The resolution rule matches the override-applied
+            // view: among skills with the matching name, pick the one
+            // with the highest source precedence, so the slash command
+            // picks the same entry the model sees in its catalog.
+            // Ties (e.g. two project-local skills from different
+            // worktrees) resolve to the first in iteration order to
+            // match `apply_skill_overrides`.
+            if parsed_command.explicit_server_id.is_none()
+                && parsed_command.skill_scope.is_none()
+                && !project_state.skills.is_empty()
+            {
+                let prompt_name = parsed_command.prompt_name;
+                let resolved = project_state
+                    .skills
+                    .iter()
+                    .filter(|skill| skill.name == prompt_name)
+                    .reduce(|best, candidate| {
+                        if candidate.source.precedence() > best.source.precedence() {
+                            candidate
+                        } else {
+                            best
+                        }
+                    });
+                if let Some(skill) = resolved {
+                    return Self::Skill {
+                        skill: skill.clone(),
+                        content,
+                    };
+                }
+            }
+        }
+        Self::Prompt(content)
+    }
 }
 
 impl Session {
@@ -874,8 +1013,26 @@ impl NativeAgent {
         let subscriptions = vec![
             cx.subscribe(&thread_handle, Self::handle_thread_title_updated),
             cx.subscribe(&thread_handle, Self::handle_thread_token_usage_updated),
+            cx.subscribe(
+                &thread_handle,
+                |this, thread, _: &crate::thread::CancellationRequested, cx| {
+                    this.cancel_session(thread.read(cx).id());
+                },
+            ),
             cx.observe(&thread_handle, move |this, thread, cx| {
                 this.save_thread(thread, cx)
+            }),
+            cx.subscribe(&acp_thread, |_this, thread, event, cx| {
+                if matches!(
+                    event,
+                    acp_thread::AcpThreadEvent::ToolAuthorizationRequested(_)
+                        | acp_thread::AcpThreadEvent::ToolAuthorizationReceived(_)
+                        | acp_thread::AcpThreadEvent::ElicitationRequested(_)
+                        | acp_thread::AcpThreadEvent::ElicitationResponded(_)
+                        | acp_thread::AcpThreadEvent::EntriesRemoved(_)
+                ) {
+                    thread.update(cx, |thread, cx| thread.sync_local_action_state(cx));
+                }
             }),
             cx.observe_release(&acp_thread, {
                 let session_id = session_id.clone();
@@ -912,6 +1069,8 @@ impl NativeAgent {
             Session {
                 thread: thread_handle,
                 acp_thread: acp_thread.downgrade(),
+                execution: None,
+                pending_cancellation: watch::channel(()).0,
                 subagents: Vec::new(),
                 project_id,
                 pending_save,
@@ -926,6 +1085,21 @@ impl NativeAgent {
         self.update_available_commands_for_project(project_id, cx);
 
         acp_thread
+    }
+
+    fn cancel_session(&mut self, session_id: &acp_v2::SessionId) {
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            return;
+        };
+        if session.pending_cancellation.send(()).is_err() {
+            log::debug!("No pending native submissions to cancel");
+        }
+        if let Some(execution) = session.execution.as_mut()
+            && let Some(sender) = execution.cancellation.take()
+            && sender.send(NativeCancellation::Cancelled).is_err()
+        {
+            log::debug!("Native execution already completed");
+        }
     }
 
     pub fn models(&self) -> &LanguageModels {
@@ -1956,8 +2130,34 @@ impl NativeAgent {
         }
     }
 
+    fn mark_execution_history_prepared(&mut self, session_id: &acp_v2::SessionId) -> Result<()> {
+        let execution = self
+            .sessions
+            .get_mut(session_id)
+            .and_then(|session| session.execution.as_mut())
+            .context("Native execution not found")?;
+        if !matches!(execution.retry_action, Some(NativeRetryAction::Compact)) {
+            execution.retry_action = None;
+        }
+        Ok(())
+    }
+
+    fn set_execution_retry_action(
+        &mut self,
+        session_id: &acp_v2::SessionId,
+        retry_action: NativeRetryAction,
+    ) -> Result<()> {
+        let execution = self
+            .sessions
+            .get_mut(session_id)
+            .and_then(|session| session.execution.as_mut())
+            .context("Native execution not found")?;
+        execution.retry_action = Some(retry_action);
+        Ok(())
+    }
+
     fn send_mcp_prompt(
-        &self,
+        &mut self,
         client_user_message_id: ClientUserMessageId,
         session_id: acp_v2::SessionId,
         prompt_name: String,
@@ -1965,7 +2165,18 @@ impl NativeAgent {
         arguments: HashMap<String, String>,
         original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<acp_v2::StopReason>> {
+        if let Err(error) = self.set_execution_retry_action(
+            &session_id,
+            NativeRetryAction::Mcp {
+                prompt_name: prompt_name.clone(),
+                server_id: server_id.clone(),
+                arguments: arguments.clone(),
+                content: original_content.clone(),
+            },
+        ) {
+            return Task::ready(Err(error));
+        }
         let Some(state) = self.session_project_state(&session_id) else {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
@@ -1989,7 +2200,6 @@ impl NativeAgent {
             })??;
 
             let mut last_is_user = true;
-
             thread.update(cx, |thread, cx| {
                 thread.push_acp_user_block(
                     client_user_message_id,
@@ -2006,19 +2216,18 @@ impl NativeAgent {
 
                 match role {
                     context_server::types::Role::User => {
-                        let id = acp_thread::ClientUserMessageId::new();
+                        let id = ClientUserMessageId::new();
+                        thread.update(cx, |thread, cx| {
+                            thread.push_acp_user_block(id.clone(), [block], path_style, cx)
+                        })?;
 
                         acp_thread.update(cx, |acp_thread, cx| {
                             acp_thread.push_user_content_block_with_indent(
-                                Some(id.clone()),
+                                Some(id),
                                 display_block,
                                 true,
                                 cx,
                             );
-                        })?;
-
-                        thread.update(cx, |thread, cx| {
-                            thread.push_acp_user_block(id, [block], path_style, cx)
                         })?;
                     }
                     context_server::types::Role::Assistant => {
@@ -2038,6 +2247,9 @@ impl NativeAgent {
                 last_is_user = role == context_server::types::Role::User;
             }
 
+            this.update(cx, |this, _cx| {
+                this.mark_execution_history_prepared(&session_id)
+            })??;
             let response_stream = thread.update(cx, |thread, cx| {
                 if last_is_user {
                     thread.send_existing(cx)
@@ -2047,7 +2259,7 @@ impl NativeAgent {
                 }
             })?;
 
-            let connection = this.upgrade().map(NativeAgentConnection);
+            let connection = Some(this.clone());
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
@@ -2067,7 +2279,7 @@ impl NativeAgent {
         client_user_message_id: ClientUserMessageId,
         session_id: acp_v2::SessionId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<acp_v2::StopReason>> {
         cx.spawn(async move |this, cx| {
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
                 let session = this
@@ -2083,7 +2295,7 @@ impl NativeAgent {
                 acp_thread.update_token_usage(None, cx);
             })?;
 
-            let connection = this.upgrade().map(NativeAgentConnection);
+            let connection = Some(this.clone());
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
@@ -2105,13 +2317,22 @@ impl NativeAgent {
     /// message after the skill envelope, so the model sees the skill
     /// instructions followed by the user's request.
     fn send_skill_invocation(
-        &self,
+        &mut self,
         client_user_message_id: ClientUserMessageId,
         session_id: acp_v2::SessionId,
         skill: Skill,
         original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<acp_v2::StopReason>> {
+        if let Err(error) = self.set_execution_retry_action(
+            &session_id,
+            NativeRetryAction::Skill {
+                skill: skill.clone(),
+                content: original_content.clone(),
+            },
+        ) {
+            return Task::ready(Err(error));
+        }
         let Some(state) = self.session_project_state(&session_id) else {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
@@ -2186,9 +2407,12 @@ impl NativeAgent {
                 thread.push_acp_user_block(client_user_message_id, combined, path_style, cx)
             })?;
 
+            this.update(cx, |this, _cx| {
+                this.mark_execution_history_prepared(&session_id)
+            })??;
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
 
-            let connection = this.upgrade().map(NativeAgentConnection);
+            let connection = Some(this.clone());
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
@@ -2263,13 +2487,320 @@ impl NativeAgentConnection {
             .update(cx, |this, cx| this.load_thread(id, project, cx))
     }
 
+    pub fn send_and_wait_for_completion(
+        &self,
+        thread: Entity<AcpThread>,
+        content: Vec<acp_v2::ContentBlock>,
+        cx: &mut App,
+    ) -> Task<Result<acp_v2::StopReason>> {
+        let session_id = thread.read(cx).session_id().clone();
+        let (receipt, completion) = self.submit_native(session_id, Some(content.clone()), cx);
+        let submission =
+            thread.update(cx, |thread, cx| thread.submit_receipt(content, receipt, cx));
+        cx.spawn(async move |_cx| {
+            if submission.await?.is_none() {
+                return Ok(acp_v2::StopReason::Cancelled);
+            }
+            completion.await?.map_err(|error| anyhow!("{error:#}"))
+        })
+    }
+
+    fn submit_native(
+        &self,
+        session_id: acp_v2::SessionId,
+        content: Option<Vec<acp_v2::ContentBlock>>,
+        cx: &mut App,
+    ) -> (Task<Result<acp_v2::PromptResponse>>, NativeCompletion) {
+        let (completion_sender, completion_receiver) = oneshot::channel();
+        let completion = completion_receiver.shared();
+        if let Some(content) = &content
+            && let Err(error) = acp_thread::AgentConnection::validate_prompt_content(self, content)
+        {
+            return (Task::ready(Err(error)), completion);
+        }
+
+        // Subscribe before spawning so cancellation also fences receipts that
+        // have not yet been polled. A later submission gets a fresh subscription.
+        let Some(mut cancellation) = self
+            .0
+            .read(cx)
+            .sessions
+            .get(&session_id)
+            .map(|session| session.pending_cancellation.receiver())
+        else {
+            return (Task::ready(Err(anyhow!("Session not found"))), completion);
+        };
+        let agent = self.0.downgrade();
+        let driver_completion = completion.clone();
+        let receipt = cx.spawn(async move |cx| {
+            let acceptance = async move {
+                // Recheck after each wait: another queued submission may have accepted
+                // a successor while this one was waiting for the previous driver.
+                loop {
+                    let previous = agent.update(cx, |agent, _cx| -> Result<_> {
+                        let session = agent
+                            .sessions
+                            .get_mut(&session_id)
+                            .context("Session not found")?;
+                        let Some(execution) = &mut session.execution else {
+                            return Ok(None);
+                        };
+                        if execution.completion.peek().is_some() {
+                            return Ok(None);
+                        }
+                        if let Some(sender) = execution.cancellation.take()
+                            && sender
+                                .send(NativeCancellation::InterruptedByFollowUp)
+                                .is_err()
+                        {
+                            log::debug!("Native execution already completed");
+                        }
+                        Ok(Some(execution.completion.clone()))
+                    })??;
+                    let Some(previous) = previous else {
+                        break;
+                    };
+                    if let Err(error) = previous
+                        .await
+                        .context("Previous native execution was released")?
+                    {
+                        log::debug!("Previous native execution failed: {error:#}");
+                    }
+                }
+
+                cx.update(|cx| -> Result<_> {
+                    let (acp_thread, thread, previous_execution) =
+                        agent.read_with(cx, |agent, _cx| {
+                            let session = agent
+                                .sessions
+                                .get(&session_id)
+                                .context("Session not found")?;
+                            Ok::<_, anyhow::Error>((
+                                session
+                                    .acp_thread
+                                    .upgrade()
+                                    .context("Session was released")?,
+                                session.thread.clone(),
+                                session.execution.as_ref().map(|execution| {
+                                    (execution.message_id.clone(), execution.retry_action.clone())
+                                }),
+                            ))
+                        })??;
+                    let (message_id, preparation, retry_action) = if let Some(content) = content {
+                        let message_id = ClientUserMessageId::new();
+                        let retry_action = agent.read_with(cx, |agent, cx| {
+                            let project_state = agent
+                                .session_project_state(&session_id)
+                                .context("Project state not found for session")?;
+                            anyhow::Ok(NativeRetryAction::for_prompt(
+                                content.clone(),
+                                project_state,
+                                cx,
+                            ))
+                        })??;
+                        let source = if matches!(retry_action, NativeRetryAction::Compact) {
+                            Vec::new()
+                        } else {
+                            content
+                        };
+                        let path_style = thread.read(cx).project().read(cx).path_style(cx);
+                        thread.update(cx, |thread, cx| {
+                            thread.prepare_local_turn(cx);
+                            // The receipt needs a retained rewind target, but a command
+                            // must not enter provider history until preparation succeeds.
+                            let history_content = match &retry_action {
+                                NativeRetryAction::Prompt(content) => content.clone(),
+                                _ => Vec::new(),
+                            };
+                            thread.push_acp_user_block(
+                                message_id.clone(),
+                                history_content,
+                                path_style,
+                                cx,
+                            )
+                        })?;
+                        let preparation = acp_thread.update(cx, |thread, cx| {
+                            thread.prepare_local_prompt(message_id.clone(), source, cx)
+                        })?;
+                        (message_id, preparation, Some(retry_action))
+                    } else {
+                        let previous_execution = previous_execution
+                            .filter(|(id, _retry_action)| thread.read(cx).has_user_message(id));
+                        let message_id = previous_execution
+                            .as_ref()
+                            .map(|(id, _retry_action)| id.clone())
+                            .or_else(|| thread.read(cx).last_user_message_id())
+                            .context("No user message to retry")?;
+                        let retry_action =
+                            previous_execution.and_then(|(_id, retry_action)| retry_action);
+                        thread.update(cx, |thread, cx| thread.prepare_local_turn(cx));
+                        (message_id, Task::ready(()), retry_action)
+                    };
+                    let (cancellation_sender, cancellation_receiver) = oneshot::channel();
+                    let driver = Self::drive_execution(
+                        agent.clone(),
+                        session_id.clone(),
+                        thread,
+                        acp_thread.downgrade(),
+                        message_id.clone(),
+                        retry_action.clone(),
+                        preparation,
+                        cancellation_receiver,
+                        completion_sender,
+                        cx,
+                    );
+                    agent.update(cx, |agent, _cx| -> Result<()> {
+                        let session = agent
+                            .sessions
+                            .get_mut(&session_id)
+                            .context("Session not found")?;
+                        session.execution = Some(NativeExecution {
+                            _driver: driver,
+                            message_id: message_id.clone(),
+                            retry_action,
+                            cancellation: Some(cancellation_sender),
+                            completion: driver_completion,
+                        });
+                        Ok(())
+                    })??;
+                    acp_thread.update(cx, |thread, cx| {
+                        thread.update_session_state(
+                            acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                            cx,
+                        )
+                    })?;
+                    Ok(acp_v2::PromptResponse::new(message_id.message_id()))
+                })
+            };
+            futures::pin_mut!(acceptance);
+            futures::select_biased! {
+                cancelled = cancellation.changed().fuse() => {
+                    cancelled.context("Session was released")?;
+                    Err(acp_thread::SubmissionCancelled.into())
+                },
+                response = acceptance.fuse() => response,
+            }
+        });
+        (receipt, completion)
+    }
+
+    fn drive_execution(
+        agent: WeakEntity<NativeAgent>,
+        session_id: acp_v2::SessionId,
+        thread: Entity<Thread>,
+        acp_thread: WeakEntity<AcpThread>,
+        message_id: ClientUserMessageId,
+        retry_action: Option<NativeRetryAction>,
+        preparation: Task<()>,
+        cancellation: oneshot::Receiver<NativeCancellation>,
+        completion: oneshot::Sender<std::result::Result<acp_v2::StopReason, Arc<anyhow::Error>>>,
+        cx: &App,
+    ) -> Task<()> {
+        cx.spawn(async move |cx| {
+            let execution = cx.spawn({
+                let agent = agent.clone();
+                async move |cx| {
+                    preparation.await;
+                    let task = cx.update(|cx| -> Result<_> {
+                        let connection = NativeAgentConnection(
+                            agent.upgrade().context("Native agent was released")?,
+                        );
+                        Ok(connection.execute_retry_action(session_id, message_id, retry_action, cx))
+                    })?;
+                    task.await
+                }
+            });
+            let mut execution = execution.fuse();
+            let result = futures::select_biased! {
+                cancellation = cancellation.fuse() => {
+                    let cancellation = cancellation.unwrap_or(NativeCancellation::Cancelled);
+                    let model_started = !thread.read_with(cx, |thread, _cx| thread.is_turn_complete());
+                    // Tools may ignore cancellation. Their native cleanup must not
+                    // delay the bridge's Stop event or the next accepted prompt.
+                    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+                    if model_started {
+                        // Drain cancellation updates (including compaction terminalization)
+                        // before publishing Idle or allowing another submission to insert.
+                        if let Err(error) = execution.await {
+                            log::debug!("Native cancellation drain: {error:#}");
+                        }
+                    } else {
+                        drop(execution);
+                    }
+                    acp_thread.update(cx, |thread, cx| {
+                        thread.cancel_local_actions(match cancellation {
+                            NativeCancellation::InterruptedByFollowUp =>
+                                acp_thread::RequestPermissionOutcome::InterruptedByFollowUp,
+                            NativeCancellation::Cancelled =>
+                                acp_thread::RequestPermissionOutcome::Cancelled,
+                        }, cx);
+                    }).log_err();
+                    Ok(acp_v2::StopReason::Cancelled)
+                },
+                result = execution => result,
+            };
+            if result.is_err() {
+                acp_thread.update(cx, |thread, cx| {
+                    thread.cancel_local_actions(acp_thread::RequestPermissionOutcome::Cancelled, cx);
+                }).log_err();
+                thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+            }
+            let result = match result {
+                Ok(reason) => {
+                    let finish = acp_thread.update(cx, |thread, cx| {
+                        thread.finish_local_turn(reason.clone(), cx)
+                    });
+                    match finish {
+                        Ok(finish) => match finish.await {
+                            Ok(()) => acp_thread.update(cx, |thread, cx| {
+                                thread.update_session_state(
+                                    acp_v2::StateUpdate::Idle(
+                                        acp_v2::IdleStateUpdate::new().stop_reason(reason.clone()),
+                                    ),
+                                    cx,
+                                )
+                            }).and_then(|result| result).map(|()| reason),
+                            Err(error) => Err(error),
+                        },
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => {
+                    let finish = acp_thread.update(cx, |thread, cx| {
+                        thread.finish_local_turn(acp_v2::ErrorStopReason::new().into(), cx)
+                    });
+                    match finish {
+                        Ok(finish) => {
+                            finish.await.log_err();
+                        }
+                        Err(finish_error) => log::error!("Native error cleanup: {finish_error:#}"),
+                    }
+                    Err(error)
+                }
+            };
+            let result = match result {
+                Ok(reason) => Ok(reason),
+                Err(error) => {
+                    let error = Arc::new(error);
+                    acp_thread.update(cx, |thread, cx| {
+                        thread.report_local_execution_error(error.clone(), cx)
+                    }).and_then(|result| result).log_err();
+                    Err(error)
+                }
+            };
+            if completion.send(result).is_err() {
+                log::debug!("Native completion observer was dropped");
+            }
+        })
+    }
+
     fn run_turn(
         &self,
         session_id: acp_v2::SessionId,
         cx: &mut App,
         f: impl 'static
         + FnOnce(Entity<Thread>, &mut App) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<acp_v2::StopReason>> {
         let Some((thread, acp_thread)) = self.0.update(cx, |agent, _cx| {
             let session = agent.sessions.get(&session_id)?;
             Some((session.thread.clone(), session.acp_thread.clone()))
@@ -2283,15 +2814,15 @@ impl NativeAgentConnection {
             Ok(stream) => stream,
             Err(err) => return Task::ready(Err(err)),
         };
-        Self::handle_thread_events(response_stream, acp_thread, Some(self.clone()), cx)
+        Self::handle_thread_events(response_stream, acp_thread, Some(self.0.downgrade()), cx)
     }
 
     fn handle_thread_events(
         mut events: mpsc::UnboundedReceiver<Result<ThreadEvent>>,
         acp_thread: WeakEntity<AcpThread>,
-        connection: Option<NativeAgentConnection>,
+        connection: Option<WeakEntity<NativeAgent>>,
         cx: &App,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<acp_v2::StopReason>> {
         cx.spawn(async move |cx| {
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = events.next().await {
@@ -2305,14 +2836,8 @@ impl NativeAgentConnection {
                                     .map(acp_v2::ContentBlock::from)
                                     .collect::<Vec<_>>();
                                 acp_thread.update(cx, |thread, cx| {
-                                    for content in content {
-                                        thread.push_user_content_block(
-                                            Some(message.id.clone()),
-                                            content,
-                                            cx,
-                                        );
-                                    }
-                                })?;
+                                    thread.upsert_local_user_message(message.id, content, cx)
+                                })??;
                             }
                             ThreadEvent::AgentText(text) => {
                                 acp_thread.update(cx, |thread, cx| {
@@ -2423,9 +2948,9 @@ impl NativeAgentConnection {
                                 {
                                     if let Some(connection) = &connection {
                                         cx.update(|cx| {
-                                            connection.0.update(cx, |agent, _| {
+                                            connection.update(cx, |agent, _| {
                                                 agent.models.notify_model_selection_changed();
-                                            });
+                                            }).log_err();
                                         });
                                     }
                                 }
@@ -2445,7 +2970,7 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return legacy_native_completion(stop_reason);
+                                return Ok(stop_reason);
                             }
                         }
                     }
@@ -2457,29 +2982,9 @@ impl NativeAgentConnection {
             }
 
             log::debug!("Response stream completed");
-            anyhow::Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+            anyhow::Ok(acp_v2::StopReason::EndTurn)
         })
     }
-}
-
-fn legacy_native_completion(stop_reason: acp_v2::StopReason) -> Result<acp_v1::PromptResponse> {
-    // Native events are version-neutral, but the completion-based connection API
-    // still returns a v1 response. This is not a v2 acceptance receipt.
-    let stop_reason = match stop_reason {
-        acp_v2::StopReason::EndTurn => acp_v1::StopReason::EndTurn,
-        acp_v2::StopReason::MaxTokens => acp_v1::StopReason::MaxTokens,
-        acp_v2::StopReason::MaxTurnRequests => acp_v1::StopReason::MaxTurnRequests,
-        acp_v2::StopReason::Refusal => acp_v1::StopReason::Refusal,
-        acp_v2::StopReason::Cancelled => acp_v1::StopReason::Cancelled,
-        acp_v2::StopReason::Error(reason) => {
-            return Err(match reason.error {
-                Some(error) => anyhow::Error::new(*error),
-                None => anyhow!("Native agent stopped with an error"),
-            });
-        }
-        _ => anyhow::bail!("Native agent returned an unsupported stop reason"),
-    };
-    Ok(acp_v1::PromptResponse::new(stop_reason))
 }
 
 struct Command<'a> {
@@ -2798,6 +3303,33 @@ pub fn available_native_agent(cx: &App) -> AvailableAgent {
     }
 }
 
+struct NativeSessionSubmissions {
+    connection: NativeAgentConnection,
+    session_id: acp_v2::SessionId,
+}
+
+impl acp_thread::ReceiptSessionSubmissions for NativeSessionSubmissions {
+    fn prompt(
+        &self,
+        content: Vec<acp_v2::ContentBlock>,
+        cx: &mut App,
+    ) -> Task<Result<acp_v2::PromptResponse>> {
+        self.connection
+            .submit_native(self.session_id.clone(), Some(content), cx)
+            .0
+    }
+
+    fn supports_retry(&self) -> bool {
+        true
+    }
+
+    fn retry(&self, cx: &mut App) -> Task<Result<acp_v2::PromptResponse>> {
+        self.connection
+            .submit_native(self.session_id.clone(), None, cx)
+            .0
+    }
+}
+
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
         ZED_AGENT_ID.clone()
@@ -2850,12 +3382,15 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         }) as Rc<dyn AgentModelSelector>)
     }
 
-    fn client_user_message_ids(
+    fn receipt_submissions(
         &self,
+        session_id: &acp_v2::SessionId,
         _cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionClientUserMessageIds>> {
-        let prompt: Rc<dyn acp_thread::AgentSessionClientUserMessageIds> = Rc::new(self.clone());
-        Some(prompt)
+    ) -> Option<Rc<dyn acp_thread::ReceiptSessionSubmissions>> {
+        Some(Rc::new(NativeSessionSubmissions {
+            connection: self.clone(),
+            session_id: session_id.clone(),
+        }))
     }
 
     fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
@@ -2864,39 +3399,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .try_for_each(UserMessageContent::validate_content_block)
     }
 
-    fn prompt(
-        &self,
-        params: acp_v2::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
-        acp_thread::AgentSessionClientUserMessageIds::prompt(
-            self,
-            acp_thread::AgentSessionClientUserMessageIds::new_id(self),
-            params,
-            cx,
-        )
-    }
-
-    fn retry(
-        &self,
-        session_id: &acp_v2::SessionId,
-        _cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionRetry>> {
-        Some(Rc::new(NativeAgentSessionRetry {
-            connection: self.clone(),
-            session_id: session_id.clone(),
-        }) as _)
-    }
-
     fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) {
         log::info!("Cancelling on session: {}", session_id);
-        self.0.update(cx, |agent, cx| {
-            if let Some(session) = agent.sessions.get(session_id) {
-                session
-                    .thread
-                    .update(cx, |thread, cx| thread.cancel(cx))
-                    .detach();
-            }
+        self.0.update(cx, |agent, _cx| {
+            agent.cancel_session(session_id);
         });
     }
 
@@ -2947,13 +3453,54 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 }
 
-impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
-    fn prompt(
+impl NativeAgentConnection {
+    fn execute_retry_action(
+        &self,
+        session_id: acp_v2::SessionId,
+        message_id: ClientUserMessageId,
+        retry_action: Option<NativeRetryAction>,
+        cx: &mut App,
+    ) -> Task<Result<acp_v2::StopReason>> {
+        match retry_action {
+            Some(NativeRetryAction::Prompt(content)) => self.execute_prompt(
+                message_id,
+                acp_v2::PromptRequest::new(session_id, content),
+                cx,
+            ),
+            Some(NativeRetryAction::Mcp {
+                prompt_name,
+                server_id,
+                arguments,
+                content,
+            }) => self.0.update(cx, |agent, cx| {
+                agent.send_mcp_prompt(
+                    message_id,
+                    session_id,
+                    prompt_name,
+                    server_id,
+                    arguments,
+                    content,
+                    cx,
+                )
+            }),
+            Some(NativeRetryAction::Skill { skill, content }) => self.0.update(cx, |agent, cx| {
+                agent.send_skill_invocation(message_id, session_id, skill, content, cx)
+            }),
+            Some(NativeRetryAction::Compact) => self.0.update(cx, |agent, cx| {
+                agent.send_compact_command(message_id, session_id, cx)
+            }),
+            None => self.run_turn(session_id, cx, |thread, cx| {
+                thread.update(cx, |thread, cx| thread.resume(cx))
+            }),
+        }
+    }
+
+    fn execute_prompt(
         &self,
         client_user_message_id: acp_thread::ClientUserMessageId,
         params: acp_v2::PromptRequest,
         cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>> {
+    ) -> Task<Result<acp_v2::StopReason>> {
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
@@ -2975,127 +3522,9 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
             return Task::ready(Err(error));
         }
 
-        if let Some(parsed_command) = Command::parse(&params.prompt) {
-            if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
-                return self.0.update(cx, |agent, cx| {
-                    agent.send_compact_command(client_user_message_id, session_id, cx)
-                });
-            }
-
-            // Skill scope qualifiers (`/:<name>` and
-            // `/<worktree>:<name>`) use a colon separator that can't
-            // collide with MCP's `/<server>.<name>` grammar. The popup
-            // inserts a qualified form for every skill so picking the
-            // global row unambiguously runs the global skill even when
-            // a same-named project-local one exists.
-            if let Some(scope) = parsed_command.skill_scope
-                && let Some(skill) = project_state.skills.iter().find(|skill| {
-                    skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
-                })
-            {
-                let skill = skill.clone();
-                return self.0.update(cx, |agent, cx| {
-                    agent.send_skill_invocation(
-                        client_user_message_id,
-                        session_id.clone(),
-                        skill,
-                        params.prompt,
-                        cx,
-                    )
-                });
-            }
-
-            // MCP prompts and skills both register slash commands. MCP
-            // prompts are checked first — if a user has both an MCP prompt
-            // and a skill with the same name, the MCP prompt wins (matching
-            // the order they appear in the catalog).
-            let registry = project_state.context_server_registry.read(cx);
-
-            let explicit_server_id = parsed_command
-                .explicit_server_id
-                .map(|server_id| ContextServerId(server_id.into()));
-
-            if let Some(prompt) =
-                registry.find_prompt(explicit_server_id.as_ref(), parsed_command.prompt_name)
-            {
-                let arguments = if !parsed_command.arg_value.is_empty()
-                    && let Some(arg_name) = prompt
-                        .prompt
-                        .arguments
-                        .as_ref()
-                        .and_then(|args| args.first())
-                        .map(|arg| arg.name.clone())
-                {
-                    HashMap::from_iter([(arg_name, parsed_command.arg_value.to_string())])
-                } else {
-                    Default::default()
-                };
-
-                let prompt_name = prompt.prompt.name.clone();
-                let server_id = prompt.server_id.clone();
-
-                return self.0.update(cx, |agent, cx| {
-                    agent.send_mcp_prompt(
-                        client_user_message_id,
-                        session_id.clone(),
-                        prompt_name,
-                        server_id,
-                        arguments,
-                        params.prompt,
-                        cx,
-                    )
-                });
-            }
-
-            // Unqualified skill match (`/skill-name` with no scope
-            // prefix and no MCP server prefix). Slash commands work
-            // for *all* skills regardless of `disable_model_invocation`
-            // — that flag only hides the skill from the model's catalog.
-            // The user explicitly typed the name, so they get to invoke
-            // it.
-            //
-            // Inlined rather than calling `apply_skill_overrides` so
-            // we don't clone the entire skill list on every prompt
-            // (including prompts like `/help` that aren't skills at
-            // all). The resolution rule matches the override-applied
-            // view: among skills with the matching name, pick the one
-            // with the highest source precedence, so the slash command
-            // picks the same entry the model sees in its catalog.
-            // Ties (e.g. two project-local skills from different
-            // worktrees) resolve to the first in iteration order to
-            // match `apply_skill_overrides`.
-            if parsed_command.explicit_server_id.is_none()
-                && parsed_command.skill_scope.is_none()
-                && !project_state.skills.is_empty()
-            {
-                let prompt_name = parsed_command.prompt_name;
-                let resolved = project_state
-                    .skills
-                    .iter()
-                    .filter(|skill| skill.name == prompt_name)
-                    .reduce(|best, candidate| {
-                        if candidate.source.precedence() > best.source.precedence() {
-                            candidate
-                        } else {
-                            best
-                        }
-                    });
-                if let Some(skill) = resolved {
-                    let skill = skill.clone();
-                    return self.0.update(cx, |agent, cx| {
-                        agent.send_skill_invocation(
-                            client_user_message_id,
-                            session_id.clone(),
-                            skill,
-                            params.prompt,
-                            cx,
-                        )
-                    });
-                }
-            }
-        };
-
         let path_style = project_state.project.read(cx).path_style(cx);
+        let agent = self.0.downgrade();
+        let prepared_session_id = session_id.clone();
         self.run_turn(session_id, cx, move |thread, cx| {
             let content = params
                 .prompt
@@ -3107,8 +3536,12 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
             log::debug!("Message content: {:?}", content);
 
             thread.update(cx, |thread, cx| {
-                thread.send(client_user_message_id, content, cx)
-            })
+                thread.upsert_user_message(client_user_message_id, content.into(), cx)
+            });
+            agent.update(cx, |agent, _cx| {
+                agent.mark_execution_history_prepared(&prepared_session_id)
+            })??;
+            thread.update(cx, |thread, cx| thread.send_existing(cx))
         })
     }
 }
@@ -3217,34 +3650,24 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
         client_user_message_id: acp_thread::ClientUserMessageId,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        match self.thread.update(cx, |thread, cx| {
-            thread.truncate(client_user_message_id.clone(), cx)?;
-            Ok(thread.latest_token_usage())
-        }) {
-            Ok(usage) => {
-                self.acp_thread
-                    .update(cx, |thread, cx| {
-                        thread.update_token_usage(usage, cx);
-                    })
-                    .ok();
-                Task::ready(Ok(()))
-            }
-            Err(error) => Task::ready(Err(error)),
-        }
-    }
-}
-
-struct NativeAgentSessionRetry {
-    connection: NativeAgentConnection,
-    session_id: acp_v2::SessionId,
-}
-
-impl acp_thread::AgentSessionRetry for NativeAgentSessionRetry {
-    fn run(&self, cx: &mut App) -> Task<Result<acp_v1::PromptResponse>> {
-        self.connection
-            .run_turn(self.session_id.clone(), cx, |thread, cx| {
-                thread.update(cx, |thread, cx| thread.resume(cx))
-            })
+        let cancellation = match self.acp_thread.update(cx, |thread, cx| thread.cancel(cx)) {
+            Ok(cancellation) => cancellation,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        let thread = self.thread.clone();
+        let acp_thread = self.acp_thread.clone();
+        cx.spawn(async move |cx| {
+            // Preparation is session-owned and may precede the model turn.
+            cancellation.await;
+            let usage = thread.update(cx, |thread, cx| {
+                thread.truncate(client_user_message_id, cx)?;
+                anyhow::Ok(thread.latest_token_usage())
+            })?;
+            acp_thread
+                .update(cx, |thread, cx| thread.update_token_usage(usage, cx))
+                .log_err();
+            Ok(())
+        })
     }
 }
 
@@ -3608,9 +4031,14 @@ impl SubagentHandle for NativeSubagentHandle {
                         }
                     },
                 );
-                let task = acp_thread.update(cx, |acp_thread, cx| {
-                    acp_thread.send(vec![message.into()], cx)
-                });
+                let task = match acp_thread.read(cx).connection().clone().into_any()
+                    .downcast::<NativeAgentConnection>()
+                {
+                    Ok(connection) => connection.send_and_wait_for_completion(
+                        acp_thread.clone(), vec![message.into()], cx,
+                    ),
+                    Err(_) => Task::ready(Err(anyhow!("Subagent connection is not native"))),
+                };
                 (task, token_limit_rx, subscription)
             });
 
@@ -3621,7 +4049,7 @@ impl SubagentHandle for NativeSubagentHandle {
                     if thread.read_with(cx, |thread, _| thread.is_turn_complete()) {
                         task.await
                     } else {
-                        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                        thread.update(cx, |thread, cx| thread.request_cancel(cx)).await;
                         Err(anyhow!(
                             "The agent is nearing the end of its context window and has been \
                              stopped. You can prompt the thread again to have the agent wrap up \
@@ -3632,16 +4060,19 @@ impl SubagentHandle for NativeSubagentHandle {
             };
             let discard_partial_output = matches!(
                 &response,
-                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) if response.stop_reason == acp_v1::StopReason::Cancelled
-                    || response.stop_reason == acp_v1::StopReason::Refusal
+                Ok(acp_v2::StopReason::Cancelled | acp_v2::StopReason::Refusal)
             );
             let result = match response {
-                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => match response.stop_reason {
-                    acp_v1::StopReason::Cancelled => Err(anyhow!("User canceled")),
-                    acp_v1::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
-                    acp_v1::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
-                    acp_v1::StopReason::Refusal => Err(anyhow!("The agent refused to process that prompt. Try again.")),
-                    _ => thread.read_with(cx, |thread, _cx| {
+                Ok(reason) => match reason {
+                    acp_v2::StopReason::Cancelled => Err(anyhow!("User canceled")),
+                    acp_v2::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
+                    acp_v2::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
+                    acp_v2::StopReason::Refusal => Err(anyhow!("The agent refused to process that prompt. Try again.")),
+                    acp_v2::StopReason::Error(reason) => Err(match reason.error {
+                        Some(error) => anyhow::Error::new(*error),
+                        None => anyhow!("Native agent stopped with an error"),
+                    }),
+                    acp_v2::StopReason::EndTurn => thread.read_with(cx, |thread, _cx| {
                         thread
                             .last_message()
                             .and_then(|message| {
@@ -3661,11 +4092,8 @@ impl SubagentHandle for NativeSubagentHandle {
                             })
                             .context("No response from subagent")
                     }),
+                    _ => Err(anyhow!("Native subagent returned an unsupported stop reason")),
                 },
-                Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
-                    Err(anyhow!("Native subagent returned acceptance instead of turn completion"))
-                }
-                Ok(None) => Err(anyhow!("No response from the agent. You can try messaging again.")),
                 Err(error) => Err(error),
             };
 
@@ -3852,8 +4280,19 @@ pub fn skill_body_resolver_for_project(
                         project.open_buffer((worktree_id, relative_path), cx)
                     })
                     .await?;
-                let content =
-                    cx.update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
+                let content = cx.update(|cx| {
+                    // Retries can retain skills after their worktree leaves the catalog.
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        let worktree_store = project.read(cx).worktree_store();
+                        anyhow::ensure!(
+                            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                trusted_worktrees.can_trust(&worktree_store, worktree_id, cx)
+                            }),
+                            "Cannot load a skill from a restricted worktree"
+                        );
+                    }
+                    anyhow::Ok(buffer.read(cx).as_text_snapshot().as_rope().to_string())
+                })?;
 
                 read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
             })
@@ -3980,39 +4419,6 @@ mod internal_tests {
     use serde_json::json;
     use settings::{LanguageModelProviderSetting, SettingsStore};
     use util::{path, rel_path::rel_path};
-
-    #[test]
-    fn native_stop_reasons_preserve_legacy_completions() -> Result<()> {
-        for (native, legacy) in [
-            (acp_v2::StopReason::EndTurn, acp_v1::StopReason::EndTurn),
-            (acp_v2::StopReason::MaxTokens, acp_v1::StopReason::MaxTokens),
-            (
-                acp_v2::StopReason::MaxTurnRequests,
-                acp_v1::StopReason::MaxTurnRequests,
-            ),
-            (acp_v2::StopReason::Refusal, acp_v1::StopReason::Refusal),
-            (acp_v2::StopReason::Cancelled, acp_v1::StopReason::Cancelled),
-        ] {
-            assert_eq!(legacy_native_completion(native)?.stop_reason, legacy);
-        }
-        assert!(
-            legacy_native_completion(acp_v2::StopReason::Other(acp_v2::OtherStopReason::new(
-                "_future",
-                Default::default(),
-            )))
-            .is_err(),
-            "an unsupported reason must not masquerade as successful completion"
-        );
-        let error = legacy_native_completion(acp_v2::ErrorStopReason::new().into())
-            .expect_err("an error without details is not successful completion");
-        assert_eq!(error.to_string(), "Native agent stopped with an error");
-        let details = acp_v2::Error::auth_required().data(json!({"hint": "sign in"}));
-        let error =
-            legacy_native_completion(acp_v2::ErrorStopReason::new().error(details.clone()).into())
-                .expect_err("reported error details propagate");
-        assert_eq!(error.downcast_ref::<acp_v2::Error>(), Some(&details));
-        Ok(())
-    }
 
     #[gpui::test]
     fn test_available_native_agent_hides_hidden_providers(cx: &mut TestAppContext) {
@@ -4269,13 +4675,1244 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_native_rewind_cancels_pending_preparation(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let message_id = ClientUserMessageId::new();
+        let content = vec!["rewound before model startup".into()];
+        let (release, preparation) = oneshot::channel::<()>();
+        let completion = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(fake.model("fake"), cx);
+                let path_style = thread.project().read(cx).path_style(cx);
+                thread
+                    .push_acp_user_block(message_id.clone(), content.clone(), path_style, cx)
+                    .expect("accepted provider message");
+            });
+            acp_thread.update(cx, |thread, cx| {
+                thread
+                    .prepare_local_prompt(message_id.clone(), content.clone(), cx)
+                    .expect("accepted display message")
+                    .detach();
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                        cx,
+                    )
+                    .expect("running");
+            });
+            // The initial Git checkpoint can remain pending after acceptance.
+            let preparation = cx.spawn(async move |_cx| {
+                preparation.await.expect("release preparation");
+            });
+            let (sender, receiver) = oneshot::channel();
+            let completion = receiver.shared();
+            let (cancellation, cancelled) = oneshot::channel();
+            let retry_action = Some(NativeRetryAction::Prompt(content));
+            let driver = NativeAgentConnection::drive_execution(
+                agent.downgrade(),
+                session_id.clone(),
+                thread.clone(),
+                acp_thread.downgrade(),
+                message_id.clone(),
+                retry_action.clone(),
+                preparation,
+                cancelled,
+                sender,
+                cx,
+            );
+            agent.update(cx, |agent, _cx| {
+                agent
+                    .sessions
+                    .get_mut(&session_id)
+                    .expect("session")
+                    .execution = Some(NativeExecution {
+                    _driver: driver,
+                    message_id: message_id.clone(),
+                    retry_action,
+                    cancellation: Some(cancellation),
+                    completion: completion.clone(),
+                });
+            });
+            completion
+        });
+        cx.run_until_parked();
+        acp_thread
+            .update(cx, |thread, cx| thread.rewind(message_id.clone(), cx))
+            .await
+            .expect("rewind accepted message");
+        if release.send(()).is_err() {
+            log::debug!("Rewind already dropped pending preparation");
+        }
+        cx.run_until_parked();
+        assert!(
+            fake.pending_completions().is_empty(),
+            "rewind must fence startup"
+        );
+        assert!(!thread.read_with(cx, |thread, _| thread.has_user_message(&message_id)));
+        assert_eq!(
+            completion.await.expect("settled").expect("cancelled"),
+            acp_v2::StopReason::Cancelled
+        );
+    }
+
+    #[gpui::test]
+    async fn test_native_stop_does_not_wait_for_uncooperative_tool(cx: &mut TestAppContext) {
+        use crate::tests::test_tools::DelayTool;
+        use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
+
+        let fake = init_test(cx);
+        let database = cx
+            .update(|cx| ThreadsDatabase::connect(cx))
+            .await
+            .expect("connect threads database");
+        let tool_use_id: language_model::LanguageModelToolUseId = "held".into();
+        let stored_result = |snapshot: &DbThread| {
+            snapshot
+                .messages
+                .iter()
+                .enumerate()
+                .find_map(|(index, message)| {
+                    let result = message.as_agent_message()?.tool_results.get(&tool_use_id)?;
+                    Some((index, result.is_error, result.text_contents()))
+                })
+        };
+        for rewind in [false, true] {
+            let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+            let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+            let model = fake.model("fake");
+            cx.update(|cx| {
+                let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+                for profile in settings.profiles.values_mut() {
+                    profile.tools.insert(DelayTool::NAME.into(), true);
+                }
+                agent_settings::AgentSettings::override_global(settings, cx);
+            });
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.add_tool(DelayTool);
+                thread.set_title("Stable title".into(), cx);
+            });
+            let (receipt, completion) = cx.update(|cx| {
+                connection.submit_native(session_id.clone(), Some(vec!["first".into()]), cx)
+            });
+            receipt.await.expect("first accepted");
+            let first_message_id = thread
+                .read_with(cx, |thread, _| thread.last_user_message_id())
+                .expect("first user");
+            cx.run_until_parked();
+            let request = fake
+                .pending_completions_for(&model)
+                .pop()
+                .expect("first reaches model");
+            fake.send_event(
+                &model,
+                &request,
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: tool_use_id.clone(),
+                    name: DelayTool::NAME.into(),
+                    raw_input: r#"{"ms":10000}"#.into(),
+                    input: LanguageModelToolUseInput::Json(json!({"ms": 10000})),
+                    is_input_complete: true,
+                    thought_signature: None,
+                }),
+            );
+            fake.end_stream(&model, &request);
+            cx.run_until_parked();
+            acp_thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread.entries().iter().any(|entry| matches!(
+                        entry,
+                        acp_thread::AgentThreadEntry::ToolCall(call)
+                            if call.status() == acp_thread::ToolCallStatus::InProgress
+                    )),
+                    "tool must start before cancellation"
+                );
+            });
+
+            cx.update(|cx| connection.cancel(&session_id, cx));
+            cx.run_until_parked();
+            assert_eq!(
+                completion
+                    .now_or_never()
+                    .expect("Stop must not wait for the tool result")
+                    .expect("driver settled")
+                    .expect("cancelled"),
+                acp_v2::StopReason::Cancelled
+            );
+            if rewind {
+                acp_thread
+                    .update(cx, |thread, cx| thread.rewind(first_message_id.clone(), cx))
+                    .await
+                    .expect("rewind old owner before its result arrives");
+            }
+
+            let (receipt, completion) = cx.update(|cx| {
+                connection.submit_native(session_id.clone(), Some(vec!["next".into()]), cx)
+            });
+            receipt
+                .await
+                .expect("next accepted before held tool returns");
+            cx.run_until_parked();
+            let request = fake
+                .pending_completions_for(&model)
+                .pop()
+                .expect("next reaches model before held tool returns");
+            fake.send_text(&model, &request, "next ");
+            cx.run_until_parked();
+            agent.read_with(cx, |agent, cx| {
+                let session = agent.sessions.get(&session_id).expect("active session");
+                assert!(
+                    session.can_skip_save_while_streaming(cx),
+                    "the successor's save key must settle before the late result"
+                );
+                assert!(session.pending_save.lock().is_none());
+            });
+            let saved_before_result = database
+                .load_thread(session_id.clone())
+                .await
+                .expect("load thread before late result")
+                .expect("persisted thread");
+            assert_eq!(saved_before_result.title, "Stable title");
+            assert!(saved_before_result.detailed_summary.is_none());
+            let owner_index =
+                stored_result(&saved_before_result).map(|(index, is_error, output)| {
+                    assert!(is_error);
+                    assert_eq!(output, "Tool canceled by user");
+                    index
+                });
+            assert_eq!(owner_index.is_some(), !rewind);
+            cx.executor().advance_clock(Duration::from_secs(10));
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread.is_streaming_message(),
+                    "old cancellation cleanup must not flush the successor's partial"
+                );
+                let message = thread
+                    .last_received_or_pending_message()
+                    .expect("successor assistant message");
+                assert!(
+                    message
+                        .as_agent_message()
+                        .expect("assistant message")
+                        .tool_results
+                        .is_empty(),
+                    "late tool results must not be inserted into the successor's native history"
+                );
+            });
+            let persisted = database
+                .load_thread(session_id.clone())
+                .await
+                .expect("load thread after late result")
+                .expect("persisted thread");
+            assert_eq!(persisted.title, saved_before_result.title);
+            assert!(persisted.detailed_summary.is_none());
+            assert_eq!(persisted.messages.len(), saved_before_result.messages.len());
+            assert!(
+                completion.clone().now_or_never().is_none(),
+                "the successor must remain pending during the database check"
+            );
+            assert_eq!(
+                stored_result(&persisted),
+                owner_index.map(|index| (index, false, "Ding".to_owned())),
+                "late output must be persisted only while its original owner is retained"
+            );
+            assert_eq!(
+                fake.pending_completions_for(&model)
+                    .iter()
+                    .filter(|request| request.thread_id == Some(session_id.to_string()))
+                    .count(),
+                1,
+                "old cancellation cleanup must not start another request"
+            );
+            fake.send_text(&model, &request, "response");
+            fake.end_stream(&model, &request);
+            assert_eq!(
+                completion
+                    .await
+                    .expect("next driver settled")
+                    .expect("done"),
+                acp_v2::StopReason::EndTurn
+            );
+            acp_thread.read_with(cx, |thread, cx| {
+                let markdown = thread.to_markdown(cx);
+                assert!(markdown.contains("next response"));
+                assert!(!markdown.contains("Ding"));
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_native_cancel_withdraws_pending_acceptance(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+        // Match an already-signalled interrupt winning before the receipt task
+        // has run, rather than cancelling a provider that has already started.
+        let (submission, helper, cancellation, helper_id) = cx.update(|cx| {
+            let submission = acp_thread.update(cx, |thread, cx| {
+                thread.send(vec!["withdrawn receipt".into()], cx)
+            });
+            let helper = connection.send_and_wait_for_completion(
+                acp_thread.clone(),
+                vec!["withdrawn helper".into()],
+                cx,
+            );
+            let helper_id = acp_thread.read(cx).latest_submission_id().expect("helper");
+            assert_eq!(
+                acp_thread.read(cx).foreground_activity(),
+                acp_thread::ForegroundActivity::Idle
+            );
+            let cancellation = acp_thread.update(cx, |thread, cx| thread.cancel(cx));
+            (submission, helper, cancellation, helper_id)
+        });
+        let submission_id = submission.id;
+        cx.run_until_parked();
+        cancellation.await;
+        assert!(
+            submission
+                .await
+                .expect("withdrawn receipt settles")
+                .is_none()
+        );
+        assert_eq!(
+            helper.await.expect("withdrawn helper settles"),
+            acp_v2::StopReason::Cancelled
+        );
+        assert!(fake.pending_completions().is_empty());
+        acp_thread.read_with(cx, |thread, _| {
+            for id in [submission_id, helper_id] {
+                assert!(matches!(
+                    thread.submission(id).expect("retained cancellation").state,
+                    acp_thread::SubmissionState::Cancelled
+                ));
+            }
+            assert!(thread.entries().is_empty());
+        });
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert!(
+            !saved
+                .messages
+                .iter()
+                .any(|message| matches!(message.as_ref(), Message::User(_)))
+        );
+
+        let accepted = cx.update(|cx| {
+            connection.send_and_wait_for_completion(
+                acp_thread.clone(),
+                vec!["accepted then cancelled".into()],
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(fake.pending_completions_for(&model).len(), 1);
+        let cancellation = acp_thread.update(cx, |thread, cx| thread.cancel(cx));
+        cancellation.await;
+        assert_eq!(
+            accepted.await.expect("accepted execution cancelled"),
+            acp_v2::StopReason::Cancelled
+        );
+
+        let later = cx.update(|cx| {
+            connection.send_and_wait_for_completion(
+                acp_thread.clone(),
+                vec!["later prompt".into()],
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("later submission reaches provider");
+        assert!(
+            request_texts_after_system(&request.messages)
+                .iter()
+                .all(|text| !text.contains("withdrawn"))
+        );
+        fake.send_text(&model, &request, "done");
+        fake.end_stream(&model, &request);
+        assert_eq!(
+            later.await.expect("later execution completes"),
+            acp_v2::StopReason::EndTurn
+        );
+    }
+
+    #[gpui::test]
+    async fn test_native_e2e_helper_waits_for_turn(cx: &mut TestAppContext) {
+        use agent_servers::e2e_tests::send_and_wait_for_turn;
+
+        let fake = init_test(cx);
+        let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+        let mut completion = send_and_wait_for_turn(&acp_thread, vec!["hello".into()], cx);
+        cx.run_until_parked();
+        assert!(
+            (&mut completion).now_or_never().is_none(),
+            "acceptance must not complete the E2E helper"
+        );
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
+        fake.send_text(&model, &request, "hello from the fake model");
+        fake.end_stream(&model, &request);
+        completion
+            .await
+            .expect("reported stop completes the helper");
+        acp_thread.read_with(cx, |thread, cx| {
+            assert!(thread.to_markdown(cx).contains("hello from the fake model"));
+        });
+
+        let weak_thread = acp_thread.downgrade();
+        drop(acp_thread);
+        cx.run_until_parked();
+        assert!(
+            !weak_thread.is_upgradable(),
+            "the helper must not retain the thread"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_native_receipt_outlives_completion_observer(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        let content = vec!["retained prompt".into()];
+        let (receipt, completion) = cx.update(|cx| {
+            let (receipt, completion) =
+                connection.submit_native(session_id.clone(), Some(content.clone()), cx);
+            let receipt = acp_thread.update(cx, |thread, cx| {
+                thread.submit_receipt(content.clone(), receipt, cx)
+            });
+            (receipt, completion)
+        });
+        let receipt = receipt.await.expect("acceptance precedes model completion");
+        let Some(acp_thread::SubmissionResponse::Accepted(receipt)) = receipt else {
+            panic!("native submission returns only acceptance");
+        };
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread
+                    .last_user_message_id()
+                    .expect("retained user")
+                    .message_id(),
+                receipt.message_id
+            );
+        });
+        acp_thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.foreground_state(),
+                acp_v2::StateUpdate::Running(_)
+            ));
+        });
+        drop(completion);
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("driver remains owned");
+        let invalid = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+            "_future",
+            Default::default(),
+        ));
+        cx.update(|cx| {
+            connection
+                .receipt_submissions(&session_id, cx)
+                .expect("native receipts")
+                .prompt(vec![invalid], cx)
+        })
+        .await
+        .expect_err("invalid follow-up must not cancel accepted work");
+        fake.send_text(&model, &request, "done");
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        acp_thread.read_with(cx, |thread, _| {
+            assert!(
+                matches!(thread.foreground_state(), acp_v2::StateUpdate::Idle(idle)
+                if idle.stop_reason == Some(acp_v2::StopReason::EndTurn))
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_native_follow_up_serializes_and_retry_reuses_message(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        let (first_receipt, first_completion) = cx.update(|cx| {
+            connection.submit_native(session_id.clone(), Some(vec!["first".into()]), cx)
+        });
+        let first_receipt = first_receipt.await.expect("first accepted");
+        cx.run_until_parked();
+        let (second_receipt, second_completion) = cx.update(|cx| {
+            connection.submit_native(session_id.clone(), Some(vec!["follow-up".into()]), cx)
+        });
+        let second_receipt = second_receipt
+            .await
+            .expect("follow-up accepted after old cleanup");
+        assert_eq!(
+            first_completion
+                .await
+                .expect("first driver completed")
+                .expect("cancelled"),
+            acp_v2::StopReason::Cancelled
+        );
+        assert!(second_completion.peek().is_none());
+        cx.run_until_parked();
+        cx.update(|cx| connection.cancel(&session_id, cx));
+        assert_eq!(
+            second_completion
+                .await
+                .expect("second driver completed")
+                .expect("cancelled"),
+            acp_v2::StopReason::Cancelled
+        );
+        let submissions = cx.update(|cx| {
+            connection
+                .receipt_submissions(&session_id, cx)
+                .expect("native receipts")
+        });
+        let retry_receipt = cx
+            .update(|cx| submissions.retry(cx))
+            .await
+            .expect("retry accepted");
+        assert_eq!(retry_receipt.message_id, second_receipt.message_id);
+        cx.run_until_parked();
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(
+            saved
+                .messages
+                .iter()
+                .filter_map(|message| match message.as_ref() {
+                    Message::User(user) => Some(user.id.message_id()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![first_receipt.message_id, second_receipt.message_id]
+        );
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("retry reaches model");
+        fake.send_text(&model, &request, "retried");
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        acp_thread.read_with(cx, |thread, cx| {
+            assert!(
+                matches!(thread.foreground_state(), acp_v2::StateUpdate::Idle(idle)
+                if idle.stop_reason == Some(acp_v2::StopReason::EndTurn))
+            );
+            assert!(thread.to_markdown(cx).contains("retried"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_native_compact_empty_and_repeated_markers_are_noops(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        thread.update(cx, |thread, cx| thread.set_model(fake.model("fake"), cx));
+        for _ in 0..2 {
+            let (receipt, completion) = cx.update(|cx| {
+                connection.submit_native(session_id.clone(), Some(vec!["/compact".into()]), cx)
+            });
+            let receipt = receipt.await.expect("compact accepted");
+            assert_eq!(
+                completion.await.expect("driver completed").expect("noop"),
+                acp_v2::StopReason::EndTurn
+            );
+            let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+            let Some(Message::User(marker)) = saved.messages.last().map(|message| message.as_ref())
+            else {
+                panic!("compact retains the accepted empty marker");
+            };
+            assert_eq!(marker.id.message_id(), receipt.message_id);
+            assert!(marker.content.is_empty());
+            assert!(fake.pending_completions().is_empty());
+        }
+    }
+
+    fn setup_native_prompt_server(
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> mpsc::UnboundedReceiver<oneshot::Sender<serde_json::Value>> {
+        use context_server::types::{Request, requests};
+        use project::project_settings::{ContextServerSettings, ProjectSettings};
+
+        struct PromptJsonRequest;
+        impl Request for PromptJsonRequest {
+            type Params = context_server::types::PromptsGetParams;
+            type Response = serde_json::Value;
+            const METHOD: &'static str = "prompts/get";
+        }
+        let server_name = "native-prompts";
+        cx.update(|cx| {
+            let mut settings = ProjectSettings::get_global(cx).clone();
+            settings.context_servers.insert(
+                server_name.into(),
+                ContextServerSettings::Stdio {
+                    enabled: true,
+                    remote: false,
+                    command: context_server::ContextServerCommand {
+                        path: "somebinary".into(),
+                        args: Vec::new(),
+                        env: None,
+                        timeout: None,
+                    },
+                },
+            );
+            ProjectSettings::override_global(settings, cx);
+        });
+        let (requests_sender, requests_receiver) = mpsc::unbounded();
+        let transport = context_server::test::create_fake_transport(server_name, cx.executor())
+            .on_request::<requests::Initialize, _>(move |_params| async move {
+                serde_json::from_value(json!({
+                    "protocolVersion": context_server::types::LATEST_PROTOCOL_VERSION,
+                    "serverInfo": {"name": server_name, "version": "1.0.0"},
+                    "capabilities": {"prompts": {}}
+                }))
+                .expect("initialize response")
+            })
+            .on_request::<requests::PromptsList, _>(|_params| async {
+                context_server::types::PromptsListResponse {
+                    prompts: vec![context_server::types::Prompt {
+                        name: "prepare".into(),
+                        title: None,
+                        description: None,
+                        arguments: None,
+                    }],
+                    next_cursor: None,
+                    meta: None,
+                }
+            })
+            .on_request::<PromptJsonRequest, _>(move |_params| {
+                let requests_sender = requests_sender.clone();
+                async move {
+                    let (response_sender, response_receiver) = oneshot::channel();
+                    requests_sender
+                        .unbounded_send(response_sender)
+                        .expect("prompt request");
+                    response_receiver.await.expect("prompt response")
+                }
+            });
+        let server_store = project.read_with(cx, |project, _| project.context_server_store());
+        server_store.update(cx, |store, cx| {
+            store.start_server(
+                Arc::new(context_server::ContextServer::new(
+                    ContextServerId(server_name.into()),
+                    Arc::new(transport),
+                )),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        requests_receiver
+    }
+
+    async fn assert_failed_native_command_context(
+        command: &str,
+        reload: bool,
+        cx: &mut TestAppContext,
+    ) {
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let mut requests = setup_native_prompt_server(&project, cx);
+        agent.update(cx, |agent, _| {
+            agent
+                .projects
+                .get_mut(&project.entity_id())
+                .expect("project state")
+                .skills = Arc::new(vec![make_global_skill("missing-skill", "Missing skill")]);
+        });
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        let content = vec![command.into()];
+        let (receipt, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), Some(content), cx));
+        let receipt = receipt.await.expect("command accepted");
+        if command == "/native-prompts.prepare" {
+            requests
+                .next()
+                .await
+                .expect("fetch prompt")
+                .send(json!({"malformed": true}))
+                .expect("malformed response");
+        }
+        completion
+            .await
+            .expect("driver completed")
+            .expect_err("command preparation fails");
+        assert!(fake.pending_completions().is_empty());
+        let accepted_id = thread
+            .read_with(cx, |thread, _| thread.last_user_message_id())
+            .expect("accepted command retained");
+        assert_eq!(accepted_id.message_id(), receipt.message_id);
+
+        let (acp_thread, thread) = if reload {
+            drop(thread);
+            drop(acp_thread);
+            release_dropped_entities(cx);
+            agent.read_with(cx, |agent, _| {
+                assert!(!agent.sessions.contains_key(&session_id));
+            });
+            let acp_thread = agent
+                .update(cx, |agent, cx| {
+                    agent.open_thread(session_id.clone(), project.clone(), cx)
+                })
+                .await
+                .expect("reload failed command");
+            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+            let (retry, completion) =
+                cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+            assert_eq!(
+                retry.await.expect("reloaded retry accepted").message_id,
+                receipt.message_id
+            );
+            cx.run_until_parked();
+            let request = fake
+                .pending_completions_for(&model)
+                .pop()
+                .expect("reloaded retry resumes retained history");
+            assert!(
+                !request_texts_after_system(&request.messages)
+                    .iter()
+                    .any(|text| text.contains(command)),
+                "reload retry must not send an unprepared command to the model"
+            );
+            cx.update(|cx| connection.cancel(&session_id, cx));
+            completion
+                .await
+                .expect("retry driver completed")
+                .expect("retry cancelled");
+            (acp_thread, thread)
+        } else {
+            (acp_thread, thread)
+        };
+        let (receipt, completion) = cx.update(|cx| {
+            connection.submit_native(
+                session_id.clone(),
+                Some(vec!["ordinary follow-up".into()]),
+                cx,
+            )
+        });
+        receipt.await.expect("follow-up accepted");
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("follow-up reaches model");
+        let expected_context = if reload {
+            vec!["Continue where you left off", "ordinary follow-up"]
+        } else {
+            vec!["ordinary follow-up"]
+        };
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            expected_context,
+            "failed preparation must not contaminate a subsequent model prompt"
+        );
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert!(
+            matches!(saved.messages.first().map(|message| message.as_ref()),
+            Some(Message::User(marker)) if marker.id == accepted_id && marker.content.is_empty()),
+            "the receipt and rewind target remain retained without unprepared provider content"
+        );
+        acp_thread.read_with(cx, |thread, cx| {
+            assert!(thread.can_rewind_to(Some(&accepted_id), cx));
+        });
+        fake.send_text(&model, &request, "done");
+        fake.end_stream(&model, &request);
+        completion
+            .await
+            .expect("follow-up driver completed")
+            .expect("follow-up completed");
+    }
+
+    #[gpui::test]
+    async fn test_native_failed_mcp_follow_up_context(cx: &mut TestAppContext) {
+        assert_failed_native_command_context("/native-prompts.prepare", false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_native_failed_mcp_reload_context(cx: &mut TestAppContext) {
+        assert_failed_native_command_context("/native-prompts.prepare", true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_native_failed_skill_follow_up_context(cx: &mut TestAppContext) {
+        assert_failed_native_command_context("/:missing-skill do work", false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_native_failed_skill_reload_context(cx: &mut TestAppContext) {
+        assert_failed_native_command_context("/:missing-skill do work", true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_native_mcp_retry_and_display_rows_use_retained_ids(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let mut requests = setup_native_prompt_server(&project, cx);
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        let (receipt, completion) = cx.update(|cx| {
+            connection.submit_native(
+                session_id.clone(),
+                Some(vec!["/native-prompts.prepare".into()]),
+                cx,
+            )
+        });
+        let receipt = receipt.await.expect("MCP command accepted");
+        requests
+            .next()
+            .await
+            .expect("fetch prompt")
+            .send(json!({"malformed": true}))
+            .expect("malformed response");
+        completion
+            .await
+            .expect("driver completed")
+            .expect_err("prompt fetch response invalid");
+
+        let server_store = project.read_with(cx, |project, _| project.context_server_store());
+        server_store.update(cx, |store, cx| {
+            store
+                .stop_server(&ContextServerId("native-prompts".into()), cx)
+                .expect("stop server");
+        });
+        cx.run_until_parked();
+        let (retry, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+        assert_eq!(
+            retry.await.expect("disconnected retry accepted").message_id,
+            receipt.message_id
+        );
+        assert!(
+            completion
+                .await
+                .expect("driver completed")
+                .expect_err("server disconnected")
+                .to_string()
+                .contains("Context server not found")
+        );
+        assert!(
+            fake.pending_completions().is_empty(),
+            "a missing prompt catalog must not turn retry into a literal model prompt"
+        );
+        requests = setup_native_prompt_server(&project, cx);
+        let (retry, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+        assert_eq!(
+            retry.await.expect("retry accepted").message_id,
+            receipt.message_id
+        );
+        requests
+            .next()
+            .await
+            .expect("retry fetches prompt again")
+            .send(json!({"messages": [
+                {"role": "assistant", "content": {"type": "text", "text": "prepared opening"}},
+                {"role": "user", "content": {"type": "text", "text": "first expanded user"}},
+                {"role": "assistant", "content": {"type": "text", "text": "prepared answer"}},
+                {"role": "user", "content": {"type": "text", "text": "second expanded user"}}
+            ]}))
+            .expect("expanded prompt response");
+        cx.run_until_parked();
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let provider_ids = saved
+            .messages
+            .iter()
+            .filter_map(|message| match message.as_ref() {
+                Message::User(user) => Some(user.id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            provider_ids.len(),
+            3,
+            "accepted header and two expanded users"
+        );
+        assert_eq!(provider_ids.iter().collect::<HashSet<_>>().len(), 3);
+        assert_eq!(
+            provider_ids.first().expect("accepted header").message_id(),
+            receipt.message_id
+        );
+        assert!(
+            matches!(saved.messages.first().map(|message| message.as_ref()),
+            Some(Message::User(header)) if header.content.is_empty())
+        );
+        let displayed_ids = acp_thread.read_with(cx, |thread, cx| {
+            thread
+                .entries()
+                .iter()
+                .filter_map(|entry| match entry {
+                    acp_thread::AgentThreadEntry::UserMessage(message) if message.indented => {
+                        assert!(thread.can_rewind_to(message.client_id.as_ref(), cx));
+                        message.client_id.clone()
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            displayed_ids.as_slice(),
+            provider_ids.get(1..).expect("expanded provider ids"),
+            "every editable display row has its actual provider rewind target"
+        );
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("expanded prompt reaches model");
+        assert_eq!(
+            request
+                .messages
+                .iter()
+                .skip(1)
+                .map(|message| (message.role, message.string_contents()))
+                .collect::<Vec<_>>(),
+            vec![
+                (language_model::Role::Assistant, "prepared opening".into()),
+                (language_model::Role::User, "first expanded user".into()),
+                (language_model::Role::Assistant, "prepared answer".into()),
+                (language_model::Role::User, "second expanded user".into()),
+            ],
+            "the empty accepted header must not reorder the assistant-first MCP expansion"
+        );
+        fake.send_text(&model, &request, "done");
+        fake.end_stream(&model, &request);
+        assert_eq!(
+            completion
+                .await
+                .expect("driver completed")
+                .expect("expanded"),
+            acp_v2::StopReason::EndTurn
+        );
+
+        let (retry, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+        assert_eq!(
+            retry.await.expect("prepared retry accepted").message_id,
+            receipt.message_id
+        );
+        cx.run_until_parked();
+        assert!(
+            requests.next().now_or_never().is_none(),
+            "prepared history retry must not fetch or inject the prompt again"
+        );
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("expanded history resumes");
+        fake.send_text(&model, &request, "resumed");
+        fake.end_stream(&model, &request);
+        completion
+            .await
+            .expect("driver completed")
+            .expect("resumed");
+        acp_thread
+            .update(cx, |thread, cx| {
+                thread.rewind(
+                    displayed_ids.first().expect("first display row").clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("expanded first row remains a valid edit/regenerate rewind target");
+        let rewound = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(
+            rewound.messages.len(),
+            2,
+            "rewind retains the header and prior MCP assistant"
+        );
+        assert!(
+            matches!(rewound.messages.first().map(|message| message.as_ref()),
+            Some(Message::User(header)) if header.id.message_id() == receipt.message_id && header.content.is_empty())
+        );
+        assert_eq!(
+            rewound.messages.get(1).map(|message| message.role()),
+            Some(language_model::Role::Assistant)
+        );
+        thread.read_with(cx, |thread, _| {
+            assert!(displayed_ids.iter().all(|id| !thread.has_user_message(id)));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_native_skill_retry_prepares_once_after_body_read_failure(
+        cx: &mut TestAppContext,
+    ) {
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        cx.run_until_parked();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        let fs = project.read_with(cx, |project, _| project.fs().clone());
+        let mut skill = make_global_skill("retry-skill", "Retry skill");
+        skill.directory_path = PathBuf::from("/a/retry-skill");
+        skill.skill_file_path = skill.directory_path.join("SKILL.md");
+        fs.create_dir(&skill.directory_path)
+            .await
+            .expect("skill directory");
+        agent.update(cx, |agent, _| {
+            agent
+                .projects
+                .get_mut(&project.entity_id())
+                .expect("project state")
+                .skills = Arc::new(vec![skill.clone()]);
+        });
+
+        let (receipt, completion) = cx.update(|cx| {
+            connection.submit_native(
+                session_id.clone(),
+                Some(vec!["/:retry-skill do work".into()]),
+                cx,
+            )
+        });
+        let receipt = receipt.await.expect("skill accepted before body read");
+        assert!(
+            completion
+                .await
+                .expect("driver completed")
+                .expect_err("missing body")
+                .to_string()
+                .contains("Failed to read skill body")
+        );
+        agent.update(cx, |agent, _| {
+            agent
+                .projects
+                .get_mut(&project.entity_id())
+                .expect("project state")
+                .skills = Arc::new(Vec::new());
+        });
+        fs.write(
+            &skill.skill_file_path,
+            b"---\nname: retry-skill\ndescription: Retry skill\n---\n\nrestored instructions",
+        )
+        .await
+        .expect("restore skill body");
+        let (retry, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+        assert_eq!(
+            retry.await.expect("retry accepted").message_id,
+            receipt.message_id
+        );
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("prepared skill reaches model");
+        let texts = request_texts_after_system(&request.messages);
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.contains("restored instructions") && text.contains("do work"))
+        );
+        assert!(!texts.iter().any(|text| text.contains("/:retry-skill")));
+        cx.update(|cx| connection.cancel(&session_id, cx));
+        assert_eq!(
+            completion
+                .await
+                .expect("driver completed")
+                .expect("cancelled"),
+            acp_v2::StopReason::Cancelled
+        );
+
+        fs.remove_file(&skill.skill_file_path, Default::default())
+            .await
+            .expect("remove body after preparation");
+        let (retry, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+        assert_eq!(
+            retry.await.expect("prepared retry accepted").message_id,
+            receipt.message_id
+        );
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("prepared history resumes without body read");
+        assert!(
+            request_texts_after_system(&request.messages)
+                .iter()
+                .any(|text| text.contains("restored instructions"))
+        );
+        fake.send_text(&model, &request, "done");
+        fake.end_stream(&model, &request);
+        assert_eq!(
+            completion
+                .await
+                .expect("driver completed")
+                .expect("resumed"),
+            acp_v2::StopReason::EndTurn
+        );
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(
+            saved
+                .messages
+                .iter()
+                .filter(|message| matches!(message.as_ref(), Message::User(_)))
+                .count(),
+            1
+        );
+    }
+
+    #[gpui::test]
+    async fn test_native_compact_retry_repeats_cancelled_and_failed_compaction(
+        cx: &mut TestAppContext,
+    ) {
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread
+                .push_acp_user_block(
+                    ClientUserMessageId::new(),
+                    vec!["old user".into()],
+                    project.read(cx).path_style(cx),
+                    cx,
+                )
+                .expect("old user");
+            thread
+                .push_acp_agent_block("old answer".into(), cx)
+                .expect("old answer");
+        });
+        let (receipt, completion) = cx.update(|cx| {
+            connection.submit_native(session_id.clone(), Some(vec!["/compact".into()]), cx)
+        });
+        let receipt = receipt.await.expect("compact accepted");
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("compaction starts");
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        cx.update(|cx| connection.cancel(&session_id, cx));
+        assert_eq!(
+            completion
+                .await
+                .expect("driver completed")
+                .expect("cancelled"),
+            acp_v2::StopReason::Cancelled
+        );
+
+        let (retry, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+        assert_eq!(
+            retry.await.expect("retry accepted").message_id,
+            receipt.message_id
+        );
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("retry compacts instead of resuming");
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        fake.end_stream(&model, &request);
+        completion
+            .await
+            .expect("driver completed")
+            .expect_err("empty summary");
+
+        let (retry, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+        assert_eq!(
+            retry
+                .await
+                .expect("failed compact retry accepted")
+                .message_id,
+            receipt.message_id
+        );
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("failed compact retries summary");
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            vec![
+                "old user".to_string(),
+                "old answer".to_string(),
+                COMPACTION_PROMPT.to_string()
+            ]
+        );
+        fake.send_text(&model, &request, "retained context");
+        fake.end_stream(&model, &request);
+        assert_eq!(
+            completion
+                .await
+                .expect("driver completed")
+                .expect("compacted"),
+            acp_v2::StopReason::EndTurn
+        );
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(saved.messages.iter().filter(|message| matches!(message.as_ref(), Message::User(user) if user.id.message_id() == receipt.message_id)).count(), 1);
+
+        let (retry, completion) =
+            cx.update(|cx| connection.submit_native(session_id.clone(), None, cx));
+        assert_eq!(
+            retry
+                .await
+                .expect("completed compact retry accepted")
+                .message_id,
+            receipt.message_id
+        );
+        assert_eq!(
+            completion
+                .await
+                .expect("driver completed")
+                .expect("already compacted"),
+            acp_v2::StopReason::EndTurn
+        );
+    }
+
+    #[gpui::test]
     async fn test_native_skill_command_releases_while_waiting_for_permission(
         cx: &mut TestAppContext,
     ) {
         use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
 
         let fake = init_test(cx);
-        let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         cx.run_until_parked();
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
@@ -4300,10 +5937,10 @@ mod internal_tests {
                 .expect("project state")
                 .skills = Arc::new(vec![skill]);
         });
-        let send = acp_thread.update(cx, |thread, cx| {
-            thread.send(vec!["/:release-skill".into()], cx)
+        let (receipt, completion) = cx.update(|cx| {
+            connection.submit_native(session_id.clone(), Some(vec!["/:release-skill".into()]), cx)
         });
-        let send = cx.foreground_executor().spawn(send);
+        receipt.await.expect("skill accepted");
         cx.run_until_parked();
         let request = fake
             .pending_completions_for(&model)
@@ -4325,15 +5962,22 @@ mod internal_tests {
         fake.end_stream(&model, &request);
         cx.run_until_parked();
         assert!(acp_thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+        let weak_thread = acp_thread.downgrade();
         drop(acp_thread);
         release_dropped_entities(cx);
+        assert!(
+            weak_thread.upgrade().is_none(),
+            "command must not retain the last AcpThread owner"
+        );
         assert!(agent.read_with(cx, |agent, _| !agent.sessions.contains_key(&session_id)));
         assert!(
             thread.read_with(cx, |thread, _| thread.is_turn_complete()),
             "release cancels model even with retained native Thread"
         );
-        send.await
-            .expect_err("release cancels the pending completion");
+        assert!(
+            completion.await.is_err(),
+            "release drops the Session-owned driver"
+        );
     }
 
     #[gpui::test]
@@ -4352,12 +5996,10 @@ mod internal_tests {
             assert!(connection.validate_prompt_content(&content).is_err());
             let error = cx
                 .update(|cx| {
-                    acp_thread::AgentSessionClientUserMessageIds::prompt(
-                        connection.as_ref(),
-                        ClientUserMessageId::new(),
-                        acp_v2::PromptRequest::new(session_id.clone(), content),
-                        cx,
-                    )
+                    connection
+                        .receipt_submissions(&session_id, cx)
+                        .expect("native receipts")
+                        .prompt(content, cx)
                 })
                 .await
                 .expect_err("unsupported content must not reach command dispatch or the model");
@@ -4444,6 +6086,16 @@ mod internal_tests {
         fake.send_text(&model, &request, "done");
         fake.end_stream(&model, &request);
         send.await.expect("skill prompt should complete");
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(
+            saved
+                .messages
+                .iter()
+                .filter(|message| matches!(message.as_ref(), Message::User(_)))
+                .count(),
+            1,
+            "skill expansion must reuse the accepted provider message"
+        );
     }
 
     #[gpui::test]
@@ -4511,14 +6163,8 @@ mod internal_tests {
             });
         });
 
-        let compact_message_id = ClientUserMessageId::new();
         let prompt_task = cx.update(|cx| {
-            acp_thread::AgentSessionClientUserMessageIds::prompt(
-                connection.as_ref(),
-                compact_message_id,
-                acp_v2::PromptRequest::new(session_id.0.clone(), vec!["/compact".into()]),
-                cx,
-            )
+            connection.send_and_wait_for_completion(acp_thread.clone(), vec!["/compact".into()], cx)
         });
         cx.run_until_parked();
 
@@ -4544,37 +6190,26 @@ mod internal_tests {
             };
             assert!(thread.is_compacting());
             assert!(compaction.is_in_progress());
-            assert_eq!(compaction.summary.blocks().len(), 0);
-            assert!(compaction.summary.source_blocks().is_empty());
-            assert!(compaction.meta.is_none());
             compaction.id.clone()
         });
 
         fake.send_text(&model, &request, "retained ");
         cx.run_until_parked();
-        let summary = acp_thread.read_with(cx, |thread, cx| {
+        acp_thread.read_with(cx, |thread, cx| {
             let Some(acp_thread::AgentThreadEntry::ContextCompaction(compaction)) =
                 thread.entries().last()
             else {
                 panic!("native compaction entry should remain in the timeline");
             };
-            assert_eq!(compaction.id, compaction_id);
             assert!(compaction.is_in_progress());
             assert_eq!(
-                compaction.summary.source_blocks(),
-                &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
-                    "retained "
-                ))]
+                compaction
+                    .summary
+                    .blocks()
+                    .next()
+                    .map(|block| block.to_markdown(cx)),
+                Some("retained ")
             );
-            let blocks = compaction.summary.blocks().collect::<Vec<_>>();
-            let [summary] = blocks.as_slice() else {
-                panic!("native text chunks should create one retained Markdown block");
-            };
-            let markdown = summary
-                .markdown()
-                .expect("native text should have markdown");
-            assert_eq!(markdown.read(cx).source().as_ref(), "retained ");
-            markdown.clone()
         });
         fake.send_text(&model, &request, "context");
         fake.end_stream(&model, &request);
@@ -4582,6 +6217,14 @@ mod internal_tests {
         prompt_task
             .await
             .expect("native compaction should complete");
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(
+            saved.messages.iter().filter(
+                |message| matches!(message.as_ref(), Message::User(user) if user.content.is_empty()),
+            ).count(),
+            1,
+            "successful compaction must not duplicate the accepted marker"
+        );
         acp_thread.read_with(cx, |thread, cx| {
             let Some(acp_thread::AgentThreadEntry::ContextCompaction(compaction)) =
                 thread.entries().last()
@@ -4594,17 +6237,14 @@ mod internal_tests {
                 compaction.status,
                 acp_thread::ContextCompactionStatus::Completed
             );
-            assert!(compaction.error.is_none());
-            assert_eq!(compaction.summary.blocks().len(), 1);
-            assert_eq!(compaction.summary.markdowns().next(), Some(&summary));
             assert_eq!(
-                compaction.summary.source_blocks(),
-                &[
-                    acp_v2::ContentBlock::Text(acp_v2::TextContent::new("retained ")),
-                    acp_v2::ContentBlock::Text(acp_v2::TextContent::new("context")),
-                ]
+                compaction
+                    .summary
+                    .blocks()
+                    .next()
+                    .map(|block| block.to_markdown(cx)),
+                Some("retained context")
             );
-            assert_eq!(summary.read(cx).source().as_ref(), "retained context");
         });
 
         agent.update(cx, |agent, cx| agent.save_thread(thread.clone(), cx));
@@ -4612,9 +6252,6 @@ mod internal_tests {
         drop(thread);
         drop(acp_thread);
         release_dropped_entities(cx);
-        agent.read_with(cx, |agent, _| {
-            assert!(!agent.sessions.contains_key(&session_id));
-        });
         let restored = cx
             .update(|cx| {
                 connection.clone().load_session(
@@ -4652,12 +6289,6 @@ mod internal_tests {
                     .next()
                     .map(|block| block.to_markdown(cx)),
                 Some("retained context")
-            );
-            assert_eq!(
-                compaction.summary.source_blocks(),
-                &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
-                    "retained context"
-                ))]
             );
         });
     }
@@ -4712,10 +6343,7 @@ mod internal_tests {
                 compaction.status,
                 acp_thread::ContextCompactionStatus::Completed
             );
-            assert_eq!(compaction.summary.blocks().len(), 0);
             assert!(compaction.summary.source_blocks().is_empty());
-            assert!(compaction.meta.is_none());
-            assert!(compaction.error.is_none());
             assert!(!thread.is_compacting());
         });
     }
@@ -4739,12 +6367,7 @@ mod internal_tests {
         });
 
         let first_prompt = cx.update(|cx| {
-            acp_thread::AgentSessionClientUserMessageIds::prompt(
-                connection.as_ref(),
-                ClientUserMessageId::new(),
-                acp_v2::PromptRequest::new(session_id.0.clone(), vec!["old user".into()]),
-                cx,
-            )
+            connection.send_and_wait_for_completion(acp_thread.clone(), vec!["old user".into()], cx)
         });
         cx.run_until_parked();
 
@@ -4768,12 +6391,7 @@ mod internal_tests {
             .expect("first user prompt should complete");
 
         let second_prompt = cx.update(|cx| {
-            acp_thread::AgentSessionClientUserMessageIds::prompt(
-                connection.as_ref(),
-                ClientUserMessageId::new(),
-                acp_v2::PromptRequest::new(session_id.0, vec!["new user".into()]),
-                cx,
-            )
+            connection.send_and_wait_for_completion(acp_thread.clone(), vec!["new user".into()], cx)
         });
         cx.run_until_parked();
 
@@ -4883,7 +6501,7 @@ mod internal_tests {
                 Some("retained partial summary"),
             ),
         ] {
-            let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+            let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
             let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
             let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
             let model = fake.model("fake");
@@ -4931,27 +6549,42 @@ mod internal_tests {
                     cx.run_until_parked();
                 }
 
-                let cancellation_task = thread.update(cx, |thread, cx| thread.cancel(cx));
+                fake.send_event(
+                    &model,
+                    &request,
+                    LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
+                        input_tokens: 1234,
+                        ..Default::default()
+                    }),
+                );
+                let cancellation_task = thread.update(cx, |thread, cx| {
+                    let cancellation = thread.cancel(cx);
+                    thread.prepare_local_turn(cx);
+                    cancellation
+                });
                 (response_stream, cancellation_task)
             };
             cancellation_task.await;
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(
+                    thread.cumulative_token_usage(),
+                    language_model::TokenUsage::default(),
+                    "{scenario}: queued compaction usage must not apply after cancellation"
+                );
+            });
 
             let response = cx
                 .update(|cx| {
                     NativeAgentConnection::handle_thread_events(
                         response_stream,
                         acp_thread.downgrade(),
-                        Some(connection.as_ref().clone()),
+                        Some(agent.downgrade()),
                         cx,
                     )
                 })
                 .await
                 .expect("canceled compaction events should be bridged");
-            assert_eq!(
-                response.stop_reason,
-                acp_v1::StopReason::Cancelled,
-                "{scenario}"
-            );
+            assert_eq!(response, acp_v2::StopReason::Cancelled, "{scenario}");
 
             acp_thread.read_with(cx, |thread, cx| {
                 let compactions = thread
@@ -5019,10 +6652,9 @@ mod internal_tests {
 
         for tool_name in ["read_file", "unavailable_tool"] {
             let prompt_task = cx.update(|cx| {
-                acp_thread::AgentSessionClientUserMessageIds::prompt(
-                    connection.as_ref(),
-                    ClientUserMessageId::new(),
-                    acp_v2::PromptRequest::new(session_id.0.clone(), vec!["use a tool".into()]),
+                connection.send_and_wait_for_completion(
+                    acp_thread.clone(),
+                    vec!["use a tool".into()],
                     cx,
                 )
             });
@@ -5094,9 +6726,6 @@ mod internal_tests {
         drop(thread);
         drop(acp_thread);
         release_dropped_entities(cx);
-        agent.read_with(cx, |agent, _| {
-            assert!(!agent.sessions.contains_key(&session_id));
-        });
 
         let restored = cx
             .update(|cx| {
@@ -6655,6 +8284,23 @@ mod internal_tests {
             body, "edited body",
             "resolver must read the in-memory buffer, not the on-disk file"
         );
+        cx.update(|cx| {
+            use project::trusted_worktrees::PathTrust;
+            TrustedWorktrees::try_get_global(cx)
+                .expect("trust initialized")
+                .update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.restrict(
+                        project.read(cx).worktree_store().downgrade(),
+                        collections::HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                        cx,
+                    );
+                });
+        });
+        let error = cx
+            .update(|cx| resolver(skill, &mut cx.to_async()))
+            .await
+            .expect_err("a retained skill cannot bypass revoked worktree trust");
+        assert!(error.to_string().contains("restricted"));
     }
 
     /// A project SKILL.md whose on-disk size exceeds the cap must be
