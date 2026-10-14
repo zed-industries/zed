@@ -204,11 +204,12 @@ impl ReleaseChannel {
 
     /// Returns the display name for this [`ReleaseChannel`].
     pub fn display_name(&self) -> &'static str {
+        // cedian builds on the dev channel, which never polls Zed's update
+        // server, so dev is cedian's own name.
         match self {
-            ReleaseChannel::Dev => "Zed Dev",
-            ReleaseChannel::Nightly => "Zed Nightly",
-            ReleaseChannel::Preview => "Zed Preview",
-            ReleaseChannel::Stable => "Zed",
+            ReleaseChannel::Dev | ReleaseChannel::Stable => "cedian",
+            ReleaseChannel::Nightly => "cedian Nightly",
+            ReleaseChannel::Preview => "cedian Preview",
         }
     }
 

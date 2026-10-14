@@ -1529,18 +1529,8 @@ fn initialize_pane(
 }
 
 fn open_about_window(cx: &mut App) {
-    fn about_window_icon(release_channel: ReleaseChannel) -> Arc<Image> {
-        let bytes = match release_channel {
-            ReleaseChannel::Dev => include_bytes!("../resources/app-icon-dev.png").as_slice(),
-            ReleaseChannel::Nightly => {
-                include_bytes!("../resources/app-icon-nightly.png").as_slice()
-            }
-            ReleaseChannel::Preview => {
-                include_bytes!("../resources/app-icon-preview.png").as_slice()
-            }
-            ReleaseChannel::Stable => include_bytes!("../resources/app-icon.png").as_slice(),
-        };
-
+    fn about_window_icon() -> Arc<Image> {
+        let bytes = include_bytes!("../resources/cedian-icon.png").as_slice();
         Arc::new(Image::from_bytes(ImageFormat::Png, bytes.to_vec()))
     }
 
@@ -1559,7 +1549,8 @@ fn open_about_window(cx: &mut App) {
             let release_channel = ReleaseChannel::global(cx);
             let release_channel_name = release_channel.display_name();
             let full_version: SharedString = AppVersion::global(cx).to_string().into();
-            let version = env!("CARGO_PKG_VERSION");
+            // Zed's own version stays the app version: extensions check it.
+            let version = format!("{} (Zed {})", paths::APP_VERSION, env!("CARGO_PKG_VERSION"));
 
             let debug = if cfg!(debug_assertions) {
                 "(debug)"
@@ -1576,7 +1567,7 @@ fn open_about_window(cx: &mut App) {
                 focus_handle: cx.focus_handle(),
                 ok_entry: NavigableEntry::focusable(cx),
                 copy_entry: NavigableEntry::focusable(cx),
-                app_icon: about_window_icon(release_channel),
+                app_icon: about_window_icon(),
                 message,
                 commit,
                 full_version,
@@ -1720,7 +1711,7 @@ fn open_about_window(cx: &mut App) {
     cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some("About Zed".into()),
+                title: Some("About cedian".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(12.), px(12.))),
             }),

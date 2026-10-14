@@ -17,6 +17,9 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 /// Forks should change this to avoid colliding with Zed's user data.
 pub const APP_NAME: &str = "cedian";
 
+/// cedian's own version, shown as the app's; `script/cedian-bundle` reads it.
+pub const APP_VERSION: &str = "0.1.0";
+
 /// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
 pub const APP_NAME_LOWERCASE: &str = {

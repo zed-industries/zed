@@ -2329,6 +2329,10 @@ mod tests {
             .update(cx, |p, cx| p.save_buffer(f.buffer.clone(), cx))
             .await
             .unwrap();
+        // The user's edit left the buffer clean again under a changed disk
+        // mtime, so Zed reloads it; let that reload and the save settle
+        // before the next call, as they would between two OMP turns.
+        cx.run_until_parked();
         agent_writes(&mut f, "c2", "alpha\nBETA\ngamma\n", cx).await;
         assert_eq!(f.review.files()[0].stale_import(), None);
         assert_eq!(statuses(&f), vec![HunkStatus::Pending]);

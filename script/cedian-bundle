@@ -15,7 +15,7 @@ cd "$(unset GIT_DIR GIT_WORK_TREE; git -C "$(dirname "$0")" rev-parse --show-top
 
 BIN=${CEDIAN_BIN:-target/release/cedian}
 APP=${CEDIAN_APP:-cedian.app}
-VERSION=${CEDIAN_VERSION:-0.1.0}
+VERSION=${CEDIAN_VERSION:-$(sed -n 's/^pub const APP_VERSION: &str = "\(.*\)";$/\1/p' crates/paths/src/paths.rs)}
 IDENTITY=${CODESIGN_IDENTITY:-}
 BUNDLE_ID=${CEDIAN_BUNDLE_ID:-dev.cedian.Cedian}
 
