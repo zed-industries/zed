@@ -52,15 +52,16 @@ use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{
-    Action, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    Pixels, Render, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, actions, div,
-    prelude::FluentBuilder as _, px, svg,
+    Action, AnchoredPositionMode, AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext,
+    Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement as _,
+    IntoElement, ParentElement as _, Pixels, Render, StatefulInteractiveElement as _, Styled as _,
+    WeakEntity, Window, actions, anchored, deferred, div, point, prelude::FluentBuilder as _, px,
+    svg,
 };
 use language::{LanguageName, Toolchain};
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
-    button::{Button, ButtonVariants as _},
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
+    button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants as _},
     collapsible::Collapsible,
     h_flex,
     label::Label,
@@ -74,6 +75,7 @@ use python_backend::{
     UpdateKind, count_requirements, detect_framework, find_missing_deps, list_outdated,
     list_packages, query_pip, query_python, scan_python_project, scan_python_projects,
 };
+use python_versions::{Download, PythonVersion};
 use script_runner_panel::ScriptRunnerPanel;
 use script_runner_panel::command::{check_package_name, check_version, shell_path, shell_program};
 pub use python_panel_settings::PythonPanelSettings;
@@ -97,6 +99,64 @@ struct PythonProcess {
     memory_mb: f64,
 }
 
+/// The built-in version change the user has been asked to confirm, or is
+/// waiting on. An install carries the whole [`Download`], so the question
+/// names exactly what will be fetched: the version, its size and its source.
+#[derive(Clone)]
+enum PendingVersionAction {
+    Install(Download),
+    Uninstall(String),
+}
+
+impl PendingVersionAction {
+    fn version(&self) -> &str {
+        match self {
+            PendingVersionAction::Install(download) => &download.version,
+            PendingVersionAction::Uninstall(version) => version,
+        }
+    }
+
+    fn verb(&self) -> &'static str {
+        match self {
+            PendingVersionAction::Install(_) => "install",
+            PendingVersionAction::Uninstall(_) => "remove",
+        }
+    }
+}
+
+/// Where a built-in version change stands. Nothing is downloaded or removed
+/// before `Confirm` has been answered.
+#[derive(Clone)]
+enum VersionStep {
+    Confirm(PendingVersionAction),
+    Running(PendingVersionAction),
+    Done(PendingVersionAction, String),
+    Error(PendingVersionAction, String),
+}
+
+/// Where the active interpreter comes from, for the header line.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InterpreterSource {
+    Venv,
+    BuiltIn,
+    System,
+}
+
+impl InterpreterSource {
+    fn label(self) -> &'static str {
+        match self {
+            InterpreterSource::Venv => "venv",
+            InterpreterSource::BuiltIn => "built-in",
+            InterpreterSource::System => "system",
+        }
+    }
+}
+
+/// Sizes in a download question: `21.0 MB`.
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+}
+
 /// A background-loaded list with its three UI states — mirrors
 /// `dotnet_panel::PackagesState`.
 enum PackagesState<T> {
@@ -118,6 +178,14 @@ actions!(
 /// Registers the Python panel's actions on every workspace. Call once at
 /// app startup, alongside the other panels' `init` functions.
 pub fn init(cx: &mut App) {
+    // Makes the built-in Python reach past this panel: terminals, the Script
+    // Runner and workflow actions all ask `ide_env` what to put first on a
+    // new process's `PATH`. What goes there is the store's link to the active
+    // version, the same folders whatever is active, so a terminal that is
+    // already open follows a switch. A project's venv, activated in a
+    // terminal or named by path, still comes before it.
+    ide_env::register(|_directory| python_versions::live_bin_dirs(&python_versions::store_dir()));
+
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<PythonPanel>(window, cx);
@@ -151,6 +219,23 @@ pub struct PythonPanel {
     /// True when `python_exe` is a project-local venv interpreter rather
     /// than a global fallback.
     using_venv: bool,
+    /// Where `python_exe` comes from, for the header line.
+    interpreter_source: InterpreterSource,
+
+    /// The built-in manager's installed versions, newest first.
+    managed_versions: Vec<PythonVersion>,
+    /// `None` while the first read of the store is pending; `Some(false)`
+    /// when it failed.
+    versions_loaded: Option<bool>,
+    /// Whether the list of installable versions is shown.
+    show_available: bool,
+    /// Installable versions, once fetched. Reading them costs two small
+    /// index files and no Python download.
+    available_versions: Vec<Download>,
+    loading_available: bool,
+    available_error: Option<String>,
+    /// The install or removal being asked about or carried out.
+    version_step: Option<VersionStep>,
 
     py_ver: Option<String>,
     pip_ver: Option<String>,
@@ -199,6 +284,18 @@ pub struct PythonPanel {
     _data_reload_task: Option<gpui::Task<()>>,
 
     _procs_poll: gpui::Task<()>,
+}
+
+/// The opened project's first worktree, which the scan is rooted on — the
+/// same choice `node_panel` and `dotnet_panel` make. `None` while no worktree
+/// is open.
+fn project_root(workspace: &Workspace, cx: &mut Context<Workspace>) -> Option<String> {
+    workspace
+        .project()
+        .read(cx)
+        .worktrees(cx)
+        .next()
+        .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
 }
 
 /// Displays a path by its final component (folder/file name), falling back
@@ -281,6 +378,15 @@ impl PythonPanel {
         _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
+        // Scan the opened project, as the Node and .NET panels do. This used
+        // to be the process's working directory: whatever folder the IDE was
+        // started from, unrelated to the project open in it.
+        let root = project_root(&*_workspace, cx).unwrap_or_else(|| {
+            std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        });
+
         // The live worktrees watch the filesystem (the same machinery the
         // project panel relies on); subscribing here lets `scan_projects`
         // rerun when a new project marker appears, instead of only once at
@@ -322,12 +428,11 @@ impl PythonPanel {
             })
             .detach();
 
-            let cwd = std::env::current_dir()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default();
+            let cwd = root.clone();
 
             let mut open = HashMap::new();
             // Keep all sections open by default
+            open.insert("Python Versions".to_string(), true);
             open.insert("Projects".to_string(), true);
             open.insert("Environment".to_string(), true);
             open.insert("Framework".to_string(), true);
@@ -347,6 +452,14 @@ impl PythonPanel {
                 scanning: false,
                 python_exe: None,
                 using_venv: false,
+                interpreter_source: InterpreterSource::System,
+                managed_versions: Vec::new(),
+                versions_loaded: None,
+                show_available: false,
+                available_versions: Vec::new(),
+                loading_available: false,
+                available_error: None,
+                version_step: None,
                 py_ver: None,
                 pip_ver: None,
                 venv_path: None,
@@ -372,9 +485,202 @@ impl PythonPanel {
             if !cwd.is_empty() {
                 panel.scan_projects(cx);
             }
+            panel.load_managed_versions(cx);
 
             panel
         })
+    }
+
+    // ── Built-in versions ──────────────────────────────────────────────
+
+    /// Re-reads the installed built-in versions. Reads the disk, so off the
+    /// main thread.
+    fn load_managed_versions(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = cx
+                .background_spawn(async { python_versions::list(&python_versions::store_dir()) })
+                .await;
+            this.update(cx, |panel, cx| {
+                match result {
+                    Ok(versions) => {
+                        panel.versions_loaded = Some(true);
+                        panel.managed_versions = versions;
+                    }
+                    Err(_) => panel.versions_loaded = Some(false),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Shows or hides the installable versions, fetching the list the first
+    /// time. That is two small index files; no Python is downloaded until an
+    /// install has been confirmed.
+    fn toggle_available(&mut self, cx: &mut Context<Self>) {
+        self.show_available = !self.show_available;
+        if self.show_available && self.available_versions.is_empty() && !self.loading_available {
+            self.loading_available = true;
+            self.available_error = None;
+            let http = cx.http_client();
+            cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let result = cx
+                    .background_spawn(async move { python_versions::list_available(http).await })
+                    .await;
+                this.update(cx, |panel, cx| {
+                    panel.loading_available = false;
+                    match result {
+                        Ok(versions) => panel.available_versions = versions,
+                        Err(error) => panel.available_error = Some(error),
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    /// Asks before downloading `download`. The question is shown at once;
+    /// the download's size is filled in when the server has said it.
+    fn request_install(&mut self, download: Download, cx: &mut Context<Self>) {
+        self.version_step = Some(VersionStep::Confirm(PendingVersionAction::Install(
+            download.clone(),
+        )));
+        cx.notify();
+
+        let http = cx.http_client();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let sized = cx
+                .background_spawn(async move { python_versions::with_size(http, download).await })
+                .await;
+            this.update(cx, |panel, cx| {
+                // Only while the same question is still open.
+                if let Some(VersionStep::Confirm(PendingVersionAction::Install(asked))) =
+                    &panel.version_step
+                    && asked.version == sized.version
+                {
+                    panel.version_step = Some(VersionStep::Confirm(
+                        PendingVersionAction::Install(sized),
+                    ));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn request_uninstall(&mut self, version: String, cx: &mut Context<Self>) {
+        self.version_step = Some(VersionStep::Confirm(PendingVersionAction::Uninstall(version)));
+        cx.notify();
+    }
+
+    fn cancel_version_step(&mut self, cx: &mut Context<Self>) {
+        self.version_step = None;
+        cx.notify();
+    }
+
+    /// Carries out the confirmed install or removal. The only place a Python
+    /// is downloaded.
+    fn confirm_version_action(&mut self, cx: &mut Context<Self>) {
+        let Some(VersionStep::Confirm(action)) = self.version_step.clone() else {
+            return;
+        };
+        self.version_step = Some(VersionStep::Running(action.clone()));
+        cx.notify();
+
+        let http = cx.http_client();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let work = action.clone();
+            let result = cx
+                .background_spawn(async move {
+                    let store = python_versions::store_dir();
+                    match work {
+                        PendingVersionAction::Install(download) => {
+                            python_versions::install(&store, &download, http)
+                                .await
+                                .map(|installed| {
+                                    format!("Installed to {}", installed.dir.to_string_lossy())
+                                })
+                        }
+                        PendingVersionAction::Uninstall(version) => {
+                            python_versions::uninstall(&store, &version)
+                        }
+                    }
+                })
+                .await;
+            this.update(cx, |panel, cx| {
+                panel.version_step = Some(match result {
+                    Ok(output) => VersionStep::Done(action, output),
+                    Err(error) => VersionStep::Error(action, error),
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn finish_version_step(&mut self, cx: &mut Context<Self>) {
+        let installed = matches!(
+            self.version_step,
+            Some(VersionStep::Done(PendingVersionAction::Install(_), _))
+        );
+        self.version_step = None;
+        if installed {
+            self.show_available = false;
+        }
+        self.after_version_change(cx);
+    }
+
+    /// Makes `version` the active one, or with `None` hands the choice back to
+    /// the machine's own Python. Only changes what the IDE starts.
+    fn switch_version(&mut self, version: Option<String>, cx: &mut Context<Self>) {
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = cx
+                .background_spawn(async move {
+                    let store = python_versions::store_dir();
+                    match version {
+                        Some(version) => python_versions::use_version(&store, &version),
+                        None => python_versions::use_system(&store),
+                    }
+                })
+                .await;
+            this.update(cx, |panel, cx| {
+                if let Err(error) = result {
+                    panel.report(error, cx);
+                }
+                panel.after_version_change(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// An install, removal or switch can change the interpreter a project
+    /// without a venv uses, so its data is re-read along with the list.
+    fn after_version_change(&mut self, cx: &mut Context<Self>) {
+        self.load_managed_versions(cx);
+        self.reload_project_data(cx);
+        cx.notify();
+    }
+
+    /// The interpreter as it can be written into a command the Script Runner
+    /// runs from `dir`. The built-in Python is first on that command's `PATH`,
+    /// so it is named plainly, not by a path under the user's profile that
+    /// may hold spaces.
+    fn command_program(&self, dir: &str) -> Result<String, String> {
+        let exe = self
+            .python_exe
+            .clone()
+            .unwrap_or_else(|| "python".to_string());
+        if self.interpreter_source == InterpreterSource::BuiltIn {
+            return Ok("python".to_string());
+        }
+        shell_program(&exe, dir)
     }
 
     fn is_open(&self, key: &str, default: bool) -> bool {
@@ -452,13 +758,10 @@ impl PythonPanel {
         let PackagesState::Ready(list) = &self.outdated else {
             return;
         };
-        let exe = self
-            .python_exe
-            .clone()
-            .unwrap_or_else(|| "python".to_string());
         let dir = self.active_project_dir();
-        let command =
-            shell_program(&exe, &dir).and_then(|exe| update_all_command(&exe, list, ty));
+        let command = self
+            .command_program(&dir)
+            .and_then(|exe| update_all_command(&exe, list, ty));
         match command {
             Ok(Some(command)) => self.dispatch_script(&command, dir, window, cx),
             Ok(None) => {}
@@ -741,10 +1044,16 @@ impl PythonPanel {
                     let scan = scan_python_project(&scan_root_for_task).ok();
                     let venv_exe = scan.as_ref().and_then(|s| s.venvs.first().cloned());
 
+                    // Without a venv, the built-in Python comes before the
+                    // machine's when one is active: it is what this panel
+                    // installed for exactly that case.
+                    let store = python_versions::store_dir();
                     let (exe, using_venv) = if let Some(exe) = toolchain_exe {
                         (Some(exe), true)
                     } else if let Some(venv) = venv_exe {
                         (Some(venv), true)
+                    } else if let Some(built_in) = python_versions::active(&store) {
+                        (Some(built_in.python.to_string_lossy().into_owned()), false)
                     } else {
                         let mut found = None;
                         for candidate in ["python", "python3"] {
@@ -754,6 +1063,16 @@ impl PythonPanel {
                             }
                         }
                         (found, false)
+                    };
+                    // Zed's own interpreter picker can point at a built-in
+                    // version too, so this is decided by the path, not by
+                    // which branch above found it.
+                    let source = match &exe {
+                        Some(exe) if python_versions::is_built_in(&store, Path::new(exe)) => {
+                            InterpreterSource::BuiltIn
+                        }
+                        _ if using_venv => InterpreterSource::Venv,
+                        _ => InterpreterSource::System,
                     };
 
                     let (py_ver, pip_ver, installed, outdated) = match &exe {
@@ -781,6 +1100,7 @@ impl PythonPanel {
                     (
                         exe,
                         using_venv,
+                        source,
                         py_ver,
                         pip_ver,
                         installed,
@@ -796,6 +1116,7 @@ impl PythonPanel {
             let (
                 exe,
                 using_venv,
+                source,
                 py_ver,
                 pip_ver,
                 installed,
@@ -812,7 +1133,8 @@ impl PythonPanel {
                         panel.scanning = false;
                         panel.python_exe = exe;
                         panel.using_venv = using_venv;
-                        panel.venv_path = if using_venv {
+                        panel.interpreter_source = source;
+                        panel.venv_path = if source == InterpreterSource::Venv {
                             panel.python_exe.clone()
                         } else {
                             None
@@ -909,7 +1231,7 @@ impl Panel for PythonPanel {
 }
 
 impl Render for PythonPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
         let panel_header = PanelHeader::new("Python").icon(
@@ -919,29 +1241,15 @@ impl Render for PythonPanel {
                 .text_color(theme.foreground),
         );
 
-        if self.py_ver.is_none() && !self.scanning {
-            return div()
-                .id("python-panel-empty")
-                .track_focus(&self.focus_handle(cx))
-                .flex()
-                .flex_col()
-                .w_full()
-                .h_full()
-                .bg(theme.background)
-                .child(panel_header)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .items_center()
-                        .justify_center()
-                        .p_4()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child("Python not found in PATH"),
-                )
-                .into_any_element();
-        }
+        // No early "Python not found" screen: with no Python on the machine,
+        // the versions section below is how one gets installed.
+        let versions_section = section_container(
+            cx,
+            "Python Versions",
+            self.managed_versions.len(),
+            self.is_open("Python Versions", true),
+            self.render_python_versions(cx),
+        );
 
         let projects_section = section_container(
             cx,
@@ -1013,6 +1321,7 @@ impl Render for PythonPanel {
             .flex()
             .flex_col()
             .child(self.render_version_info(cx))
+            .child(versions_section)
             .child(projects_section)
             .child(env_section);
 
@@ -1046,6 +1355,7 @@ impl Render for PythonPanel {
                     .overflow_y_scroll()
                     .child(body),
             )
+            .children(self.render_version_modal(window, cx))
             .into_any_element()
     }
 }
@@ -1113,10 +1423,20 @@ impl PythonPanel {
             .as_deref()
             .map(|v| v.split(" from ").next().unwrap_or(v).trim().to_string());
 
-        let text = match (&self.py_ver, &pip_short) {
-            (Some(py), Some(pip)) => format!("Python {}  |  {}", py, pip),
-            (Some(py), None) => format!("Python {}", py),
-            _ => "Python not detected".to_string(),
+        // Says where the interpreter comes from, since a venv, a built-in
+        // version and the machine's own can all report similar versions.
+        let source = self.interpreter_source.label();
+        // `python --version` already says "Python 3.13.14"; keep just the
+        // number so the line doesn't read "Python Python …".
+        let py_ver = self
+            .py_ver
+            .as_deref()
+            .map(|v| v.trim().trim_start_matches("Python").trim().to_string());
+        let text = match (&py_ver, &pip_short) {
+            (Some(py), Some(pip)) => format!("Python {} ({source})  |  {}", py, pip),
+            (Some(py), None) => format!("Python {} ({source})", py),
+            _ if self.scanning => "Looking for Python\u{2026}".to_string(),
+            _ => "Python not found \u{2014} install a version below".to_string(),
         };
 
         div()
@@ -1134,6 +1454,436 @@ impl PythonPanel {
                     .text_color(cx.theme().primary)
                     .child(text),
             )
+    }
+
+    /// The built-in versions: the machine's own Python, every installed
+    /// version (click to make it active), and the installable ones. Picking
+    /// one to install only opens the question; nothing is downloaded before
+    /// it has been answered.
+    fn render_python_versions(&self, cx: &Context<Self>) -> impl IntoElement {
+        let mut col = div().flex().flex_col();
+
+        match self.versions_loaded {
+            None => {
+                return col.child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .px_3()
+                        .py_2()
+                        .child(Spinner::new().xsmall())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Loading Python versions\u{2026}"),
+                        ),
+                );
+            }
+            Some(false) => {
+                return col.child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Couldn't read the installed Python versions"),
+                );
+            }
+            Some(true) => {}
+        }
+
+        col = col.child(
+            div().px_3().py_0p5().child(
+                Button::new("python-version-available-toggle")
+                    .ghost()
+                    .xsmall()
+                    .selected(self.show_available)
+                    .label(if self.show_available {
+                        "Hide Available"
+                    } else {
+                        "Install Version\u{2026}"
+                    })
+                    .on_click(cx.listener(|this, _e, _w, cx| this.toggle_available(cx))),
+            ),
+        );
+
+        if self.managed_versions.is_empty() {
+            col = col.child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "No built-in versions yet. One can be downloaded into the IDE's own \
+                         folder, without installing anything on this machine.",
+                    ),
+            );
+        }
+
+        let marker = |current: bool| {
+            div()
+                .w_3()
+                .flex_shrink_0()
+                .text_color(if current {
+                    cx.theme().primary
+                } else {
+                    cx.theme().muted_foreground
+                })
+                .child(if current { "\u{25CF}" } else { "\u{25CB}" })
+        };
+        let row_color = |current: bool| {
+            if current {
+                cx.theme().primary
+            } else {
+                cx.theme().foreground
+            }
+        };
+
+        // The machine's own Python, in use whenever no built-in version is
+        // active (and no venv takes over).
+        let system_current = !self.managed_versions.iter().any(|v| v.current);
+        col = col.child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .px_3()
+                .py_0p5()
+                .text_xs()
+                .child(marker(system_current))
+                .child(
+                    Button::new("python-version-system")
+                        .custom(ButtonCustomVariant::new(cx).foreground(row_color(system_current)))
+                        .xsmall()
+                        .label("System")
+                        .tooltip(if system_current {
+                            "In use: the Python already on this machine"
+                        } else {
+                            "Use the Python already on this machine"
+                        })
+                        .on_click(cx.listener(|this, _e, _w, cx| this.switch_version(None, cx))),
+                ),
+        );
+
+        for version in &self.managed_versions {
+            let name = version.version.clone();
+            let for_switch = name.clone();
+            let for_remove = name.clone();
+            col = col.child(
+                h_flex()
+                    .justify_between()
+                    .gap_2()
+                    .px_3()
+                    .py_0p5()
+                    .text_xs()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .flex_1()
+                            .min_w_0()
+                            .child(marker(version.current))
+                            .child(
+                                Button::new(format!("python-version-use-{name}"))
+                                    .custom(
+                                        ButtonCustomVariant::new(cx)
+                                            .foreground(row_color(version.current)),
+                                    )
+                                    .xsmall()
+                                    .label(if python_versions::is_prerelease(&name) {
+                                        format!("{name} (pre-release)")
+                                    } else {
+                                        name.clone()
+                                    })
+                                    .tooltip(if version.current {
+                                        "Active version"
+                                    } else {
+                                        "Use this version"
+                                    })
+                                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                                        this.switch_version(Some(for_switch.clone()), cx);
+                                    })),
+                            ),
+                    )
+                    .child(
+                        Button::new(format!("python-version-remove-{name}"))
+                            .custom(
+                                ButtonCustomVariant::new(cx)
+                                    .foreground(cx.theme().muted_foreground),
+                            )
+                            .xsmall()
+                            .icon(IconName::CircleX)
+                            .tooltip("Remove")
+                            .on_click(cx.listener(move |this, _e, _w, cx| {
+                                this.request_uninstall(for_remove.clone(), cx);
+                            })),
+                    ),
+            );
+        }
+
+        if !self.show_available {
+            return col;
+        }
+
+        col = col.child(div().mx_3().mt_1().border_t_1().border_color(cx.theme().border));
+        if self.loading_available {
+            return col.child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .px_3()
+                    .py_1()
+                    .child(Spinner::new().xsmall())
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Loading available versions\u{2026}"),
+                    ),
+            );
+        }
+        if let Some(error) = &self.available_error {
+            return col.child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .text_xs()
+                    .text_color(cx.theme().danger)
+                    .child(error.clone()),
+            );
+        }
+
+        let installed: Vec<&str> = self
+            .managed_versions
+            .iter()
+            .map(|v| v.version.as_str())
+            .collect();
+        // Releases first, newest first; pre-releases (alphas, betas,
+        // release candidates) after them and marked, since they are for
+        // trying out, not for a project to depend on.
+        let (releases, prereleases): (Vec<&Download>, Vec<&Download>) = self
+            .available_versions
+            .iter()
+            .filter(|d| !installed.contains(&d.version.as_str()))
+            .partition(|d| !python_versions::is_prerelease(&d.version));
+        let mut any = false;
+        for download in releases.into_iter().chain(prereleases) {
+            any = true;
+            let label = if python_versions::is_prerelease(&download.version) {
+                format!("{} (pre-release)", download.version)
+            } else {
+                download.version.clone()
+            };
+            let for_install = download.clone();
+            col = col.child(
+                div().px_3().py_0p5().child(
+                    Button::new(format!("python-version-install-{}", download.version))
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Plus)
+                        .label(label)
+                        .on_click(cx.listener(move |this, _e, _w, cx| {
+                            this.request_install(for_install.clone(), cx);
+                        })),
+                ),
+            );
+        }
+        if !any {
+            col = col.child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Every available version is installed"),
+            );
+        }
+        col
+    }
+
+    /// The question before an install or removal, then its progress and
+    /// result. Drawn over the whole window so it can't be missed.
+    fn render_version_modal(&self, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
+        let step = self.version_step.clone()?;
+        let viewport = window.viewport_size();
+
+        let title = match &step {
+            VersionStep::Confirm(PendingVersionAction::Install(_)) => {
+                "Download Python?".to_string()
+            }
+            VersionStep::Confirm(PendingVersionAction::Uninstall(_)) => {
+                "Remove Python version?".to_string()
+            }
+            VersionStep::Running(action) => format!(
+                "{} Python {}\u{2026}",
+                match action {
+                    PendingVersionAction::Install(_) => "Installing",
+                    PendingVersionAction::Uninstall(_) => "Removing",
+                },
+                action.version()
+            ),
+            VersionStep::Done(action, _) => format!("Python {} {}", action.version(), match action {
+                PendingVersionAction::Install(_) => "installed",
+                PendingVersionAction::Uninstall(_) => "removed",
+            }),
+            VersionStep::Error(action, _) => {
+                format!("Couldn't {} Python {}", action.verb(), action.version())
+            }
+        };
+
+        let muted = |text: String| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(text)
+        };
+
+        let body: AnyElement = match &step {
+            VersionStep::Confirm(PendingVersionAction::Install(download)) => {
+                let size = match download.size {
+                    Some(bytes) => megabytes(bytes),
+                    None => "size not known yet".to_string(),
+                };
+                v_flex()
+                    .gap_1()
+                    .child(div().text_sm().text_color(cx.theme().foreground).child(format!(
+                        "Python {} will be downloaded ({size}) and unpacked into the IDE's own \
+                         folder. Nothing is installed on this machine.",
+                        download.version
+                    )))
+                    .when(python_versions::is_prerelease(&download.version), |el| {
+                        el.child(div().text_xs().text_color(cx.theme().warning).child(
+                            "This is a pre-release of Python, published for testing. \
+                             Packages may not support it yet.",
+                        ))
+                    })
+                    .child(muted(format!("From: {}", python_versions::SOURCE)))
+                    .child(muted(format!("File: {}", download.file_name)))
+                    .child(muted(format!(
+                        "Into: {}",
+                        python_versions::store_dir().to_string_lossy()
+                    )))
+                    .into_any_element()
+            }
+            VersionStep::Confirm(PendingVersionAction::Uninstall(version)) => v_flex()
+                .gap_1()
+                .child(div().text_sm().text_color(cx.theme().foreground).child(format!(
+                    "Python {version} will be deleted from the IDE's folder."
+                )))
+                .child(div().text_xs().text_color(cx.theme().warning).child(
+                    "Any virtual environment created from this version stops working, \
+                     and has to be created again.",
+                ))
+                .into_any_element(),
+            VersionStep::Running(action) => h_flex()
+                .gap_3()
+                .items_center()
+                .py_2()
+                .child(Spinner::new())
+                .child(muted(match action {
+                    PendingVersionAction::Install(_) => {
+                        "Downloading, checking and unpacking\u{2026}".to_string()
+                    }
+                    PendingVersionAction::Uninstall(_) => "Deleting\u{2026}".to_string(),
+                }))
+                .into_any_element(),
+            VersionStep::Done(_, output) => div()
+                .text_xs()
+                .text_color(cx.theme().success)
+                .font_family("Cascadia Mono")
+                .child(output.clone())
+                .into_any_element(),
+            VersionStep::Error(_, message) => div()
+                .text_xs()
+                .text_color(cx.theme().danger)
+                .font_family("Cascadia Mono")
+                .child(message.clone())
+                .into_any_element(),
+        };
+
+        let footer: AnyElement = match &step {
+            VersionStep::Confirm(action) => {
+                let (label, variant) = match action {
+                    PendingVersionAction::Install(_) => ("Download", ButtonVariant::Success),
+                    PendingVersionAction::Uninstall(_) => ("Remove", ButtonVariant::Danger),
+                };
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("python-version-cancel")
+                            .outline()
+                            .xsmall()
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.cancel_version_step(cx))),
+                    )
+                    .child(
+                        Button::new("python-version-confirm")
+                            .with_variant(variant)
+                            .xsmall()
+                            .label(label)
+                            .on_click(
+                                cx.listener(|this, _e, _w, cx| this.confirm_version_action(cx)),
+                            ),
+                    )
+                    .into_any_element()
+            }
+            VersionStep::Running(_) => div().into_any_element(),
+            VersionStep::Done(..) | VersionStep::Error(..) => h_flex()
+                .justify_end()
+                .child(
+                    Button::new("python-version-ok")
+                        .outline()
+                        .xsmall()
+                        .label("OK")
+                        .on_click(cx.listener(|this, _e, _w, cx| this.finish_version_step(cx))),
+                )
+                .into_any_element(),
+        };
+
+        Some(
+            deferred(
+                anchored()
+                    .position_mode(AnchoredPositionMode::Window)
+                    .position(point(px(0.0), px(0.0)))
+                    .child(
+                        div()
+                            .id("python-version-modal-backdrop")
+                            .w(viewport.width)
+                            .h(viewport.height)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(gpui::rgba(0x000000aa))
+                            .child(
+                                div()
+                                    .id("python-version-modal")
+                                    .occlude()
+                                    .w(px(420.0))
+                                    .flex()
+                                    .flex_col()
+                                    .gap_3()
+                                    .p_4()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .bg(cx.theme().background)
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(cx.theme().foreground)
+                                            .child(title),
+                                    )
+                                    .child(body)
+                                    .child(footer),
+                            ),
+                    ),
+            )
+            .with_priority(100)
+            .into_any_element(),
+        )
     }
 
     fn render_projects(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -1227,6 +1977,10 @@ impl PythonPanel {
                     .w_full()
                     .child(Label::new("venv").text_xs().secondary(venv.as_str())),
             );
+        } else if self.interpreter_source == InterpreterSource::BuiltIn {
+            content = content.child(div().w_full().child(
+                Label::new("Using the built-in Python (no project venv found)").text_xs(),
+            ));
         } else if self.python_exe.is_some() {
             content = content.child(div().w_full().child(
                 Label::new("Using the global interpreter (no project venv found)").text_xs(),

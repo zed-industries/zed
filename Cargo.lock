@@ -16165,6 +16165,7 @@ dependencies = [
  "http_client",
  "project",
  "python_backend",
+ "python_versions",
  "script_runner_panel",
  "serde_json",
  "ui",
@@ -16181,15 +16182,35 @@ dependencies = [
  "gpui",
  "gpui-component",
  "http_client",
+ "ide_env",
  "language",
  "project",
  "python_backend",
  "python_manager_panel",
+ "python_versions",
  "script_runner_panel",
  "settings",
  "sysinfo 0.39.6",
  "ui",
  "workspace",
+]
+
+[[package]]
+name = "python_versions"
+version = "0.1.0"
+dependencies = [
+ "async-compression",
+ "async-std",
+ "async-tar",
+ "futures 0.3.34",
+ "http_client",
+ "junction",
+ "log",
+ "paths",
+ "serde_json",
+ "sha2 0.10.9",
+ "smol",
+ "tempfile",
 ]
 
 [[package]]

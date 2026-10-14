@@ -1,0 +1,40 @@
+[package]
+name = "python_versions"
+description = "Built-in Python version management for the Python panel: downloads self-contained CPython builds into a folder of the IDE's own — no Python install needed."
+license = "Apache-2.0"
+edition.workspace = true
+version = "0.1.0"
+publish = false
+
+[lib]
+path = "src/python_versions.rs"
+doctest = false
+
+[dependencies]
+async-compression.workspace = true
+async-tar.workspace = true
+futures.workspace = true
+http_client.workspace = true
+log.workspace = true
+paths.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+# The link to the active version is a directory junction on Windows, which
+# needs no privilege to create (a directory symlink does).
+#
+# async-std is not used here directly: async-tar's Windows code calls an
+# async-std function behind its `unstable` feature, which only the workspace
+# entry turns on. Built on its own (`-p python_versions`) nothing else would,
+# so it is listed for that, as `node_runtime` and `fs` list it.
+[target.'cfg(windows)'.dependencies]
+async-std.workspace = true
+junction.workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["async-std"]
+
+[dev-dependencies]
+http_client = { workspace = true, features = ["test-support"] }
+smol.workspace = true
+tempfile.workspace = true

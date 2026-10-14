@@ -205,6 +205,7 @@ members = [
 "crates/python_backend",
     "crates/python_manager_panel",
     "crates/python_panel",
+    "crates/python_versions",
     "crates/recent_projects",
     "crates/refineable",
     "crates/refineable/derive_refineable",
@@ -515,6 +516,7 @@ nuget_manager_panel = { path = "crates/nuget_manager_panel" }
 python_backend = { path = "crates/python_backend" }
 python_manager_panel = { path = "crates/python_manager_panel" }
 python_panel = { path = "crates/python_panel" }
+python_versions = { path = "crates/python_versions" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
@@ -752,6 +754,7 @@ indoc = "2"
 inventory = "0.3.19"
 is_executable = "1.0"
 itertools = "0.14.0"
+junction = "1.2"
 js-sys = "0.3"
 jsonschema = { version = "0.51", default-features = false }
 jsonwebtoken = { version = "10.0", default-features = false }

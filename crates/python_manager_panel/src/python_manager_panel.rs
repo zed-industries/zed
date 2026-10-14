@@ -32,6 +32,7 @@
 //! original's own documented tradeoff.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use futures::io::AsyncReadExt as _;
 use futures::stream::{self, StreamExt as _};
@@ -343,11 +344,18 @@ impl PythonManagerPanel {
                     let (working_exe, using_venv) = if let Some(venv) = venv_exe {
                         (Some(venv), true)
                     } else {
-                        let mut found: Option<String> = None;
+                        // Without a venv: the built-in Python when one is
+                        // active, which is also what a new venv is made
+                        // from, then whatever the machine has.
+                        let mut found: Option<String> =
+                            python_versions::active(&python_versions::store_dir())
+                                .map(|version| version.python.to_string_lossy().into_owned());
                         for candidate in ["python", "python3"] {
+                            if found.is_some() {
+                                break;
+                            }
                             if query_python(candidate).is_ok() {
                                 found = Some(candidate.to_string());
-                                break;
                             }
                         }
                         (found, false)
@@ -569,8 +577,15 @@ impl PythonManagerPanel {
     /// selected project's directory — relative when it's the project's own
     /// venv, so a project under a path with spaces still works.
     fn pip_program(&self) -> Result<String, String> {
+        let exe = self.pip_bin();
+        // The built-in Python is first on the `PATH` of every command the
+        // Script Runner runs, so it is named plainly rather than by a path
+        // under the user's profile, which may hold spaces.
+        if python_versions::is_built_in(&python_versions::store_dir(), Path::new(&exe)) {
+            return Ok("python".to_string());
+        }
         let cwd = self.selected_project.clone().unwrap_or_else(|| self.root.clone());
-        shell_program(&self.pip_bin(), &cwd)
+        shell_program(&exe, &cwd)
     }
 
     /// Runs `command` if it was built successfully; otherwise shows the

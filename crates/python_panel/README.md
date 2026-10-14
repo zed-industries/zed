@@ -17,6 +17,7 @@ Open with `ctrl-k i` (`cmd-k i` on macOS), the status bar icon (tooltip
 
 | Section | What it does |
 | --- | --- |
+| Python Versions | Built-in Python versions: install, pick the active one, remove |
 | Projects | Python projects found under the workspace; pick the active one |
 | Environment | Interpreter, pip and virtual-environment details |
 | Framework | The detected web framework and entry point, if any |
@@ -25,6 +26,31 @@ Open with `ctrl-k i` (`cmd-k i` on macOS), the status bar icon (tooltip
 | Outdated | Packages with newer versions, with **Update all (patch)** / **Update all (minor)** |
 | Vulnerabilities | Known advisories for installed packages |
 | Processes | Running Python processes |
+
+### Python versions
+
+The panel can download Python itself, so a machine with no Python can still
+create a virtual environment and run a project. The builds are self-contained
+CPython from `python-build-standalone`, unpacked into a `python_versions`
+folder in the IDE's data directory; nothing is installed on the machine.
+
+- **Nothing is downloaded without asking.** **Install Version…** only lists
+  what is available. Picking a version opens a question that names the
+  version, its download size and where it comes from; the download starts
+  on **Download**, and is checked against its published checksum.
+- Click a version to make it the active one. The first one installed becomes
+  active on its own. **System** hands the choice back to the machine's own
+  Python.
+- **A project's venv stays in charge.** The active built-in version is used
+  where a project has no venv, and is what a new venv is created from.
+- Terminals, the Script Runner and workflow actions find the active version
+  first on their `PATH` (through `ide_env`); a terminal already open follows a
+  switch.
+- Removing a version breaks any venv created from it; the panel says so
+  before removing.
+
+The header says where the interpreter in use comes from: `(venv)`,
+`(built-in)` or `(system)`.
 
 Useful to know:
 
