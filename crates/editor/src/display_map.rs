@@ -1600,6 +1600,7 @@ impl DisplaySnapshot {
     ) -> Option<UnderlineStyle> {
         (underline
             && editor_style.show_underlines
+            && editor_style.show_diagnostic_underlines
             && self.diagnostic_severity_is_visible(severity)
             && !(is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
             .then(|| UnderlineStyle {

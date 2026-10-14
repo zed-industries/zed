@@ -553,6 +553,7 @@ pub struct EditorStyle {
     pub edit_prediction_styles: EditPredictionStyles,
     pub unnecessary_code_fade: f32,
     pub show_underlines: bool,
+    pub show_diagnostic_underlines: bool,
 }
 
 impl Default for EditorStyle {
@@ -577,6 +578,7 @@ impl Default for EditorStyle {
             },
             unnecessary_code_fade: Default::default(),
             show_underlines: true,
+            show_diagnostic_underlines: true,
         }
     }
 }
@@ -11550,7 +11552,8 @@ impl Editor {
             inlay_hints_style: make_inlay_hints_style(cx),
             edit_prediction_styles: make_suggestion_styles(cx),
             unnecessary_code_fade: settings.unnecessary_code_fade,
-            show_underlines: self.diagnostics_enabled(),
+            show_underlines: !self.mode.is_minimap(),
+            show_diagnostic_underlines: self.diagnostics_enabled(),
         }
     }
 
