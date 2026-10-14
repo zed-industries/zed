@@ -11,6 +11,7 @@ use gpui::{
     SharedString, Styled, Subscription, div, prelude::*,
 };
 use language::Buffer;
+use picker::{QueryEdit, QueryMode};
 use settings::Settings as _;
 use text::{Bias, Point};
 use theme::ActiveTheme;
@@ -27,7 +28,7 @@ pub struct GoToLine {
     active_editor: Entity<Editor>,
     active_buffer: Entity<Buffer>,
     current_text: SharedString,
-    mode_prefix: Option<char>,
+    query_mode: QueryMode,
     prev_scroll_position: Option<gpui::Point<ScrollOffset>>,
     current_line: u32,
     _subscriptions: Vec<Subscription>,
@@ -60,22 +61,21 @@ impl GoToLine {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::open_with_mode_prefix(workspace, None, query, window, cx);
+        Self::open_with_query_mode(workspace, QueryMode::Plain, query, window, cx);
     }
 
     pub fn open_in_unified_mode(
         workspace: &mut Workspace,
-        prefix: char,
         query: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::open_with_mode_prefix(workspace, Some(prefix), query, window, cx);
+        Self::open_with_query_mode(workspace, QueryMode::Prefixed(':'), query, window, cx);
     }
 
-    fn open_with_mode_prefix(
+    fn open_with_query_mode(
         workspace: &mut Workspace,
-        mode_prefix: Option<char>,
+        query_mode: QueryMode,
         query: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -91,15 +91,10 @@ impl GoToLine {
         };
 
         workspace.toggle_modal(window, cx, move |window, cx| {
-            let go_to_line =
-                GoToLine::new_with_mode_prefix(editor, buffer, mode_prefix, window, cx);
-            let query = if let Some(prefix) = mode_prefix {
-                format!("{prefix}{query}")
-            } else {
-                query
-            };
+            let go_to_line = GoToLine::new_with_query_mode(editor, buffer, query_mode, window, cx);
+            let query = query_mode.display_query(&query);
             go_to_line.line_editor.update(cx, |editor, cx| {
-                editor.set_text(query.as_str(), window, cx);
+                editor.set_text(query.as_ref(), window, cx);
             });
             go_to_line
         });
@@ -117,7 +112,7 @@ impl GoToLine {
                 };
                 if settings::UnifiedPaletteSettings::get_global(cx).enabled {
                     workspace.update(cx, |workspace, cx| {
-                        GoToLine::open_in_unified_mode(workspace, ':', String::new(), window, cx);
+                        GoToLine::open_in_unified_mode(workspace, String::new(), window, cx);
                     });
                     return;
                 }
@@ -141,13 +136,13 @@ impl GoToLine {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_with_mode_prefix(active_editor, active_buffer, None, window, cx)
+        Self::new_with_query_mode(active_editor, active_buffer, QueryMode::Plain, window, cx)
     }
 
-    fn new_with_mode_prefix(
+    fn new_with_query_mode(
         active_editor: Entity<Editor>,
         active_buffer: Entity<Buffer>,
-        mode_prefix: Option<char>,
+        query_mode: QueryMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -215,7 +210,7 @@ impl GoToLine {
             active_editor,
             active_buffer,
             current_text: current_text.into(),
-            mode_prefix,
+            query_mode,
             prev_scroll_position: Some(scroll_position),
             current_line: line,
             _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],
@@ -247,10 +242,10 @@ impl GoToLine {
             }
             editor::EditorEvent::BufferEdited => {
                 let query = self.line_editor.read(cx).text(cx);
-                if self
-                    .mode_prefix
-                    .is_some_and(|prefix| !query.starts_with(prefix))
-                {
+                if matches!(
+                    self.query_mode.edit_query(&query),
+                    QueryEdit::ReturnToFileFinder
+                ) {
                     // Let this view release its update lease before the router reads its query.
                     cx.defer_in(window, |_, window, cx| {
                         window.dispatch_action(
@@ -324,10 +319,7 @@ impl GoToLine {
 
     pub fn query(&self, cx: &App) -> String {
         let query = self.line_editor.read(cx).text(cx);
-        self.mode_prefix
-            .and_then(|prefix| query.strip_prefix(prefix))
-            .unwrap_or(&query)
-            .to_owned()
+        self.query_mode.filter_query(&query).to_owned()
     }
 
     pub fn query_with_mode_prefix(&self, cx: &App) -> String {
@@ -335,7 +327,7 @@ impl GoToLine {
     }
 
     pub fn is_unified_mode(&self) -> bool {
-        self.mode_prefix.is_some()
+        matches!(self.query_mode, QueryMode::Prefixed(_))
     }
 
     fn relative_line_from_query(&self, cx: &App) -> Option<i32> {

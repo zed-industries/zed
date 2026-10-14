@@ -23,7 +23,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(
                 |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
                     if settings::UnifiedPaletteSettings::get_global(cx).enabled {
-                        open_in_unified_mode(workspace, '#', String::new(), window, cx);
+                        open_in_unified_mode(workspace, String::new(), window, cx);
                     } else {
                         open_with_query(workspace, String::new(), window, cx);
                     }
@@ -58,14 +58,13 @@ pub fn open_with_query(
 
 pub fn open_in_unified_mode(
     workspace: &mut Workspace,
-    prefix: char,
     query: String,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     open(
         workspace,
-        picker::QueryMode::Prefixed(prefix),
+        picker::QueryMode::Prefixed('#'),
         query,
         window,
         cx,

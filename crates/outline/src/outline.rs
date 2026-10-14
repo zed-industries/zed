@@ -48,7 +48,7 @@ pub fn toggle(
     }
 
     if settings::UnifiedPaletteSettings::get_global(cx).enabled {
-        open_in_unified_mode(editor, '@', String::new(), window, cx);
+        open_in_unified_mode(editor, String::new(), window, cx);
     } else {
         open_with_query(editor, String::new(), window, cx);
     }
@@ -60,18 +60,11 @@ pub fn open_with_query(editor: Entity<Editor>, query: String, window: &mut Windo
 
 pub fn open_in_unified_mode(
     editor: Entity<Editor>,
-    prefix: char,
     query: String,
     window: &mut Window,
     cx: &mut App,
 ) {
-    open_with_query_mode(
-        editor,
-        picker::QueryMode::Prefixed(prefix),
-        query,
-        window,
-        cx,
-    );
+    open_with_query_mode(editor, picker::QueryMode::Prefixed('@'), query, window, cx);
 }
 
 fn open_with_query_mode(

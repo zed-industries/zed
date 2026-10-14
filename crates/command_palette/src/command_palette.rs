@@ -82,7 +82,7 @@ impl CommandPalette {
     ) {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             if settings::UnifiedPaletteSettings::get_global(cx).enabled {
-                Self::toggle_in_unified_mode(workspace, '>', "", window, cx);
+                Self::toggle_in_unified_mode(workspace, "", window, cx);
             } else {
                 Self::toggle(workspace, "", window, cx);
             }
@@ -100,14 +100,28 @@ impl CommandPalette {
 
     pub fn toggle_in_unified_mode(
         workspace: &mut Workspace,
-        prefix: char,
         query: &str,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         Self::toggle_with_query_mode(
             workspace,
-            picker::QueryMode::Prefixed(prefix),
+            picker::QueryMode::Prefixed('>'),
+            query,
+            window,
+            cx,
+        );
+    }
+
+    pub fn open_in_unified_mode(
+        workspace: &mut Workspace,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::open_with_query_mode(
+            workspace,
+            picker::QueryMode::Prefixed('>'),
             query,
             window,
             cx,
@@ -126,6 +140,16 @@ impl CommandPalette {
             return;
         }
 
+        Self::open_with_query_mode(workspace, query_mode, query, window, cx);
+    }
+
+    fn open_with_query_mode(
+        workspace: &mut Workspace,
+        query_mode: picker::QueryMode,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
         if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
             return;
         }

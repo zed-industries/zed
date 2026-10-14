@@ -7296,6 +7296,7 @@ dependencies = [
  "language",
  "menu",
  "multi_buffer",
+ "picker",
  "project",
  "rope",
  "serde_json",

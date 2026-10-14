@@ -69,13 +69,13 @@ pub enum QueryMode {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum QueryEdit<'a> {
+pub enum QueryEdit<'a> {
     Filter(&'a str),
     ReturnToFileFinder,
 }
 
 impl QueryMode {
-    fn display_query(self, query: &str) -> Cow<'_, str> {
+    pub fn display_query(self, query: &str) -> Cow<'_, str> {
         match self {
             Self::Plain => Cow::Borrowed(query),
             Self::Prefixed(prefix) => Cow::Owned(format!(
@@ -85,14 +85,14 @@ impl QueryMode {
         }
     }
 
-    fn filter_query(self, query: &str) -> &str {
+    pub fn filter_query(self, query: &str) -> &str {
         match self.edit_query(query) {
             QueryEdit::Filter(filtered_query) => filtered_query,
             QueryEdit::ReturnToFileFinder => query,
         }
     }
 
-    fn edit_query<'a>(self, input: &'a str) -> QueryEdit<'a> {
+    pub fn edit_query<'a>(self, input: &'a str) -> QueryEdit<'a> {
         match self {
             Self::Plain => QueryEdit::Filter(input),
             Self::Prefixed(prefix) => match input.strip_prefix(prefix) {
