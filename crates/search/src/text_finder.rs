@@ -409,28 +409,10 @@ impl TextFinder {
         self.picker.read(cx).query(cx)
     }
 
-    pub fn is_unified_mode(&self, cx: &App) -> bool {
-        self.picker.read(cx).has_query_mode_prefix()
-    }
-
     pub fn cycle_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.init_modifiers = Some(window.modifiers());
         self.picker
             .update(cx, |picker, cx| picker.cycle_selection(window, cx));
-    }
-
-    /// Opens the TextFinder using its normal selection and search-history seeding.
-    pub fn open_from_workspace(
-        workspace: &mut Workspace,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Task<()> {
-        Self::open_from_workspace_with_query_mode(
-            workspace,
-            picker::QueryMode::Standalone,
-            window,
-            cx,
-        )
     }
 
     pub fn open_from_workspace_in_unified_mode(
@@ -454,23 +436,6 @@ impl TextFinder {
     ) -> Task<()> {
         let seed_query = Self::seed_query(workspace, window, cx);
         Self::open_with_query_mode(seed_query, query_mode, window, cx)
-    }
-
-    /// Opens a search query without adding unified-palette mode state.
-    pub fn open_with_query(
-        query: String,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Task<()> {
-        Self::open_with_query_mode(
-            Some(SearchSeed {
-                query: QuerySeed::Query(query),
-                options: None,
-            }),
-            picker::QueryMode::Standalone,
-            window,
-            cx,
-        )
     }
 
     pub fn open_in_unified_mode(

@@ -222,10 +222,6 @@ impl CommandPalette {
         self.picker.read(cx).query(cx)
     }
 
-    pub fn is_unified_mode(&self, cx: &App) -> bool {
-        self.picker.read(cx).has_query_mode_prefix()
-    }
-
     fn remove_selected(&mut self, _: &RemoveSelected, window: &mut Window, cx: &mut Context<Self>) {
         self.picker.update(cx, |picker, cx| {
             let delegate = &mut picker.delegate;

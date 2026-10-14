@@ -1985,10 +1985,7 @@ impl PickerDelegate for FileFinderDelegate {
                 Some('>' | '#' | '@' | ':' | '%' | '?')
             )
         {
-            self.latest_search_id = post_inc(&mut self.search_count);
-            self.cancel_flag.store(true, atomic::Ordering::Release);
             window.dispatch_action(SwitchModeFromFileFinder.boxed_clone(), cx);
-            return Task::ready(());
         }
 
         let raw_query = match &raw_query.get(0..2) {

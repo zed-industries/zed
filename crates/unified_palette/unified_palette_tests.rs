@@ -447,6 +447,50 @@ async fn modal_keybindings_follow_unified_palette_setting(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn unavailable_outline_prefix_falls_back_to_file_matching(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({"@target.rs": ""}))
+        .await;
+    cx.update(|cx| {
+        init(cx);
+        file_finder::init(cx);
+        outline::init(cx);
+    });
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+    cx.dispatch_action(workspace::ToggleFileFinder::default());
+    cx.run_until_parked();
+    let file_finder = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_modal::<file_finder::FileFinder>(cx)
+            .unwrap()
+    });
+    file_finder.update_in(cx, |file_finder, window, cx| {
+        file_finder.set_query("@target.rs", window, cx);
+    });
+    cx.run_until_parked();
+    assert!(workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_modal::<file_finder::FileFinder>(cx)
+            .is_some()
+    }));
+
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    workspace.read_with(cx, |workspace, cx| {
+        let editor = workspace.active_item_as::<editor::Editor>(cx).unwrap();
+        assert_eq!(editor.read(cx).title(cx), "@target.rs");
+    });
+}
+
+#[gpui::test]
 async fn outline_prefix_opens_existing_outline_view(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state

@@ -1780,16 +1780,4 @@
       "right": ["tabular_data::MoveFocusedCell", { "direction": "right" }],
     },
   },
-  {
-    "context": "UnifiedPalette",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-p": "file_finder::Toggle",
-      "cmd-shift-p": "command_palette::Toggle",
-      "cmd-t": "project_symbols::Toggle",
-      "cmd-shift-o": "outline::Toggle",
-      "ctrl-g": "go_to_line::Toggle",
-      "alt-cmd-f": "text_finder::Toggle",
-    },
-  },
 ]

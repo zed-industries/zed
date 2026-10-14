@@ -327,10 +327,6 @@ impl GoToLine {
         self.line_editor.read(cx).text(cx)
     }
 
-    pub fn is_unified_mode(&self) -> bool {
-        matches!(self.query_mode, QueryMode::Prefixed(_))
-    }
-
     fn relative_line_from_query(&self, cx: &App) -> Option<i32> {
         let query = self.query(cx);
         let trimmed = query.trim();

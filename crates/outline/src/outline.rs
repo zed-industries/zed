@@ -74,15 +74,6 @@ fn toggle_with_query_mode(
     open_with_query_mode(editor, query_mode, query, window, cx);
 }
 
-pub fn open_with_query(
-    editor: Entity<Editor>,
-    query: String,
-    window: &mut Window,
-    cx: &mut App,
-) -> bool {
-    open_with_query_mode(editor, picker::QueryMode::Standalone, query, window, cx)
-}
-
 pub fn open_in_unified_mode(
     editor: Entity<Editor>,
     query: String,
@@ -222,10 +213,6 @@ impl OutlineView {
 
     pub fn query_with_mode_prefix(&self, cx: &App) -> String {
         self.picker.read(cx).query(cx)
-    }
-
-    pub fn is_unified_mode(&self, cx: &App) -> bool {
-        self.picker.read(cx).has_query_mode_prefix()
     }
 
     fn register(editor: &mut Editor, _: Option<&mut Window>, cx: &mut Context<Editor>) {
