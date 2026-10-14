@@ -197,6 +197,7 @@ impl Thread {
             | RouterEvent::ModelChanged
             | RouterEvent::RunNote { .. }
             | RouterEvent::ThinkingLevel(_)
+            | RouterEvent::SessionInfo { .. }
             | RouterEvent::Unknown { .. }
             | RouterEvent::SubagentLifecycle { .. }
             | RouterEvent::SubagentProgress { .. } => {

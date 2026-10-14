@@ -468,6 +468,12 @@ pub struct CedianPanel {
     worktree_gate: Option<Arc<WorktreeAsk>>,
     /// The lease on the pending worktree request (ADR-0013).
     _worktree_expiry: Option<Task<()>>,
+    /// The session list and the open session's history (S10 U1).
+    sessions: crate::sessions::SessionManager,
+    /// The session OMP was last on, and its file.
+    session: Option<(String, Option<PathBuf>)>,
+    rename_input: Entity<Editor>,
+    _session_list: Option<Task<()>>,
 }
 
 /// The model and thinking-level picker: OMP's choices once read, and what
@@ -550,6 +556,11 @@ impl CedianPanel {
         let input = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Ask OMP…", window, cx);
+            editor
+        });
+        let rename_input = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("New session name…", window, cx);
             editor
         });
         let (reads, mut read_rx) =
@@ -641,6 +652,10 @@ impl CedianPanel {
             worktree_ask: None,
             worktree_gate: None,
             _worktree_expiry: None,
+            sessions: Default::default(),
+            session: None,
+            rename_input,
+            _session_list: None,
         };
         this._worktree_changes = Some(cx.subscribe(&this.project, |this, project, event, cx| {
             if let project::Event::WorktreeUpdatedEntries(worktree, changes) = event {
@@ -2138,6 +2153,183 @@ impl CedianPanel {
         cx.notify();
     }
 
+    /// OMP is on session `id` now. When that is another session than
+    /// before, the old one's thread and history go; its pending hunks stay
+    /// in the task's review (ADR-0006: the review is the task's, and a
+    /// switch accepts or rejects nothing).
+    fn on_session(
+        &mut self,
+        id: &str,
+        file: Option<PathBuf>,
+        title: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let moved = self.session.as_ref().is_some_and(|(old, _)| old != id);
+        if moved {
+            self.forget_old_omp(window, cx);
+            self.thread = Thread::new();
+            self.sessions.moved(title);
+            let pending = self.pending_hunks();
+            if pending > 0 {
+                self.session_notes.push(format!(
+                    "{pending} pending change(s) of the previous session stay in Review changes"
+                ));
+            }
+        } else if title.is_some() {
+            self.sessions.title = title;
+        }
+        self.session = Some((id.to_string(), file));
+    }
+
+    fn pending_hunks(&self) -> usize {
+        self.review
+            .files()
+            .iter()
+            .flat_map(|f| f.hunks())
+            .filter(|h| !matches!(h.status, HunkStatus::Accepted | HunkStatus::Rejected))
+            .count()
+    }
+
+    /// The session manager's state.
+    pub fn sessions(&self) -> &crate::sessions::SessionManager {
+        &self.sessions
+    }
+
+    /// Whether a session change may be sent now: OMP is ready, no turn
+    /// runs and no dialog waits.
+    fn session_idle(&self) -> bool {
+        matches!(self.connection, Connection::Ready { .. })
+            && self.turn == Turn::Idle
+            && self.dialogs.is_empty()
+    }
+
+    /// Open or close the session list; opening reads OMP's store again.
+    pub fn toggle_sessions(&mut self, cx: &mut Context<Self>) {
+        self.sessions.open = !self.sessions.open;
+        if self.sessions.open {
+            self.refresh_sessions(cx);
+        }
+        cx.notify();
+    }
+
+    fn refresh_sessions(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = self
+            .session
+            .as_ref()
+            .and_then(|(_, file)| file.as_ref())
+            .and_then(|f| f.parent())
+            .map(Path::to_path_buf)
+        else {
+            self.sessions.list_error = Some("OMP has not named its session file".to_string());
+            return;
+        };
+        let listed = cx
+            .background_executor()
+            .spawn(async move { cedian_omp::sessions::list(&dir) });
+        self._session_list = Some(cx.spawn(async move |this, cx| {
+            let listed = listed.await;
+            this.update(cx, |this, cx| {
+                match listed {
+                    Ok(entries) => {
+                        this.sessions.entries = entries;
+                        this.sessions.list_error = None;
+                    }
+                    Err(e) => this.sessions.list_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Move OMP to the session in `file`.
+    pub fn open_session(&mut self, file: PathBuf, cx: &mut Context<Self>) {
+        if !self.session_idle() {
+            self.notice = Some("finish or stop the turn before changing sessions".to_string());
+        } else if let Some(Err(e)) = self.link.as_ref().map(|l| l.switch_session(file)) {
+            self.notice = Some(e);
+        } else {
+            self.connection = Connection::Checking;
+        }
+        cx.notify();
+    }
+
+    /// Rename the session to what the rename box holds.
+    pub fn rename_session(&mut self, cx: &mut Context<Self>) {
+        let name = self.rename_input.read(cx).text(cx).trim().to_string();
+        if name.is_empty() {
+            self.notice = Some("type the session's new name first".to_string());
+        } else if let Some(link) = &self.link {
+            link.rename(name);
+        }
+        cx.notify();
+    }
+
+    /// The rename box.
+    pub fn rename_input(&self) -> &Entity<Editor> {
+        &self.rename_input
+    }
+
+    /// Hand the conversation off with OMP's summary.
+    pub fn handoff(&mut self, cx: &mut Context<Self>) {
+        if !self.session_idle() {
+            self.notice = Some("finish or stop the turn before handing off".to_string());
+        } else if let Some(Err(e)) = self.link.as_ref().map(OmpLink::handoff) {
+            self.notice = Some(e);
+        }
+        cx.notify();
+    }
+
+    /// Export the session as HTML into the workspace's state dir, outside
+    /// the project, so the review never sees it as a change.
+    pub fn export_session(&mut self, cx: &mut Context<Self>) {
+        match (&self.link, &self.state_dir, &self.session) {
+            (Some(link), Some(dir), Some((id, _))) => {
+                link.export(dir.join("exports").join(format!("{id}.html")));
+            }
+            _ => self.notice = Some("no session to export".to_string()),
+        }
+        cx.notify();
+    }
+
+    /// The session's history: its first page, or the next one.
+    pub fn load_history(&mut self, more: bool, cx: &mut Context<Self>) {
+        let cursor = if more {
+            match self.sessions.history.next.clone() {
+                Some(cursor) => Some(cursor),
+                None => return,
+            }
+        } else {
+            None
+        };
+        if let Some(link) = &self.link {
+            link.history(cursor);
+        }
+        cx.notify();
+    }
+
+    pub fn load_all_history(&mut self, cx: &mut Context<Self>) {
+        if let Some(link) = &self.link {
+            link.all_messages();
+        }
+        cx.notify();
+    }
+
+    pub fn load_timeline(&mut self, cx: &mut Context<Self>) {
+        if let Some(link) = &self.link {
+            link.timeline();
+        }
+        cx.notify();
+    }
+
+    pub fn load_last_reply(&mut self, cx: &mut Context<Self>) {
+        if let Some(link) = &self.link {
+            link.last_reply();
+        }
+        cx.notify();
+    }
+
     /// The old OMP's subagents and queue die with it: their rows go, and
     /// what was queued goes back (`take_back`).
     fn forget_old_omp(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2268,12 +2460,20 @@ impl CedianPanel {
         match event {
             LinkEvent::Ready {
                 session_id,
+                session_file,
                 resumed,
                 policy_note,
                 model,
                 thinking,
-                ..
+                title,
             } => {
+                self.on_session(
+                    &session_id,
+                    session_file.map(PathBuf::from),
+                    title,
+                    window,
+                    cx,
+                );
                 self.forget_subagents();
                 self.onboarding = None;
                 if model.is_some() {
@@ -2300,6 +2500,8 @@ impl CedianPanel {
                     self.thread.withdraw_user();
                     self.end_turn(None, window, cx);
                 }
+                let file = self.session.as_ref().and_then(|(_, file)| file.clone());
+                self.on_session(&session_id, file, None, window, cx);
                 self.connection = Connection::Taken { session_id, reason };
             }
             LinkEvent::PromptTimed { sent, returned } => {
@@ -2337,6 +2539,51 @@ impl CedianPanel {
             }
             LinkEvent::QueueRefused { text, reason } => self.queue_refused(text, reason, cx),
             LinkEvent::Restored(texts) => self.take_back(texts, window, cx),
+            LinkEvent::SwitchRefused(reason) => self.notice = Some(reason),
+            LinkEvent::HandedOff(Ok(Some(_))) => {
+                self.thread = Thread::new();
+                self.sessions.history = Default::default();
+                self.session_notes.push(
+                    "OMP handed the conversation off: its summary now opens the session".into(),
+                );
+                if let Some(link) = &self.link {
+                    link.history(None);
+                }
+            }
+            LinkEvent::HandedOff(Ok(None)) => {
+                self.notice = Some("OMP produced no handoff".to_string());
+            }
+            LinkEvent::HandedOff(Err(e)) => self.notice = Some(format!("hand off: {e}")),
+            LinkEvent::Renamed { name, result } => match result {
+                Ok(()) => {
+                    if let Some((id, _)) = &self.session {
+                        self.sessions.renamed(&id.clone(), Some(name));
+                    }
+                    self.rename_input
+                        .update(cx, |editor, cx| editor.clear(window, cx));
+                }
+                Err(e) => self.notice = Some(format!("rename: {e}")),
+            },
+            LinkEvent::History { more, result } => match result {
+                Ok(page) => self.sessions.history.page(page, more),
+                Err(e) => self.notice = Some(format!("history: {e}")),
+            },
+            LinkEvent::AllMessages(result) => match result {
+                Ok(lines) => self.sessions.history.all(lines),
+                Err(e) => self.notice = Some(format!("history: {e}")),
+            },
+            LinkEvent::Timeline(result) => match result {
+                Ok(lines) => self.sessions.history.timeline = lines,
+                Err(e) => self.notice = Some(format!("timeline: {e}")),
+            },
+            LinkEvent::LastReply(result) => match result {
+                Ok(text) => self.sessions.history.last_reply = Some(text),
+                Err(e) => self.notice = Some(format!("last reply: {e}")),
+            },
+            LinkEvent::Exported(result) => match result {
+                Ok(path) => self.session_notes.push(format!("exported to {path}")),
+                Err(e) => self.notice = Some(format!("export: {e}")),
+            },
             LinkEvent::TakeBackNotice(notice) => self.notice = Some(notice),
             LinkEvent::SubagentSteered { id, result } => {
                 let note = match result {
@@ -2500,6 +2747,22 @@ impl CedianPanel {
                 }
             }
             LinkEvent::Event(RouterEvent::ThinkingLevel(level)) => self.picker.thinking = level,
+            LinkEvent::Event(RouterEvent::SessionInfo { session_id, title }) => {
+                if self
+                    .session
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == session_id)
+                {
+                    self.sessions.renamed(&session_id, title);
+                } else if let Some(entry) = self
+                    .sessions
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.id == session_id)
+                {
+                    entry.title = title;
+                }
+            }
             LinkEvent::Event(RouterEvent::Toast(toast)) => self.push_toast(toast),
             LinkEvent::Event(event) => {
                 let settled = matches!(event, RouterEvent::Settled);
@@ -3338,6 +3601,167 @@ impl CedianPanel {
     /// Compaction and retry notes, Stop retry, Steer now on each queued
     /// follow-up, and the session's queue, compaction and retry settings
     /// while the picker is open.
+    /// The history loaded so far, above the live thread.
+    fn render_history(&self) -> Vec<AnyElement> {
+        let history = &self.sessions.history;
+        let mut rows: Vec<AnyElement> = history
+            .lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                div()
+                    .debug_selector(move || format!("cedian-history-{i}"))
+                    .child(Label::new(line.clone()).color(Color::Muted))
+                    .into_any_element()
+            })
+            .collect();
+        if let Some(total) = history.total {
+            rows.push(
+                Label::new(format!(
+                    "{} of {total} earlier message(s) shown",
+                    history.lines.len()
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+            );
+        }
+        rows
+    }
+
+    /// The session list, the current session's actions and its history
+    /// reads (S10 U1).
+    fn render_sessions(&self, cx: &mut Context<Self>) -> AnyElement {
+        let idle = self.session_idle();
+        let current = self.session.as_ref().map(|(id, _)| id.clone());
+        let button = |id: &'static str,
+                      label: &'static str,
+                      enabled: bool,
+                      click: fn(&mut Self, &mut Context<Self>)| {
+            div().debug_selector(move || id.to_string()).child(
+                Button::new(id, label)
+                    .disabled(!enabled)
+                    .on_click(cx.listener(move |this, _, _, cx| click(this, cx))),
+            )
+        };
+        let history = &self.sessions.history;
+        let actions = h_flex()
+            .gap_2()
+            .child(div().flex_1().child(self.rename_input.clone()))
+            .child(button(
+                "cedian-rename-session",
+                "Rename",
+                idle,
+                Self::rename_session,
+            ))
+            .child(button("cedian-handoff", "Hand off", idle, Self::handoff))
+            .child(button(
+                "cedian-export",
+                "Export HTML",
+                idle,
+                Self::export_session,
+            ));
+        let reads = h_flex()
+            .gap_2()
+            .child(button(
+                "cedian-history-more",
+                if history.total.is_none() {
+                    "Show history"
+                } else {
+                    "Load more"
+                },
+                history.total.is_none() || history.next.is_some(),
+                |this, cx| {
+                    let more = this.sessions.history.total.is_some();
+                    this.load_history(more, cx)
+                },
+            ))
+            .child(button(
+                "cedian-history-all",
+                "Load all",
+                true,
+                Self::load_all_history,
+            ))
+            .child(button(
+                "cedian-timeline",
+                "Timeline",
+                true,
+                Self::load_timeline,
+            ))
+            .child(button(
+                "cedian-last-reply",
+                "Last reply",
+                true,
+                Self::load_last_reply,
+            ));
+        let rows: Vec<AnyElement> = self
+            .sessions
+            .entries
+            .iter()
+            .map(|entry| {
+                let short = crate::sessions::short_id(&entry.id).to_string();
+                let is_current = current.as_deref() == Some(entry.id.as_str());
+                let path = entry.path.clone();
+                let label = crate::sessions::entry_label(entry);
+                let row_id = format!("cedian-session-{short}");
+                let open_id = format!("cedian-open-session-{short}");
+                let open_selector = open_id.clone();
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div().debug_selector(move || row_id).child(
+                            Label::new(if is_current {
+                                format!("{label} · current")
+                            } else {
+                                label
+                            })
+                            .size(LabelSize::Small),
+                        ),
+                    )
+                    .when(!is_current, |row| {
+                        row.child(
+                            div().debug_selector(move || open_selector).child(
+                                Button::new(SharedString::from(open_id), "Open")
+                                    .disabled(!idle)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.open_session(path.clone(), cx)
+                                    })),
+                            ),
+                        )
+                    })
+                    .into_any_element()
+            })
+            .collect();
+        v_flex()
+            .gap_1()
+            .debug_selector(|| "cedian-sessions".to_string())
+            .children(rows)
+            .when_some(self.sessions.list_error.clone(), |list, error| {
+                list.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+            })
+            .child(actions)
+            .child(reads)
+            .when_some(history.last_reply.clone(), |list, reply| {
+                list.child(
+                    div()
+                        .debug_selector(|| "cedian-last-reply-text".to_string())
+                        .child(
+                            Label::new(match reply {
+                                Some(text) => format!("last reply: {text}"),
+                                None => "OMP has no reply in this session yet".to_string(),
+                            })
+                            .size(LabelSize::Small),
+                        ),
+                )
+            })
+            .children(history.timeline.iter().map(|line| {
+                Label::new(line.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+            }))
+            .into_any_element()
+    }
+
     fn render_session(&self, cx: &mut Context<Self>) -> AnyElement {
         use crate::omp_link::SessionSetting as S;
         use omp_rpc::{InterruptMode, QueueMode};
@@ -5074,6 +5498,7 @@ impl Render for CedianPanel {
             }
         );
         let review = self.show_review.then(|| self.render_review(cx));
+        let history = self.render_history();
         let browser = self.render_browser(cx);
         let workflow = self.render_workflow(cx);
         let workers = self.render_worker_trees(cx);
@@ -5108,6 +5533,20 @@ impl Render for CedianPanel {
                     )
                     .child(
                         div()
+                            .debug_selector(|| "cedian-sessions-toggle".to_string())
+                            .child(
+                                Button::new(
+                                    "cedian-sessions-toggle",
+                                    match &self.sessions.title {
+                                        Some(title) => format!("Sessions · {title}"),
+                                        None => "Sessions".to_string(),
+                                    },
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| this.toggle_sessions(cx))),
+                            ),
+                    )
+                    .child(
+                        div()
                             .debug_selector(|| "cedian-open-browser".to_string())
                             .child(
                                 Button::new("cedian-open-browser", "Open browser")
@@ -5136,6 +5575,10 @@ impl Render for CedianPanel {
                     .filter(|_| self.show_settings && !self.show_review),
                 |panel, settings| panel.child(div().flex_1().child(settings)),
             )
+            .when(
+                self.sessions.open && !self.show_settings && !self.show_review,
+                |panel| panel.child(self.render_sessions(cx)),
+            )
             .when(!self.show_settings && !self.show_review, |panel| {
                 panel.child(
                     v_flex()
@@ -5143,6 +5586,7 @@ impl Render for CedianPanel {
                         .flex_1()
                         .overflow_y_scroll()
                         .gap_1()
+                        .children(history)
                         .children(rows),
                 )
             })

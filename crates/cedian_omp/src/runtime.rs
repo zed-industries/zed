@@ -26,7 +26,7 @@ use omp_rpc::{
     AbortAndRestoreQueueCommand, AbortCommand, Client, ClientOptions, Event, ExtensionUiResponse,
     GetStateCommand, HostTool, HostUri, ImageContent, NewSessionCommand, OpenSessionCommand,
     OpenSessionResult, PromptCommand, PromptTurn, RpcInbound, RpcNotification, SessionState,
-    SetAskDialogCommand, SetModelCommand, SteerCommand,
+    SetAskDialogCommand, SetModelCommand, SteerCommand, SwitchSessionCommand,
 };
 use std::{
     path::PathBuf,
@@ -354,6 +354,40 @@ impl OmpRuntime {
         Ok(NewSession::Started(state))
     }
 
+    /// Move OMP to the session in `file` and rebind to it. An error means
+    /// OMP refused and kept the current session.
+    pub fn switch_session(
+        &mut self,
+        file: &std::path::Path,
+        task: &str,
+    ) -> Result<NewSession, OmpError> {
+        let result = self
+            .client()
+            .call(&SwitchSessionCommand {
+                session_path: file.to_string_lossy().into_owned(),
+                provider: None,
+                model_id: None,
+            })
+            .map_err(OmpError::from)?;
+        if result.cancelled {
+            return Ok(NewSession::Declined);
+        }
+        let state = match self.get_state() {
+            Ok(state) => state,
+            Err(e) => {
+                self.session = None;
+                return Ok(NewSession::Unknown(e));
+            }
+        };
+        self.session = Some(SessionBinding::new(
+            self.config.cwd.clone(),
+            file.parent().map_or_else(PathBuf::new, PathBuf::from),
+            state.session_id.clone(),
+            task.to_string(),
+        ));
+        Ok(NewSession::Started(state))
+    }
+
     /// Switch the session model (`provider/id` pair, both required upstream).
     pub fn set_model(&self, provider: &str, model_id: &str) -> Result<(), OmpError> {
         self.client()
@@ -429,7 +463,7 @@ fn take_unique<T>(arc: Arc<T>, limit: Duration) -> Result<T, Arc<T>> {
     Arc::try_unwrap(arc)
 }
 
-/// What [`OmpRuntime::new_session`] did.
+/// What [`OmpRuntime::new_session`] or [`OmpRuntime::switch_session`] did.
 #[derive(Debug)]
 pub enum NewSession {
     Started(SessionState),

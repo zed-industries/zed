@@ -84,6 +84,10 @@ name = "one_driver"
 harness = false
 
 [[test]]
+name = "sessions"
+harness = false
+
+[[test]]
 name = "live_approval"
 harness = false
 

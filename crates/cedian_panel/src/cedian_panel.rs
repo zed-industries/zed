@@ -10,6 +10,7 @@ pub mod omp_link;
 pub mod omp_settings;
 pub mod panel;
 pub mod review;
+pub mod sessions;
 pub mod worker_complete;
 pub mod worker_trees;
 pub mod workflow_view;
@@ -21,3 +22,4 @@ pub use panel::{
     BROWSER_GATE, CedianPanel, Connection, DIALOG_TIMEOUT, InlineEdit, ModelPicker, Onboarding,
     RevertTurn, TASK_ID, ToggleFocus, Turn, init,
 };
+pub use sessions::{History, SessionManager};

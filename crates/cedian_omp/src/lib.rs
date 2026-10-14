@@ -13,11 +13,13 @@ pub mod dialog;
 pub mod driver;
 pub mod errors;
 pub mod event_router;
+pub mod history;
 pub mod omp_config;
 pub mod protected;
 pub mod runtime;
 pub mod sandbox;
 pub mod session;
+pub mod sessions;
 pub mod spawn_profile;
 
 pub use dialog::{
@@ -41,6 +43,7 @@ pub use runtime::{
 pub use session::{
     ResumeState, SNAPSHOT_VERSION, SessionBinding, SnapshotVersionMismatch, validate_binding,
 };
+pub use sessions::SessionEntry;
 pub use spawn_profile::{
     ApprovalMode, Approvals, BashRule, Sessions, SpawnPlan, SpawnPolicy, SpawnProfile, ToolPolicy,
     omp_config_get, omp_version, resolve_on_path, scrub_env,

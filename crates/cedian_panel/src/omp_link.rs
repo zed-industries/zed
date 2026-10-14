@@ -13,7 +13,7 @@
 
 use cedian_omp::{
     Answerer, DialogRecord, EventRouter, GateDecision, NewSession, OmpBinary, OmpError, OmpRuntime,
-    RouterEvent, RuntimeConfig, RuntimeControl, Sessions, SpawnPolicy, UserAnswer,
+    RouterEvent, RuntimeConfig, RuntimeControl, Sessions, SpawnPolicy, UserAnswer, history,
 };
 use cedian_shell::audit::AuditLog;
 use cedian_shell::{Policy, RunKind, Verdict};
@@ -21,12 +21,13 @@ use collections::HashMap;
 use futures::channel::mpsc::UnboundedSender;
 use omp_rpc::{
     AbortAndRestoreQueueResult, AbortRetryCommand, CompactCommand, CycleModelCommand,
-    CycleThinkingLevelCommand, ExtensionUiRequest, ExtensionUiResponse, GetAvailableModelsCommand,
-    GetAvailableThinkingLevelsCommand, GetLoginProvidersCommand, GetStateCommand, HostTool,
-    HostUri, ImageContent, InterruptMode, LoginCommand, LoginProvider, ModelInfo,
-    PromoteQueuedMessageCommand, QueueMode, RpcAgentEvent, SetAutoCompactionCommand,
+    CycleThinkingLevelCommand, ExportHtmlCommand, ExtensionUiRequest, ExtensionUiResponse,
+    GetAvailableModelsCommand, GetAvailableThinkingLevelsCommand, GetEntriesCommand,
+    GetLoginProvidersCommand, GetMessagesCommand, GetMessagesPageCommand, GetStateCommand,
+    HandoffCommand, HostTool, HostUri, ImageContent, InterruptMode, LoginCommand, LoginProvider,
+    ModelInfo, PromoteQueuedMessageCommand, QueueMode, RpcAgentEvent, SetAutoCompactionCommand,
     SetAutoRetryCommand, SetFollowUpModeCommand, SetInterruptModeCommand, SetModelCommand,
-    SetSteeringModeCommand, SetThinkingLevelCommand, ThinkingLevel,
+    SetSessionNameCommand, SetSteeringModeCommand, SetThinkingLevelCommand, ThinkingLevel,
 };
 use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,8 @@ pub enum LinkEvent {
         /// it opened, for the closed picker.
         model: Option<String>,
         thinking: Option<omp_rpc::ThinkingLevel>,
+        /// The session's name, when it has one.
+        title: Option<String>,
     },
     /// The OMP the link runs is not the pinned one (ADR-0057 decision 4).
     OmpWarning(String),
@@ -115,6 +118,30 @@ pub enum LinkEvent {
         id: String,
         result: Result<bool, String>,
     },
+    /// OMP did not move to the session asked for, and why; the current
+    /// session stays open.
+    SwitchRefused(String),
+    /// OMP's answer to Hand off: `Ok(None)` when it produced no handoff.
+    HandedOff(Result<Option<omp_rpc::HandoffResult>, String>),
+    /// OMP's answer to renaming the session to `name`.
+    Renamed {
+        name: String,
+        result: Result<(), String>,
+    },
+    /// A page of the session's history; `more` loads the page after the
+    /// ones shown.
+    History {
+        more: bool,
+        result: Result<crate::sessions::HistoryPage, String>,
+    },
+    /// Every message of the session (`get_messages`), one line each.
+    AllMessages(Result<Vec<String>, String>),
+    /// The session's entries (`get_entries`), one line each.
+    Timeline(Result<Vec<String>, String>),
+    /// OMP's last assistant text, `None` when it has none.
+    LastReply(Result<Option<String>, String>),
+    /// Where OMP wrote the HTML export.
+    Exported(Result<String, String>),
     /// A host-tool thread waits on the person for worktree `id`; the panel
     /// shows Allow/Deny and answers with `WorktreeAsk::answer` (ADR-0012).
     WorktreeAsked {
@@ -209,6 +236,10 @@ enum Command {
     Retry,
     /// Leave the session to its driver and start a fresh one.
     NewSession,
+    /// Move to the session in this file.
+    Switch(PathBuf),
+    /// Hand the conversation off (OMP compacts it to a handoff summary).
+    Handoff,
     /// Park the thread until the sender is dropped, so a test can pin a
     /// prompt in the queue across a Restart.
     #[cfg(any(test, feature = "test-support"))]
@@ -1256,6 +1287,17 @@ impl OmpLink {
         self.command(Command::NewSession)
     }
 
+    /// Move OMP to the session in `file`; `Ready` or `Taken` follows, or
+    /// `SwitchRefused`.
+    pub fn switch_session(&self, file: PathBuf) -> Result<(), String> {
+        self.command(Command::Switch(file))
+    }
+
+    /// Hand the conversation off; `HandedOff` follows.
+    pub fn handoff(&self) -> Result<(), String> {
+        self.command(Command::Handoff)
+    }
+
     fn command(&self, command: Command) -> Result<(), String> {
         self.commands
             .send(command)
@@ -1433,6 +1475,105 @@ impl OmpLink {
                 .map_err(|e| e.to_string());
             LinkEvent::LoggedIn { provider, result }
         });
+    }
+
+    /// Rename the session.
+    pub fn rename(&self, name: String) {
+        let refused = LinkEvent::Renamed {
+            name: name.clone(),
+            result: Err(NOT_RUNNING.to_string()),
+        };
+        self.off_thread(refused, move |control| {
+            let result = control
+                .call(&SetSessionNameCommand { name: name.clone() })
+                .map_err(|e| e.to_string());
+            LinkEvent::Renamed { name, result }
+        });
+    }
+
+    /// A page of the session's history: the first, or the one at `cursor`.
+    pub fn history(&self, cursor: Option<String>) {
+        let more = cursor.is_some();
+        let refused = LinkEvent::History {
+            more,
+            result: Err(NOT_RUNNING.to_string()),
+        };
+        self.off_thread(refused, move |control| {
+            let result = control
+                .call(&GetMessagesPageCommand {
+                    cursor,
+                    limit: Some(crate::sessions::HISTORY_PAGE),
+                })
+                .map(crate::sessions::HistoryPage::from)
+                .map_err(|e| e.to_string());
+            LinkEvent::History { more, result }
+        });
+    }
+
+    /// Every message of the session in one read.
+    pub fn all_messages(&self) {
+        self.off_thread(
+            LinkEvent::AllMessages(Err(NOT_RUNNING.to_string())),
+            |control| {
+                LinkEvent::AllMessages(
+                    control
+                        .call(&GetMessagesCommand {})
+                        .map(|messages| messages.iter().map(history::message_line).collect())
+                        .map_err(|e| e.to_string()),
+                )
+            },
+        );
+    }
+
+    /// The session's entries: model, level and title changes, messages.
+    pub fn timeline(&self) {
+        self.off_thread(
+            LinkEvent::Timeline(Err(NOT_RUNNING.to_string())),
+            |control| {
+                LinkEvent::Timeline(
+                    control
+                        .call(&GetEntriesCommand { since: None })
+                        .map(|entries| {
+                            entries
+                                .entries
+                                .iter()
+                                .map(crate::sessions::entry_line)
+                                .collect()
+                        })
+                        .map_err(|e| e.to_string()),
+                )
+            },
+        );
+    }
+
+    /// OMP's last assistant text.
+    pub fn last_reply(&self) {
+        self.off_thread(
+            LinkEvent::LastReply(Err(NOT_RUNNING.to_string())),
+            |control| {
+                LinkEvent::LastReply(
+                    control
+                        .call(&history::LastAssistantTextCommand {})
+                        .map_err(|e| e.to_string()),
+                )
+            },
+        );
+    }
+
+    /// Export the session as HTML to `file`.
+    pub fn export(&self, file: PathBuf) {
+        self.off_thread(
+            LinkEvent::Exported(Err(NOT_RUNNING.to_string())),
+            move |control| {
+                LinkEvent::Exported(
+                    control
+                        .call(&ExportHtmlCommand {
+                            output_path: Some(file.to_string_lossy().into_owned()),
+                        })
+                        .map_err(|e| e.to_string()),
+                )
+            },
+        );
     }
 
     /// Make `provider/id` the session's model.
@@ -1747,7 +1888,8 @@ fn run(
         resumed: session.resumed,
         policy_note: chosen.badge.clone(),
         model: state.as_ref().and_then(|s| s.model.as_ref()).map(model_key),
-        thinking: state.and_then(|s| s.thinking_level),
+        thinking: state.as_ref().and_then(|s| s.thinking_level),
+        title: state.and_then(|s| s.session_name),
     };
     let first = if session.resumed {
         taken(&session)
@@ -1797,6 +1939,42 @@ fn run(
                         (false, _) => LinkEvent::PromptFailed(e.to_string()),
                     });
                 }
+            }
+            Command::Switch(file) => {
+                let event = match runtime.switch_session(&file, "app") {
+                    Ok(NewSession::Started(state)) => {
+                        session = Session {
+                            id: state.session_id.clone(),
+                            file: state.session_file.clone(),
+                            resumed: true,
+                        };
+                        taken(&session).unwrap_or_else(|| ready(&session, Some(state)))
+                    }
+                    Ok(NewSession::Unknown(e)) => LinkEvent::Failed(format!(
+                        "OMP switched sessions but did not say which: {e}"
+                    )),
+                    Ok(NewSession::Declined) => {
+                        LinkEvent::SwitchRefused("OMP kept the current session".to_string())
+                    }
+                    Err(e) => {
+                        LinkEvent::SwitchRefused(format!("OMP kept the current session: {e}"))
+                    }
+                };
+                let _ = events.unbounded_send(event);
+            }
+            Command::Handoff => {
+                let event = match taken(&session) {
+                    Some(refusal) => refusal,
+                    None => LinkEvent::HandedOff(
+                        runtime
+                            .control()
+                            .call(&HandoffCommand {
+                                custom_instructions: None,
+                            })
+                            .map_err(|e| e.to_string()),
+                    ),
+                };
+                let _ = events.unbounded_send(event);
             }
             Command::Retry => {
                 let _ = events.unbounded_send(taken(&session).unwrap_or_else(|| {

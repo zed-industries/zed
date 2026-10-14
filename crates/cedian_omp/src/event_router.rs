@@ -98,6 +98,11 @@ pub enum RouterEvent {
     ThinkingLevel(Option<omp_rpc::wire::ThinkingLevel>),
     /// One of OMP's notices for the person (ADR-0057 decision 3).
     Toast(Toast),
+    /// OMP renamed session `session_id` (`session_info_update`).
+    SessionInfo {
+        session_id: String,
+        title: Option<String>,
+    },
     /// Forward-compat: recognized frame, unmodeled kind — never fatal.
     Unknown { frame_type: String },
     /// OMP's output closed without cedian shutting it down: the process
@@ -391,6 +396,10 @@ fn classify_notification(frame: &RpcNotification) -> RouterEvent {
             status: result.status.into(),
         },
         RpcNotification::SessionSettled(_) => RouterEvent::Settled,
+        RpcNotification::SessionInfoUpdate(info) => RouterEvent::SessionInfo {
+            session_id: info.session_id.clone(),
+            title: info.title.clone(),
+        },
         RpcNotification::ExtensionUiRequest(ExtensionUiRequest::Notify(notify)) => {
             RouterEvent::Toast(Toast {
                 level: notify.notify_type.map_or(ToastLevel::Info, Into::into),

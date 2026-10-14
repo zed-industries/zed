@@ -1,0 +1,7 @@
+{"type":"title","v":1,"title":"flaky test hunt","source":"user","updatedAt":"2026-10-14T10:12:09.850Z","pad":"                                                                                                                                               "}
+{"type":"session","version":3,"id":"01a139e5-e3fa-7590-a571-57102af41fd6","title":"flaky test hunt","titleSource":"user","timestamp":"2026-10-14T10:12:09.850Z","cwd":"${CEDIAN_CWD}","parentSession":"01a139e5-e33c-70c9-8151-5f9579b3b6e1","providerPromptCacheKey":"01a139e5-e33c-70c9-8151-5f9579b3b6e1"}
+{"type":"model_change","id":"246f970d","parentId":null,"timestamp":"2026-10-14T10:12:09.687Z","model":"anthropic/claude-opus-5-5","resolvedModelIsFallback":false}
+{"type":"thinking_level_change","id":"56e9e377","parentId":"246f970d","timestamp":"2026-10-14T10:12:09.687Z","thinkingLevel":"high","configured":null}
+{"type":"message","id":"867a582a","parentId":"56e9e377","timestamp":"2026-10-14T10:12:09.848Z","message":{"role":"bashExecution","command":"echo b-1","output":"b-1\n","exitCode":0,"cancelled":false,"truncated":false,"timestamp":1791972729848}}
+{"type":"message","id":"904468ba","parentId":"867a582a","timestamp":"2026-10-14T10:12:09.849Z","message":{"role":"bashExecution","command":"echo b-2","output":"b-2\n","exitCode":0,"cancelled":false,"truncated":false,"timestamp":1791972729849}}
+{"type":"title_change","id":"c4bf454e","parentId":"904468ba","timestamp":"2026-10-14T10:12:09.849Z","title":"flaky test hunt","source":"user"}

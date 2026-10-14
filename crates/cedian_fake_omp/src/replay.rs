@@ -31,6 +31,8 @@ pub(crate) fn run(fixture: &Path, cwd: &Path, placeholders: &Placeholders) -> i3
     let mut stdout = std::io::stdout().lock();
     // recorded request id → this run's request id.
     let mut ids: HashMap<String, String> = HashMap::new();
+    // Where the host asked `export_html` to write, until OMP's answer.
+    let mut export: Option<String> = None;
 
     for (n, record) in records.iter().enumerate() {
         match record.dir {
@@ -63,6 +65,15 @@ pub(crate) fn run(fixture: &Path, cwd: &Path, placeholders: &Placeholders) -> i3
                 ) {
                     remap_id(&mut frame, &ids);
                 }
+                if frame.get("command").and_then(Value::as_str) == Some("export_html") {
+                    if let Some(path) = export.take() {
+                        if let Err(e) = write_export(&path) {
+                            eprintln!("fake-omp replay: record {n}: export to {path}: {e}");
+                            return crate::EXIT_DIVERGED;
+                        }
+                        frame["data"] = json!({ "path": path });
+                    }
+                }
                 if writeln!(stdout, "{frame}")
                     .and_then(|()| stdout.flush())
                     .is_err()
@@ -82,6 +93,12 @@ pub(crate) fn run(fixture: &Path, cwd: &Path, placeholders: &Placeholders) -> i3
                     }
                 };
                 let got_type = got.get("type").and_then(Value::as_str);
+                if got_type == Some("export_html") {
+                    export = got
+                        .get("outputPath")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
                 if got_type != record.frame_type() {
                     eprintln!(
                         "fake-omp replay: divergence at record {n}: expected {:?}, host sent {:?}",
@@ -248,6 +265,19 @@ fn hold(cwd: &Path, frame: &Value) {
     }
 }
 
+/// OMP writes the export where the host asked; fake-omp writes a stand-in
+/// page there, so the host finds a file at the path OMP answers.
+fn write_export(path: &str) -> std::io::Result<()> {
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err(std::io::Error::other("not an absolute path"));
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, "<!doctype html><title>fake-omp export</title>\n")
+}
+
 /// The first line of each text item of a host tool result.
 fn first_lines(frame: &Value) -> Vec<&str> {
     frame
@@ -260,7 +290,7 @@ fn first_lines(frame: &Value) -> Vec<&str> {
         .collect()
 }
 
-/// Commands replay checks whole (S9 U11, ADR-0057 decision 3).
+/// Commands replay checks whole (S9 U11, ADR-0057 decision 3; S10 U1).
 const WHOLE_FRAME: &[&str] = &[
     "get_available_models",
     "set_model",
@@ -277,6 +307,10 @@ const WHOLE_FRAME: &[&str] = &[
     "set_auto_compaction",
     "set_auto_retry",
     "abort_retry",
+    "switch_session",
+    "set_session_name",
+    "get_messages_page",
+    "handoff",
 ];
 
 fn remap_id(frame: &mut Value, ids: &HashMap<String, String>) {
