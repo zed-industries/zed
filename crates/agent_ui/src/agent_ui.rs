@@ -51,7 +51,7 @@ use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
     Action, App, Context, Entity, ImageSource, ReadGlobal as _, Resource, SharedString, SharedUri,
-    TaskExt, Window, actions,
+    TaskExt, WeakEntity, Window, actions,
 };
 use language::{
     LanguageRegistry,
@@ -60,7 +60,7 @@ use language::{
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
-use project::{AgentId, DisableAiSettings};
+use project::{AgentId, DisableAiSettings, Project, image_store};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
 use rope::Point;
 use schemars::JsonSchema;
@@ -68,6 +68,7 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
+use util::paths::{PathStyle, UrlExt};
 use workspace::Workspace;
 
 use crate::agent_configuration::ManageProfilesModal;
@@ -95,7 +96,8 @@ pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
 pub(crate) fn resolve_agent_image(
     dest_url: &str,
-    worktree_roots: &[PathBuf],
+    project: &WeakEntity<Project>,
+    cx: &App,
 ) -> Option<ImageSource> {
     if dest_url.starts_with("http://") || dest_url.starts_with("https://") {
         return Some(ImageSource::Resource(Resource::Uri(SharedUri::from(
@@ -103,39 +105,56 @@ pub(crate) fn resolve_agent_image(
         ))));
     }
 
-    if dest_url.starts_with("file:") {
-        let path = url::Url::parse(dest_url).ok()?.to_file_path().ok()?;
-        return existing_image_path(&path);
-    }
+    let project = project.upgrade()?;
+    let path_style = project.read(cx).path_style(cx);
+    let candidates = image_path_candidates(dest_url, path_style);
 
-    // Percent escapes in bare paths are ambiguous: prefer the decoded
-    // interpretation, falling back to the literal one (e.g. a file actually
-    // named `a%20b.png`) only when the decoded path doesn't exist.
-    let decoded = decode_path_escapes(dest_url);
-    let literal_fallback = (decoded != dest_url).then_some(dest_url);
-
-    for candidate in std::iter::once(decoded.as_ref()).chain(literal_fallback) {
-        let path = Path::new(candidate);
-        if path.is_absolute() {
-            if let Some(source) = existing_image_path(path) {
-                return Some(source);
-            }
+    for candidate in &candidates {
+        let Some(project_path) = project
+            .read(cx)
+            .project_path_for_file_link(Path::new(candidate), cx)
+        else {
             continue;
+        };
+        let worktree = project
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)?;
+        if worktree.read(cx).is_local() {
+            let path = project.read(cx).absolute_path(&project_path, cx)?;
+            return Some(ImageSource::Resource(Resource::Path(Arc::from(
+                path.as_path(),
+            ))));
         }
-
-        for root in worktree_roots {
-            if let Some(source) = existing_image_path(&root.join(candidate)) {
-                return Some(source);
-            }
-        }
+        return Some(image_store::project_image_source(
+            project.downgrade(),
+            project_path,
+        ));
     }
 
-    None
+    let abs_paths: Vec<String> = candidates
+        .into_iter()
+        .filter(|candidate| path_style.is_absolute(Path::new(candidate)))
+        .collect();
+    (!abs_paths.is_empty())
+        .then(|| image_store::abs_path_image_source(project.downgrade(), abs_paths))
 }
 
-fn existing_image_path(path: &Path) -> Option<ImageSource> {
-    path.is_file()
-        .then(|| ImageSource::Resource(Resource::Path(Arc::from(path))))
+// Percent escapes in bare paths are ambiguous: prefer the decoded interpretation and
+// keep the literal one (e.g. a file actually named `a%20b.png`) as a later candidate.
+fn image_path_candidates(dest_url: &str, path_style: PathStyle) -> Vec<String> {
+    if dest_url.starts_with("file:") {
+        return url::Url::parse(dest_url)
+            .ok()
+            .and_then(|url| url.to_file_path_ext(path_style).ok())
+            .map(|path| path.to_string_lossy().into_owned())
+            .into_iter()
+            .collect();
+    }
+    let decoded = decode_path_escapes(dest_url);
+    let literal_fallback = (decoded != dest_url).then(|| dest_url.to_owned());
+    std::iter::once(decoded.into_owned())
+        .chain(literal_fallback)
+        .collect()
 }
 
 /// Opens `abs_path` in the workspace, moving the cursor to `point` when one
@@ -997,9 +1016,11 @@ mod tests {
     use editor::actions::AcceptEditPrediction;
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
+    use serde_json::json;
     use settings::{
         DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
     };
+    use util::path;
 
     fn image_path(source: Option<ImageSource>) -> Option<Arc<Path>> {
         match source {
@@ -1010,85 +1031,184 @@ mod tests {
 
     fn file_url(path: &Path) -> String {
         url::Url::from_file_path(path)
-            .expect("temp paths are absolute")
+            .expect("test paths are absolute")
             .to_string()
     }
 
-    #[test]
-    fn test_resolve_agent_image_passes_remote_urls_through() {
-        let source = resolve_agent_image("https://example.com/a.png", &[]);
+    async fn image_test_project(
+        tree: serde_json::Value,
+        cx: &mut TestAppContext,
+    ) -> Entity<Project> {
+        crate::test_support::init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), tree).await;
+        Project::test(fs, [path!("/project").as_ref()], cx).await
+    }
+
+    fn resolve(
+        dest_url: &str,
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> Option<ImageSource> {
+        cx.update(|cx| resolve_agent_image(dest_url, &project.downgrade(), cx))
+    }
+
+    #[gpui::test]
+    fn test_resolve_agent_image_passes_remote_urls_through(cx: &mut TestAppContext) {
+        let source = cx.update(|cx| {
+            resolve_agent_image("https://example.com/a.png", &WeakEntity::new_invalid(), cx)
+        });
         assert!(matches!(
             source,
             Some(ImageSource::Resource(Resource::Uri(uri))) if uri.to_string() == "https://example.com/a.png"
         ));
     }
 
-    #[test]
-    fn test_resolve_agent_image_resolves_absolute_paths_and_file_urls() {
-        let dir = tempfile::tempdir().unwrap();
-        let image = dir.path().join("my screenshot.png");
-        std::fs::write(&image, b"png").unwrap();
-        let expected: Arc<Path> = Arc::from(image.as_path());
+    #[gpui::test]
+    async fn test_resolve_agent_image_resolves_worktree_files_synchronously(
+        cx: &mut TestAppContext,
+    ) {
+        let project = image_test_project(json!({"shots": {"my shot.png": ""}}), cx).await;
+        let expected: Arc<Path> = Arc::from(Path::new(path!("/project/shots/my shot.png")));
+        let shot_url = file_url(Path::new(path!("/project/shots/my shot.png")));
+        assert!(shot_url.contains("%20"));
+
+        for dest_url in [
+            "shots/my shot.png",
+            "shots/my%20shot.png",
+            "project/shots/my shot.png",
+            path!("/project/shots/my shot.png"),
+            &shot_url,
+        ] {
+            assert_eq!(
+                image_path(resolve(dest_url, &project, cx)),
+                Some(expected.clone()),
+                "{dest_url}"
+            );
+        }
+        assert!(resolve("shots/nope.png", &project, cx).is_none());
+        assert!(resolve("shots", &project, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_resolve_agent_image_prefers_decoded_path_over_literal(cx: &mut TestAppContext) {
+        let project =
+            image_test_project(json!({"a%20b.png": "", "a b.png": "", "e%20f.png": ""}), cx).await;
 
         assert_eq!(
-            image_path(resolve_agent_image(image.to_str().unwrap(), &[])),
-            Some(expected.clone())
+            image_path(resolve("a%20b.png", &project, cx)),
+            Some(Arc::from(Path::new(path!("/project/a b.png"))))
         );
         assert_eq!(
-            image_path(resolve_agent_image(&file_url(&image), &[])),
-            Some(expected.clone())
-        );
-
-        let encoded_path = image.to_str().unwrap().replace(' ', "%20");
-        assert!(encoded_path.contains("%20"));
-        assert_eq!(
-            image_path(resolve_agent_image(&encoded_path, &[])),
-            Some(expected)
+            image_path(resolve("e%20f.png", &project, cx)),
+            Some(Arc::from(Path::new(path!("/project/e%20f.png"))))
         );
     }
 
-    #[test]
-    fn test_resolve_agent_image_prefers_literal_path_when_decoded_one_is_missing() {
-        let dir = tempfile::tempdir().unwrap();
-        let literal = dir.path().join("a%20b.png");
-        std::fs::write(&literal, b"png").unwrap();
+    #[gpui::test]
+    async fn test_resolve_agent_image_defers_paths_outside_worktrees(cx: &mut TestAppContext) {
+        let project = image_test_project(json!({"shot.png": ""}), cx).await;
+        let outside_url = file_url(Path::new(path!("/outside/shot.png")));
 
-        assert_eq!(
-            image_path(resolve_agent_image(literal.to_str().unwrap(), &[])),
-            Some(Arc::from(literal.as_path()))
-        );
+        for dest_url in [
+            path!("/outside/shot.png"),
+            &outside_url,
+            path!("/outside/missing.png"),
+            path!("/project/../outside/shot.png"),
+        ] {
+            assert!(
+                matches!(
+                    resolve(dest_url, &project, cx),
+                    Some(ImageSource::Custom(_))
+                ),
+                "{dest_url}"
+            );
+        }
+        assert!(resolve("../outside/shot.png", &project, cx).is_none());
+        assert!(resolve("file://not a url", &project, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_resolve_agent_image_uses_remote_worktree_entries(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
+        let project = Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
+        let worktree = project.update(cx, |project, cx| {
+            project.add_test_remote_worktree("/remote/project", cx)
+        });
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id().to_proto());
+        let entry = |id: u64, path: &str, is_dir: bool| proto::Entry {
+            id,
+            is_dir,
+            path: path.to_string(),
+            inode: id,
+            mtime: Some(proto::Timestamp {
+                seconds: 0,
+                nanos: 0,
+            }),
+            is_ignored: false,
+            is_hidden: false,
+            is_external: false,
+            is_fifo: false,
+            size: None,
+            canonical_path: None,
+            is_unloaded: false,
+        };
+        worktree.update(cx, |worktree, _cx| {
+            worktree
+                .as_remote()
+                .unwrap()
+                .update_from_remote(proto::UpdateWorktree {
+                    project_id: 0,
+                    worktree_id,
+                    abs_path: "/remote/project".to_string(),
+                    root_name: "project".to_string(),
+                    updated_entries: vec![
+                        entry(1, "", true),
+                        entry(2, "docs", true),
+                        entry(3, "docs/shot.png", false),
+                    ],
+                    removed_entries: vec![],
+                    scan_id: 1,
+                    is_last_update: true,
+                    updated_repositories: vec![],
+                    removed_repositories: vec![],
+                    root_repo_common_dir: None,
+                    root_repo_is_linked_worktree: false,
+                });
+        });
+        cx.run_until_parked();
+
+        assert!(matches!(
+            resolve("docs/shot.png", &project, cx),
+            Some(ImageSource::Custom(_))
+        ));
+        assert!(resolve("docs/missing.png", &project, cx).is_none());
     }
 
     #[test]
-    fn test_resolve_agent_image_resolves_relative_paths_against_worktree_roots() {
-        let dir = tempfile::tempdir().unwrap();
-        let image = dir.path().join("shots").join("my screenshot.png");
-        std::fs::create_dir_all(image.parent().unwrap()).unwrap();
-        std::fs::write(&image, b"png").unwrap();
-        let roots = vec![dir.path().to_path_buf()];
-        let expected: Arc<Path> = Arc::from(image.as_path());
-
+    fn test_image_path_candidates_follow_project_path_style() {
         assert_eq!(
-            image_path(resolve_agent_image("shots/my screenshot.png", &roots)),
-            Some(expected.clone())
+            image_path_candidates("file:///C:/shots/my%20shot.png", PathStyle::Windows),
+            vec![r"C:\shots\my shot.png"]
         );
         assert_eq!(
-            image_path(resolve_agent_image("shots/my%20screenshot.png", &roots)),
-            Some(expected)
+            image_path_candidates("file:///remote/my%20shot.png", PathStyle::Unix),
+            vec!["/remote/my shot.png"]
         );
-        assert!(resolve_agent_image("shots/nope.png", &roots).is_none());
-        assert!(resolve_agent_image("shots/my screenshot.png", &[]).is_none());
-    }
-
-    #[test]
-    fn test_resolve_agent_image_returns_none_for_missing_files_and_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("nope.png");
-
-        assert!(resolve_agent_image(missing.to_str().unwrap(), &[]).is_none());
-        assert!(resolve_agent_image(&file_url(&missing), &[]).is_none());
-        assert!(resolve_agent_image(&file_url(dir.path()), &[]).is_none());
-        assert!(resolve_agent_image("file://not a url", &[]).is_none());
+        assert!(image_path_candidates("file://host/share/x.png", PathStyle::Unix).is_empty());
+        assert_eq!(
+            image_path_candidates("file://host/share/x.png", PathStyle::Windows),
+            vec![r"\\host\share\x.png"]
+        );
+        assert_eq!(
+            image_path_candidates("shots/my%20shot.png", PathStyle::Unix),
+            vec!["shots/my shot.png", "shots/my%20shot.png"]
+        );
+        assert_eq!(
+            image_path_candidates("shots/my shot.png", PathStyle::Unix),
+            vec!["shots/my shot.png"]
+        );
+        assert!(image_path_candidates("file://not a url", PathStyle::Unix).is_empty());
     }
 
     #[gpui::test]

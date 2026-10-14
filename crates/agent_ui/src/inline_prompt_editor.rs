@@ -1153,8 +1153,11 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
-        MarkdownElement::new(markdown, style)
-            .image_resolver(|dest_url, _cx| crate::resolve_agent_image(dest_url, &[]))
+        let workspace = self.workspace.clone();
+        MarkdownElement::new(markdown, style).image_resolver(move |dest_url, cx| {
+            let project = workspace.upgrade()?.read(cx).project().downgrade();
+            crate::resolve_agent_image(dest_url, &project, cx)
+        })
     }
 }
 

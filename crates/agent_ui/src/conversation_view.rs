@@ -3796,10 +3796,10 @@ fn render_agent_markdown(
     style: MarkdownStyle,
     workspace: &WeakEntity<Workspace>,
     code_span_resolver: &AgentCodeSpanResolver,
-    cx: &App,
+    _cx: &App,
 ) -> MarkdownElement {
     let workspace = workspace.clone();
-    let worktree_roots = code_span_resolver.worktree_roots(cx);
+    let project = code_span_resolver.inner.project.clone();
     let resolver = code_span_resolver.clone();
     MarkdownElement::new(markdown, style)
         .code_block_renderer(markdown::CodeBlockRenderer::Default {
@@ -3807,7 +3807,7 @@ fn render_agent_markdown(
             wrap_button_visibility: markdown::WrapButtonVisibility::VisibleOnHover,
             border: false,
         })
-        .image_resolver(move |dest_url, _cx| resolve_agent_image(dest_url, &worktree_roots))
+        .image_resolver(move |dest_url, cx| resolve_agent_image(dest_url, &project, cx))
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);
         })
@@ -3844,22 +3844,6 @@ impl AgentCodeSpanResolver {
 
     pub(crate) fn clear_cache(&self) {
         self.inner.cache.lock().clear();
-    }
-
-    /// Absolute paths of every current worktree.
-    /// Used by the markdown image resolver, which needs the same set of roots.
-    fn worktree_roots(&self, cx: &App) -> Vec<PathBuf> {
-        self.inner
-            .project
-            .upgrade()
-            .map(|project| {
-                project
-                    .read(cx)
-                    .visible_worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     fn try_resolve(&self, text: &str, cx: &App) -> Option<SharedString> {
