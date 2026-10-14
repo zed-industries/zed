@@ -472,11 +472,12 @@ impl ChatCompletionEventMapper {
                     reasoning_details,
                 )));
             }
-            if let Some(reasoning) = delta.reasoning.clone() {
+            let reasoning = delta
+                .reasoning_content
+                .clone()
+                .or_else(|| delta.reasoning.clone());
+            if let Some(reasoning) = reasoning {
                 push_thinking_event(reasoning, &mut events);
-            }
-            if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                push_thinking_event(reasoning_content, &mut events);
             }
             if let Some(content) = delta.content.clone() {
                 if !content.is_empty() {
@@ -819,6 +820,95 @@ mod tests {
             events,
             vec![LanguageModelCompletionEvent::Thinking {
                 text: "thinking".into(),
+                signature: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn stream_maps_reasoning_content() {
+        let events = map_completion_events(vec![ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: Some(ResponseMessageDelta {
+                    content: None,
+                    reasoning: None,
+                    tool_calls: None,
+                    reasoning_content: Some("thinking".into()),
+                    reasoning_details: None,
+                }),
+                finish_reason: None,
+            }],
+            usage: None,
+        }]);
+
+        assert_eq!(
+            events,
+            vec![LanguageModelCompletionEvent::Thinking {
+                text: "thinking".into(),
+                signature: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn stream_deduplicates_reasoning_when_both_spellings_present() {
+        let events = map_completion_events(vec![ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: Some(ResponseMessageDelta {
+                    content: Some("".into()),
+                    reasoning: Some("thinking".into()),
+                    tool_calls: None,
+                    reasoning_content: Some("thinking".into()),
+                    reasoning_details: Some(json!([{
+                        "index": 0,
+                        "type": "reasoning.text",
+                        "text": "thinking"
+                    }])),
+                }),
+                finish_reason: None,
+            }],
+            usage: None,
+        }]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::ReasoningDetails(json!([{
+                    "index": 0,
+                    "type": "reasoning.text",
+                    "text": "thinking"
+                }])),
+                LanguageModelCompletionEvent::Thinking {
+                    text: "thinking".into(),
+                    signature: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_prefers_reasoning_content_over_reasoning() {
+        let events = map_completion_events(vec![ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: Some(ResponseMessageDelta {
+                    content: None,
+                    reasoning: Some("alias".into()),
+                    tool_calls: None,
+                    reasoning_content: Some("primary".into()),
+                    reasoning_details: None,
+                }),
+                finish_reason: None,
+            }],
+            usage: None,
+        }]);
+
+        assert_eq!(
+            events,
+            vec![LanguageModelCompletionEvent::Thinking {
+                text: "primary".into(),
                 signature: None,
             }]
         );
