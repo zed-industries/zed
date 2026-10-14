@@ -69,6 +69,7 @@ pub struct FakeGitRepositoryState {
     pub blames: HashMap<RepoPath, Blame>,
     pub blames_at_revision: HashMap<(RepoPath, Oid), Blame>,
     pub current_branch_name: Option<String>,
+    pub parent_branch_name: Option<String>,
     pub branches: HashSet<String>,
     /// List of remotes, keys are names and values are URLs
     pub remotes: HashMap<String, String>,
@@ -96,6 +97,7 @@ impl FakeGitRepositoryState {
             blames: Default::default(),
             blames_at_revision: Default::default(),
             current_branch_name: Default::default(),
+            parent_branch_name: None,
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
             simulated_create_worktree_error: Default::default(),
@@ -1624,6 +1626,12 @@ impl GitRepository for FakeGitRepository {
             }))
         }
         .boxed()
+    }
+
+    fn parent_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
+        self.with_state_async(false, |state| {
+            Ok(state.parent_branch_name.clone().map(Into::into))
+        })
     }
 
     fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {

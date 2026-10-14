@@ -95,30 +95,33 @@ impl BranchDiff {
             return;
         };
 
-        let default_branch = intended_repo.update(cx, |repo, _| repo.default_branch(true));
+        let diff_base = project.read(cx).git_store().read(cx).diff_base();
+        let branch_diff_base =
+            intended_repo.update(cx, |repository, _| repository.branch_diff_base(diff_base));
         let workspace = cx.entity();
         let workspace_weak = workspace.downgrade();
         window
             .spawn(cx, async move |cx| {
-                let base_ref = default_branch.await??;
+                let base_ref = branch_diff_base.await??;
                 workspace.update_in(cx, |workspace, window, cx| {
                     let git_store = project.read(cx).git_store().clone();
                     let Some(base_ref) = base_ref else {
                         ProjectDiff::deploy_at(workspace, None, window, cx);
                         return;
                     };
-                    let branch_diff =
-                        if git_store.read(cx).diff_base() == GitDiffBaseSetting::DefaultBranch {
-                            Some(git_store.update(cx, |git_store, cx| {
-                                git_store.ensure_display_diff(
-                                    intended_repo.clone(),
-                                    base_ref.clone(),
-                                    cx,
-                                )
-                            }))
-                        } else {
-                            None
-                        };
+                    let branch_diff = if diff_base != GitDiffBaseSetting::Head
+                        && git_store.read(cx).diff_base() == diff_base
+                    {
+                        Some(git_store.update(cx, |git_store, cx| {
+                            git_store.ensure_display_diff(
+                                intended_repo.clone(),
+                                base_ref.clone(),
+                                cx,
+                            )
+                        }))
+                    } else {
+                        None
+                    };
                     Self::deploy_branch_diff_with_base_ref(
                         workspace,
                         project,
@@ -1193,6 +1196,114 @@ mod tests {
                 )
             ])
         );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_branch_diff_action_follows_diff_base_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "changed",
+            }),
+        )
+        .await;
+        fs.with_git_state(Path::new(path!("/project/.git")), true, |state| {
+            state.parent_branch_name = Some("topic".into());
+        })
+        .expect("set parent branch");
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        cx.run_until_parked();
+        cx.focus(&workspace);
+
+        for (setting, expected_base) in [
+            ("head", "origin/main"),
+            ("default_branch", "origin/main"),
+            ("parent_branch", "topic"),
+        ] {
+            cx.update(|_, cx| {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store
+                        .set_user_settings(
+                            &json!({ "git": { "diff_base": setting } }).to_string(),
+                            cx,
+                        )
+                        .result()
+                        .expect("parse diff base setting");
+                });
+            });
+            cx.run_until_parked();
+            let mut branch_diff_id = None;
+            for _ in 0..2 {
+                cx.update(|window, cx| {
+                    window.dispatch_action(DeployBranchDiff.boxed_clone(), cx);
+                });
+                cx.run_until_parked();
+                workspace.update(cx, |workspace, cx| {
+                    let branch_diff = workspace
+                        .active_item_as::<BranchDiff>(cx)
+                        .expect("branch diff is active");
+                    assert_eq!(
+                        branch_diff.read(cx).diff_base(cx),
+                        &DiffBase::Merge {
+                            base_ref: expected_base.into()
+                        }
+                    );
+                    if let Some(branch_diff_id) = branch_diff_id {
+                        assert_eq!(branch_diff.entity_id(), branch_diff_id);
+                    } else {
+                        branch_diff_id = Some(branch_diff.entity_id());
+                    }
+                    let repository = project
+                        .read(cx)
+                        .active_repository(cx)
+                        .expect("active repository");
+                    let display_diff = project
+                        .read(cx)
+                        .git_store()
+                        .read(cx)
+                        .display_diff_for_repo(repository.read(cx).id);
+                    if setting == "head" {
+                        assert!(display_diff.is_none());
+                    } else {
+                        let display_diff = display_diff.expect("branch display diff");
+                        assert_eq!(
+                            display_diff.read(cx).diff_base(),
+                            branch_diff.read(cx).diff_base(cx)
+                        );
+                        assert_eq!(
+                            branch_diff.read(cx).diff.read(cx).branch_diff().entity_id(),
+                            display_diff.entity_id()
+                        );
+                    }
+                });
+            }
+            cx.update(|window, cx| {
+                window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+            });
+            cx.run_until_parked();
+            workspace.update(cx, |workspace, cx| {
+                if setting == "head" {
+                    assert!(workspace.active_item_as::<ProjectDiff>(cx).is_some());
+                } else {
+                    let branch_diff = workspace
+                        .active_item_as::<BranchDiff>(cx)
+                        .expect("configured branch diff is active");
+                    assert_eq!(
+                        branch_diff.read(cx).diff_base(cx),
+                        &DiffBase::Merge {
+                            base_ref: expected_base.into()
+                        }
+                    );
+                }
+            });
+        }
     }
 
     #[gpui::test]
