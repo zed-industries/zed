@@ -355,11 +355,11 @@ pub trait AgentTelemetry {
 }
 
 pub trait AgentSessionModes {
-    fn current_mode(&self) -> acp_v1::SessionModeId;
+    fn current_mode(&self) -> acp_v2::SessionConfigValueId;
 
-    fn all_modes(&self) -> Vec<acp_v1::SessionMode>;
+    fn all_modes(&self) -> Vec<acp_v2::SessionConfigSelectOption>;
 
-    fn set_mode(&self, mode: acp_v1::SessionModeId, cx: &mut App) -> Task<Result<()>>;
+    fn set_mode(&self, mode: acp_v2::SessionConfigValueId, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentSessionConfigOptions {
@@ -386,14 +386,14 @@ pub trait AgentSessionConfigOptions {
 pub struct AgentSessionListRequest {
     pub cwd: Option<PathBuf>,
     pub cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentSessionListResponse {
     pub sessions: Vec<AgentSessionInfo>,
     pub next_cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 impl AgentSessionListResponse {
@@ -514,6 +514,35 @@ impl dyn AgentSessionList {
     }
 }
 
+/// Read protocol fields without replacing the concrete SDK error or its context chain.
+#[derive(Clone, Copy)]
+pub struct ProtocolErrorInfo<'a> {
+    pub code: i32,
+    pub message: &'a str,
+    pub data: Option<&'a serde_json::Value>,
+}
+
+impl<'a> ProtocolErrorInfo<'a> {
+    pub fn from_error(error: &'a anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<acp_v1::Error>() {
+            return Some(Self {
+                code: error.code.into(),
+                message: &error.message,
+                data: error.data.as_ref(),
+            });
+        }
+        error.downcast_ref::<acp_v2::Error>().map(|error| Self {
+            code: error.code.into(),
+            message: &error.message,
+            data: error.data.as_ref(),
+        })
+    }
+
+    pub fn is_auth_required(&self) -> bool {
+        self.code == i32::from(acp_v2::ErrorCode::AuthRequired)
+    }
+}
+
 #[derive(Debug)]
 pub struct AuthRequired {
     pub description: Option<String>,
@@ -527,6 +556,19 @@ impl AuthRequired {
     pub fn with_description(mut self, description: String) -> Self {
         self.description = Some(description);
         self
+    }
+
+    pub fn from_error(error: &anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<Self>() {
+            return Some(Self {
+                description: error.description.clone(),
+            });
+        }
+        let error = ProtocolErrorInfo::from_error(error)?;
+        error.is_auth_required().then(|| Self {
+            description: (error.message != acp_v2::ErrorCode::AuthRequired.to_string())
+                .then(|| error.message.to_owned()),
+        })
     }
 }
 
@@ -874,7 +916,7 @@ mod test_support {
     pub struct StubAgentConnection {
         sessions: Arc<Mutex<HashMap<acp_v2::SessionId, Session>>>,
         permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
-        next_prompt_updates: Arc<Mutex<Vec<acp_v1::SessionUpdate>>>,
+        next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
@@ -890,6 +932,13 @@ mod test_support {
         agent_id: AgentId,
         telemetry_id: SharedString,
         prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
+    }
+
+    enum StubPromptUpdate {
+        Legacy(Box<acp_v1::SessionUpdate>),
+        Application(
+            Box<dyn FnOnce(&mut AcpThread, &mut gpui::Context<AcpThread>) -> Result<()> + Send>,
+        ),
     }
 
     struct Session {
@@ -932,7 +981,20 @@ mod test_support {
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
-            *self.next_prompt_updates.lock() = updates;
+            *self.next_prompt_updates.lock() = updates
+                .into_iter()
+                .map(|update| StubPromptUpdate::Legacy(Box::new(update)))
+                .collect();
+        }
+
+        pub fn set_next_prompt_action(
+            &self,
+            update: impl FnOnce(&mut AcpThread, &mut gpui::Context<AcpThread>) -> Result<()>
+            + Send
+            + 'static,
+        ) {
+            *self.next_prompt_updates.lock() =
+                vec![StubPromptUpdate::Application(Box::new(update))];
         }
 
         pub fn defer_next_prompt_response(
@@ -1189,9 +1251,8 @@ mod test_support {
             } else {
                 for update in self.next_prompt_updates.lock().drain(..) {
                     let thread = thread.clone();
-                    let update = update.clone();
-                    let permission_request = if let acp_v1::SessionUpdate::ToolCall(tool_call) =
-                        &update
+                    let permission_request = if let StubPromptUpdate::Legacy(update) = &update
+                        && let acp_v1::SessionUpdate::ToolCall(tool_call) = update.as_ref()
                         && let Some(options) = self
                             .permission_requests
                             .get(&acp_v2::ToolCallId::new(tool_call.tool_call_id.0.clone()))
@@ -1213,9 +1274,12 @@ mod test_support {
                                 })??
                                 .await;
                         }
-                        thread.update(cx, |thread, cx| {
-                            thread.handle_session_update(update.clone(), cx).unwrap();
-                        })?;
+                        thread.update(cx, |thread, cx| match update {
+                            StubPromptUpdate::Legacy(update) => thread
+                                .handle_session_update(*update, cx)
+                                .map_err(anyhow::Error::from),
+                            StubPromptUpdate::Application(update) => update(thread, cx),
+                        })??;
                         anyhow::Ok(())
                     });
                     tasks.push(task);

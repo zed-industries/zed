@@ -1,10 +1,9 @@
 use super::*;
 use acp_thread::{
     AgentConnection, AgentModelGroupName, AgentModelId, AgentModelList, AgentThreadEntry,
-    ClientUserMessageId, PermissionOptions, ThreadStatus,
+    ClientUserMessageId, PermissionOptions, ProcessOutput, ThreadStatus,
 };
 use agent_client_protocol::schema::MaybeUndefined;
-use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::{AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT};
 use anyhow::Result;
@@ -76,8 +75,8 @@ pub(crate) struct FakeTerminalHandle {
     killed: Arc<AtomicBool>,
     stopped_by_user: Arc<AtomicBool>,
     exit_sender: std::cell::RefCell<Option<futures::channel::oneshot::Sender<()>>>,
-    wait_for_exit: Shared<Task<acp::TerminalExitStatus>>,
-    output: acp::TerminalOutputResponse,
+    wait_for_exit: Shared<Task<acp_v2::TerminalExitStatus>>,
+    output: ProcessOutput,
     id: acp_v2::TerminalId,
 }
 
@@ -92,7 +91,7 @@ impl FakeTerminalHandle {
             .spawn(async move |_cx| {
                 // Wait for the exit signal (sent when kill() is called)
                 let _ = exit_receiver.await;
-                acp::TerminalExitStatus::new()
+                acp_v2::TerminalExitStatus::new()
             })
             .shared();
 
@@ -101,7 +100,7 @@ impl FakeTerminalHandle {
             stopped_by_user,
             exit_sender: std::cell::RefCell::new(Some(exit_sender)),
             wait_for_exit,
-            output: acp::TerminalOutputResponse::new("partial output".to_string(), false),
+            output: ProcessOutput::new("partial output".to_string(), false),
             id: acp_v2::TerminalId::new("fake_terminal".to_string()),
         }
     }
@@ -112,7 +111,7 @@ impl FakeTerminalHandle {
         let (exit_sender, _exit_receiver) = futures::channel::oneshot::channel();
 
         let wait_for_exit = cx
-            .spawn(async move |_cx| acp::TerminalExitStatus::new().exit_code(exit_code))
+            .spawn(async move |_cx| acp_v2::TerminalExitStatus::new().exit_code(exit_code))
             .shared();
 
         Self {
@@ -120,12 +119,12 @@ impl FakeTerminalHandle {
             stopped_by_user,
             exit_sender: std::cell::RefCell::new(Some(exit_sender)),
             wait_for_exit,
-            output: acp::TerminalOutputResponse::new("command output".to_string(), false),
+            output: ProcessOutput::new("command output".to_string(), false),
             id: acp_v2::TerminalId::new("fake_terminal".to_string()),
         }
     }
 
-    pub(crate) fn with_output(mut self, output: acp::TerminalOutputResponse) -> Self {
+    pub(crate) fn with_output(mut self, output: ProcessOutput) -> Self {
         self.output = output;
         self
     }
@@ -150,11 +149,11 @@ impl crate::TerminalHandle for FakeTerminalHandle {
         Ok(self.id.clone())
     }
 
-    fn current_output(&self, _cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
+    fn current_output(&self, _cx: &AsyncApp) -> Result<ProcessOutput> {
         Ok(self.output.clone())
     }
 
-    fn wait_for_exit(&self, _cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
+    fn wait_for_exit(&self, _cx: &AsyncApp) -> Result<Shared<Task<acp_v2::TerminalExitStatus>>> {
         Ok(self.wait_for_exit.clone())
     }
 
@@ -230,7 +229,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
     fn create_terminal(
         &self,
         _command: String,
-        _extra_env: Vec<acp::EnvVariable>,
+        _extra_env: Vec<(String, String)>,
         _cwd: Option<std::path::PathBuf>,
         output_byte_limit: Option<u64>,
         _sandbox_wrap: Option<acp_thread::SandboxWrap>,
@@ -283,7 +282,7 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
     fn create_terminal(
         &self,
         _command: String,
-        _extra_env: Vec<acp::EnvVariable>,
+        _extra_env: Vec<(String, String)>,
         _cwd: Option<std::path::PathBuf>,
         _output_byte_limit: Option<u64>,
         _sandbox_wrap: Option<acp_thread::SandboxWrap>,
