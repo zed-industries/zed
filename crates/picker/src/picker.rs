@@ -64,7 +64,7 @@ pub enum ScrollBehavior {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueryMode {
-    Plain,
+    Standalone,
     Prefixed(char),
 }
 
@@ -75,9 +75,22 @@ pub enum QueryEdit<'a> {
 }
 
 impl QueryMode {
+    pub const COMMAND_PALETTE: Self = Self::Prefixed('>');
+    pub const PROJECT_SYMBOLS: Self = Self::Prefixed('#');
+    pub const OUTLINE: Self = Self::Prefixed('@');
+    pub const GO_TO_LINE: Self = Self::Prefixed(':');
+    pub const TEXT_FINDER: Self = Self::Prefixed('%');
+
+    pub fn strip_prefix(self, query: &str) -> Option<&str> {
+        match self {
+            Self::Standalone => None,
+            Self::Prefixed(prefix) => query.strip_prefix(prefix),
+        }
+    }
+
     pub fn display_query(self, query: &str) -> Cow<'_, str> {
         match self {
-            Self::Plain => Cow::Borrowed(query),
+            Self::Standalone => Cow::Borrowed(query),
             Self::Prefixed(prefix) => Cow::Owned(format!(
                 "{prefix}{}",
                 query.strip_prefix(prefix).unwrap_or(query)
@@ -94,7 +107,7 @@ impl QueryMode {
 
     pub fn edit_query<'a>(self, input: &'a str) -> QueryEdit<'a> {
         match self {
-            Self::Plain => QueryEdit::Filter(input),
+            Self::Standalone => QueryEdit::Filter(input),
             Self::Prefixed(prefix) => match input.strip_prefix(prefix) {
                 Some(query) => QueryEdit::Filter(query),
                 None => QueryEdit::ReturnToFileFinder,
@@ -667,7 +680,7 @@ impl<D: PickerDelegate> Picker<D> {
             head,
             element_container,
             pending_update_matches: None,
-            query_mode: QueryMode::Plain,
+            query_mode: QueryMode::Standalone,
             confirm_on_update: None,
             select_instead_of_open: false,
             preview,
@@ -1725,14 +1738,14 @@ mod tests {
 
     #[test]
     fn query_mode_preserves_visible_prefix_and_routes_when_removed() {
-        let query_mode = QueryMode::Prefixed('>');
+        let query_mode = QueryMode::Prefixed('?');
 
-        assert_eq!(query_mode.display_query("needle"), ">needle");
-        assert_eq!(query_mode.display_query(">needle"), ">needle");
-        assert_eq!(QueryMode::Plain.display_query(">needle"), ">needle");
-        assert_eq!(query_mode.filter_query(">needle"), "needle");
+        assert_eq!(query_mode.display_query("needle"), "?needle");
+        assert_eq!(query_mode.display_query("?needle"), "?needle");
+        assert_eq!(QueryMode::Standalone.display_query("?needle"), "?needle");
+        assert_eq!(query_mode.filter_query("?needle"), "needle");
         assert_eq!(
-            query_mode.edit_query(">needle"),
+            query_mode.edit_query("?needle"),
             QueryEdit::Filter("needle")
         );
         assert_eq!(
@@ -1740,8 +1753,8 @@ mod tests {
             QueryEdit::ReturnToFileFinder
         );
         assert_eq!(
-            QueryMode::Plain.edit_query(">needle"),
-            QueryEdit::Filter(">needle")
+            QueryMode::Standalone.edit_query("?needle"),
+            QueryEdit::Filter("?needle")
         );
     }
 

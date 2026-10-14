@@ -53,7 +53,7 @@ pub fn open_with_query(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open_with_query_mode(workspace, picker::QueryMode::Plain, query, window, cx);
+    open_with_query_mode(workspace, picker::QueryMode::Standalone, query, window, cx);
 }
 
 pub fn open_in_unified_mode(
@@ -64,7 +64,7 @@ pub fn open_in_unified_mode(
 ) {
     open_with_query_mode(
         workspace,
-        picker::QueryMode::Prefixed('#'),
+        picker::QueryMode::PROJECT_SYMBOLS,
         query,
         window,
         cx,

@@ -95,7 +95,7 @@ impl CommandPalette {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::toggle_with_query_mode(workspace, picker::QueryMode::Plain, query, window, cx);
+        Self::toggle_with_query_mode(workspace, picker::QueryMode::Standalone, query, window, cx);
     }
 
     pub fn toggle_in_unified_mode(
@@ -106,7 +106,7 @@ impl CommandPalette {
     ) {
         Self::toggle_with_query_mode(
             workspace,
-            picker::QueryMode::Prefixed('>'),
+            picker::QueryMode::COMMAND_PALETTE,
             query,
             window,
             cx,
@@ -121,7 +121,7 @@ impl CommandPalette {
     ) {
         Self::open_with_query_mode(
             workspace,
-            picker::QueryMode::Prefixed('>'),
+            picker::QueryMode::COMMAND_PALETTE,
             query,
             window,
             cx,

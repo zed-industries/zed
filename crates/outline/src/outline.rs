@@ -24,11 +24,7 @@ pub fn init(cx: &mut App) {
                 return;
             };
 
-            if settings::UnifiedPaletteSettings::get_global(cx).enabled {
-                toggle_in_unified_mode(editor, String::new(), window, cx);
-            } else {
-                toggle(editor, &Default::default(), window, cx);
-            }
+            toggle(editor, &Default::default(), window, cx);
         })
         .ok();
 }
@@ -39,7 +35,12 @@ pub fn toggle(
     window: &mut Window,
     cx: &mut App,
 ) {
-    toggle_with_query_mode(editor, picker::QueryMode::Plain, String::new(), window, cx);
+    let query_mode = if settings::UnifiedPaletteSettings::get_global(cx).enabled {
+        picker::QueryMode::OUTLINE
+    } else {
+        picker::QueryMode::Standalone
+    };
+    toggle_with_query_mode(editor, query_mode, String::new(), window, cx);
 }
 
 pub fn toggle_in_unified_mode(
@@ -48,7 +49,7 @@ pub fn toggle_in_unified_mode(
     window: &mut Window,
     cx: &mut App,
 ) {
-    toggle_with_query_mode(editor, picker::QueryMode::Prefixed('@'), query, window, cx);
+    toggle_with_query_mode(editor, picker::QueryMode::OUTLINE, query, window, cx);
 }
 
 fn toggle_with_query_mode(
@@ -79,7 +80,7 @@ pub fn open_with_query(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
-    open_with_query_mode(editor, picker::QueryMode::Plain, query, window, cx)
+    open_with_query_mode(editor, picker::QueryMode::Standalone, query, window, cx)
 }
 
 pub fn open_in_unified_mode(
@@ -88,7 +89,7 @@ pub fn open_in_unified_mode(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
-    open_with_query_mode(editor, picker::QueryMode::Prefixed('@'), query, window, cx)
+    open_with_query_mode(editor, picker::QueryMode::OUTLINE, query, window, cx)
 }
 
 fn open_with_query_mode(
@@ -108,7 +109,7 @@ fn open_with_query_mode(
     window
         .spawn(cx, async move |cx| {
             let items = task.await;
-            if items.is_empty() && query.is_empty() && query_mode == picker::QueryMode::Plain {
+            if items.is_empty() && query.is_empty() && query_mode == picker::QueryMode::Standalone {
                 return;
             }
             cx.update(|window, cx| {
@@ -116,7 +117,7 @@ fn open_with_query_mode(
                 workspace.update(cx, |workspace, cx| {
                     workspace.toggle_modal(window, cx, move |window, cx| {
                         let outline_view = OutlineView::new(outline, editor, window, cx);
-                        if !query.is_empty() || query_mode != picker::QueryMode::Plain {
+                        if !query.is_empty() || query_mode != picker::QueryMode::Standalone {
                             outline_view.picker.update(cx, |picker, cx| {
                                 picker.set_query_mode(query_mode, &query, window, cx);
                             });

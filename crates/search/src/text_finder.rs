@@ -165,7 +165,7 @@ impl TextFinder {
                         Self::new(
                             delegate,
                             None,
-                            picker::QueryMode::Plain,
+                            picker::QueryMode::Standalone,
                             workspace_id,
                             window,
                             cx,
@@ -425,7 +425,12 @@ impl TextFinder {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
-        Self::open_from_workspace_with_query_mode(workspace, picker::QueryMode::Plain, window, cx)
+        Self::open_from_workspace_with_query_mode(
+            workspace,
+            picker::QueryMode::Standalone,
+            window,
+            cx,
+        )
     }
 
     pub fn open_from_workspace_in_unified_mode(
@@ -435,7 +440,7 @@ impl TextFinder {
     ) -> Task<()> {
         Self::open_from_workspace_with_query_mode(
             workspace,
-            picker::QueryMode::Prefixed('%'),
+            picker::QueryMode::TEXT_FINDER,
             window,
             cx,
         )
@@ -462,7 +467,7 @@ impl TextFinder {
                 query: QuerySeed::Query(query),
                 options: None,
             }),
-            picker::QueryMode::Plain,
+            picker::QueryMode::Standalone,
             window,
             cx,
         )
@@ -478,7 +483,7 @@ impl TextFinder {
                 query: QuerySeed::Query(query),
                 options: None,
             }),
-            picker::QueryMode::Prefixed('%'),
+            picker::QueryMode::TEXT_FINDER,
             window,
             cx,
         )
@@ -489,7 +494,7 @@ impl TextFinder {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
-        Self::open_with_query_mode(seed_query, picker::QueryMode::Plain, window, cx)
+        Self::open_with_query_mode(seed_query, picker::QueryMode::Standalone, window, cx)
     }
 
     fn open_with_query_mode(
@@ -552,10 +557,10 @@ impl TextFinder {
                 }
                 let query = seed_query.query.into_query(picker.delegate.search_options);
                 picker.set_query_mode(query_mode, &query, window, cx);
-                if query_mode == picker::QueryMode::Plain {
+                if query_mode == picker::QueryMode::Standalone {
                     picker.select_query(window, cx);
                 }
-            } else if query_mode != picker::QueryMode::Plain {
+            } else if query_mode != picker::QueryMode::Standalone {
                 picker.set_query_mode(query_mode, "", window, cx);
             }
         });

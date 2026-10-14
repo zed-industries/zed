@@ -61,7 +61,7 @@ impl GoToLine {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> bool {
-        Self::open_with_query_mode(workspace, QueryMode::Plain, query, window, cx)
+        Self::open_with_query_mode(workspace, QueryMode::Standalone, query, window, cx)
     }
 
     pub fn open_in_unified_mode(
@@ -70,7 +70,7 @@ impl GoToLine {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> bool {
-        Self::open_with_query_mode(workspace, QueryMode::Prefixed(':'), query, window, cx)
+        Self::open_with_query_mode(workspace, QueryMode::GO_TO_LINE, query, window, cx)
     }
 
     fn open_with_query_mode(
@@ -130,7 +130,13 @@ impl GoToLine {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_with_query_mode(active_editor, active_buffer, QueryMode::Plain, window, cx)
+        Self::new_with_query_mode(
+            active_editor,
+            active_buffer,
+            QueryMode::Standalone,
+            window,
+            cx,
+        )
     }
 
     fn new_with_query_mode(

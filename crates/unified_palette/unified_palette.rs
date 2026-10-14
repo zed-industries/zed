@@ -1,7 +1,7 @@
 mod unified_palette_tests;
 
 use gpui::{App, Context, Window};
-use picker::Picker;
+use picker::{Picker, QueryMode};
 use settings::{Settings, UnifiedPaletteSettings};
 use workspace::Workspace;
 use zed_actions::unified_palette::{SwitchModeFromFileFinder, ToggleFileFinderMode};
@@ -138,17 +138,13 @@ fn open_mode(
 }
 
 fn mode_from_query(query: &str) -> Option<(Mode, &str)> {
-    if let Some(query) = query.strip_prefix('>') {
-        Some((Mode::CommandPalette, query))
-    } else if let Some(query) = query.strip_prefix('#') {
-        Some((Mode::ProjectSymbols, query))
-    } else if let Some(query) = query.strip_prefix('@') {
-        Some((Mode::Outline, query))
-    } else if let Some(query) = query.strip_prefix(':') {
-        Some((Mode::GoToLine, query))
-    } else if let Some(query) = query.strip_prefix('%') {
-        Some((Mode::TextFinder, query))
-    } else {
-        None
-    }
+    [
+        (Mode::CommandPalette, QueryMode::COMMAND_PALETTE),
+        (Mode::ProjectSymbols, QueryMode::PROJECT_SYMBOLS),
+        (Mode::Outline, QueryMode::OUTLINE),
+        (Mode::GoToLine, QueryMode::GO_TO_LINE),
+        (Mode::TextFinder, QueryMode::TEXT_FINDER),
+    ]
+    .into_iter()
+    .find_map(|(mode, query_mode)| query_mode.strip_prefix(query).map(|query| (mode, query)))
 }
