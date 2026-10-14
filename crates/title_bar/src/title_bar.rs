@@ -37,7 +37,7 @@ use project::{
     Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
     trusted_worktrees::TrustedWorktrees,
 };
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionOptions, SshConnectionOptions};
 use settings::{Settings as _, SettingsStore};
 
 use std::any::TypeId;
@@ -346,6 +346,7 @@ impl Render for TitleBar {
                                         ))
                                     },
                                 )
+                                .children(self.render_ssh_port_forward_button(cx))
                         })
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -1110,6 +1111,57 @@ impl TitleBar {
                     )
                 })
                 .children(branch_picker)
+                .into_any_element(),
+        )
+    }
+
+    /// Temporary override to show the port-forward button on local projects so
+    /// the popover UI can be tested without a remote server. Flip to `false`
+    /// (or delete) once tested against a real SSH remote.
+    const ALWAYS_SHOW_PORT_FORWARD_BUTTON_FOR_TEST: bool = true;
+
+    fn render_ssh_port_forward_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let options = self.project.read(cx).remote_connection_options(cx);
+        let ssh = match options {
+            Some(RemoteConnectionOptions::Ssh(ssh)) => Some(ssh),
+            // TODO(port-forward-popover): remove this override once the popover
+            // has been tested against a real remote server. The button should
+            // only render when connected over SSH.
+            None if Self::ALWAYS_SHOW_PORT_FORWARD_BUTTON_FOR_TEST => Some(SshConnectionOptions {
+                host: "for-testing-only".to_string().into(),
+                ..Default::default()
+            }),
+            _ => None,
+        }?;
+        let workspace = self.workspace.clone();
+        let forward_count = recent_projects::port_forward_count_for_ssh(&ssh, cx);
+        let ssh_for_menu = ssh.clone();
+
+        Some(
+            PopoverMenu::new("ssh-port-forward-menu")
+                .menu(move |window, cx| {
+                    let workspace = workspace.clone();
+                    let ssh = ssh_for_menu.clone();
+                    Some(cx.new(|cx| {
+                        recent_projects::PortForwardPopover::new(ssh, workspace, window, cx)
+                    }))
+                })
+                .trigger_with_tooltip(
+                    ButtonLike::new("ssh_port_forward")
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .child(
+                            IconWithIndicator::new(
+                                Icon::new(IconName::ArrowRightLeft)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                                (forward_count > 0).then(|| Indicator::dot().color(Color::Info)),
+                            )
+                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                            .into_any_element(),
+                        ),
+                    Tooltip::text("Port forwarding"),
+                )
+                .anchor(gpui::Anchor::TopLeft)
                 .into_any_element(),
         )
     }

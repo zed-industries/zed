@@ -1,5 +1,6 @@
 mod dev_container_suggest;
 pub mod disconnected_overlay;
+mod port_forward_popover;
 mod remote_connections;
 mod remote_servers;
 pub mod sidebar_recent_projects;
@@ -17,6 +18,7 @@ use fs::Fs;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
+pub use port_forward_popover::{PortForwardPopover, port_forward_count_for_ssh};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
@@ -34,8 +36,9 @@ use picker::{
 };
 use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
+use remote_connections::sync_live_ssh_port_forwards;
 pub use remote_servers::RemoteServerProjects;
-use settings::{DefaultOpenBehavior, Settings, WorktreeId};
+use settings::{DefaultOpenBehavior, Settings, SettingsStore, WorktreeId};
 use workspace::ProjectGroupKey;
 
 use dev_container::{DevContainerContext, find_devcontainer_configs};
@@ -284,6 +287,11 @@ pub(crate) fn default_open_in_new_window(cx: &App) -> bool {
 }
 
 pub fn init(cx: &mut App) {
+    cx.observe_global::<SettingsStore>(|cx| {
+        sync_live_ssh_port_forwards(cx);
+    })
+    .detach();
+
     #[cfg(target_os = "windows")]
     cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenFolderInWsl, cx| {
         let create_new_window = open_wsl

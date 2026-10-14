@@ -1,10 +1,11 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::transport::mock::ConnectGuard;
 use crate::{
-    SshConnectionOptions,
+    SshConnectionOptions, SshPortForwardOption,
     command::RemoteCommand,
     protocol::MessageId,
     proxy::ProxyLaunchError,
+    remote_identity::{RemoteConnectionIdentity, remote_connection_identity},
     transport::{
         docker::{DockerConnectionOptions, DockerExecConnection},
         ssh::SshRemoteConnection,
@@ -405,6 +406,57 @@ pub fn has_active_connection(opts: &RemoteConnectionOptions, cx: &App) -> bool {
                 if remote.upgrade().is_some_and(|r| !r.has_been_killed())
         )
     })
+}
+
+/// Live SSH sessions whose identity matches `identity` (host, username, port).
+///
+/// Matching ignores runtime fields such as `port_forwards`, so a settings edit
+/// can still find the ControlMaster that was opened with the previous list.
+pub fn active_connections_matching(
+    identity: &RemoteConnectionIdentity,
+    cx: &App,
+) -> Vec<Arc<dyn RemoteConnection>> {
+    cx.try_global::<ConnectionPool>()
+        .map(|pool| {
+            pool.connections
+                .iter()
+                .filter_map(|(opts, entry)| {
+                    if remote_connection_identity(opts) != *identity {
+                        return None;
+                    }
+                    match entry {
+                        ConnectionPoolEntry::Connected(remote) => {
+                            remote.upgrade().filter(|remote| !remote.has_been_killed())
+                        }
+                        ConnectionPoolEntry::Connecting(_) => None,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Live SSH connections, paired with the options they were opened with.
+pub fn active_ssh_connections(cx: &App) -> Vec<(SshConnectionOptions, Arc<dyn RemoteConnection>)> {
+    cx.try_global::<ConnectionPool>()
+        .map(|pool| {
+            pool.connections
+                .iter()
+                .filter_map(|(opts, entry)| {
+                    let RemoteConnectionOptions::Ssh(ssh_opts) = opts else {
+                        return None;
+                    };
+                    match entry {
+                        ConnectionPoolEntry::Connected(remote) => remote
+                            .upgrade()
+                            .filter(|remote| !remote.has_been_killed())
+                            .map(|remote| (ssh_opts.clone(), remote)),
+                        ConnectionPoolEntry::Connecting(_) => None,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 impl RemoteClient {
@@ -1002,17 +1054,11 @@ impl RemoteClient {
         connection.build_forward_ports_command(forwards)
     }
 
-    pub async fn update_port_forwards(
-        &self,
-        previous_forwards: &[(u16, String, u16)],
-        new_forwards: &[(u16, String, u16)],
-    ) -> Result<()> {
+    pub async fn sync_port_forwards(&self, new_forwards: &[SshPortForwardOption]) -> Result<()> {
         let Some(connection) = self.remote_connection() else {
             return Err(anyhow!("no remote connection"));
         };
-        connection
-            .update_port_forwards(previous_forwards, new_forwards)
-            .await
+        connection.sync_port_forwards(new_forwards).await
     }
 
     pub fn upload_directory(
@@ -1696,11 +1742,7 @@ pub trait RemoteConnection: Send + Sync {
     fn default_system_shell(&self) -> String;
     fn has_wsl_interop(&self) -> bool;
 
-    async fn update_port_forwards(
-        &self,
-        _previous_forwards: &[(u16, String, u16)],
-        _new_forwards: &[(u16, String, u16)],
-    ) -> Result<()> {
+    async fn sync_port_forwards(&self, _new_forwards: &[SshPortForwardOption]) -> Result<()> {
         Ok(())
     }
 

@@ -115,6 +115,12 @@ mod tests {
             connection_timeout: Some(30),
             nickname: Some("work".to_string()),
             upload_binary_over_ssh: true,
+            port_forwards: Some(vec![crate::SshPortForwardOption {
+                local_host: None,
+                local_port: 8080,
+                remote_host: None,
+                remote_port: 80,
+            }]),
             ..Default::default()
         });
         let right = RemoteConnectionOptions::Ssh(SshConnectionOptions {
@@ -126,6 +132,7 @@ mod tests {
             connection_timeout: None,
             nickname: None,
             upload_binary_over_ssh: false,
+            port_forwards: None,
             ..Default::default()
         });
 

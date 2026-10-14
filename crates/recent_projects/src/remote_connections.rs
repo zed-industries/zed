@@ -7,12 +7,12 @@ use anyhow::{Context as _, Result};
 use askpass::EncryptedPassword;
 use editor::Editor;
 use futures::{FutureExt as _, channel::oneshot, select};
-use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
+use gpui::{App, AppContext, AsyncApp, Entity, PromptLevel, WindowHandle};
 
 use project::trusted_worktrees;
 use remote::{
     DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionOptions,
-    SshConnectionOptions,
+    SshConnectionOptions, active_ssh_connections,
 };
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
@@ -125,6 +125,29 @@ impl Settings for RemoteSettings {
     }
 }
 
+/// Apply `ssh_connections[].port_forwards` to any live SSH ControlMaster
+/// for that host, without reconnecting.
+pub fn sync_live_ssh_port_forwards(cx: &mut App) {
+    let settings = RemoteSettings::get_global(cx);
+    for (ssh_opts, connection) in active_ssh_connections(cx) {
+        let forwards = settings
+            .ssh_connections()
+            .find(|conn| {
+                conn.host == ssh_opts.host.to_string()
+                    && conn.username == ssh_opts.username
+                    && conn.port == ssh_opts.port
+            })
+            .and_then(|conn| conn.port_forwards.clone())
+            .unwrap_or_default();
+        cx.spawn(async move |_| {
+            if let Err(error) = connection.sync_port_forwards(&forwards).await {
+                log::error!("Failed to sync SSH port forwards: {error:#}");
+            }
+        })
+        .detach();
+    }
+}
+
 pub async fn open_remote_project(
     connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
@@ -132,7 +155,7 @@ pub async fn open_remote_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<WindowHandle<MultiWorkspace>> {
-    let created_new_window = open_options.requesting_window.is_none();
+    let open_in_new_window = open_options.requesting_window.is_none();
 
     let (existing, open_visible) = find_existing_workspace(
         &paths,
@@ -201,59 +224,32 @@ pub async fn open_remote_project(
         );
     }
 
-    let (window, initial_workspace) = if let Some(window) = open_options.requesting_window {
+    // Show the existing RemoteConnectionPrompt on the current window.
+    // Only create a blank window first when there is no workspace at all (CLI).
+    let prompt_host = open_options
+        .requesting_window
+        .or_else(|| existing_multi_workspace_window(cx));
+    let created_prompt_window = prompt_host.is_none();
+    let (prompt_window, prompt_workspace) = if let Some(window) = prompt_host {
         let workspace = window.update(cx, |multi_workspace, _, _| {
             multi_workspace.workspace().clone()
         })?;
         (window, workspace)
     } else {
-        let workspace_position = cx
-            .update(|cx| {
-                workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
-            })
-            .await
-            .context("fetching remote workspace position from db")?;
-
-        let mut options =
-            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
-        options.window_bounds = workspace_position.window_bounds;
-
-        let window = cx.open_window(options, |window, cx| {
-            let project = project::Project::local(
-                app_state.client.clone(),
-                app_state.node_runtime.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                None,
-                project::LocalProjectFlags {
-                    init_worktree_trust: false,
-                    ..Default::default()
-                },
-                cx,
-            );
-            let workspace = cx.new(|cx| {
-                let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
-                workspace.centered_layout = workspace_position.centered_layout;
-                workspace
-            });
-            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
-        })?;
-        let workspace = window.update(cx, |multi_workspace, _, _cx| {
-            multi_workspace.workspace().clone()
-        })?;
-        (window, workspace)
+        open_blank_window_for_remote(&connection_options, &paths, &app_state, cx).await?
     };
+    // Open the project in a separate window only after auth succeeds.
+    let defer_project_window = open_in_new_window && !created_prompt_window;
 
     loop {
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
-        let delegate = window.update(cx, {
+        let delegate = prompt_window.update(cx, {
             let paths = paths.clone();
             let connection_options = connection_options.clone();
-            let initial_workspace = initial_workspace.clone();
+            let prompt_workspace = prompt_workspace.clone();
             move |_multi_workspace: &mut MultiWorkspace, window, cx| {
                 window.activate_window();
-                initial_workspace.update(cx, |workspace, cx| {
+                prompt_workspace.update(cx, |workspace, cx| {
                     workspace.hide_modal(window, cx);
                     workspace.toggle_modal(window, cx, |window, cx| {
                         RemoteConnectionModal::new(&connection_options, paths, window, cx)
@@ -290,7 +286,7 @@ pub async fn open_remote_project(
         let connection = remote::connect(connection_options.clone(), delegate.clone(), cx);
         let connection = select! {
             _ = cancel_rx => {
-                initial_workspace.update(cx, |workspace, cx| {
+                prompt_workspace.update(cx, |workspace, cx| {
                     if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
                         ui.update(cx, |modal, cx| modal.finished(cx))
                     }
@@ -303,13 +299,13 @@ pub async fn open_remote_project(
         let remote_connection = match connection {
             Ok(connection) => connection,
             Err(e) => {
-                initial_workspace.update(cx, |workspace, cx| {
+                prompt_workspace.update(cx, |workspace, cx| {
                     if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
                         ui.update(cx, |modal, cx| modal.finished(cx))
                     }
                 });
                 log::error!("Failed to open project: {e:#}");
-                let response = window
+                let response = prompt_window
                     .update(cx, |_, window, cx| {
                         window.prompt(
                             PromptLevel::Critical,
@@ -335,22 +331,30 @@ pub async fn open_remote_project(
                     continue;
                 }
 
-                if created_new_window {
-                    window
+                if created_prompt_window {
+                    prompt_window
                         .update(cx, |_, window, _| window.remove_window())
                         .ok();
                 }
-                return Ok(window);
+                return Ok(prompt_window);
             }
         };
 
         let (paths, paths_with_positions) =
             determine_paths_with_positions(&remote_connection, paths.clone()).await;
 
+        let project_window = if defer_project_window {
+            open_blank_window_for_remote(&connection_options, &paths, &app_state, cx)
+                .await?
+                .0
+        } else {
+            prompt_window
+        };
+
         let opened = cx
             .update(|cx| {
                 workspace::open_remote_project_with_new_connection(
-                    window,
+                    project_window,
                     remote_connection,
                     cancel_rx,
                     delegate.clone(),
@@ -361,7 +365,7 @@ pub async fn open_remote_project(
             })
             .await;
 
-        initial_workspace.update(cx, |workspace, cx| {
+        prompt_workspace.update(cx, |workspace, cx| {
             if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
                 ui.update(cx, |modal, cx| modal.finished(cx))
             }
@@ -370,7 +374,7 @@ pub async fn open_remote_project(
         match opened {
             Err(e) => {
                 log::error!("Failed to open project: {e:#}");
-                let response = window
+                let response = prompt_window
                     .update(cx, |_, window, cx| {
                         window.prompt(
                             PromptLevel::Critical,
@@ -392,15 +396,24 @@ pub async fn open_remote_project(
                     })?
                     .await;
                 if response == Ok(0) {
+                    if defer_project_window {
+                        project_window
+                            .update(cx, |_, window, _| window.remove_window())
+                            .ok();
+                    }
                     continue;
                 }
 
-                if created_new_window {
-                    window
+                if created_prompt_window {
+                    prompt_window
+                        .update(cx, |_, window, _| window.remove_window())
+                        .ok();
+                } else if defer_project_window {
+                    project_window
                         .update(cx, |_, window, _| window.remove_window())
                         .ok();
                 }
-                initial_workspace.update(cx, |workspace, cx| {
+                prompt_workspace.update(cx, |workspace, cx| {
                     trusted_worktrees::track_worktree_trust(
                         workspace.project().read(cx).worktree_store(),
                         None,
@@ -409,17 +422,20 @@ pub async fn open_remote_project(
                         cx,
                     );
                 });
+                return Ok(prompt_window);
             }
 
             Ok((_, items)) => {
-                navigate_to_positions(&window, items, &paths_with_positions, cx);
+                project_window
+                    .update(cx, |_, window, _| window.activate_window())
+                    .ok();
+                navigate_to_positions(&project_window, items, &paths_with_positions, cx);
+                return Ok(project_window);
             }
         }
-
-        break;
     }
 
-    Ok(window)
+    Ok(prompt_window)
 }
 
 pub fn navigate_to_positions(
@@ -473,6 +489,58 @@ pub(crate) async fn determine_paths_with_positions(
         paths_with_positions.push(PathWithPosition::from_path(path.clone()))
     }
     (paths, paths_with_positions)
+}
+
+fn existing_multi_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<MultiWorkspace>> {
+    cx.update(|cx| {
+        cx.active_window()
+            .and_then(|handle| handle.downcast::<MultiWorkspace>())
+    })
+}
+
+async fn open_blank_window_for_remote(
+    connection_options: &RemoteConnectionOptions,
+    paths: &[PathBuf],
+    app_state: &Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> Result<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> {
+    let workspace_position = cx
+        .update(|cx| {
+            workspace::remote_workspace_position_from_db(connection_options.clone(), paths, cx)
+        })
+        .await
+        .context("fetching remote workspace position from db")?;
+
+    let mut options =
+        cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
+    options.window_bounds = workspace_position.window_bounds;
+
+    let app_state = app_state.clone();
+    let window = cx.open_window(options, |window, cx| {
+        let project = project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        );
+        let workspace = cx.new(|cx| {
+            let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
+            workspace.centered_layout = workspace_position.centered_layout;
+            workspace
+        });
+        cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+    })?;
+    let workspace = window.update(cx, |multi_workspace, _, _cx| {
+        multi_workspace.workspace().clone()
+    })?;
+    Ok((window, workspace))
 }
 
 async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> bool {
