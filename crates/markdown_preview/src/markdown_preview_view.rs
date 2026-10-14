@@ -36,7 +36,7 @@ use ui::{
 use util::{
     ResultExt,
     markdown::{source_position_from_fragment, split_local_url_fragment},
-    paths::{PathStyle, PathWithPosition},
+    paths::{PathStyle, PathWithPosition, UrlExt},
     rel_path::RelPath,
 };
 use workspace::item::{
@@ -1532,21 +1532,36 @@ fn resolve_preview_image(
         ))));
     }
 
-    // `file:` URLs name a path on the client machine, so resolve them there
-    // directly instead of routing through project/workspace-relative lookup.
-    if dest_url.starts_with("file:") {
-        let path = url::Url::parse(dest_url).ok()?.to_file_path().ok()?;
-        return path
-            .exists()
-            .then(|| ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))));
-    }
-
-    let decoded = urlencoding::decode(dest_url)
-        .map(|decoded| decoded.into_owned())
-        .unwrap_or_else(|_| dest_url.to_string());
-    let workspace_relative_path = ['/', '\\']
-        .iter()
-        .find_map(|prefix| decoded.strip_prefix(*prefix));
+    let is_file_url = dest_url.starts_with("file:");
+    let decoded = if is_file_url {
+        let path_style = project
+            .zip(source_project_path)
+            .and_then(|(project, source_project_path)| {
+                let worktree = project
+                    .read(cx)
+                    .worktree_for_id(source_project_path.worktree_id, cx)?;
+                Some(worktree.read(cx).path_style())
+            })
+            .unwrap_or(client_path_style);
+        url::Url::parse(dest_url)
+            .ok()?
+            .to_file_path_ext(path_style)
+            .ok()?
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        urlencoding::decode(dest_url)
+            .map(|decoded| decoded.into_owned())
+            .unwrap_or_else(|_| dest_url.to_string())
+    };
+    // A file URL's leading `/` is part of the absolute path, not the workspace-root shorthand.
+    let workspace_relative_path = if is_file_url {
+        None
+    } else {
+        ['/', '\\']
+            .iter()
+            .find_map(|prefix| decoded.strip_prefix(*prefix))
+    };
 
     if let (Some(project), Some(source_project_path)) = (project, source_project_path) {
         let project_path = resolve_project_path_for_preview_image(
@@ -2534,6 +2549,46 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn resolves_file_url_preview_image_through_remote_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let worktree = project.update(cx, |project, cx| {
+            project.add_test_remote_worktree("/remote/project", cx)
+        });
+        let source_project_path = ProjectPath {
+            worktree_id: worktree.read_with(cx, |worktree, _cx| worktree.id()),
+            path: rel_path("docs/readme.md").into(),
+        };
+
+        for client_path_style in [PathStyle::Unix, PathStyle::Windows] {
+            let resolve = |dest_url: &str, cx: &mut TestAppContext| {
+                cx.update(|cx| {
+                    resolve_preview_image(
+                        dest_url,
+                        Some(Path::new("/remote/project/docs")),
+                        Some(Path::new("/remote/project")),
+                        Some(&project),
+                        Some(&source_project_path),
+                        client_path_style,
+                        cx,
+                    )
+                })
+            };
+            assert!(
+                matches!(
+                    resolve("file:///remote/project/docs/images/example.png", cx),
+                    Some(ImageSource::Custom(_))
+                ),
+                "{client_path_style:?}"
+            );
+            assert!(
+                resolve("file:///remote/outside/example.png", cx).is_none(),
+                "{client_path_style:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn resolves_remote_preview_image_with_different_client_path_style(
         cx: &mut TestAppContext,
     ) {
@@ -2572,6 +2627,22 @@ mod tests {
         assert_eq!(
             project_path
                 .expect("image should resolve within the remote worktree")
+                .path,
+            rel_path("docs/images/example.png").into()
+        );
+
+        let absolute_project_path = cx.update(|cx| {
+            resolve_project_path_for_preview_image(
+                "/remote/project/docs/images/example.png",
+                None,
+                &source_project_path,
+                &project,
+                cx,
+            )
+        });
+        assert_eq!(
+            absolute_project_path
+                .expect("absolute image path should resolve within the remote worktree")
                 .path,
             rel_path("docs/images/example.png").into()
         );
