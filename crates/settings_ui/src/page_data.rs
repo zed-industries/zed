@@ -157,7 +157,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     ]
 }
 
-fn pair_zedlink_in_terminal(window: &mut Window, cx: &mut App) {
+fn run_zedlink_in_terminal(
+    action: &'static str,
+    label: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let manager_path = SettingsStore::global(cx)
         .merged_settings()
         .zedlink
@@ -176,25 +181,22 @@ fn pair_zedlink_in_terminal(window: &mut Window, cx: &mut App) {
                     .ok_or_else(|| anyhow::anyhow!("The manager path cannot be quoted safely."))?;
                 let workspace_window =
                     workspace::activate_any_workspace_window(cx).ok_or_else(|| {
-                        anyhow::anyhow!("Open a local Zed workspace to show the terminal QR.")
+                        anyhow::anyhow!("Open a local Zed workspace to run this ZedLink action.")
                     })?;
                 let task = workspace_window.update(cx, |multi_workspace, window, cx| {
                     let workspace = multi_workspace.workspace().clone();
                     workspace.update(cx, |workspace, cx| {
                         anyhow::ensure!(
                             workspace.project().read(cx).is_local(),
-                            "Pairing must run in a local Zed workspace."
+                            "ZedLink setup must run in a local Zed workspace."
                         );
                         Ok(workspace.spawn_in_terminal(
                             task::SpawnInTerminal {
-                                id: task::TaskId("zedlink-pair-terminal".into()),
-                                label: "ZedLink: Pair device — Terminal QR".into(),
-                                full_label: "ZedLink: Pair device — Terminal QR".into(),
+                                id: task::TaskId(format!("zedlink-{action}").into()),
+                                label: label.into(),
+                                full_label: label.into(),
                                 command: Some("python3".into()),
-                                args: vec![
-                                    quoted_path.into_owned(),
-                                    "pair-primary-terminal".into(),
-                                ],
+                                args: vec![quoted_path.into_owned(), action.into()],
                                 shell: task::Shell::Program("sh".into()),
                                 use_new_terminal: true,
                                 allow_concurrent_runs: false,
@@ -214,7 +216,7 @@ fn pair_zedlink_in_terminal(window: &mut Window, cx: &mut App) {
                     .ok_or_else(|| anyhow::anyhow!("Zed's terminal provider is unavailable."))??;
                 anyhow::ensure!(
                     status.success(),
-                    "Pairing failed. Check the terminal for details."
+                    "ZedLink action needs attention. Check the terminal for details."
                 );
                 anyhow::Ok(())
             }
@@ -222,7 +224,7 @@ fn pair_zedlink_in_terminal(window: &mut Window, cx: &mut App) {
             if let Err(error) = result {
                 cx.prompt(
                     PromptLevel::Warning,
-                    "Terminal pairing unavailable",
+                    "ZedLink terminal action unavailable",
                     Some(&error.to_string()),
                     &["OK"],
                 )
@@ -1142,7 +1144,7 @@ fn zedlink_page() -> SettingsPage {
                             title: "Pair New Device in Terminal".into(),
                             description: Some("Show the one-use QR and manual code in a local Zed terminal using the primary connection. No browser is opened. The challenge expires after five minutes.".into()),
                             button_text: "Show Terminal QR".into(),
-                            on_click: Arc::new(|_, window, cx| pair_zedlink_in_terminal(window, cx)),
+                            on_click: Arc::new(|_, window, cx| run_zedlink_in_terminal("pair-primary-terminal", "ZedLink: Pair device — Terminal QR", window, cx)),
                             files: USER,
                         }),
                         SettingsPageItem::ActionLink(ActionLink {
@@ -1168,6 +1170,21 @@ fn zedlink_page() -> SettingsPage {
                 render: |this, scroll_handle, window, cx| {
                     let items = [
                         SettingsPageItem::SectionHeader("Tailscale and TLS"),
+                        SettingsPageItem::ActionLink(ActionLink {
+                            title: "Check Tailscale Connection".into(),
+                            description: Some("Check MagicDNS, local DNS acceptance, hostname resolution, private listener, trusted certificate, served certificate, gateway identity, and renewal. Phone reachability is verified separately.".into()),
+                            button_text: "Check".into(),
+                            on_click: Arc::new(|_, window, cx| run_zedlink_in_terminal("tailscale-check", "ZedLink: Check Tailscale connection", window, cx)),
+                            files: USER,
+                        }),
+                        SettingsPageItem::ActionLink(ActionLink {
+                            title: "Guided Tailscale Repair".into(),
+                            description: Some("Review and confirm DNS, certificate, and route repairs in the terminal. Saved pairings are preserved; gateway connections may briefly reconnect. Tailnet administrator settings open in your browser.".into()),
+                            button_text: "Review Repairs".into(),
+                            on_click: Arc::new(|_, window, cx| run_zedlink_in_terminal("tailscale-repair", "ZedLink: Guided Tailscale repair", window, cx)),
+                            files: USER,
+                        }),
+
                         SettingsPageItem::ActionLink(ActionLink {
                             title: "Open Tailscale DNS and HTTPS Settings".into(),
                             description: Some("Enable MagicDNS and HTTPS certificates for the tailnet. Tailscale requires an administrator to accept its Certificate Transparency disclosure.".into()),
