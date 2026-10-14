@@ -7018,6 +7018,23 @@ mod tests {
 
     #[gpui::test]
     async fn test_parent_branch_selects_nearest_merge_base(cx: &mut TestAppContext) {
+        // Before the first parent lookup (oldest commits at the top):
+        //
+        // o (main)
+        // |
+        // o (merge-base)
+        // |\
+        // | +--o--o--o (topic, origin/topic; origin/HEAD -> origin/topic)
+        // | |
+        // | +--o--o--o--o (sibling)
+        // |
+        // o (origin/published; configured upstream of feature/child)
+        // |
+        // o (feature/child [HEAD], other/feature/child)
+        // |
+        // o (descendant)
+        //
+        // o (unrelated; orphan history)
         disable_git_global_config();
         cx.executor().allow_parking();
         let repository_directory = tempfile::tempdir().expect("create repository directory");
@@ -7106,6 +7123,13 @@ mod tests {
             Some("origin/topic".into())
         );
 
+        // After deleting topic, the linked worktree branches from feature/child:
+        //
+        // o (feature/child, other/feature/child)
+        // |\
+        // | o (worktree-feature [HEAD in linked worktree])
+        // |
+        // o (descendant)
         let worktree_directory = repository_directory.path().join("linked");
         git_command(
             directory,
@@ -7140,6 +7164,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_parent_branch_ties_and_missing_candidates(cx: &mut TestAppContext) {
+        // Tied parents after the feature commit:
+        //
+        // o (main, a-parent, b-parent, origin/a-parent)
+        // |
+        // o (feature [HEAD])
+        //
+        // Earlier: unborn main -> main only -> feature at main's commit.
+        // Finally: HEAD detaches at the feature commit.
         disable_git_global_config();
         cx.executor().allow_parking();
         let repository_directory = tempfile::tempdir().expect("create repository directory");
