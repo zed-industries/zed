@@ -1174,9 +1174,7 @@ impl ProjectPanel {
                 let has_history = has_git_repo
                     && !git_store
                         .project_path_git_status(&project_path, cx)
-                        .is_some_and(|status| {
-                            status.is_created() || status.is_untracked() || status.is_ignored()
-                        });
+                        .is_some_and(|status| status.is_created());
 
                 let is_git_ignored = has_git_repo && worktree.is_path_ignored(&entry.path);
 
