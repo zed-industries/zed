@@ -287,16 +287,6 @@ impl LspAdapter for ExtensionLspAdapter {
     }
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
-        // TODO: The language IDs can be provided via the language server options
-        // in `extension.toml now but we're leaving these existing usages in place temporarily
-        // to avoid any compatibility issues between Zed and the extension versions.
-        //
-        // We can remove once the following extension versions no longer see any use:
-        // - php@0.0.1
-        if self.extension.manifest().id.as_ref() == "php" {
-            return HashMap::from_iter([(LanguageName::new_static("PHP"), "php".into())]);
-        }
-
         self.extension
             .manifest()
             .language_servers
@@ -305,12 +295,12 @@ impl LspAdapter for ExtensionLspAdapter {
             .unwrap_or_default()
     }
 
-    fn enabled_by_default(&self) -> bool {
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
         self.extension
             .manifest()
             .language_servers
             .get(&self.language_server_id)
-            .is_none_or(|server| !server.is_opt_in_for(&self.language_name))
+            .is_some_and(|server| server.is_opt_in_for(language))
     }
 
     async fn initialization_options(
@@ -436,9 +426,7 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn additional_workspace_configuration(
         self: Arc<Self>,
         target_language_server_id: LanguageServerName,
-
         delegate: &Arc<dyn LspAdapterDelegate>,
-
         _cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let language_server_status_source = delegate.status_source_id();

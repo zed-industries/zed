@@ -28,6 +28,18 @@ pub enum SubmissionResponse {
     Accepted(acp_v2::PromptResponse),
 }
 
+/// A local receipt withdrawn by cancellation before the message was accepted.
+#[derive(Debug)]
+pub struct SubmissionCancelled;
+
+impl fmt::Display for SubmissionCancelled {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Submission cancelled before acceptance")
+    }
+}
+
+impl std::error::Error for SubmissionCancelled {}
+
 pub struct Submission {
     pub id: SubmissionId,
     pub response: BoxFuture<'static, anyhow::Result<Option<SubmissionResponse>>>,
@@ -63,7 +75,7 @@ pub enum SubmissionState {
 }
 
 pub struct SubmissionRecord {
-    pub content: Arc<[acp_v1::ContentBlock]>,
+    pub content: Arc<[acp_v2::ContentBlock]>,
     pub state: SubmissionState,
     task: Option<Task<()>>,
 }
@@ -134,7 +146,7 @@ impl SessionSubmissions {
         })
     }
 
-    pub(crate) fn register(&mut self, content: Arc<[acp_v1::ContentBlock]>) -> SubmissionId {
+    pub(crate) fn register(&mut self, content: Arc<[acp_v2::ContentBlock]>) -> SubmissionId {
         self.next_id += 1;
         let id = SubmissionId(self.next_id);
         self.latest_id = Some(id);

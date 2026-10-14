@@ -1,3 +1,8 @@
+; Package-level test runner
+((package_clause
+  (package_identifier) @run) @_
+  (#set! tag go-package-test))
+
 ; Functions names start with `Test`
 (((function_declaration
   name: (_) @run
