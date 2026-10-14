@@ -1,8 +1,7 @@
 use super::{
     AcpDebugLog, AcpDebugMessage, ClientContext, ForegroundWork, UnsupportedVersion,
-    cancel_elicitations_after_disconnect, drain_foreground_queue, enqueue_notification,
-    exited_load_error_after_drain, first_class_terminal_auth_task, map_acp_error, transport,
-    with_v2_client_ingress,
+    drain_foreground_queue, enqueue_notification, first_class_terminal_auth_task, map_acp_error,
+    runtime, transport, with_v2_client_ingress,
 };
 use acp_thread::ElicitationStore;
 use agent_client_protocol::{
@@ -11,15 +10,12 @@ use agent_client_protocol::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use futures::{FutureExt as _, StreamExt as _, channel::mpsc, future::Shared};
+use futures::{FutureExt as _, channel::mpsc, future::Shared};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use project::{AgentId, AgentServerStore, Project, agent_server_store::AgentServerCommand};
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{cell::RefCell, rc::Rc};
 use task::SpawnInTerminal;
-use util::{ResultExt as _, process::Child};
-
-// Startup failures and dropped startup futures must also reap the spawned process.
-struct OwnedChild(Child);
+use util::ResultExt as _;
 
 fn cancel_auth_elicitations(
     request_id: acp::RequestId,
@@ -49,12 +45,6 @@ fn finish_auth_request(request_id: acp::RequestId, cx: &mut AsyncApp, context: &
     });
 }
 
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        self.0.kill().log_err();
-    }
-}
-
 /// An unselected v2 connection foundation, not yet an `AgentConnection` session backend.
 pub struct AcpV2Connection {
     id: AgentId,
@@ -65,25 +55,10 @@ pub struct AcpV2Connection {
     request_elicitations: Entity<ElicitationStore>,
     debug_log: AcpDebugLog,
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
-    io_task: Option<Task<()>>,
-    dispatch_task: Option<Task<()>>,
-    shutdown: Option<futures::channel::oneshot::Sender<()>>,
+    _runtime: runtime::ClientRuntime,
     _stderr_task: Shared<Task<()>>,
     _wait_task: Option<Task<()>>,
-    _child: Option<OwnedChild>,
-}
-
-impl Drop for AcpV2Connection {
-    fn drop(&mut self) {
-        // Let SDK shutdown finish its close callback before releasing the foreground owners.
-        drop(self.shutdown.take());
-        if let Some(task) = self.io_task.take() {
-            task.detach();
-        }
-        if let Some(task) = self.dispatch_task.take() {
-            task.detach();
-        }
-    }
+    _child: Option<transport::OwnedChild>,
 }
 
 impl AcpV2Connection {
@@ -101,7 +76,7 @@ impl AcpV2Connection {
             stderr,
             debug_log,
         } = transport::spawn_stdio(&project, command, cx)?;
-        let mut child = OwnedChild(child);
+        let mut child = transport::OwnedChild(child);
         let stderr_task = cx
             .background_spawn(async move {
                 stderr.await.log_err();
@@ -139,51 +114,25 @@ impl AcpV2Connection {
                 result.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
             })
             .boxed_local();
-        let (mut connection, status) = match futures::future::select(initialized, status).await {
-            futures::future::Either::Left((Ok(connection), status)) => (connection, status),
-            futures::future::Either::Left((Err(error), status)) => {
-                let timeout = cx
-                    .background_executor()
-                    .timer(Duration::from_millis(250))
-                    .boxed_local();
-                if let futures::future::Either::Left((status, _)) =
-                    futures::future::select(status, timeout).await
-                {
-                    return Err(exited_load_error_after_drain(
-                        status?,
-                        stderr_task,
-                        &debug_log,
-                        cx,
-                    )
-                    .await
-                    .into());
-                }
-                return Err(error);
-            }
-            futures::future::Either::Right((status, _)) => {
-                return Err(
-                    exited_load_error_after_drain(status?, stderr_task, &debug_log, cx)
-                        .await
-                        .into(),
-                );
-            }
-        };
+        let (mut connection, status, stderr_task) =
+            runtime::race_startup(initialized, status, stderr_task, &debug_log, cx).await?;
         let drained = {
             let sdk_connection = connection.connection.clone();
-            let dispatch_tx = connection.dispatch_tx.clone();
-            async move {
-                sdk_connection.incoming_closed().await;
-                drain_foreground_queue(&dispatch_tx).await.log_err();
-                stderr_task.await;
-            }
+            runtime::drain_transport(
+                async move { sdk_connection.incoming_closed().await },
+                connection.dispatch_tx.clone(),
+                stderr_task,
+            )
         };
-        connection._wait_task = Some(cx.spawn(async move |cx| match status.await {
-            Ok(status) => {
-                let error = exited_load_error_after_drain(status, drained, &debug_log, cx).await;
+        connection._wait_task = Some(runtime::watch_process(
+            status,
+            drained,
+            debug_log,
+            |error, _cx| {
                 log::warn!("ACP v2 agent exited: {error}");
-            }
-            Err(error) => log::error!("ACP v2 process wait failed: {error}"),
-        }));
+            },
+            cx,
+        ));
         connection._child = Some(child);
         Ok(connection)
     }
@@ -204,42 +153,25 @@ impl AcpV2Connection {
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: Some(RefCell::new(Default::default())),
         };
-        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
-        let dispatch_task = cx.spawn(async move |cx| {
-            while let Some(work) = dispatch_rx.next().await {
-                work.run(cx, &context);
-            }
-        });
+        let (mut runtime, shutdown) = runtime::ClientRuntime::new(context, cx);
+        let dispatch_tx = runtime.sender();
         let (sender, received) = futures::channel::oneshot::channel();
-        let (shutdown, shutdown_received) = futures::channel::oneshot::channel();
-        let io_task = cx.background_spawn({
-            let dispatch_tx = dispatch_tx.clone();
-            async move {
-                let cleanup = cancel_elicitations_after_disconnect(dispatch_tx.clone())
-                    .boxed()
-                    .shared();
-                let result = with_v2_client_ingress(Client.v2().name("zed-v2"), dispatch_tx)
-                    .on_close({
-                        let cleanup = cleanup.clone();
-                        async move |_connection: V2ConnectionTo<Agent>| cleanup.await
-                    })
-                    .connect_with(transport, async move |connection| {
-                        if sender.send(connection).is_err() {
-                            return Err(agent_client_protocol::Error::internal_error()
-                                .data("ACP v2 connection receiver dropped"));
-                        }
-                        if shutdown_received.await.is_err() {
-                            log::debug!("ACP v2 connection owner dropped");
-                        }
-                        Ok(())
-                    })
-                    .await;
-                if let Err(error) = cleanup.await {
-                    log::warn!("ACP v2 disconnect cleanup failed: {error}");
-                }
-                result.log_err();
-            }
-        });
+        let cleanup = runtime::disconnect_cleanup(dispatch_tx.clone());
+        let connection_future =
+            with_v2_client_ingress(Client.v2().name("zed-v2"), dispatch_tx.clone())
+                .on_close({
+                    let cleanup = cleanup.clone();
+                    async move |_connection: V2ConnectionTo<Agent>| cleanup.await
+                })
+                .connect_with(transport, async move |connection| {
+                    runtime::publish_connection(
+                        connection,
+                        sender,
+                        runtime::shutdown_requested(shutdown),
+                    )
+                    .await
+                });
+        runtime.start_io(runtime::finish_connection(connection_future, cleanup), cx);
         let connection = received
             .await
             .context("Failed to receive ACP v2 connection handle")?;
@@ -274,9 +206,7 @@ impl AcpV2Connection {
             request_elicitations,
             debug_log,
             dispatch_tx,
-            io_task: Some(io_task),
-            dispatch_task: Some(dispatch_task),
-            shutdown: Some(shutdown),
+            _runtime: runtime,
             _stderr_task: stderr_task,
             _wait_task: None,
             _child: None,
@@ -402,7 +332,10 @@ mod tests {
     };
     use gpui::TestAppContext;
     use serde_json::json;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     struct Harness {
         client: AcpV2Connection,

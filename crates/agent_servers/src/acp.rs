@@ -1,4 +1,5 @@
 mod debug_log;
+mod runtime;
 mod session_updates;
 mod terminal_updates;
 mod transport;
@@ -29,7 +30,7 @@ use async_channel;
 use collections::{HashMap, HashSet};
 use futures::channel::mpsc;
 use futures::future::Shared;
-use futures::{Future, FutureExt as _, StreamExt as _};
+use futures::{Future, FutureExt as _};
 use project::agent_server_store::{
     AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
 };
@@ -45,7 +46,6 @@ use task::SpawnInTerminal;
 use thiserror::Error;
 use util::ResultExt as _;
 use util::path_list::PathList;
-use util::process::Child;
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
@@ -335,14 +335,13 @@ pub struct AcpConnection {
     agent_capabilities: acp::AgentCapabilities,
     request_elicitations: Entity<ElicitationStore>,
     defaults: AcpConnectionDefaults,
-    child: Option<Child>,
+    _child: Option<transport::OwnedChild>,
     session_list: Option<Rc<AcpSessionList>>,
     debug_log: AcpDebugLog,
     _settings_subscription: Subscription,
-    _io_task: Task<()>,
+    _runtime: runtime::ClientRuntime,
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
-    _dispatch_task: Task<()>,
-    _wait_task: Task<Result<()>>,
+    _wait_task: Task<()>,
     _stderr_task: Shared<Task<()>>,
 }
 
@@ -623,13 +622,11 @@ fn connect_client_future(
     transport: impl agent_client_protocol::ConnectTo<Client> + 'static,
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
     connection_tx: futures::channel::oneshot::Sender<ConnectionTo<Agent>>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> impl Future<Output = Result<(), acp::Error>> {
     async move {
-        // Transport failures can bypass `on_close`; both paths share the same foreground cleanup.
-        let cleanup = cancel_elicitations_after_disconnect(dispatch_tx.clone())
-            .boxed()
-            .shared();
-        let result = client_builder(name, dispatch_tx)
+        let cleanup = runtime::disconnect_cleanup(dispatch_tx.clone());
+        let future = client_builder(name, dispatch_tx)
             .on_close({
                 let cleanup = cleanup.clone();
                 async move |_connection: ConnectionTo<Agent>| cleanup.await
@@ -637,20 +634,10 @@ fn connect_client_future(
             .connect_with(
                 transport,
                 move |connection: ConnectionTo<Agent>| async move {
-                    if connection_tx.send(connection).is_err() {
-                        log::error!("failed to send ACP connection handle — receiver was dropped");
-                    }
-                    // Keep the connection alive until the transport closes.
-                    futures::future::pending::<Result<(), acp::Error>>().await
+                    runtime::publish_connection(connection, connection_tx, shutdown).await
                 },
-            )
-            .await;
-        let cleanup_result = cleanup.await;
-        if let Err(error) = &cleanup_result {
-            log::warn!("ACP disconnect cleanup failed: {error}");
-        }
-        result?;
-        cleanup_result
+            );
+        runtime::finish_connection(future, cleanup).await
     }
 }
 
@@ -932,12 +919,13 @@ impl AcpConnection {
     ) -> Result<Self> {
         let original_command = command.clone();
         let transport::StdioProcess {
-            mut child,
+            child,
             incoming,
             outgoing,
             stderr,
             debug_log,
         } = transport::spawn_stdio(&project, command, cx)?;
+        let mut child = transport::OwnedChild(child);
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
         let (release_channel, version): (Option<&str>, String) = cx.update(|cx| {
@@ -952,9 +940,14 @@ impl AcpConnection {
             Rc::new(RefCell::new(None));
         let request_elicitations = cx.new(|_| ElicitationStore::default());
 
-        // Set up the foreground dispatch channel for bridging Send handler
-        // closures to the !Send foreground thread.
-        let (dispatch_tx, dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
+        let dispatch_context = ClientContext {
+            sessions: sessions.clone(),
+            session_list: client_session_list.clone(),
+            request_elicitations: request_elicitations.clone(),
+            active_request_scopes: None,
+        };
+        let (mut runtime, shutdown) = runtime::ClientRuntime::new(dispatch_context, cx);
+        let dispatch_tx = runtime.sender();
 
         let transport = Lines::new(outgoing, incoming);
         let stderr_task = cx
@@ -964,13 +957,14 @@ impl AcpConnection {
             .shared();
 
         let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
-        let connection_future =
-            connect_client_future("zed", transport, dispatch_tx.clone(), connection_tx);
-        let io_task = cx.background_spawn(async move {
-            if let Err(err) = connection_future.await {
-                log::error!("ACP connection error: {err}");
-            }
-        });
+        let connection_future = connect_client_future(
+            "zed",
+            transport,
+            dispatch_tx.clone(),
+            connection_tx,
+            runtime::shutdown_requested(shutdown),
+        );
+        runtime.start_io(connection_future, cx);
 
         let connection_rx = async move {
             connection_rx
@@ -979,60 +973,27 @@ impl AcpConnection {
         }
         .boxed_local();
         let status_fut = child
+            .0
             .status()
             .map(|status| {
                 status.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
             })
             .boxed_local();
-        let (connection, status_fut) = match futures::future::select(connection_rx, status_fut)
-            .await
-        {
-            futures::future::Either::Left((connection, status_fut)) => (connection?, status_fut),
-            futures::future::Either::Right((status, _connection_rx)) => {
-                return Err(
-                    exited_load_error_after_drain(status?, stderr_task, &debug_log, cx)
-                        .await
-                        .into(),
-                );
-            }
-        };
-
-        // Set up the foreground dispatch loop to process work items from handlers.
-        let dispatch_context = ClientContext {
-            sessions: sessions.clone(),
-            session_list: client_session_list.clone(),
-            request_elicitations: request_elicitations.clone(),
-            active_request_scopes: None,
-        };
-        let dispatch_task = cx.spawn({
-            let mut dispatch_rx = dispatch_rx;
-            async move |cx| {
-                while let Some(work) = dispatch_rx.next().await {
-                    work.run(cx, &dispatch_context);
-                }
-            }
-        });
+        let (connection, status_fut, _) = runtime::race_startup(
+            connection_rx,
+            status_fut,
+            stderr_task.clone(),
+            &debug_log,
+            cx,
+        )
+        .await?;
         let drained = {
             let connection = connection.clone();
-            let stderr_task = stderr_task.clone();
-            let dispatch_tx = dispatch_tx.clone();
-            async move {
-                let incoming = async move {
-                    // EOF follows SDK dispatch, but model updates are still queued on the foreground.
-                    connection.incoming_closed().await;
-                    let (acknowledgment, received) = futures::channel::oneshot::channel();
-                    let barrier: ForegroundWork = Box::new(ForegroundBarrier { acknowledgment });
-                    if let Err(error) = dispatch_tx.unbounded_send(barrier) {
-                        error.into_inner().reject();
-                        return;
-                    }
-                    received
-                        .await
-                        .context("ACP foreground dispatch closed during exit drain")
-                        .log_err();
-                };
-                futures::join!(incoming, stderr_task);
-            }
+            runtime::drain_transport(
+                async move { connection.incoming_closed().await },
+                dispatch_tx.clone(),
+                stderr_task.clone(),
+            )
         };
 
         let initialize_response = connection
@@ -1045,51 +1006,27 @@ impl AcpConnection {
                     ),
             )
             .block_task()
+            .map(|response| response.map_err(anyhow::Error::from))
             .boxed_local();
-        let (response, status_fut) =
-            match futures::future::select(initialize_response, status_fut).await {
-                futures::future::Either::Left((Ok(response), status_fut)) => (response, status_fut),
-                futures::future::Either::Left((Err(error), status_fut)) => {
-                    let timer = cx
-                        .background_executor()
-                        .timer(std::time::Duration::from_millis(250))
-                        .boxed_local();
-                    if let futures::future::Either::Left((status, _timer)) =
-                        futures::future::select(status_fut, timer).await
-                    {
-                        return Err(exited_load_error_after_drain(
-                            status?, drained, &debug_log, cx,
-                        )
-                        .await
-                        .into());
-                    }
-
-                    return Err(error.into());
-                }
-                futures::future::Either::Right((status, _initialize_response)) => {
-                    return Err(
-                        exited_load_error_after_drain(status?, drained, &debug_log, cx)
-                            .await
-                            .into(),
-                    );
-                }
-            };
+        let (response, status_fut, drained) =
+            runtime::race_startup(initialize_response, status_fut, drained, &debug_log, cx).await?;
 
         if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
             return Err(UnsupportedVersion.into());
         }
 
-        let wait_task = cx.spawn({
-            let sessions = sessions.clone();
-            let debug_log = debug_log.clone();
-            async move |cx| {
-                let status = status_fut.await?;
-                let load_error =
-                    exited_load_error_after_drain(status, drained, &debug_log, cx).await;
-                emit_load_error_to_all_sessions(&sessions, load_error, cx);
-                anyhow::Ok(())
-            }
-        });
+        let wait_task = runtime::watch_process(
+            status_fut,
+            drained,
+            debug_log.clone(),
+            {
+                let sessions = sessions.clone();
+                move |load_error, cx| {
+                    emit_load_error_to_all_sessions(&sessions, load_error, cx);
+                }
+            },
+            cx,
+        );
 
         let agent_info = response.agent_info;
         let telemetry_id = agent_info
@@ -1163,12 +1100,11 @@ impl AcpConnection {
             session_list,
             debug_log,
             _settings_subscription: settings_subscription,
-            _io_task: io_task,
+            _runtime: runtime,
             dispatch_tx,
-            _dispatch_task: dispatch_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
-            child: Some(child),
+            _child: Some(child),
         })
     }
 
@@ -1206,14 +1142,17 @@ impl AcpConnection {
             agent_capabilities,
             request_elicitations,
             defaults,
-            child: None,
+            _child: None,
             session_list: None,
             debug_log: AcpDebugLog::default(),
             _settings_subscription: settings_subscription,
-            _io_task: io_task,
+            _runtime: runtime::ClientRuntime::from_test_tasks(
+                dispatch_tx.clone(),
+                io_task,
+                dispatch_task,
+            ),
             dispatch_tx,
-            _dispatch_task: dispatch_task,
-            _wait_task: Task::ready(Ok(())),
+            _wait_task: Task::ready(()),
             _stderr_task: Task::ready(()).shared(),
         }
     }
@@ -1681,14 +1620,6 @@ fn emit_load_error_to_all_sessions(
         thread
             .update(cx, |thread, cx| thread.emit_load_error(error.clone(), cx))
             .ok();
-    }
-}
-
-impl Drop for AcpConnection {
-    fn drop(&mut self) {
-        if let Some(ref mut child) = self.child {
-            child.kill().log_err();
-        }
     }
 }
 
@@ -2253,6 +2184,7 @@ pub mod test_support {
     };
 
     use super::*;
+    use futures::StreamExt as _;
 
     #[derive(Clone, Default)]
     pub struct FakeAcpAgentServer {
@@ -2711,6 +2643,7 @@ pub mod test_support {
             client_transport,
             dispatch_tx.clone(),
             connection_tx,
+            futures::future::pending(),
         );
         let client_io_task = cx.background_spawn(async move {
             client_future.await.ok();
@@ -2871,6 +2804,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use futures::StreamExt as _;
     use settings::Settings as _;
 
     #[test]
@@ -2934,6 +2868,7 @@ mod tests {
             client_transport,
             harness.connection.dispatch_tx.clone(),
             connection_tx,
+            futures::future::pending(),
         ));
         Rc::get_mut(&mut harness.connection)
             .expect("test harness should own the only ACP connection handle")
@@ -7669,6 +7604,7 @@ exit 7
             client_transport,
             dispatch_tx.clone(),
             connection_tx,
+            futures::future::pending(),
         );
         let client_io_task = cx.background_spawn(async move {
             client_future.await.ok();
@@ -8095,6 +8031,7 @@ exit 7
             Lines::new(Box::pin(outgoing), incoming_rx),
             dispatch_tx,
             connection_tx,
+            futures::future::pending(),
         ));
         let _connection = connection_rx.await.expect("SDK connection handle");
         let (entry, response) = store.update(cx, |store, cx| {
