@@ -71,6 +71,7 @@ pub enum QueryMode {
 #[derive(Debug, PartialEq, Eq)]
 pub enum QueryEdit<'a> {
     Filter(&'a str),
+    /// The query no longer has the active mode's prefix, so the UI should return to the file finder.
     ReturnToFileFinder,
 }
 
@@ -105,6 +106,7 @@ impl QueryMode {
         }
     }
 
+    /// Strips this mode's prefix for filtering, or requests returning to the file finder if it is missing.
     pub fn edit_query<'a>(self, input: &'a str) -> QueryEdit<'a> {
         match self {
             Self::Standalone => QueryEdit::Filter(input),
@@ -1249,6 +1251,7 @@ impl<D: PickerDelegate> Picker<D> {
                 match self.query_mode.edit_query(&query) {
                     QueryEdit::Filter(query) => self.update_matches(query.to_owned(), window, cx),
                     QueryEdit::ReturnToFileFinder => {
+                        // The query lost this mode's prefix; return to the file finder.
                         // Let this picker release its update lease before the router reads its query.
                         cx.defer_in(window, |_, window, cx| {
                             window.dispatch_action(

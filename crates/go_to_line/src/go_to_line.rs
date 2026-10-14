@@ -242,6 +242,7 @@ impl GoToLine {
             }
             editor::EditorEvent::BufferEdited => {
                 let query = self.line_editor.read(cx).text(cx);
+                // The query no longer has this mode's prefix, so return to the file finder.
                 if matches!(
                     self.query_mode.edit_query(&query),
                     QueryEdit::ReturnToFileFinder
