@@ -402,7 +402,18 @@ impl X11Client {
         let compositor_present = check_compositor_present(&xcb_connection, root);
         let gtk_frame_extents_supported =
             check_gtk_frame_extents_supported(&xcb_connection, &atoms, root);
-        let client_side_decorations_supported = compositor_present && gtk_frame_extents_supported;
+        // Only require a compositor for client-side decorations. Some WMs,
+        // notably deepin's kwin, never list _GTK_FRAME_EXTENTS in
+        // _NET_SUPPORTED even while compositing, so gating on it downgrades
+        // WindowDecorations::Client to Server and the WM stacks its own title
+        // bar on top of apps that draw their own chrome (min/max/close +
+        // drag region). CSD works fine without frame-extents support: the
+        // Motif undecorated hint still removes the WM frame, the app draws
+        // shadow/border/resize hit zones itself, and interactive resize goes
+        // through _NET_WM_MOVERESIZE. The compositor requirement stays:
+        // without one there is no ARGB visual, so drawn shadows would render
+        // as opaque artifacts.
+        let client_side_decorations_supported = compositor_present;
         log::info!(
             "x11: compositor present: {}, gtk_frame_extents_supported: {}",
             compositor_present,
