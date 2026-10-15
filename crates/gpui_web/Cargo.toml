@@ -19,8 +19,8 @@ doctest = false
 
 [dependencies]
 unicode-properties = "=0.1.3"
-unicode-script = "0.5.7"
-unicode-segmentation = "1.10"
+unicode-script.workspace = true
+unicode-segmentation.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 gpui.workspace = true
@@ -29,6 +29,7 @@ parking_lot = { workspace = true, features = ["nightly"] }
 gpui_wgpu.workspace = true
 http_client.workspace = true
 anyhow.workspace = true
+async-channel.workspace = true
 futures.workspace = true
 log.workspace = true
 uuid.workspace = true
@@ -39,12 +40,8 @@ console_error_panic_hook.workspace = true
 js-sys.workspace = true
 raw-window-handle.workspace = true
 smallvec.workspace = true
-# Forked because upstream is unmaintained and its worker bootstrap still calls
-# the wasm-bindgen init function with the positional arguments deprecated in 0.2.93.
-wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", version = "0.3", features = [
-    "es_modules",
-], optional = true }
-web-sys = { version = "0.3", features = [
+wasm_thread = { workspace = true, optional = true }
+web-sys = { workspace = true, features = [
     "console",
     "Blob",
     "Clipboard",
@@ -72,7 +69,6 @@ web-sys = { version = "0.3", features = [
     "KeyboardEvent",
     "Location",
     "MediaQueryList",
-    "MediaQueryListEvent",
     "MouseEvent",
     "Navigator",
     "OffscreenCanvas",

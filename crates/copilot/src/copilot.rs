@@ -520,12 +520,20 @@ impl Copilot {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(cx: &mut gpui::TestAppContext) -> (Entity<Self>, lsp::FakeLanguageServer) {
+        Self::fake_with_initializer(cx, |_| {})
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_with_initializer(
+        cx: &mut gpui::TestAppContext,
+        initializer: impl FnOnce(&mut lsp::FakeLanguageServer),
+    ) -> (Entity<Self>, lsp::FakeLanguageServer) {
         use fs::FakeFs;
         use gpui::Subscription;
         use lsp::FakeLanguageServer;
         use node_runtime::NodeRuntime;
 
-        let (server, fake_server) = FakeLanguageServer::new(
+        let (server, mut fake_server) = FakeLanguageServer::new(
             LanguageServerId(0),
             LanguageServerBinary {
                 path: "path/to/copilot".into(),
@@ -536,6 +544,7 @@ impl Copilot {
             Default::default(),
             &mut cx.to_async(),
         );
+        initializer(&mut fake_server);
         let node_runtime = NodeRuntime::unavailable();
         let send_focus_notification = Subscription::new(|| {});
         let this = cx.new(|cx| Self {
@@ -1031,7 +1040,6 @@ impl Copilot {
         let pending_snapshot = registered_buffer.report_changes(buffer, cx);
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
-        let position = position.to_point_utf16(buffer);
         let snapshot = buffer.snapshot();
         let settings = snapshot.settings_at(0, cx);
         let tab_size = settings.tab_size.get();
@@ -1050,7 +1058,7 @@ impl Copilot {
 
         cx.background_spawn(async move {
             let (version, snapshot) = pending_snapshot.await?;
-            let lsp_position = point_to_lsp(position);
+            let lsp_position = point_to_lsp(position.to_point_utf16(&snapshot));
 
             let nes_fut = if nes_enabled {
                 lsp.request::<NextEditSuggestions>(
@@ -1818,6 +1826,70 @@ mod tests {
                 "Copilot should be starting after disable_ai is set to false"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_completion_position_tracks_reported_snapshot(cx: &mut TestAppContext) {
+        init_test(cx);
+        let positions = Arc::new(Mutex::new(Vec::new()));
+        let (copilot, _server) = Copilot::fake_with_initializer(cx, |server| {
+            server.set_request_handler::<NextEditSuggestions, _, _>({
+                let positions = positions.clone();
+                move |params, _| {
+                    positions
+                        .lock()
+                        .push((params.text_document.version, params.position));
+                    async { Ok(request::NextEditSuggestionsResult { edits: Vec::new() }) }
+                }
+            });
+            server.set_request_handler::<InlineCompletions, _, _>({
+                let positions = positions.clone();
+                move |params, _| {
+                    positions
+                        .lock()
+                        .push((params.text_document.version, params.position));
+                    async { Ok(request::InlineCompletionsResult { items: Vec::new() }) }
+                }
+            });
+        });
+
+        for (replacement, expected_position) in [
+            ("new\né\t", lsp::Position::new(1, 4)),
+            ("", lsp::Position::new(0, 2)),
+        ] {
+            let buffer = cx.new(|cx| Buffer::local("prefix\n😀target", cx));
+            copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer, cx));
+            let (release, pending) = oneshot::channel::<()>();
+            copilot.update(cx, |copilot, cx| {
+                let registered = copilot
+                    .server
+                    .as_authenticated()
+                    .unwrap()
+                    .registered_buffers
+                    .get_mut(&buffer.entity_id())
+                    .unwrap();
+                registered.pending_buffer_change =
+                    cx.background_spawn(async move { pending.await.ok() });
+            });
+            let position = buffer.update(cx, |buffer, cx| {
+                buffer.edit([(buffer.len()..buffer.len(), "!")], None, cx);
+                buffer.anchor_before("prefix\n😀".len())
+            });
+            let completions =
+                copilot.update(cx, |copilot, cx| copilot.completions(&buffer, position, cx));
+            cx.run_until_parked();
+            assert_eq!(positions.lock().len(), 0);
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..7, replacement)], None, cx)
+            });
+            release.send(()).unwrap();
+
+            assert_eq!(completions.await.unwrap().len(), 0);
+            assert_eq!(
+                positions.lock().drain(..).collect::<Vec<_>>(),
+                vec![(1, expected_position); 2]
+            );
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {
