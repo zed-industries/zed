@@ -645,19 +645,7 @@ impl TitleBar {
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let workspace = self.workspace.clone();
 
-        let options = self.project.read(cx).remote_connection_options(cx);
-        let Some(options) = options else {
-            #[cfg(debug_assertions)]
-            if SHOW_PORT_FORWARDING_PREVIEW {
-                let options = SshConnectionOptions {
-                    host: "for-testing-only".into(),
-                    nickname: Some("for-testing-only".to_owned()),
-                    ..Default::default()
-                };
-                return Some(port_forwarding_popover_trigger(workspace, options, true));
-            }
-            return None;
-        };
+        let options = self.project.read(cx).remote_connection_options(cx)?;
         let port_forwarding_options = match &options {
             RemoteConnectionOptions::Ssh(options) => Some(options.clone()),
             _ => None,
@@ -818,7 +806,21 @@ impl TitleBar {
             );
         }
 
-        let host = self.project.read(cx).host()?;
+        let host = self.project.read(cx).host();
+        #[cfg(debug_assertions)]
+        if SHOW_PORT_FORWARDING_PREVIEW && host.is_none() {
+            let options = SshConnectionOptions {
+                host: "for-testing-only".into(),
+                nickname: Some("for-testing-only".to_owned()),
+                ..Default::default()
+            };
+            return Some(port_forwarding_popover_trigger(
+                self.workspace.clone(),
+                options,
+                true,
+            ));
+        }
+        let host = host?;
         let host_user = self.user_store.read(cx).get_cached_user(host.user_id)?;
         let participant_index = self
             .user_store
