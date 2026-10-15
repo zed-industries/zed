@@ -1025,7 +1025,7 @@ fn signature_label(item: &CallHierarchyItem, language: &Arc<Language>) -> Option
     let source = Rope::from_iter([signature.as_str(), " {}"]);
     let runs = language
         .highlight_text(&source, 0..signature.len())
-        .collect::<Vec<_>>();
+        .collect();
     Some(CodeLabel::new(signature, filter_range, runs))
 }
 

@@ -281,7 +281,7 @@ impl LspAdapter for GoLspAdapter {
                 let source = format!("import {text}");
                 let runs = language
                     .highlight_text(source.as_str(), 7..7 + text[name_offset..].len())
-                    .collect::<Vec<_>>();
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -444,7 +444,7 @@ impl LspAdapter for GoLspAdapter {
             filter_range,
             language
                 .highlight_text(text.as_str(), display_range)
-                .collect::<Vec<_>>(),
+                .collect(),
         ))
     }
 
@@ -580,7 +580,7 @@ fn adjust_runs(
     runs: impl Iterator<Item = (Range<usize>, HighlightId)>,
 ) -> Vec<(Range<usize>, HighlightId)> {
     runs.map(|(range, highlight_id)| (range.start + delta..range.end + delta, highlight_id))
-        .collect::<Vec<_>>()
+        .collect()
 }
 
 pub(crate) struct GoContextProvider;

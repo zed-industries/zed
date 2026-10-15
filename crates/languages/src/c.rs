@@ -214,7 +214,7 @@ impl super::LspAdapter for CLspAdapter {
                 let source = format!("struct S {{ {} }}", text);
                 let runs = language
                     .highlight_text(source.as_str(), 11..11 + text.len())
-                    .collect::<Vec<_>>();
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -232,7 +232,7 @@ impl super::LspAdapter for CLspAdapter {
                 let text = format!("{} {}", detail, label);
                 let runs = language
                     .highlight_text(text.as_str(), 0..text.len())
-                    .collect::<Vec<_>>();
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -250,7 +250,7 @@ impl super::LspAdapter for CLspAdapter {
                 let text = format!("{} {}", detail, label);
                 let runs = language
                     .highlight_text(text.as_str(), 0..text.len())
-                    .collect::<Vec<_>>();
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -356,7 +356,7 @@ impl super::LspAdapter for CLspAdapter {
             filter_range,
             language
                 .highlight_text(text.as_str(), display_range)
-                .collect::<Vec<_>>(),
+                .collect(),
         ))
     }
 

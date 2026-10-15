@@ -245,7 +245,7 @@ fn label_for_python_symbol(
         filter_range,
         language
             .highlight_text(text.as_str(), display_range)
-            .collect::<Vec<_>>(),
+            .collect(),
     ))
 }
 

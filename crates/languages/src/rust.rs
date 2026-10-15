@@ -383,7 +383,7 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from_iter([prefix, &text, " }"]);
                 let runs = language
                     .highlight_text(&source, prefix.len()..prefix.len() + text.len())
-                    .collect::<Vec<_>>();
+                    .collect();
                 mk_label(text, &|| 0..completion.label.len(), runs)
             }
             (
@@ -396,7 +396,7 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from_iter([prefix, &text, " = ();"]);
                 let runs = language
                     .highlight_text(&source, prefix.len()..prefix.len() + text.len())
-                    .collect::<Vec<_>>();
+                    .collect();
                 mk_label(text, &|| 0..completion.label.len(), runs)
             }
             (
@@ -434,7 +434,7 @@ impl LspAdapter for RustLspAdapter {
                 {
                     let runs = language
                         .highlight_text(function_signature, 0..function_signature.len())
-                        .collect::<Vec<_>>();
+                        .collect();
                     mk_label(
                         function_signature.to_owned(),
                         &|| match_.range().start + 3..match_.range().end - 1,
@@ -446,14 +446,12 @@ impl LspAdapter for RustLspAdapter {
                     let run_start = prefix.len() + 1;
                     let runs = language
                         .highlight_text(&source, run_start..run_start + text.len())
-                        .collect::<Vec<_>>();
+                        .collect();
                     mk_label(text, &|| 0..label.len(), runs)
                 } else if detail_right.is_some_and(|detail| detail.starts_with("macro_rules! ")) {
                     let text = completion.label.clone();
                     let len = text.len();
-                    let runs = language
-                        .highlight_text(text.as_str(), 0..len)
-                        .collect::<Vec<_>>();
+                    let runs = language.highlight_text(text.as_str(), 0..len).collect();
                     mk_label(text, &|| 0..completion.label.len(), runs)
                 } else if detail_left.is_none() {
                     return None;
@@ -674,7 +672,7 @@ impl LspAdapter for RustLspAdapter {
                             &Rope::from_iter([prefix, name, "}"]),
                             prefix.len()..prefix.len() + name.len(),
                         )
-                        .collect::<Vec<_>>(),
+                        .collect(),
                 ));
             }
             _ => return None,
@@ -687,7 +685,7 @@ impl LspAdapter for RustLspAdapter {
             filter_range,
             language
                 .highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range)
-                .collect::<Vec<_>>(),
+                .collect(),
         ))
     }
 
