@@ -3,7 +3,7 @@ use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, PromptLevel, Render,
-    SharedString, Styled, Subscription, WeakEntity, Window, div, h_flex, px, v_flex,
+    SharedString, Styled, Subscription, WeakEntity, Window, div, px,
 };
 use project::Fs;
 use remote::{SshConnectionOptions, SshPortForwardOption};
@@ -474,7 +474,13 @@ impl Render for PortForwardingPopover {
                             .truncate(),
                     ),
             )
-            .child(div().max_h(px(280.)).overflow_y_scroll().child(list))
+            .child(
+                div()
+                    .id("port-forward-list")
+                    .max_h(px(280.))
+                    .overflow_y_scroll()
+                    .child(list),
+            )
             .when(self.editor.is_none() && !self.is_saving, |this| {
                 this.child(
                     Button::new("add-port-forward", "Add port forward")
@@ -556,7 +562,7 @@ impl PortForwardingPopover {
     fn render_editor(
         &self,
         editor: &ForwardEditor,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         h_flex()
