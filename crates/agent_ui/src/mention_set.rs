@@ -1062,17 +1062,18 @@ pub(crate) fn paste_images_as_context(
             })
             .partition_map::<Vec<_>, Vec<_>, _, _, _>(std::convert::identity);
 
-        if !paths.is_empty() {
-            images.extend(
-                cx.background_spawn(async move {
+        // A bitmap and image files in the clipboard are usually the same image (e.g. a
+        // screenshot saved to a temporary file), so only load files when there's no bitmap.
+        if images.is_empty() && !paths.is_empty() {
+            images = cx
+                .background_spawn(async move {
                     paths
                         .into_iter()
                         .flat_map(|paths| paths.paths().to_owned())
                         .filter_map(|path| load_external_image_from_path(&path, &default_name))
                         .collect::<Vec<_>>()
                 })
-                .await,
-            );
+                .await;
         }
 
         if !images.is_empty() {
