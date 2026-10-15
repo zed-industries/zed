@@ -3329,6 +3329,15 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn clear_titlebar_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.titlebar_item.take().is_some() {
+            if self.titlebar_focus_handle.contains_focused(window, cx) {
+                window.focus(&self.active_pane.focus_handle(cx), cx);
+            }
+            cx.notify();
+        }
+    }
+
     pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
         self.on_prompt_for_new_path = Some(prompt)
     }
@@ -12635,6 +12644,33 @@ mod tests {
         assert!(!noise.relative_path);
         assert!(!noise.remote);
         assert!(!noise.branch);
+    }
+
+    #[gpui::test]
+    async fn test_clearing_title_bar_restores_editor_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let title_bar = cx.new(|cx| TestItem::new(cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_titlebar_item(title_bar.into(), window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            window.focus(&workspace.titlebar_focus_handle, cx);
+            assert!(workspace.titlebar_focus_handle.contains_focused(window, cx));
+
+            workspace.clear_titlebar_item(window, cx);
+            assert!(workspace.titlebar_item().is_none());
+            assert!(workspace.active_pane.focus_handle(cx).is_focused(window));
+
+            workspace.clear_titlebar_item(window, cx);
+            assert!(workspace.active_pane.focus_handle(cx).is_focused(window));
+        });
     }
 
     #[gpui::test]
