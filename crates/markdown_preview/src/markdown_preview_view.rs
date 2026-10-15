@@ -1117,7 +1117,7 @@ impl MarkdownPreviewView {
             .show_root_block_markers()
             .image_resolver({
                 let base_directory = self.base_directory.clone();
-                move |dest_url, cx| {
+                move |dest_url, _window, cx| {
                     resolve_preview_image(
                         dest_url,
                         base_directory.as_deref(),

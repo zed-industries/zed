@@ -1739,7 +1739,7 @@ pub struct MarkdownElement {
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
     on_mermaid_zoom: Option<MermaidZoomCallback>,
-    image_resolver: Option<Box<dyn Fn(&str, &App) -> Option<ImageSource>>>,
+    image_resolver: Option<Box<dyn Fn(&str, &mut Window, &mut App) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
     /// Test-only hook to observe the laid-out text when this element is
@@ -1863,7 +1863,7 @@ impl MarkdownElement {
 
     pub fn image_resolver(
         mut self,
-        resolver: impl Fn(&str, &App) -> Option<ImageSource> + 'static,
+        resolver: impl Fn(&str, &mut Window, &mut App) -> Option<ImageSource> + 'static,
     ) -> Self {
         self.image_resolver = Some(Box::new(resolver));
         self
@@ -2712,7 +2712,7 @@ impl Element for MarkdownElement {
                             } else if let Some(source) = self
                                 .image_resolver
                                 .as_ref()
-                                .and_then(|resolve| resolve(dest_url.as_ref(), cx))
+                                .and_then(|resolve| resolve(dest_url.as_ref(), window, cx))
                             {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
@@ -2895,7 +2895,13 @@ impl Element for MarkdownElement {
                         MarkdownTag::HtmlBlock => {
                             builder.push_div(div(), range, markdown_end);
                             if let Some(block) = parsed_markdown.html_blocks.get(&range.start) {
-                                self.render_html_block(block, &mut builder, markdown_end, cx);
+                                self.render_html_block(
+                                    block,
+                                    &mut builder,
+                                    markdown_end,
+                                    window,
+                                    cx,
+                                );
                                 handled_html_block = true;
                             }
                         }
@@ -5950,7 +5956,7 @@ mod tests {
         let rendered = render_markdown_with_image_resolver(
             "Here is an image ![alt](https://example.com/a.png) and more text\nthat continues",
             MarkdownOptions::default(),
-            move |_, _| Some(ImageSource::Render(image.clone())),
+            move |_, _, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let text: String = rendered
@@ -5974,7 +5980,7 @@ mod tests {
         let rendered = render_markdown_with_image_resolver(
             "![alt](https://example.com/a.png)\ncaption",
             MarkdownOptions::default(),
-            move |_, _| Some(ImageSource::Render(image.clone())),
+            move |_, _, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let text: String = rendered
@@ -5997,7 +6003,7 @@ mod tests {
                 parse_html: true,
                 ..Default::default()
             },
-            move |_, _| Some(ImageSource::Render(image.clone())),
+            move |_, _, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let stray_whitespace_line = rendered.lines.iter().find_map(|line| {
@@ -6020,7 +6026,7 @@ mod tests {
                 parse_html: true,
                 ..Default::default()
             },
-            move |_, _| Some(ImageSource::Render(image.clone())),
+            move |_, _, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let text: String = rendered
@@ -6063,7 +6069,7 @@ mod tests {
                 size(px(600.0), px(600.0)),
                 |_window, _cx| {
                     MarkdownElement::new(markdown.clone(), style)
-                        .image_resolver(move |_, _| Some(ImageSource::Render(image.clone())))
+                        .image_resolver(move |_, _, _| Some(ImageSource::Render(image.clone())))
                         .code_block_renderer(CodeBlockRenderer::Default {
                             copy_button_visibility: CopyButtonVisibility::Hidden,
                             wrap_button_visibility: WrapButtonVisibility::Hidden,
@@ -7417,7 +7423,7 @@ mod tests {
                 let hovered_urls = self.hovered_urls.clone();
                 div().size_full().child(
                     MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                        .image_resolver(|_, _| Some(loaded_image_source()))
+                        .image_resolver(|_, _, _| Some(loaded_image_source()))
                         .on_url_hover(move |url, _, _| {
                             hovered_urls.borrow_mut().push(url);
                         }),
@@ -8731,7 +8737,7 @@ mod tests {
     fn render_markdown_with_image_resolver(
         markdown: &str,
         options: MarkdownOptions,
-        resolver: impl Fn(&str, &App) -> Option<ImageSource> + 'static,
+        resolver: impl Fn(&str, &mut Window, &mut App) -> Option<ImageSource> + 'static,
         cx: &mut TestAppContext,
     ) -> RenderedText {
         ensure_theme_initialized(cx);
@@ -8789,7 +8795,7 @@ mod tests {
             let wide_image = self.wide_image.clone();
             div().size_full().child(
                 MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                    .image_resolver(move |dest_url, _| {
+                    .image_resolver(move |dest_url, _, _| {
                         let image = match dest_url {
                             "tall.png" => tall_image.clone(),
                             "wide.png" => wide_image.clone(),
@@ -8896,7 +8902,7 @@ mod tests {
                 let image_source = self.image_source.clone();
                 div().size_full().child(
                     MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                        .image_resolver(move |_, _| Some(image_source.clone())),
+                        .image_resolver(move |_, _, _| Some(image_source.clone())),
                 )
             }
         }
