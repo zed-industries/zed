@@ -16,11 +16,21 @@
 //!
 //! Like `node_backend`, this has no GPUI or app-state dependency. Every call
 //! blocks on disk or network, so call them from a background thread.
+//!
+//! The `workspace` module adds a choice per workspace on top of the IDE-wide
+//! one.
+
+mod workspace;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use fnm::Fnm;
+
+pub use workspace::{
+    ChoiceSource, NodeChoice, Resolved, bin_dirs_for, choice_for, clear_choice, remove_stale_links,
+    resolve, set_choice, sync_workspace, workspace_bin_dir, workspace_link,
+};
 
 /// One Node.js version the built-in manager has installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,10 +111,7 @@ pub fn install(store: &Path, version: &str) -> Result<String, String> {
     let installed = manager(store)
         .install(version_of(version))
         .map_err(|error| error.to_string())?;
-    Ok(format!(
-        "Installed to {}",
-        installed.path.to_string_lossy()
-    ))
+    Ok(format!("Installed to {}", installed.path.to_string_lossy()))
 }
 
 /// Removes `version`. Removing the active version leaves none active, which
@@ -167,7 +174,11 @@ fn point_link(target: &Path, link: &Path, staging: &Path) -> std::io::Result<()>
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let staged = staging.join(format!(".{name}.new-{}", std::process::id()));
+    // Unique to this call: two threads can re-point links at once.
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tag = format!("{}-{call}", std::process::id());
+    let staged = staging.join(format!(".{name}.new-{tag}"));
     remove_link(&staged)?;
     create_link(target, &staged)?;
 
@@ -179,7 +190,7 @@ fn point_link(target: &Path, link: &Path, staging: &Path) -> std::io::Result<()>
 
     #[cfg(windows)]
     {
-        let old = staging.join(format!(".{name}.old-{}", std::process::id()));
+        let old = staging.join(format!(".{name}.old-{tag}"));
         let had_old = link.symlink_metadata().is_ok();
         if had_old {
             remove_link(&old).ok();
@@ -229,7 +240,10 @@ fn create_link(target: &Path, link: &Path) -> std::io::Result<()> {
 
 /// The active version, or `None` when the system Node.js is in use.
 pub fn active(store: &Path) -> Option<NodeVersion> {
-    list(store).ok()?.into_iter().find(|version| version.current)
+    list(store)
+        .ok()?
+        .into_iter()
+        .find(|version| version.current)
 }
 
 /// What `project` asks for and whether it is installed.
@@ -292,7 +306,11 @@ pub fn live_bin_dir(store: &Path) -> PathBuf {
     let link = default_link(store);
     // A Windows distribution has its executables at the top; the others
     // keep them in `bin`.
-    if cfg!(windows) { link } else { link.join("bin") }
+    if cfg!(windows) {
+        link
+    } else {
+        link.join("bin")
+    }
 }
 
 /// The `PATH` to give a process the IDE starts: this process's own, with
@@ -390,7 +408,10 @@ mod tests {
 
         let project = tempfile::tempdir().unwrap();
         // Asks for nothing.
-        assert_eq!(project_node(store.path(), project.path()), ProjectNode::default());
+        assert_eq!(
+            project_node(store.path(), project.path()),
+            ProjectNode::default()
+        );
 
         // Asks for 20, which is installed: reported, in subfolders too, for
         // the user to switch to. The active version is still the one picked.
