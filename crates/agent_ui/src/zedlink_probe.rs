@@ -4646,6 +4646,14 @@ fn loaded_project_workspaces(project_root: &Path, cx: &App) -> Vec<Entity<worksp
 fn loaded_terminal_views(project_root: &Path, cx: &App) -> Vec<Entity<TerminalView>> {
     let mut terminals = Vec::new();
     for workspace in loaded_project_workspaces(project_root, cx) {
+        let center_panes = workspace.read(cx).panes().to_vec();
+        for pane in center_panes {
+            for item in pane.read(cx).items() {
+                if let Some(view) = item.downcast::<TerminalView>() {
+                    terminals.push(view);
+                }
+            }
+        }
         let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             continue;
         };
