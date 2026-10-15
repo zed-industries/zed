@@ -4171,6 +4171,7 @@ impl AcpThread {
     fn track_submission(
         &mut self,
         id: SubmissionId,
+        applied: Option<oneshot::Sender<bool>>,
         cx: &mut Context<Self>,
         complete: impl 'static
         + AsyncFnOnce(
@@ -4224,6 +4225,11 @@ impl AcpThread {
                     Err(error) => SubmissionState::Failed(format!("{error:#}").into()),
                 };
                 let changed = this.submissions.settle(id, state);
+                if let Some(applied) = applied
+                    && applied.send(response.is_ok()).is_err()
+                {
+                    log::debug!("Receipt transport ended before application acknowledgement");
+                }
                 // The thread owns settlement even when the response observer has gone away.
                 if let Err(Err(error)) = sender.send(response) {
                     log::debug!("Submission observer was dropped: {error:#}");
@@ -6403,9 +6409,10 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> Submission {
-        if let Some(submissions) = self.submissions.receipt_transport() {
-            let response = submissions.prompt(message.clone(), cx);
-            self.submit_receipt(message, response, cx)
+        if let Some(submissions) = self.submissions.receipt_transport().cloned() {
+            let id = self.register_submission(message.clone().into(), cx);
+            let request = submissions.submit(message, cx);
+            self.track_receipt_submission(id, request, cx)
         } else {
             let id = self.register_submission(message.clone().into(), cx);
             self.send_inner(id, message, push_user_message, cx)
@@ -6415,11 +6422,21 @@ impl AcpThread {
     pub fn submit_receipt(
         &mut self,
         content: Vec<acp_v2::ContentBlock>,
-        response: Task<Result<acp_v2::PromptResponse>>,
+        request: impl Into<ReceiptSubmission>,
         cx: &mut Context<Self>,
     ) -> Submission {
         let id = self.register_submission(content.into(), cx);
-        self.track_submission(id, cx, async move |_, _| {
+        self.track_receipt_submission(id, request.into(), cx)
+    }
+
+    fn track_receipt_submission(
+        &mut self,
+        id: SubmissionId,
+        request: ReceiptSubmission,
+        cx: &mut Context<Self>,
+    ) -> Submission {
+        let ReceiptSubmission { response, applied } = request;
+        self.track_submission(id, applied, cx, async move |_, _| {
             Ok(Some(SubmissionResponse::Accepted(response.await?)))
         })
     }
@@ -6519,7 +6536,7 @@ impl AcpThread {
     ) -> Submission {
         let request = acp_v2::PromptRequest::new(self.session_id().clone(), message);
         if let Err(error) = self.validate_prompt_content(&request.prompt) {
-            return self.track_submission(id, cx, async move |_, _| Err(error));
+            return self.track_submission(id, None, cx, async move |_, _| Err(error));
         }
         let language_registry = self.project.read(cx).languages().clone();
         let path_style = self.project.read(cx).path_style(cx);
@@ -6602,13 +6619,11 @@ impl AcpThread {
             .unwrap_or_default();
         let id = self.register_submission(content.clone(), cx);
         if let Err(error) = self.validate_prompt_content(&content) {
-            return self.track_submission(id, cx, async move |_, _| Err(error));
+            return self.track_submission(id, None, cx, async move |_, _| Err(error));
         }
         if let Some(submissions) = self.submissions.receipt_transport() {
-            let response = submissions.retry(cx);
-            return self.track_submission(id, cx, async move |_, _| {
-                Ok(Some(SubmissionResponse::Accepted(response.await?)))
-            });
+            let request = submissions.retry(cx);
+            return self.track_receipt_submission(id, request, cx);
         }
         self.run_turn(id, cx, async move |this, cx| {
             this.update(cx, |this, cx| {
@@ -6788,7 +6803,7 @@ impl AcpThread {
                 }
             })?
         };
-        self.track_submission(id, cx, async move |thread, cx| {
+        self.track_submission(id, None, cx, async move |thread, cx| {
             Ok(completion(thread, cx)
                 .await?
                 .map(SubmissionResponse::LegacyCompleted))

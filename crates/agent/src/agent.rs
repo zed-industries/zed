@@ -3309,24 +3309,26 @@ struct NativeSessionSubmissions {
 }
 
 impl acp_thread::ReceiptSessionSubmissions for NativeSessionSubmissions {
-    fn prompt(
+    fn submit(
         &self,
         content: Vec<acp_v2::ContentBlock>,
-        cx: &mut App,
-    ) -> Task<Result<acp_v2::PromptResponse>> {
+        cx: &mut Context<acp_thread::AcpThread>,
+    ) -> acp_thread::ReceiptSubmission {
         self.connection
             .submit_native(self.session_id.clone(), Some(content), cx)
             .0
+            .into()
     }
 
     fn supports_retry(&self) -> bool {
         true
     }
 
-    fn retry(&self, cx: &mut App) -> Task<Result<acp_v2::PromptResponse>> {
+    fn retry(&self, cx: &mut Context<acp_thread::AcpThread>) -> acp_thread::ReceiptSubmission {
         self.connection
             .submit_native(self.session_id.clone(), None, cx)
             .0
+            .into()
     }
 }
 
@@ -5131,14 +5133,10 @@ mod internal_tests {
             "_future",
             Default::default(),
         ));
-        cx.update(|cx| {
-            connection
-                .receipt_submissions(&session_id, cx)
-                .expect("native receipts")
-                .prompt(vec![invalid], cx)
-        })
-        .await
-        .expect_err("invalid follow-up must not cancel accepted work");
+        acp_thread
+            .update(cx, |thread, cx| thread.send(vec![invalid], cx))
+            .await
+            .expect_err("invalid follow-up must not cancel accepted work");
         fake.send_text(&model, &request, "done");
         fake.end_stream(&model, &request);
         cx.run_until_parked();
@@ -5186,15 +5184,13 @@ mod internal_tests {
                 .expect("cancelled"),
             acp_v2::StopReason::Cancelled
         );
-        let submissions = cx.update(|cx| {
-            connection
-                .receipt_submissions(&session_id, cx)
-                .expect("native receipts")
-        });
-        let retry_receipt = cx
-            .update(|cx| submissions.retry(cx))
+        let retry_receipt = acp_thread
+            .update(cx, |thread, cx| thread.retry(cx))
             .await
             .expect("retry accepted");
+        let Some(acp_thread::SubmissionResponse::Accepted(retry_receipt)) = retry_receipt else {
+            panic!("retry returns acceptance");
+        };
         assert_eq!(retry_receipt.message_id, second_receipt.message_id);
         cx.run_until_parked();
         let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
@@ -5994,13 +5990,8 @@ mod internal_tests {
         for text in ["ordinary prompt", "/compact"] {
             let content = vec![text.into(), unknown.clone()];
             assert!(connection.validate_prompt_content(&content).is_err());
-            let error = cx
-                .update(|cx| {
-                    connection
-                        .receipt_submissions(&session_id, cx)
-                        .expect("native receipts")
-                        .prompt(content, cx)
-                })
+            let error = acp_thread
+                .update(cx, |thread, cx| thread.send(content, cx))
                 .await
                 .expect_err("unsupported content must not reach command dispatch or the model");
             assert!(error.to_string().contains("Native agent does not support"));
