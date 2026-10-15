@@ -5645,7 +5645,9 @@ mod tests {
         let code_text = "fn main() {}\n";
         let code_start = source.find(code_text).unwrap();
         let cached = cached_code_block_highlights(&markdown, code_start, cx);
-        let expected = language.highlight_text(&Rope::from(code_text), 0..code_text.len());
+        let expected = language
+            .highlight_text(&Rope::from(code_text), 0..code_text.len())
+            .collect::<Vec<_>>();
         assert_eq!(
             cached.runs.to_vec(),
             expected,

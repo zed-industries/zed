@@ -212,7 +212,9 @@ impl super::LspAdapter for CLspAdapter {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
                 let source = format!("struct S {{ {} }}", text);
-                let runs = language.highlight_text(source.as_str(), 11..11 + text.len());
+                let runs = language
+                    .highlight_text(source.as_str(), 11..11 + text.len())
+                    .collect::<Vec<_>>();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -228,7 +230,9 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(text.as_str(), 0..text.len());
+                let runs = language
+                    .highlight_text(text.as_str(), 0..text.len())
+                    .collect::<Vec<_>>();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -244,7 +248,9 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(text.as_str(), 0..text.len());
+                let runs = language
+                    .highlight_text(text.as_str(), 0..text.len())
+                    .collect::<Vec<_>>();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -348,7 +354,9 @@ impl super::LspAdapter for CLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(text.as_str(), display_range),
+            language
+                .highlight_text(text.as_str(), display_range)
+                .collect::<Vec<_>>(),
         ))
     }
 

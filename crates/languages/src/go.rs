@@ -279,8 +279,9 @@ impl LspAdapter for GoLspAdapter {
             Some((lsp::CompletionItemKind::MODULE, detail)) => {
                 let text = format!("{label} {detail}");
                 let source = format!("import {text}");
-                let runs =
-                    language.highlight_text(source.as_str(), 7..7 + text[name_offset..].len());
+                let runs = language
+                    .highlight_text(source.as_str(), 7..7 + text[name_offset..].len())
+                    .collect::<Vec<_>>();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -441,7 +442,9 @@ impl LspAdapter for GoLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(text.as_str(), display_range),
+            language
+                .highlight_text(text.as_str(), display_range)
+                .collect::<Vec<_>>(),
         ))
     }
 
@@ -574,13 +577,10 @@ async fn get_cached_server_binary(container_dir: &Path) -> Option<LanguageServer
 
 fn adjust_runs(
     delta: usize,
-    mut runs: Vec<(Range<usize>, HighlightId)>,
+    runs: impl Iterator<Item = (Range<usize>, HighlightId)>,
 ) -> Vec<(Range<usize>, HighlightId)> {
-    for (range, _) in &mut runs {
-        range.start += delta;
-        range.end += delta;
-    }
-    runs
+    runs.map(|(range, highlight_id)| (range.start + delta..range.end + delta, highlight_id))
+        .collect::<Vec<_>>()
 }
 
 pub(crate) struct GoContextProvider;

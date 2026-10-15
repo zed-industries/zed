@@ -1132,13 +1132,13 @@ impl Language {
         self.toolchain.clone()
     }
 
-    pub fn highlight_text(
+    pub fn highlight_text<Source: HighlightSource + ?Sized>(
         self: &Arc<Self>,
-        text: &(impl HighlightSource + ?Sized),
+        text: &Source,
         range: Range<usize>,
-    ) -> Vec<(Range<usize>, HighlightId)> {
-        let highlights = self.highlight_text_resolved(text, 0..text.source_len());
-        highlight_runs_in_range(&highlights.runs, range).collect()
+    ) -> impl Iterator<Item = (Range<usize>, HighlightId)> + 'static + use<Source> {
+        self.highlight_text_resolved(text, 0..text.source_len())
+            .runs_in_range(range)
     }
 
     pub fn highlight_text_resolved(
@@ -1178,7 +1178,7 @@ impl Language {
         }
         ResolvedHighlights {
             sources: highlights.sources.clone(),
-            runs: highlight_runs_in_range(&highlights.runs, range).collect(),
+            runs: highlights.runs_in_range(range).collect(),
         }
     }
 
@@ -1532,21 +1532,6 @@ pub(crate) fn parse_text(grammar: &Grammar, text: &Rope, old_tree: Option<Tree>)
             )
             .unwrap()
     })
-}
-
-fn highlight_runs_in_range(
-    runs: &[(Range<usize>, HighlightId)],
-    range: Range<usize>,
-) -> impl Iterator<Item = (Range<usize>, HighlightId)> + '_ {
-    runs.iter()
-        .filter(move |(run_range, _)| run_range.start < range.end && run_range.end > range.start)
-        .map(move |(run_range, highlight_id)| {
-            (
-                run_range.start.max(range.start) - range.start
-                    ..run_range.end.min(range.end) - range.start,
-                *highlight_id,
-            )
-        })
 }
 
 pub trait CodeLabelExt {
@@ -1920,6 +1905,8 @@ mod tests {
         );
         assert_eq!(partial.runs.as_ref(), &[(0..2, highlights.runs[0].1)]);
 
+        let runs = language.highlight_text(String::from(code).as_str(), 1..5);
+
         let richer_theme = SyntaxTheme::new(
             [
                 ("function", rgba(0x100000ff)),
@@ -1930,6 +1917,13 @@ mod tests {
             .map(|(name, color)| (name.to_string(), (*color).into())),
         );
         language.set_theme(&richer_theme);
+        assert_eq!(
+            runs.map(|(range, highlight_id)| {
+                (range, theme.get_capture_name(highlight_id).unwrap())
+            })
+            .collect::<Vec<_>>(),
+            vec![(0..1, "keyword"), (1..4, "function")]
+        );
         assert!(
             !highlights.is_current(),
             "a theme change must invalidate previously resolved highlights"

@@ -43,6 +43,23 @@ pub struct ResolvedHighlights {
 }
 
 impl ResolvedHighlights {
+    pub fn runs_in_range(
+        self,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = (Range<usize>, HighlightId)> {
+        let runs = self.runs;
+        (0..runs.len()).filter_map(move |index| {
+            let (run_range, highlight_id) = &runs[index];
+            (run_range.start < range.end && run_range.end > range.start).then(|| {
+                (
+                    run_range.start.max(range.start) - range.start
+                        ..run_range.end.min(range.end) - range.start,
+                    *highlight_id,
+                )
+            })
+        })
+    }
+
     pub fn is_current(&self) -> bool {
         self.sources
             .iter()
@@ -214,6 +231,54 @@ fn chunks_match_text<'a>(text: &str, text_chunks: impl Iterator<Item = &'a str>)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_runs_in_range() {
+        let first = HighlightId::new(0);
+        let second = HighlightId::new(1);
+        let runs = Arc::from([(2..5, first), (7..11, second)]);
+        for (range, expected) in [
+            (0..usize::MAX, vec![(2..5, first), (7..11, second)]),
+            (1..9, vec![(1..4, first), (6..8, second)]),
+            (3..8, vec![(0..2, first), (4..5, second)]),
+            (5..7, Vec::new()),
+            (0..0, Vec::new()),
+            (6..6, Vec::new()),
+            (11..usize::MAX, Vec::new()),
+            (usize::MAX..usize::MAX, Vec::new()),
+        ] {
+            let highlights = ResolvedHighlights {
+                runs: Arc::clone(&runs),
+                ..ResolvedHighlights::default()
+            };
+            assert_eq!(
+                highlights.runs_in_range(range.clone()).collect::<Vec<_>>(),
+                expected,
+                "{range:?}"
+            );
+        }
+        assert_eq!(
+            ResolvedHighlights::default()
+                .runs_in_range(0..usize::MAX)
+                .next(),
+            None
+        );
+
+        let weak_runs = Arc::downgrade(&runs);
+        let highlights = ResolvedHighlights {
+            runs: Arc::clone(&runs),
+            ..ResolvedHighlights::default()
+        };
+        let mut iterator = highlights.runs_in_range(3..9);
+        assert_eq!(Arc::strong_count(&runs), 2);
+        drop(runs);
+        assert_eq!(iterator.next(), Some((0..2, first)));
+        assert_eq!(iterator.next(), Some((4..6, second)));
+        assert_eq!(iterator.next(), None);
+        assert_eq!(iterator.next(), None);
+        drop(iterator);
+        assert!(weak_runs.upgrade().is_none());
+    }
 
     #[test]
     fn test_budget_evicts_least_recently_used() {
