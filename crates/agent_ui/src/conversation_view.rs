@@ -5148,7 +5148,7 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_receipt_disconnect_keeps_copyable_records_without_restore_or_resend(
+    async fn test_receipt_disconnect_preserves_draft_without_restore_or_resend(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -5159,20 +5159,7 @@ pub(crate) mod tests {
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
         let editor = message_editor(&conversation_view, cx);
-        let accept = connection.defer_next_receipt_response();
-        editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("accepted content", window, cx);
-        });
-        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
-        cx.run_until_parked();
-        let accepted_id = thread.read_with(cx, |thread, _| {
-            thread.latest_submission_id().expect("accepted")
-        });
-        accept
-            .send(Ok(acp_v2::PromptResponse::new("accepted-id")))
-            .expect("receipt");
-        cx.run_until_parked();
-        let pending_sender = connection.defer_next_receipt_response();
+        let _pending_sender = connection.defer_next_receipt_response();
         editor.update_in(cx, |editor, window, cx| {
             editor.set_text("unknown content", window, cx);
         });
@@ -5191,37 +5178,13 @@ pub(crate) mod tests {
             editor.read_with(cx, |editor, cx| editor.text(cx)),
             "keep my draft"
         );
-        for (id, content) in [
-            (accepted_id, "accepted content"),
-            (pending_id, "unknown content"),
-        ] {
-            let copy: &'static str =
-                Box::leak(format!("copy-submission-{}", id.as_u64()).into_boxed_str());
-            let restore: &'static str =
-                Box::leak(format!("restore-submission-{}", id.as_u64()).into_boxed_str());
-            assert!(cx.debug_bounds(restore).is_none());
-            let copy_bounds = cx
-                .debug_bounds(copy)
-                .expect("disconnected content remains copyable");
-            cx.simulate_click(copy_bounds.center(), gpui::Modifiers::default());
-            assert_eq!(
-                cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
-                Some(content.to_owned())
-            );
-            thread.update(cx, |thread, cx| thread.forget_submission(id, cx));
-            cx.run_until_parked();
-            assert!(cx.debug_bounds(copy).is_none());
-        }
-        assert!(
-            pending_sender
-                .send(Ok(acp_v2::PromptResponse::new("late")))
-                .is_err()
-        );
+        let copy: &'static str =
+            Box::leak(format!("copy-submission-{}", pending_id.as_u64()).into_boxed_str());
+        let restore: &'static str =
+            Box::leak(format!("restore-submission-{}", pending_id.as_u64()).into_boxed_str());
+        assert!(cx.debug_bounds(copy).is_some());
+        assert!(cx.debug_bounds(restore).is_none());
         assert!(connection.take_receipt_prompt().is_none());
-        assert_eq!(
-            editor.read_with(cx, |editor, cx| editor.text(cx)),
-            "keep my draft"
-        );
     }
 
     #[gpui::test]

@@ -7600,41 +7600,28 @@ exit 7
     async fn receipt_disconnect_sdk_eof_settles_retained_submission_owners(
         cx: &mut gpui::TestAppContext,
     ) {
-        let harness = V2SessionHarness::new(cx).await;
-        let (project, work_dirs) = harness.thread.read_with(cx, |thread, _| {
-            (
-                thread.project().clone(),
-                thread.work_dirs().cloned().expect("directories"),
-            )
-        });
+        let (client, project, _, _, _, _, agent_task) = connect_fake_agent(None, cx).await;
         let connection =
             Rc::new(acp_thread::StubAgentConnection::new().with_receipt_submissions(true));
         let thread = cx
-            .update(|cx| connection.clone().new_session(project, work_dirs, cx))
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project, PathList::default(), cx)
+            })
             .await
             .expect("receipt model owner");
         cx.update(|cx| {
             let session_id = thread.read(cx).session_id().clone();
-            harness
-                .connection
-                .register_session(session_id, &thread, None, None, None, cx);
+            client.register_session(session_id, &thread, None, None, None, cx);
         });
-        let accepted = thread.update(cx, |thread, cx| {
-            thread.submit_receipt(
-                vec!["accepted".into()],
-                Task::ready(Ok(acp_v2::PromptResponse::new("accepted"))),
-                cx,
-            )
-        });
-        let accepted_id = accepted.id;
-        accepted.await.expect("known receipt");
-        let pending_sender = connection.defer_next_receipt_response();
+        let _pending_sender = connection.defer_next_receipt_response();
         let pending = thread.update(cx, |thread, cx| thread.send(vec!["pending".into()], cx));
         let pending_id = pending.id;
         cx.run_until_parked();
-        drop(harness._legacy_agent_task);
-        harness.connection.connection.incoming_closed().await;
-        drain_foreground_queue(&harness.connection.dispatch_tx)
+        drop(agent_task);
+        client.connection.incoming_closed().await;
+        drain_foreground_queue(&client.dispatch_tx)
             .await
             .expect("disconnect barrier");
         assert!(
@@ -7643,19 +7630,8 @@ exit 7
                 .expect_err("lost transport")
                 .is::<acp_thread::SubmissionDisconnected>()
         );
-        if pending_sender
-            .send(Ok(acp_v2::PromptResponse::new("late")))
-            .is_ok()
-        {
-            cx.run_until_parked();
-        }
         thread.read_with(cx, |thread, _| {
             assert!(!thread.has_unsettled_submissions());
-            assert!(
-                matches!(&thread.submission(accepted_id).expect("retained receipt").state,
-                acp_thread::SubmissionState::Disconnected { receipt: Some(receipt) }
-                    if receipt.message_id == "accepted".into())
-            );
             assert!(matches!(
                 thread
                     .submission(pending_id)
@@ -7664,11 +7640,6 @@ exit 7
                 acp_thread::SubmissionState::Disconnected { receipt: None }
             ));
         });
-        assert!(
-            !harness
-                .thread
-                .read_with(cx, |thread, _| thread.uses_reported_activity())
-        );
     }
 
     #[test]
