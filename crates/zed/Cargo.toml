@@ -93,6 +93,7 @@ codestral.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
+command_palette_hooks.workspace = true
 component_preview.workspace = true
 copilot.workspace = true
 copilot_chat.workspace = true
@@ -168,7 +169,6 @@ mimalloc = { version = "0.1", optional = true }
 miniprofiler_ui.workspace = true
 node_runtime.workspace = true
 notifications.workspace = true
-nrepl.workspace = true
 onboarding.workspace = true
 outline.workspace = true
 outline_panel.workspace = true

@@ -1,0 +1,62 @@
+package zed:extension;
+
+interface editor {
+    use common.{range};
+
+    record editor-state {
+        path: string,
+        language: string,
+        text: string,
+        selections: list<range>,
+        version: u64,
+    }
+
+    record text-edit {
+        start: u32,
+        end: u32,
+        text: string,
+    }
+
+    enum decoration-style {
+        info,
+        success,
+        error,
+        warning,
+        muted,
+    }
+
+    record inline-decoration {
+        range: range,
+        text: string,
+        style: decoration-style,
+    }
+
+    record block-decoration {
+        row: u32,
+        text: string,
+        style: decoration-style,
+    }
+
+    record highlight-decoration {
+        range: range,
+        style: decoration-style,
+    }
+
+    record gutter-decoration {
+        row: u32,
+        style: decoration-style,
+    }
+
+    variant decoration {
+        inline-after(inline-decoration),
+        block(block-decoration),
+        highlight(highlight-decoration),
+        gutter(gutter-decoration),
+    }
+
+    active-editor: func() -> option<editor-state>;
+    apply-edits: func(path: string, edits: list<text-edit>) -> result<_, string>;
+    set-selections: func(path: string, selections: list<range>) -> result<_, string>;
+    set-decorations: func(path: string, key: string, decorations: list<decoration>) -> result<_, string>;
+    clear-decorations: func(path: option<string>, key: string) -> result<_, string>;
+}

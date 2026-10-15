@@ -12,7 +12,7 @@ use anyhow::Context as _;
 use client::parse_zed_link;
 use command_palette_hooks::{
     CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter,
-    GlobalCommandPaletteInterceptor,
+    GlobalCommandPaletteExtraCommands, GlobalCommandPaletteInterceptor,
 };
 use command_palette_settings::CommandPaletteSettings;
 
@@ -119,7 +119,7 @@ impl CommandPalette {
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
 
-        let commands = window
+        let mut commands: Vec<Command> = window
             .available_actions(cx)
             .into_iter()
             .filter_map(|action| {
@@ -134,6 +134,15 @@ impl CommandPalette {
                 })
             })
             .collect();
+        commands.extend(
+            GlobalCommandPaletteExtraCommands::commands(cx)
+                .into_iter()
+                .map(|(name, action)| Command {
+                    name: SharedString::from(name),
+                    action,
+                    usage: None,
+                }),
+        );
 
         let delegate = CommandPaletteDelegate::new(
             cx.entity().downgrade(),

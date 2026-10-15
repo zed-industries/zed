@@ -1035,6 +1035,32 @@ pub struct JupyterContent {
     ///
     /// Default: `{}`
     pub kernel_selections: Option<HashMap<String, String>>,
+
+    /// nREPL servers to offer as kernels, in addition to the ones discovered
+    /// from `.nrepl-port` files in the project.
+    ///
+    /// Default: `[]`
+    pub nrepl_servers: Option<Vec<NreplServerContent>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct NreplServerContent {
+    /// Name shown in the kernel picker and usable in `kernel_selections`.
+    pub name: String,
+    #[serde(default = "default_nrepl_host")]
+    pub host: String,
+    pub port: u16,
+    /// Language of the code evaluated by this server.
+    #[serde(default = "default_nrepl_language")]
+    pub language: String,
+}
+
+fn default_nrepl_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_nrepl_language() -> String {
+    "clojure".to_string()
 }
 
 /// Whether to allow drag and drop text selection in buffer.

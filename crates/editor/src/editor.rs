@@ -128,8 +128,8 @@ pub use lsp::CompletionContext;
 pub use lsp_ext::lsp_tasks;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, BufferOffset, ExcerptRange, MBTextSummary, MultiBuffer,
-    MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
-    ToPoint,
+    MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferRow, MultiBufferSnapshot, PathKey,
+    RowInfo, ToOffset, ToPoint,
 };
 pub use split::{DiffStyleControls, SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
@@ -205,7 +205,6 @@ use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::{
     ExcerptBoundaryInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint,
-    MultiBufferRow,
 };
 use parking_lot::Mutex;
 use persistence::EditorDb;
@@ -2797,10 +2796,6 @@ impl Editor {
 
         if EditorSettings::jupyter_enabled(cx) {
             key_context.add("jupyter");
-        }
-
-        if EditorSettings::nrepl_enabled(cx) {
-            key_context.add("nrepl");
         }
 
         key_context.set("mode", mode);

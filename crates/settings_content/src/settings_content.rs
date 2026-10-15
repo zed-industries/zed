@@ -247,8 +247,6 @@ pub struct SettingsContent {
 
     pub repl: Option<ReplSettingsContent>,
 
-    pub nrepl: Option<NreplSettingsContent>,
-
     /// Whether or not to enable Helix mode.
     ///
     /// Default: false
@@ -410,7 +408,7 @@ fallible_options::flattened_deserialize!(SettingsContent {
         call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
         git,
-        global_lsp_settings, image_viewer, markdown_preview, repl, nrepl, helix_mode, hide_mouse,
+        global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
         journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
         title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
@@ -1506,30 +1504,6 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 0
     pub output_max_height_lines: Option<usize>,
-}
-
-/// Settings for configuring the Clojure nREPL client.
-#[with_fallible_options]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct NreplSettingsContent {
-    /// Whether the nREPL feature is enabled.
-    ///
-    /// Default: true
-    pub enabled: Option<bool>,
-    /// Default host to use when connecting to an nREPL server.
-    ///
-    /// Default: "localhost"
-    pub default_host: Option<String>,
-    /// Whether to automatically connect to a discovered nREPL server on
-    /// workspace open.
-    ///
-    /// Default: false
-    pub auto_connect: Option<bool>,
-    /// File name (relative to the workspace root) used for auto-discovering
-    /// a running nREPL server.
-    ///
-    /// Default: ".nrepl-port"
-    pub port_file: Option<String>,
 }
 
 /// Settings for configuring the tab switcher behaviour.

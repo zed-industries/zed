@@ -2826,6 +2826,9 @@
     //    "python": "conda-base"
     //    "typescript": "deno"
     // }
+    // nREPL servers to offer as kernels, besides those found via `.nrepl-port`.
+    // "nrepl_servers": [{ "name": "my-app", "host": "127.0.0.1", "port": 7888, "language": "clojure" }]
+    "nrepl_servers": [],
   },
   // REPL settings.
   "repl": {
@@ -2841,20 +2844,6 @@
     // Maximum number of columns of output to display before scaling images.
     // Set to 0 to disable output width limits.
     "output_max_width_columns": 0,
-  },
-  // Clojure nREPL settings.
-  "nrepl": {
-    // Whether the nREPL feature is enabled.
-    "enabled": true,
-    // Default host to use when connecting to an nREPL server.
-    "default_host": "localhost",
-    // Whether to automatically connect to a discovered nREPL server on
-    // workspace open.
-    "auto_connect": false,
-    // File name (relative to the workspace root) used for auto-discovering
-    // a running nREPL server. Common build tools (Leiningen, deps.edn,
-    // shadow-cljs, babashka) write `.nrepl-port` by default.
-    "port_file": ".nrepl-port",
   },
   // Vim settings
   "vim": {

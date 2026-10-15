@@ -1,10 +1,13 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
+pub mod console;
+pub mod editor;
 pub mod http_client;
 pub mod panel;
 pub mod process;
 pub mod settings;
 pub mod tcp;
+pub mod ui;
 
 use core::fmt;
 
@@ -17,9 +20,9 @@ pub use serde_json;
 // We explicitly enumerate the symbols we want to re-export, as there are some
 // that we may want to shadow to provide a cleaner Rust API.
 pub use wit::{
-    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
-    make_file_executable,
+    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, CommandContext, DownloadedFileType,
+    EnvVars, KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree,
+    download_file, make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
         AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, BuildTaskTemplate,
@@ -82,6 +85,46 @@ pub trait Extension: Send + Sync {
         _payload: serde_json::Value,
     ) -> Result<()> {
         Err("`panel_action` not implemented".to_string())
+    }
+
+    /// Receives a command execution request from Zed.
+    fn run_command(&mut self, _command_id: &str, _context: CommandContext) -> Result<()> {
+        Err("`run_command` not implemented".to_string())
+    }
+
+    /// Receives the user response to a quick-pick or input-box prompt.
+    fn ui_response(&mut self, _request_id: u64, _selected: Option<String>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Receives user input entered into an extension console.
+    fn console_input(&mut self, _id: &str, _text: &str) -> Result<()> {
+        Ok(())
+    }
+
+    /// Receives streamed stdout or stderr chunks from a background process.
+    fn process_output(&mut self, _handle: u64, _is_stderr: bool, _text: &str) -> Result<()> {
+        Ok(())
+    }
+
+    /// Receives the exit notification of a background process.
+    fn process_exit(&mut self, _handle: u64, _code: Option<i32>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Receives data read from a subscribed TCP stream.
+    fn tcp_data(&mut self, _stream_id: u64, _data: &[u8]) -> Result<()> {
+        Ok(())
+    }
+
+    /// Receives notification that a subscribed TCP stream was closed.
+    fn tcp_closed(&mut self, _stream_id: u64, _error: Option<String>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Receives an event that the extension subscribed to in extension.toml.
+    fn on_event(&mut self, _kind: &str, _payload_json: &str) -> Result<()> {
+        Ok(())
     }
 
     /// Returns the command used to start the language server for the specified
@@ -383,6 +426,38 @@ impl wit::Guest for Component {
             return Err("extension panel action payload must be a JSON object".to_string());
         }
         extension().panel_action(&panel_id, &action, payload)
+    }
+
+    fn run_command(command_id: String, context: wit::CommandContext) -> Result<(), String> {
+        extension().run_command(&command_id, context)
+    }
+
+    fn ui_response(request_id: u64, selected: Option<String>) -> Result<(), String> {
+        extension().ui_response(request_id, selected)
+    }
+
+    fn console_input(id: String, text: String) -> Result<(), String> {
+        extension().console_input(&id, &text)
+    }
+
+    fn process_output(handle: u64, is_stderr: bool, text: String) -> Result<(), String> {
+        extension().process_output(handle, is_stderr, &text)
+    }
+
+    fn process_exit(handle: u64, code: Option<i32>) -> Result<(), String> {
+        extension().process_exit(handle, code)
+    }
+
+    fn tcp_data(stream_id: u64, data: Vec<u8>) -> Result<(), String> {
+        extension().tcp_data(stream_id, &data)
+    }
+
+    fn tcp_closed(stream_id: u64, error: Option<String>) -> Result<(), String> {
+        extension().tcp_closed(stream_id, error)
+    }
+
+    fn on_event(kind: String, payload_json: String) -> Result<(), String> {
+        extension().on_event(&kind, &payload_json)
     }
 
     fn language_server_command(

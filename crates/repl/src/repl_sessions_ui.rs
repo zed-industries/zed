@@ -22,7 +22,7 @@ fn refresh_python_kernelspecs_for_buffer(
 
     if buffer
         .language()
-        .is_none_or(|language| language.name() != "Python")
+        .is_none_or(|language| !matches!(language.name().as_ref(), "Python" | "Clojure"))
     {
         return;
     };
@@ -65,6 +65,7 @@ actions!(
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+            crate::ReplOutputPanel::register(workspace);
             workspace.register_action(|workspace, _: &Sessions, window, cx| {
                 let existing = workspace
                     .active_pane()
@@ -86,10 +87,21 @@ pub fn init(cx: &mut App) {
                 }
             });
 
-            workspace.register_action(|_workspace, _: &RefreshKernelspecs, _, cx| {
+            workspace.register_action(|workspace, _: &RefreshKernelspecs, _, cx| {
+                let project = workspace.project().clone();
+                let worktree_ids: Vec<_> = project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).id())
+                    .collect();
                 let store = ReplStore::global(cx);
                 store.update(cx, |store, cx| {
                     store.refresh_kernelspecs(cx).detach();
+                    for worktree_id in worktree_ids {
+                        store
+                            .refresh_python_kernelspecs(worktree_id, &project, cx)
+                            .detach_and_log_err(cx);
+                    }
                 });
             });
         },

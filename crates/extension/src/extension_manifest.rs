@@ -122,6 +122,10 @@ pub struct ExtensionManifest {
     pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub commands: BTreeMap<Arc<str>, CommandManifestEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<String>,
 }
 
 impl ExtensionManifest {
@@ -318,6 +322,12 @@ pub struct LanguageModelProviderManifestEntry {
     pub icon: Option<String>,
 }
 
+/// Manifest entry for a command.
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct CommandManifestEntry {
+    pub title: String,
+}
+
 impl ExtensionManifest {
     pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
         let extension_name = extension_dir
@@ -388,6 +398,8 @@ fn manifest_from_old_manifest(
         debug_adapters: Default::default(),
         debug_locators: Default::default(),
         language_model_providers: Default::default(),
+        commands: Default::default(),
+        events: Vec::new(),
     }
 }
 
@@ -422,7 +434,54 @@ mod tests {
             debug_adapters: Default::default(),
             debug_locators: Default::default(),
             language_model_providers: BTreeMap::default(),
+            commands: BTreeMap::default(),
+            events: Vec::new(),
         }
+    }
+
+    #[test]
+    fn test_parse_manifest_with_commands_and_events() {
+        let toml_content = r#"
+            id = "my-extension"
+            name = "My Extension"
+            version = "0.1.0"
+            schema_version = 1
+            events = ["active-editor-changed", "buffer-saved", "selection-changed"]
+
+            [commands.eval-form]
+            title = "Evaluate Form"
+
+            [commands.run-tests]
+            title = "Run All Tests"
+        "#;
+        let manifest: ExtensionManifest =
+            toml::from_str(toml_content).expect("failed to parse extension.toml");
+        assert_eq!(manifest.id.as_ref(), "my-extension");
+        assert_eq!(
+            manifest.events,
+            vec![
+                "active-editor-changed".to_string(),
+                "buffer-saved".to_string(),
+                "selection-changed".to_string(),
+            ]
+        );
+        assert_eq!(manifest.commands.len(), 2);
+        assert_eq!(
+            manifest
+                .commands
+                .get("eval-form")
+                .expect("missing eval-form")
+                .title,
+            "Evaluate Form"
+        );
+        assert_eq!(
+            manifest
+                .commands
+                .get("run-tests")
+                .expect("missing run-tests")
+                .title,
+            "Run All Tests"
+        );
     }
 
     #[test]

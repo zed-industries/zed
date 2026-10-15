@@ -565,6 +565,16 @@ fn main() {
         extension_host_proxy.register_panel_ui_proxy(
             workspace::extension_panel::ExtensionPanelsProxy::new(workspace_store.clone()),
         );
+        extension_host_proxy.register_editor_proxy(
+            zed::extension_editor_api::ZedExtensionEditorProxy::new(workspace_store.clone()),
+        );
+        extension_host_proxy.register_ui_proxy(
+            zed::extension_editor_api::ZedExtensionUiProxy::new(workspace_store.clone(), cx),
+        );
+        extension_host_proxy.register_console_proxy(
+            zed::extension_editor_api::ZedExtensionConsoleProxy::new(workspace_store.clone()),
+        );
+        zed::extension_editor_api::init_extension_events(workspace_store.clone(), cx);
 
         language_extension::init(
             language_extension::LspAccess::ViaWorkspaces({
@@ -724,7 +734,6 @@ fn main() {
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
         repl::init(app_state.fs.clone(), cx);
-        nrepl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
         dev_container::init(cx);
 

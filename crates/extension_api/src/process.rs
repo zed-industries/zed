@@ -42,3 +42,24 @@ impl Command {
         process::run_command(self)
     }
 }
+
+/// Spawns a background child process.
+/// Output will be delivered via `Extension::process_output` and exit via `Extension::process_exit`.
+pub fn spawn(
+    command: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+    cwd: Option<&str>,
+) -> Result<u64, String> {
+    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let env: Vec<(String, String)> = env
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    process::spawn(command, &args, &env, cwd)
+}
+
+/// Terminates a spawned background process by handle.
+pub fn kill(handle: u64) -> Result<(), String> {
+    process::kill(handle)
+}

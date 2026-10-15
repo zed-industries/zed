@@ -33,7 +33,8 @@ use uuid::Uuid;
 use crate::components::{KernelPickerDelegate, KernelSelector};
 use crate::kernels::{
     Kernel, KernelSession, KernelSpecification, KernelStatus, LocalKernelSpecification,
-    NativeRunningKernel, RemoteRunningKernel, SshRunningKernel, WslRunningKernel,
+    NativeRunningKernel, NreplRunningKernel, RemoteRunningKernel, SshRunningKernel,
+    WslRunningKernel,
 };
 use crate::notebook::MovementDirection;
 use crate::repl_store::ReplStore;
@@ -451,6 +452,7 @@ impl NotebookEditor {
                 KernelSpecification::JupyterServer(s) => s.kernelspec.display_name.clone(),
                 KernelSpecification::SshRemote(s) => s.kernelspec.display_name.clone(),
                 KernelSpecification::WslRemote(s) => s.kernelspec.display_name.clone(),
+                KernelSpecification::Nrepl(s) => s.name.clone(),
             };
 
             let kernelspec_json = serde_json::json!({
@@ -494,6 +496,9 @@ impl NotebookEditor {
             }
             KernelSpecification::WslRemote(spec) => {
                 WslRunningKernel::new(spec, entity_id, working_directory, fs, view, window, cx)
+            }
+            KernelSpecification::Nrepl(spec) => {
+                NreplRunningKernel::new(spec.host, spec.port, working_directory, view, window, cx)
             }
         };
 

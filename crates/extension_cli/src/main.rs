@@ -765,6 +765,8 @@ mod tests {
             debug_adapters: BTreeMap::default(),
             debug_locators: BTreeMap::default(),
             language_model_providers: BTreeMap::default(),
+            commands: BTreeMap::default(),
+            events: Vec::new(),
         }
     }
 

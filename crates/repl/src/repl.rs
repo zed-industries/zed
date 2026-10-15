@@ -4,6 +4,7 @@ pub mod kernels;
 pub mod notebook;
 mod outputs;
 mod repl_editor;
+mod repl_output_panel;
 mod repl_sessions_ui;
 mod repl_settings;
 mod repl_store;
@@ -19,6 +20,7 @@ pub use runtimelib::ExecutionState;
 pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus, PythonEnvKernelSpecification};
 pub use crate::repl_editor::*;
+pub use crate::repl_output_panel::{ClearOutputPanel, ReplOutputPanel, ToggleOutputPanel};
 pub use crate::repl_sessions_ui::{
     ClearCurrentOutput, ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
 };

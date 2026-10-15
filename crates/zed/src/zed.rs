@@ -1,5 +1,6 @@
 mod app_menus;
 pub mod edit_prediction_registry;
+pub mod extension_editor_api;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
@@ -917,6 +918,7 @@ fn register_actions(
     _: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    extension_editor_api::register_actions(workspace);
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &OpenStatusPage, _, cx| cx.open_url(STATUS_URL))
@@ -6215,7 +6217,6 @@ mod tests {
             );
 
             repl::init(app_state.fs.clone(), cx);
-            nrepl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
             project::debugger::breakpoint_store::BreakpointStore::init(

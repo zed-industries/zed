@@ -26,6 +26,9 @@ pub struct ExtensionSettingsContent {
     pub suggest_extensions: bool,
     /// The capabilities granted to extensions.
     pub granted_extension_capabilities: Option<Vec<ExtensionCapabilityContent>>,
+    /// Settings for individual extensions, keyed by extension ID.
+    #[serde(default)]
+    pub extensions_settings: HashMap<Arc<str>, serde_json::Value>,
 }
 
 impl Default for ExtensionSettingsContent {
@@ -35,6 +38,7 @@ impl Default for ExtensionSettingsContent {
             auto_update_extensions: HashMap::default(),
             suggest_extensions: true,
             granted_extension_capabilities: None,
+            extensions_settings: HashMap::default(),
         }
     }
 }

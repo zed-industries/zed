@@ -18,6 +18,7 @@ pub struct ExtensionSettings {
     pub auto_update_extensions: HashMap<Arc<str>, bool>,
     pub suggest_extensions: bool,
     pub granted_capabilities: Vec<ExtensionCapability>,
+    pub extensions_settings: HashMap<Arc<str>, serde_json::Value>,
 }
 
 impl ExtensionSettings {
@@ -43,6 +44,7 @@ impl Settings for ExtensionSettings {
             auto_install_extensions: content.extension.auto_install_extensions.clone(),
             auto_update_extensions: content.extension.auto_update_extensions.clone(),
             suggest_extensions: content.extension.suggest_extensions,
+            extensions_settings: content.extension.extensions_settings.clone(),
             granted_capabilities: content
                 .extension
                 .granted_extension_capabilities

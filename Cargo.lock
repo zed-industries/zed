@@ -11407,32 +11407,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nrepl"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "command_palette_hooks",
- "editor",
- "futures 0.3.34",
- "gpui",
- "language",
- "log",
- "menu",
- "multi_buffer",
- "parking_lot",
- "project",
- "serde_json",
- "settings",
- "smol",
- "theme",
- "theme_settings",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "ntapi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22477,6 +22451,7 @@ dependencies = [
  "collab_ui",
  "collections",
  "command_palette",
+ "command_palette_hooks",
  "component_preview",
  "copilot",
  "copilot_chat",
@@ -22543,7 +22518,6 @@ dependencies = [
  "nix",
  "node_runtime",
  "notifications",
- "nrepl",
  "onboarding",
  "outline",
  "outline_panel",
