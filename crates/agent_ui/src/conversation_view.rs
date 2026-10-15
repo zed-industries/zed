@@ -284,10 +284,10 @@ impl ProfileProvider for Entity<agent::Thread> {
 
 #[derive(Default)]
 pub(crate) struct Conversation {
-    threads: HashMap<acp_v1::SessionId, Entity<AcpThread>>,
-    permission_requests: IndexMap<acp_v1::SessionId, Vec<PermissionRequestId>>,
+    threads: HashMap<acp_v2::SessionId, Entity<AcpThread>>,
+    permission_requests: IndexMap<acp_v2::SessionId, Vec<PermissionRequestId>>,
     permission_selections: HashMap<PermissionRequestId, thread_view::PermissionSelection>,
-    elicitation_requests: IndexMap<acp_v1::SessionId, Vec<ElicitationEntryId>>,
+    elicitation_requests: IndexMap<acp_v2::SessionId, Vec<ElicitationEntryId>>,
     subscriptions: Vec<Subscription>,
     updated_at: Option<Instant>,
 }
@@ -363,7 +363,7 @@ impl Conversation {
 
     fn set_permission_choice(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         index: usize,
         cx: &mut Context<Self>,
@@ -382,7 +382,7 @@ impl Conversation {
 
     fn toggle_permission_pattern(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         pattern_index: usize,
         cx: &mut Context<Self>,
@@ -415,7 +415,7 @@ impl Conversation {
 
     fn add_permission_request(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: &PermissionRequestId,
     ) {
         let requests = self
@@ -429,7 +429,7 @@ impl Conversation {
 
     fn permission_request<'a>(
         &'a self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         cx: &'a App,
     ) -> Option<&'a PermissionRequest> {
@@ -441,7 +441,7 @@ impl Conversation {
 
     fn pending_permission_request_for_session<'a>(
         &'a self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &'a App,
     ) -> Option<&'a PermissionRequest> {
         self.permission_requests
@@ -452,9 +452,9 @@ impl Conversation {
 
     fn pending_permission_request<'a>(
         &'a self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &'a App,
-    ) -> Option<(acp_v1::SessionId, &'a PermissionRequest)> {
+    ) -> Option<(acp_v2::SessionId, &'a PermissionRequest)> {
         if self
             .threads
             .get(session_id)?
@@ -477,9 +477,9 @@ impl Conversation {
 
     pub fn pending_tool_call<'a>(
         &'a self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &'a App,
-    ) -> Option<(acp_v1::SessionId, acp_v1::ToolCallId, &'a PermissionOptions)> {
+    ) -> Option<(acp_v2::SessionId, acp_v2::ToolCallId, &'a PermissionOptions)> {
         let (result_session_id, request) = self.pending_permission_request(session_id, cx)?;
         Some((
             result_session_id,
@@ -488,7 +488,7 @@ impl Conversation {
         ))
     }
 
-    pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp_v1::SessionId, usize)> {
+    pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp_v2::SessionId, usize)> {
         self.permission_requests
             .iter()
             .filter_map(|(session_id, _)| {
@@ -508,9 +508,9 @@ impl Conversation {
     /// request for non-subagent sessions.
     pub fn pending_tool_call_for_session(
         &self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &App,
-    ) -> Option<acp_v1::ToolCallId> {
+    ) -> Option<acp_v2::ToolCallId> {
         Some(
             self.pending_permission_request_for_session(session_id, cx)?
                 .legacy_tool_call_id()?
@@ -520,7 +520,7 @@ impl Conversation {
 
     pub fn pending_tool_call_count_for_session(
         &self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &App,
     ) -> usize {
         self.permission_requests
@@ -538,7 +538,7 @@ impl Conversation {
 
     pub fn respond_to_elicitation(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         elicitation_id: ElicitationEntryId,
         response: acp_v2::CreateElicitationResponse,
         cx: &mut Context<Self>,
@@ -552,7 +552,7 @@ impl Conversation {
 
     pub fn authorize_pending_tool_call(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         kind: acp_v1::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) -> Option<()> {
@@ -569,7 +569,7 @@ impl Conversation {
 
     pub fn authorize_with_granularity(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
         is_allow: bool,
         cx: &mut Context<Self>,
@@ -587,8 +587,8 @@ impl Conversation {
     #[cfg(test)]
     fn authorize_tool_call(
         &mut self,
-        session_id: acp_v1::SessionId,
-        tool_call_id: acp_v1::ToolCallId,
+        session_id: acp_v2::SessionId,
+        tool_call_id: acp_v2::ToolCallId,
         outcome: SelectedPermissionOutcome,
         cx: &mut Context<Self>,
     ) {
@@ -604,7 +604,7 @@ impl Conversation {
 
     pub fn authorize_permission_request(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         request_id: PermissionRequestId,
         outcome: SelectedPermissionOutcome,
         cx: &mut Context<Self>,
@@ -638,7 +638,7 @@ impl Conversation {
 
     fn select_permission_option(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         option_id: acp_v2::PermissionOptionId,
         cx: &mut Context<Self>,
@@ -654,7 +654,7 @@ impl Conversation {
 
     fn cancel_permission_request(
         &mut self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         request_id: PermissionRequestId,
         cx: &mut Context<Self>,
     ) {
@@ -782,7 +782,7 @@ pub struct ConversationView {
     project: Entity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
     pub(crate) thread_id: ThreadId,
-    pub(crate) root_session_id: Option<acp_v1::SessionId>,
+    pub(crate) root_session_id: Option<acp_v2::SessionId>,
     server_state: ServerState,
     pending_selections: Vec<AgentContextSelection>,
     focus_handle: FocusHandle,
@@ -828,7 +828,7 @@ impl ConversationView {
     pub fn pending_tool_call<'a>(
         &'a self,
         cx: &'a App,
-    ) -> Option<(acp_v1::SessionId, acp_v1::ToolCallId, &'a PermissionOptions)> {
+    ) -> Option<(acp_v2::SessionId, acp_v2::ToolCallId, &'a PermissionOptions)> {
         let session_id = self.active_thread()?.read(cx).session_id.clone();
         self.as_connected()?
             .conversation
@@ -861,7 +861,7 @@ impl ConversationView {
             .and_then(|id| self.thread_view(id))
     }
 
-    pub fn thread_view(&self, session_id: &acp_v1::SessionId) -> Option<Entity<ThreadView>> {
+    pub fn thread_view(&self, session_id: &acp_v2::SessionId) -> Option<Entity<ThreadView>> {
         let connected = self.as_connected()?;
         connected.threads.get(session_id).cloned()
     }
@@ -887,7 +887,7 @@ impl ConversationView {
 
     pub fn navigate_to_thread(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -928,8 +928,8 @@ enum ServerState {
 // hashmap of threads, current becomes session_id
 pub struct ConnectedServerState {
     auth_state: AuthState,
-    active_id: Option<acp_v1::SessionId>,
-    pub(crate) threads: HashMap<acp_v1::SessionId, Entity<ThreadView>>,
+    active_id: Option<acp_v2::SessionId>,
+    pub(crate) threads: HashMap<acp_v2::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
     conversation: Entity<Conversation>,
     _connection_entry_subscription: Subscription,
@@ -964,7 +964,7 @@ impl ConnectedServerState {
             .map_or(false, |view| view.read(cx).thread_error.is_some())
     }
 
-    pub fn navigate_to_thread(&mut self, session_id: acp_v1::SessionId) {
+    pub fn navigate_to_thread(&mut self, session_id: acp_v2::SessionId) {
         if self.threads.contains_key(&session_id) {
             self.active_id = Some(session_id);
         }
@@ -991,7 +991,7 @@ impl ConversationView {
         agent: Rc<dyn AgentServer>,
         connection_store: Entity<AgentConnectionStore>,
         connection_key: Agent,
-        resume_session_id: Option<acp_v1::SessionId>,
+        resume_session_id: Option<acp_v2::SessionId>,
         thread_id: Option<ThreadId>,
         work_dirs: Option<PathList>,
         title: Option<SharedString>,
@@ -1224,7 +1224,7 @@ impl ConversationView {
         agent: Rc<dyn AgentServer>,
         connection_store: Entity<AgentConnectionStore>,
         connection_key: Agent,
-        resume_session_id: Option<acp_v1::SessionId>,
+        resume_session_id: Option<acp_v2::SessionId>,
         work_dirs: Option<PathList>,
         title: Option<SharedString>,
         project: Entity<Project>,
@@ -2323,8 +2323,8 @@ impl ConversationView {
 
     fn load_subagent_session(
         &mut self,
-        subagent_id: acp_v1::SessionId,
-        parent_session_id: acp_v1::SessionId,
+        subagent_id: acp_v2::SessionId,
+        parent_session_id: acp_v2::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3584,7 +3584,7 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
 
 fn native_available_skills(
     native_connection: &agent::NativeAgentConnection,
-    session_id: &acp_v1::SessionId,
+    session_id: &acp_v2::SessionId,
     cx: &App,
 ) -> Vec<AvailableSkill> {
     native_connection
@@ -3637,7 +3637,7 @@ impl ConversationView {
 impl ConversationView {
     /// Expands a tool call so its content is visible.
     /// This is primarily useful for visual testing.
-    pub fn expand_tool_call(&mut self, tool_call_id: acp_v1::ToolCallId, cx: &mut Context<Self>) {
+    pub fn expand_tool_call(&mut self, tool_call_id: acp_v2::ToolCallId, cx: &mut Context<Self>) {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.entry_view_state.update(cx, |state, _cx| {
@@ -5419,7 +5419,7 @@ pub(crate) mod tests {
         let root_thread =
             active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
         let root_session_id = root_thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let other_session_id = acp_v1::SessionId::new("other-session");
+        let other_session_id = acp_v2::SessionId::new("other-session");
         conversation_view.update_in(cx, |view, window, cx| {
             view.load_subagent_session(
                 other_session_id.clone(),
@@ -5669,7 +5669,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(acp_v1::SessionId::new("resume-session")),
+                    Some(acp_v2::SessionId::new("resume-session")),
                     None,
                     None,
                     None,
@@ -5718,7 +5718,7 @@ pub(crate) mod tests {
                 self,
                 project,
                 "RestoredAvailableCommandsConnection",
-                acp_v1::SessionId::new("new-session"),
+                acp_v2::SessionId::new("new-session"),
                 cx,
             );
             Task::ready(Ok(thread))
@@ -5730,7 +5730,7 @@ pub(crate) mod tests {
 
         fn load_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             _work_dirs: PathList,
             title: Option<SharedString>,
@@ -5803,7 +5803,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -5832,7 +5832,7 @@ pub(crate) mod tests {
                     )),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(acp_v1::SessionId::new("restored-session")),
+                    Some(acp_v2::SessionId::new("restored-session")),
                     None,
                     None,
                     None,
@@ -5977,7 +5977,7 @@ pub(crate) mod tests {
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
             let thread_id = ThreadId::new();
-            let session_id = acp_v1::SessionId::new(format!("early-title-{index}"));
+            let session_id = acp_v2::SessionId::new(format!("early-title-{index}"));
             cx.update(|_, cx| {
                 ThreadMetadataStore::global(cx).update(cx, |store, cx| {
                     store.save(
@@ -6103,7 +6103,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(acp_v1::SessionId::new("session-1")),
+                    Some(acp_v2::SessionId::new("session-1")),
                     None,
                     Some(PathList::new(&[PathBuf::from("/project/subdir")])),
                     None,
@@ -6209,7 +6209,7 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         // Simulate a previous run that persisted metadata for this session.
-        let resume_session_id = acp_v1::SessionId::new("persistent-session");
+        let resume_session_id = acp_v2::SessionId::new("persistent-session");
         let stored_title: SharedString = "Persistent chat".into();
         cx.update(|_window, cx| {
             ThreadMetadataStore::global(cx).update(cx, |store, cx| {
@@ -6682,10 +6682,11 @@ pub(crate) mod tests {
     async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Label")
-            .kind(acp_v1::ToolKind::Edit)
-            .content(vec!["hi".into()]);
+        let tool_call_id = acp_v2::ToolCallId::new("1");
+        let tool_call =
+            acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id.0.clone()), "Label")
+                .kind(acp_v1::ToolKind::Edit)
+                .content(vec!["hi".into()]);
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
                 tool_call_id,
@@ -8056,7 +8057,7 @@ pub(crate) mod tests {
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         name: &'static str,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         cx: &mut App,
     ) -> Entity<AcpThread> {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -8100,7 +8101,7 @@ pub(crate) mod tests {
             _work_dirs: PathList,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let session_id = acp_v1::SessionId::new("new-session");
+            let session_id = acp_v2::SessionId::new("new-session");
             let thread = build_test_thread(
                 self.clone(),
                 project,
@@ -8113,9 +8114,7 @@ pub(crate) mod tests {
                     .request_elicitation(
                         acp_v2::CreateElicitationRequest::new(
                             acp_v2::ElicitationFormMode::new(
-                                acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
-                                    session_id.0,
-                                )),
+                                acp_v2::ElicitationSessionScope::new(session_id),
                                 acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
@@ -8158,7 +8157,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8221,7 +8220,7 @@ pub(crate) mod tests {
                 self.clone(),
                 project,
                 "SessionCreationRequestElicitationConnection",
-                acp_v1::SessionId::new("session-creation-request-elicitation-session"),
+                acp_v2::SessionId::new("session-creation-request-elicitation-session"),
                 cx,
             );
             let first_response_task = self.store.update(cx, |store, cx| {
@@ -8289,7 +8288,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8351,7 +8350,7 @@ pub(crate) mod tests {
                 self.clone(),
                 project,
                 "ReleaseRequestElicitationConnection",
-                acp_v1::SessionId::new("release-request-elicitation-session"),
+                acp_v2::SessionId::new("release-request-elicitation-session"),
                 cx,
             );
             let response_task = self.store.update(cx, |store, cx| {
@@ -8401,7 +8400,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8430,7 +8429,7 @@ pub(crate) mod tests {
                 self,
                 project,
                 "ResumeOnlyAgentConnection",
-                acp_v1::SessionId::new("new-session"),
+                acp_v2::SessionId::new("new-session"),
                 cx,
             );
             Task::ready(Ok(thread))
@@ -8442,7 +8441,7 @@ pub(crate) mod tests {
 
         fn resume_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             _work_dirs: PathList,
             _title: Option<SharedString>,
@@ -8473,7 +8472,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8559,7 +8558,7 @@ pub(crate) mod tests {
                     .into()));
             }
 
-            let session_id = acp_v1::SessionId::new("auth-gated-session");
+            let session_id = acp_v2::SessionId::new("auth-gated-session");
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             Task::ready(Ok(cx.new(|cx| {
                 AcpThread::new(
@@ -8625,7 +8624,7 @@ pub(crate) mod tests {
             unimplemented!()
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {
             unimplemented!()
         }
 
@@ -8662,7 +8661,7 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    acp_v1::SessionId::new("test"),
+                    acp_v2::SessionId::new("test"),
                     watch::Receiver::constant(
                         acp_v2::PromptCapabilities::new()
                             .image(acp_v2::PromptImageCapabilities::new())
@@ -8694,7 +8693,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Refusal)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {
             unimplemented!()
         }
 
@@ -8741,7 +8740,7 @@ pub(crate) mod tests {
                     self.clone(),
                     project,
                     action_log,
-                    acp_v1::SessionId::new("new-session"),
+                    acp_v2::SessionId::new("new-session"),
                     watch::Receiver::constant(
                         acp_v2::PromptCapabilities::new()
                             .image(acp_v2::PromptImageCapabilities::new())
@@ -8760,7 +8759,7 @@ pub(crate) mod tests {
 
         fn load_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             work_dirs: PathList,
             _title: Option<SharedString>,
@@ -8809,7 +8808,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -9296,13 +9295,16 @@ pub(crate) mod tests {
     ) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("ask-user-1");
+        let tool_call_id = acp_v2::ToolCallId::new("ask-user-1");
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
-            acp_v1::ToolCall::new(tool_call_id.clone(), "Which directory should we explore?")
-                .kind(acp_v1::ToolKind::Other)
-                .status(acp_v1::ToolCallStatus::InProgress)
-                .meta(acp_thread::meta_with_tool_name("ask_user")),
+            acp_v1::ToolCall::new(
+                acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+                "Which directory should we explore?",
+            )
+            .kind(acp_v1::ToolKind::Other)
+            .status(acp_v1::ToolCallStatus::InProgress)
+            .meta(acp_thread::meta_with_tool_name("ask_user")),
         )]);
 
         let (conversation_view, cx) =
@@ -9328,10 +9330,8 @@ pub(crate) mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
-                                session_id.0.clone(),
-                            ))
-                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationSessionScope::new(session_id.clone())
+                                .tool_call_id(tool_call_id.clone()),
                             acp_v2::ElicitationSchema::new().string("other", true),
                         ),
                         "Which directory should we explore?",
@@ -9372,7 +9372,7 @@ pub(crate) mod tests {
             thread
                 .handle_session_update(
                     acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
-                        tool_call_id.clone(),
+                        acp_v1::ToolCallId::new(tool_call_id.0.clone()),
                         acp_v1::ToolCallUpdateFields::new()
                             .title("Answered: delve into src")
                             .status(acp_v1::ToolCallStatus::Completed),
@@ -9415,12 +9415,15 @@ pub(crate) mod tests {
     async fn test_scroll_to_user_message_skips_accepted_url_elicitation(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("sign-in-1");
+        let tool_call_id = acp_v2::ToolCallId::new("sign-in-1");
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
-            acp_v1::ToolCall::new(tool_call_id.clone(), "Sign in to continue")
-                .kind(acp_v1::ToolKind::Other)
-                .status(acp_v1::ToolCallStatus::InProgress),
+            acp_v1::ToolCall::new(
+                acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+                "Sign in to continue",
+            )
+            .kind(acp_v1::ToolKind::Other)
+            .status(acp_v1::ToolCallStatus::InProgress),
         )]);
 
         let (conversation_view, cx) =
@@ -9446,10 +9449,8 @@ pub(crate) mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationUrlMode::new(
-                            acp_v2::ElicitationSessionScope::new(acp_v2::SessionId::new(
-                                session_id.0.clone(),
-                            ))
-                            .tool_call_id(acp_v2::ToolCallId::new(tool_call_id.0.clone())),
+                            acp_v2::ElicitationSessionScope::new(session_id.clone())
+                                .tool_call_id(tool_call_id.clone()),
                             acp_v2::ElicitationId::new("sign-in-url-1"),
                             "https://example.com/sign-in",
                         ),
@@ -10311,13 +10312,16 @@ pub(crate) mod tests {
     async fn test_thread_search_includes_expanded_tool_call_content(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("search-tool-content");
+        let tool_call_id = acp_v2::ToolCallId::new("search-tool-content");
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
-            acp_v1::ToolCall::new(tool_call_id.clone(), "Inspect output")
-                .kind(acp_v1::ToolKind::Other)
-                .status(acp_v1::ToolCallStatus::Completed)
-                .content(vec!["Tool output mentions papaya once.".into()]),
+            acp_v1::ToolCall::new(
+                acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+                "Inspect output",
+            )
+            .kind(acp_v1::ToolKind::Other)
+            .status(acp_v1::ToolCallStatus::Completed)
+            .content(vec!["Tool output mentions papaya once.".into()]),
         )]);
 
         let (conversation_view, cx) =
@@ -10474,7 +10478,7 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::default_response(), cx).await;
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("new-patch");
+        let tool_call_id = acp_v2::ToolCallId::new("new-patch");
 
         let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
             "toolCallId": "new-patch",
@@ -10564,7 +10568,7 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::default_response(), cx).await;
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("authorization-patch");
+        let tool_call_id = acp_v2::ToolCallId::new("authorization-patch");
         let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
             "toolCallId": "authorization-patch",
             "title": "Review patch",
@@ -10589,7 +10593,7 @@ pub(crate) mod tests {
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
                     acp_v1::ToolCallUpdate::new(
-                        tool_call_id.clone(),
+                        acp_v1::ToolCallId::new(tool_call_id.0.clone()),
                         acp_v1::ToolCallUpdateFields::new(),
                     ),
                     PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
@@ -10671,7 +10675,7 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("shared-search-tool");
+        let tool_call_id = acp_v2::ToolCallId::new("shared-search-tool");
 
         let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
             "toolCallId": "shared-search-tool",
@@ -11033,8 +11037,8 @@ pub(crate) mod tests {
         add_to_workspace(conversation_view.clone(), cx);
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("historical-chunks");
-        let later_tool_call_id = acp_v1::ToolCallId::new("later-tool");
+        let tool_call_id = acp_v2::ToolCallId::new("historical-chunks");
+        let later_tool_call_id = acp_v2::ToolCallId::new("later-tool");
         for (id, text) in [
             ("historical-chunks", "Original mango output"),
             ("later-tool", "Unchanged later output"),
@@ -11694,7 +11698,7 @@ pub(crate) mod tests {
             );
             thread.read_with(cx, |thread, cx| {
                 let (_, call) = thread
-                    .tool_call(&acp_v1::ToolCallId::new("tool"))
+                    .tool_call(&acp_v2::ToolCallId::new("tool"))
                     .expect("tool call should exist");
                 assert_eq!(
                     !call.label.read(cx).search_highlights().is_empty(),
@@ -13507,7 +13511,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
         let entry_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
         entry_state.update(cx, |state, cx| {
-            state.expand_tool_call(acp_v1::ToolCallId::new("tool"));
+            state.expand_tool_call(acp_v2::ToolCallId::new("tool"));
             cx.notify();
         });
         let terminal = thread.read_with(cx, |thread, _| {
@@ -13638,7 +13642,7 @@ pub(crate) mod tests {
             let thread_view = active_thread(&conversation_view, cx);
             let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
             let terminal_id = acp_v1::TerminalId::new("provider-terminal");
-            let tool_id = acp_v1::ToolCallId::new("provider-tool");
+            let tool_id = acp_v2::ToolCallId::new("provider-tool");
             let terminal = cx.new(|cx| {
                 terminal::TerminalBuilder::new_display_only(
                     Default::default(),
@@ -13665,12 +13669,17 @@ pub(crate) mod tests {
                 thread
                     .handle_session_update(
                         acp_v1::SessionUpdate::ToolCall(
-                            acp_v1::ToolCall::new(tool_id.clone(), "provider command")
-                                .kind(acp_v1::ToolKind::Execute)
-                                .status(acp_v1::ToolCallStatus::InProgress)
-                                .content(vec![acp_v1::ToolCallContent::Terminal(
-                                    acp_v1::Terminal::new(terminal_id.clone()),
-                                )]),
+                            acp_v1::ToolCall::new(
+                                acp_v1::ToolCallId::new(tool_id.0.clone()),
+                                "provider command",
+                            )
+                            .kind(acp_v1::ToolKind::Execute)
+                            .status(acp_v1::ToolCallStatus::InProgress)
+                            .content(vec![
+                                acp_v1::ToolCallContent::Terminal(acp_v1::Terminal::new(
+                                    terminal_id.clone(),
+                                )),
+                            ]),
                         ),
                         cx,
                     )
@@ -13730,7 +13739,7 @@ pub(crate) mod tests {
                 thread
                     .handle_session_update(
                         acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
-                            tool_id.clone(),
+                            acp_v1::ToolCallId::new(tool_id.0.clone()),
                             acp_v1::ToolCallUpdateFields::new()
                                 .status(acp_v1::ToolCallStatus::Completed),
                         )),
@@ -13769,7 +13778,7 @@ pub(crate) mod tests {
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
         let terminal_id = acp_v1::TerminalId::new("acp-owned-terminal");
-        let tool_id = acp_v1::ToolCallId::new("acp-owned-tool");
+        let tool_id = acp_v2::ToolCallId::new("acp-owned-tool");
         let lower_terminal = cx.new(|cx| {
             terminal::TerminalBuilder::new_display_only(
                 Default::default(),
@@ -13795,12 +13804,15 @@ pub(crate) mod tests {
             thread
                 .handle_session_update(
                     acp_v1::SessionUpdate::ToolCall(
-                        acp_v1::ToolCall::new(tool_id.clone(), "client-owned command")
-                            .kind(acp_v1::ToolKind::Execute)
-                            .status(acp_v1::ToolCallStatus::InProgress)
-                            .content(vec![acp_v1::ToolCallContent::Terminal(
-                                acp_v1::Terminal::new(terminal_id),
-                            )]),
+                        acp_v1::ToolCall::new(
+                            acp_v1::ToolCallId::new(tool_id.0.clone()),
+                            "client-owned command",
+                        )
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::InProgress)
+                        .content(vec![acp_v1::ToolCallContent::Terminal(
+                            acp_v1::Terminal::new(terminal_id),
+                        )]),
                     ),
                     cx,
                 )
@@ -13843,9 +13855,12 @@ pub(crate) mod tests {
     async fn test_tool_permission_buttons_terminal_with_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("terminal-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("terminal-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `cargo build --release`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options = ToolPermissionContext::new(
             TerminalTool::NAME,
@@ -13957,9 +13972,12 @@ pub(crate) mod tests {
     async fn test_tool_permission_buttons_edit_file_with_path_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("edit-file-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("edit-file-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Edit `src/main.rs`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(EditFileTool::NAME, vec!["src/main.rs".to_string()])
@@ -14049,9 +14067,12 @@ pub(crate) mod tests {
     async fn test_tool_permission_buttons_fetch_with_domain_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("fetch-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Fetch `https://docs.rs/gpui`")
-            .kind(acp_v1::ToolKind::Fetch);
+        let tool_call_id = acp_v2::ToolCallId::new("fetch-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Fetch `https://docs.rs/gpui`",
+        )
+        .kind(acp_v1::ToolKind::Fetch);
 
         let permission_options =
             ToolPermissionContext::new(FetchTool::NAME, vec!["https://docs.rs/gpui".to_string()])
@@ -14141,10 +14162,12 @@ pub(crate) mod tests {
     async fn test_tool_permission_buttons_without_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("terminal-no-pattern-1");
-        let tool_call =
-            acp_v1::ToolCall::new(tool_call_id.clone(), "Run `./deploy.sh --production`")
-                .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("terminal-no-pattern-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `./deploy.sh --production`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         // No pattern button since ./deploy.sh doesn't match the alphanumeric pattern
         let permission_options = ToolPermissionContext::new(
@@ -14248,9 +14271,12 @@ pub(crate) mod tests {
     async fn test_authorize_tool_call_action_triggers_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("action-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `cargo test`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("action-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `cargo test`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo test".to_string()])
@@ -14328,9 +14354,12 @@ pub(crate) mod tests {
     async fn test_authorize_tool_call_action_with_pattern_option(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("pattern-action-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `npm install`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("pattern-action-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `npm install`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["npm install".to_string()])
@@ -14409,9 +14438,12 @@ pub(crate) mod tests {
     async fn test_granularity_selection_updates_state(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("granularity-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `cargo build`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("granularity-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `cargo build`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo build".to_string()])
@@ -14511,9 +14543,12 @@ pub(crate) mod tests {
     async fn test_allow_button_uses_selected_granularity(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("allow-granularity-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `npm install`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("allow-granularity-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `npm install`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["npm install".to_string()])
@@ -14610,9 +14645,12 @@ pub(crate) mod tests {
     async fn test_deny_button_uses_selected_granularity(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp_v1::ToolCallId::new("deny-granularity-test-1");
-        let tool_call = acp_v1::ToolCall::new(tool_call_id.clone(), "Run `git push`")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id = acp_v2::ToolCallId::new("deny-granularity-test-1");
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+            "Run `git push`",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let permission_options =
             ToolPermissionContext::new(TerminalTool::NAME, vec!["git push".to_string()])
@@ -15106,7 +15144,7 @@ pub(crate) mod tests {
     }
 
     fn create_test_acp_thread(
-        parent_session_id: Option<acp_v1::SessionId>,
+        parent_session_id: Option<acp_v2::SessionId>,
         session_id: &str,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
@@ -15121,7 +15159,7 @@ pub(crate) mod tests {
                 connection,
                 project,
                 action_log,
-                acp_v1::SessionId::new(session_id),
+                acp_v2::SessionId::new(session_id),
                 watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
                 cx,
             )
@@ -15156,13 +15194,13 @@ pub(crate) mod tests {
         PermissionRequestId,
         Task<acp_thread::RequestPermissionOutcome>,
     ) {
-        let tool_call_id = acp_v1::ToolCallId::new(tool_call_id);
+        let tool_call_id = acp_v2::ToolCallId::new(tool_call_id);
         let label = format!("Tool {tool_call_id}");
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread
                     .request_tool_call_authorization_with_id(
-                        acp_v1::ToolCall::new(tool_call_id, label)
+                        acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id.0), label)
                             .kind(acp_v1::ToolKind::Edit)
                             .into(),
                         options,
@@ -15227,7 +15265,7 @@ pub(crate) mod tests {
             (view.thread.clone(), view.conversation.clone())
         });
         let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
-        let child_session_id = acp_v1::SessionId::new("embedded-permission-child");
+        let child_session_id = acp_v2::SessionId::new("embedded-permission-child");
         let child_view = conversation_view.update_in(cx, |view, window, cx| {
             let child = create_test_acp_thread(
                 Some(root_session_id.clone()),
@@ -15692,7 +15730,7 @@ pub(crate) mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
 
-        let session_id = acp_v1::SessionId::new("session-1");
+        let session_id = acp_v2::SessionId::new("session-1");
         let (thread, conversation) = cx.update(|cx| {
             let thread =
                 create_test_acp_thread(None, "session-1", connection.clone(), project.clone(), cx);
@@ -15712,14 +15750,14 @@ pub(crate) mod tests {
                 .read(cx)
                 .pending_tool_call(&session_id, cx)
                 .expect("Expected a pending tool call");
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-1"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-1"));
         });
 
         cx.update(|cx| {
             conversation.update(cx, |conversation, cx| {
                 conversation.authorize_tool_call(
                     session_id.clone(),
-                    acp_v1::ToolCallId::new("tc-1"),
+                    acp_v2::ToolCallId::new("tc-1"),
                     SelectedPermissionOutcome::new(
                         acp_v1::PermissionOptionId::new("allow-1"),
                         acp_v1::PermissionOptionKind::AllowOnce,
@@ -15736,14 +15774,14 @@ pub(crate) mod tests {
                 .read(cx)
                 .pending_tool_call(&session_id, cx)
                 .expect("Expected tc-2 to be pending after tc-1 was authorized");
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-2"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-2"));
         });
 
         cx.update(|cx| {
             conversation.update(cx, |conversation, cx| {
                 conversation.authorize_tool_call(
                     session_id.clone(),
-                    acp_v1::ToolCallId::new("tc-2"),
+                    acp_v2::ToolCallId::new("tc-2"),
                     SelectedPermissionOutcome::new(
                         acp_v1::PermissionOptionId::new("allow-2"),
                         acp_v1::PermissionOptionKind::AllowOnce,
@@ -15774,8 +15812,8 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
-        let root_session_id = acp_v1::SessionId::new("root");
-        let child_session_id = acp_v1::SessionId::new("child");
+        let root_session_id = acp_v2::SessionId::new("root");
+        let child_session_id = acp_v2::SessionId::new("child");
         let (root, child) = cx.update(|cx| {
             let root =
                 create_test_acp_thread(None, "root", connection.clone(), project.clone(), cx);
@@ -15893,8 +15931,8 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
-        let root_session_id = acp_v1::SessionId::new("root");
-        let child_session_id = acp_v1::SessionId::new("child");
+        let root_session_id = acp_v2::SessionId::new("root");
+        let child_session_id = acp_v2::SessionId::new("child");
         let (root, child, conversation) = cx.update(|cx| {
             let root =
                 create_test_acp_thread(None, "root", connection.clone(), project.clone(), cx);
@@ -15978,13 +16016,13 @@ pub(crate) mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
 
-        let parent_session_id = acp_v1::SessionId::new("parent");
-        let subagent_session_id = acp_v1::SessionId::new("subagent");
+        let parent_session_id = acp_v2::SessionId::new("parent");
+        let subagent_session_id = acp_v2::SessionId::new("subagent");
         let (parent_thread, subagent_thread, conversation) = cx.update(|cx| {
             let parent_thread =
                 create_test_acp_thread(None, "parent", connection.clone(), project.clone(), cx);
             let subagent_thread = create_test_acp_thread(
-                Some(acp_v1::SessionId::new("parent")),
+                Some(acp_v2::SessionId::new("parent")),
                 "subagent",
                 connection.clone(),
                 project.clone(),
@@ -16012,7 +16050,7 @@ pub(crate) mod tests {
                 .pending_tool_call(&subagent_session_id, cx)
                 .expect("Expected subagent's pending tool call");
             assert_eq!(returned_session_id, subagent_session_id);
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("subagent-tc"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("subagent-tc"));
         });
 
         // Querying with the parent's session ID returns the first pending
@@ -16023,7 +16061,7 @@ pub(crate) mod tests {
                 .pending_tool_call(&parent_session_id, cx)
                 .expect("Expected a pending tool call from parent query");
             assert_eq!(returned_session_id, parent_session_id);
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("parent-tc"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("parent-tc"));
         });
     }
 
@@ -16035,8 +16073,8 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
-        let parent_session_id = acp_v1::SessionId::new("parent");
-        let subagent_session_id = acp_v1::SessionId::new("subagent");
+        let parent_session_id = acp_v2::SessionId::new("parent");
+        let subagent_session_id = acp_v2::SessionId::new("subagent");
         let (subagent_thread, conversation) = cx.update(|cx| {
             let parent_thread =
                 create_test_acp_thread(None, "parent", connection.clone(), project.clone(), cx);
@@ -16059,7 +16097,7 @@ pub(crate) mod tests {
             request_test_tool_authorization(&subagent_thread, "resolved-tool", "allow-child", cx);
         subagent_thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(
-                acp_v1::ToolCallId::new("resolved-tool"),
+                acp_v2::ToolCallId::new("resolved-tool"),
                 SelectedPermissionOutcome::new(
                     acp_v1::PermissionOptionId::new("allow-child"),
                     acp_v1::PermissionOptionKind::AllowOnce,
@@ -16096,7 +16134,7 @@ pub(crate) mod tests {
             request_test_tool_authorization(&subagent_thread, "later-tool", "allow-child", cx);
 
         for (tool_id, pending_count) in [("child-tool", 3), ("queued-tool", 2), ("later-tool", 1)] {
-            let tool_id = acp_v1::ToolCallId::new(tool_id);
+            let tool_id = acp_v2::ToolCallId::new(tool_id);
             conversation.read_with(cx, |conversation, cx| {
                 assert_eq!(
                     conversation.pending_tool_call_for_session(&subagent_session_id, cx),
@@ -16145,8 +16183,8 @@ pub(crate) mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
 
-        let session_id_a = acp_v1::SessionId::new("thread-a");
-        let session_id_b = acp_v1::SessionId::new("thread-b");
+        let session_id_a = acp_v2::SessionId::new("thread-a");
+        let session_id_b = acp_v2::SessionId::new("thread-b");
         let (thread_a, thread_b, conversation) = cx.update(|cx| {
             let thread_a =
                 create_test_acp_thread(None, "thread-a", connection.clone(), project.clone(), cx);
@@ -16172,7 +16210,7 @@ pub(crate) mod tests {
                 .pending_tool_call(&session_id_a, cx)
                 .expect("Expected a pending tool call");
             assert_eq!(returned_session_id, session_id_a);
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-a"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-a"));
         });
 
         // Querying with thread-b also returns thread-a's tool call,
@@ -16186,7 +16224,7 @@ pub(crate) mod tests {
                 returned_session_id, session_id_a,
                 "Non-subagent queries always return the first pending request in FIFO order"
             );
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-a"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-a"));
         });
 
         // After authorizing thread-a's tool call, thread-b's becomes first
@@ -16194,7 +16232,7 @@ pub(crate) mod tests {
             conversation.update(cx, |conversation, cx| {
                 conversation.authorize_tool_call(
                     session_id_a.clone(),
-                    acp_v1::ToolCallId::new("tc-a"),
+                    acp_v2::ToolCallId::new("tc-a"),
                     SelectedPermissionOutcome::new(
                         acp_v1::PermissionOptionId::new("allow-a"),
                         acp_v1::PermissionOptionKind::AllowOnce,
@@ -16212,7 +16250,7 @@ pub(crate) mod tests {
                 .pending_tool_call(&session_id_b, cx)
                 .expect("Expected thread-b's tool call after thread-a's was authorized");
             assert_eq!(returned_session_id, session_id_b);
-            assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-b"));
+            assert_eq!(tool_call_id, acp_v2::ToolCallId::new("tc-b"));
         });
     }
 
@@ -16600,7 +16638,7 @@ pub(crate) mod tests {
             (view.thread.clone(), view.conversation.clone())
         });
         let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
-        let child_session_id = acp_v1::SessionId::new("generic-child");
+        let child_session_id = acp_v2::SessionId::new("generic-child");
         let child_view = conversation_view.update_in(cx, |view, window, cx| {
             let child = create_test_acp_thread(
                 Some(root_session_id.clone()),
@@ -16708,7 +16746,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         for queued_event in [false, true] {
-            let child_session_id = acp_v1::SessionId::new(if queued_event {
+            let child_session_id = acp_v2::SessionId::new(if queued_event {
                 "queued-generic-child"
             } else {
                 "late-generic-child"
@@ -16799,9 +16837,12 @@ pub(crate) mod tests {
         usize,
         &'a mut VisualTestContext,
     ) {
-        let tool_call_id_value = acp_v1::ToolCallId::new(tool_call_id);
-        let tool_call = acp_v1::ToolCall::new(tool_call_id_value.clone(), "Run something")
-            .kind(acp_v1::ToolKind::Edit);
+        let tool_call_id_value = acp_v2::ToolCallId::new(tool_call_id);
+        let tool_call = acp_v1::ToolCall::new(
+            acp_v1::ToolCallId::new(tool_call_id_value.0.clone()),
+            "Run something",
+        )
+        .kind(acp_v1::ToolKind::Edit);
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -16921,8 +16962,8 @@ pub(crate) mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
 
-        let session_id_a = acp_v1::SessionId::new("thread-a");
-        let session_id_b = acp_v1::SessionId::new("thread-b");
+        let session_id_a = acp_v2::SessionId::new("thread-a");
+        let session_id_b = acp_v2::SessionId::new("thread-b");
         let (thread_a, thread_b, conversation) = cx.update(|cx| {
             let thread_a =
                 create_test_acp_thread(None, "thread-a", connection.clone(), project.clone(), cx);
@@ -16947,13 +16988,13 @@ pub(crate) mod tests {
                 .read(cx)
                 .pending_tool_call_for_session(&session_id_a, cx)
                 .expect("Expected a pending tool call in thread A");
-            assert_eq!(tool_call_id_a, acp_v1::ToolCallId::new("tc-a"));
+            assert_eq!(tool_call_id_a, acp_v2::ToolCallId::new("tc-a"));
 
             let tool_call_id_b = conversation
                 .read(cx)
                 .pending_tool_call_for_session(&session_id_b, cx)
                 .expect("Expected a pending tool call in thread B");
-            assert_eq!(tool_call_id_b, acp_v1::ToolCallId::new("tc-b"));
+            assert_eq!(tool_call_id_b, acp_v2::ToolCallId::new("tc-b"));
         });
     }
 
@@ -17737,7 +17778,7 @@ pub(crate) mod tests {
 
     #[derive(Clone)]
     struct CloseCapableConnection {
-        closed_sessions: Arc<Mutex<Vec<acp_v1::SessionId>>>,
+        closed_sessions: Arc<Mutex<Vec<acp_v2::SessionId>>>,
     }
 
     impl CloseCapableConnection {
@@ -17772,7 +17813,7 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    acp_v1::SessionId::new("close-capable-session"),
+                    acp_v2::SessionId::new("close-capable-session"),
                     watch::Receiver::constant(
                         acp_v2::PromptCapabilities::new()
                             .image(acp_v2::PromptImageCapabilities::new())
@@ -17791,7 +17832,7 @@ pub(crate) mod tests {
 
         fn close_session(
             self: Rc<Self>,
-            session_id: &acp_v1::SessionId,
+            session_id: &acp_v2::SessionId,
             _cx: &mut App,
         ) -> Task<Result<()>> {
             self.closed_sessions.lock().push(session_id.clone());
@@ -17818,7 +17859,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
