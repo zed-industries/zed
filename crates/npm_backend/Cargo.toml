@@ -11,6 +11,7 @@ path = "src/npm_backend.rs"
 doctest = false
 
 [dependencies]
+ide_env.workspace = true
 log.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }

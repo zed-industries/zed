@@ -44,7 +44,7 @@ use anyhow::Result;
 use gpui::{
     Action, AnchoredPositionMode, AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext,
     Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, Render, StatefulInteractiveElement as _, Styled as _,
+    IntoElement, ParentElement as _, Pixels, PromptLevel, Render, StatefulInteractiveElement as _, Styled as _,
     Subscription, WeakEntity, Window, actions, anchored, deferred, div, point,
     prelude::FluentBuilder as _, px, relative, svg,
 };
@@ -67,12 +67,14 @@ use node_backend::{
 };
 use node_versions::{NodeVersion, ProjectNode};
 use npm_backend::{
-    NpmAuditVuln, NpmInstalledPkg, NpmOutdatedPkg, UpdateKind, classify_update,
-    detect_package_manager, list_audit_vulns, list_installed, list_outdated,
+    NodeRequirement, NpmAuditVuln, NpmInstalledPkg, NpmOutdatedPkg, UpdateKind, classify_update,
+    detect_package_manager, list_audit_vulns, list_installed, list_outdated, node_requirement,
+    npm_range_matches,
 };
 use flows_panel::FlowsPanel;
 use script_runner_panel::ScriptRunnerPanel;
 use script_runner_panel::command::{check_package_name, check_script_name};
+use db::kvp::KeyValueStore;
 use serde::Deserialize;
 use sysinfo::System;
 pub use node_panel_settings::NodePanelSettings;
@@ -85,7 +87,15 @@ use workspace::{
 const PAGE_SIZE: usize = 6;
 
 /// How often the local Node-process poll re-scans the system.
-const NODE_PROCS_TICK_INTERVAL: Duration = Duration::from_secs(2);
+/// How often the process list refreshes while it is on screen. It isn't
+/// refreshed at all while the panel is hidden or the section collapsed (see
+/// `NodePanel::update_procs_poll`).
+const NODE_PROCS_TICK_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Where the open/closed state of the panel's sections is remembered: the
+/// IDE's key-value store, shared by every window, so the panel opens the way
+/// it was last left.
+const OPEN_SECTIONS_KEY: &str = "node_panel_open_sections";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -216,6 +226,10 @@ pub struct NodePanel {
     system_node_ver: Option<String>,
     /// What the selected project asks for and whether that is installed.
     project_node: ProjectNode,
+    /// What the selected project requires of Node.js, as written and with
+    /// the file it came from (`npm_backend::node_requirement`, the npm
+    /// manager's reading).
+    project_requirement: Option<NodeRequirement>,
     /// Set while the pending install was asked for by the project line: the
     /// folder whose version request to install from.
     install_for_project: Option<PathBuf>,
@@ -292,7 +306,11 @@ pub struct NodePanel {
     /// package data when its `package.json`/lockfile changes on disk.
     _data_reload_task: Option<gpui::Task<()>>,
 
-    _procs_poll: gpui::Task<()>,
+    /// The process poll, running only while the list is on screen: the panel
+    /// shown in its dock and the Processes section open. Dropping it stops it.
+    _procs_poll: Option<gpui::Task<()>>,
+    /// Whether the dock is showing this panel (`Panel::set_active`).
+    panel_active: bool,
 }
 
 struct PackageJsonView {
@@ -503,13 +521,15 @@ impl NodePanel {
             .detach();
 
             let mut open = HashMap::new();
-            // Keep all sections open by default
+            // Sections start open, except the three long package lists:
+            // they start collapsed so the rest of the panel stays in view,
+            // and their counts still show in the headers.
             open.insert("Node Versions".to_string(), true);
             open.insert("Projects".to_string(), true);
             open.insert("Quick Actions".to_string(), true);
-            open.insert("Packages".to_string(), true);
-            open.insert("Outdated".to_string(), true);
-            open.insert("Vulnerabilities".to_string(), true);
+            open.insert("Packages".to_string(), false);
+            open.insert("Outdated".to_string(), false);
+            open.insert("Vulnerabilities".to_string(), false);
             open.insert("Scripts".to_string(), true);
             open.insert("Processes".to_string(), true);
 
@@ -524,6 +544,7 @@ impl NodePanel {
                 node_is_built_in: false,
                 system_node_ver: None,
                 project_node: ProjectNode::default(),
+                project_requirement: None,
                 install_for_project: None,
                 versions_loaded: None,
                 managed_versions: Vec::new(),
@@ -559,13 +580,29 @@ impl NodePanel {
                 view_pkg: None,
                 _rescan_task: None,
                 _data_reload_task: None,
-                _procs_poll: Self::spawn_processes_poll(cx),
+                // Started when the panel is first shown (`set_active`).
+                _procs_poll: None,
+                panel_active: false,
             };
 
             init_discovery(cx);
+            Self::restore_open_sections(cx);
 
             panel
         })
+    }
+
+    /// Runs the process poll only while its list is on screen: the panel shown
+    /// and the Processes section open. Starting it scans at once, so the list
+    /// is current as soon as it appears; stopping it (dropping the task) ends
+    /// the scans. Nothing else reads the list, so nothing misses an update.
+    fn update_procs_poll(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.panel_active && self.is_open("Processes", true);
+        if !wanted {
+            self._procs_poll = None;
+        } else if self._procs_poll.is_none() {
+            self._procs_poll = Some(Self::spawn_processes_poll(cx));
+        }
     }
 
     /// Stops `pid` and everything it started, once the user has confirmed
@@ -637,9 +674,49 @@ impl NodePanel {
         *self.open.get(key).unwrap_or(&default)
     }
 
-    fn toggle(&mut self, key: &str) {
+    /// Opens or closes a section, and remembers that for the next session.
+    fn toggle(&mut self, key: &str, cx: &mut Context<Self>) {
         let e = self.open.entry(key.to_string()).or_insert(true);
         *e = !*e;
+        if key == "Processes" {
+            self.update_procs_poll(cx);
+        }
+        cx.notify();
+
+        let sections = self.open.clone();
+        let kvp = KeyValueStore::global(cx);
+        cx.background_spawn(async move {
+            if let Ok(json) = serde_json::to_string(&sections) {
+                kvp.write_kvp(OPEN_SECTIONS_KEY.to_string(), json).await.ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Restores which sections were open in the last session. Reads the
+    /// IDE's database, so off the main thread; until it lands the defaults
+    /// apply. Sections never saved keep their default.
+    fn restore_open_sections(cx: &mut Context<Self>) {
+        let kvp = KeyValueStore::global(cx);
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let saved = cx
+                .background_spawn(async move { kvp.read_kvp(OPEN_SECTIONS_KEY) })
+                .await
+                .ok()
+                .flatten()
+                .and_then(|json| serde_json::from_str::<HashMap<String, bool>>(&json).ok());
+            let Some(saved) = saved else {
+                return;
+            };
+            this.update(cx, |panel, cx| {
+                panel.open.extend(saved);
+                // A remembered closed Processes section stops the poll.
+                panel.update_procs_poll(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn selected_pkg_path(&self) -> Option<String> {
@@ -1052,6 +1129,7 @@ impl NodePanel {
         self.node_is_built_in = runtimes.built_in;
         self.system_node_ver = runtimes.system_node;
         self.project_node = runtimes.project;
+        self.project_requirement = runtimes.requirement;
     }
 
     fn load_managed_versions(&mut self, cx: &mut Context<Self>) {
@@ -1334,7 +1412,63 @@ impl NodePanel {
     /// then observes the Script Runner panel so `reload_package_data` re-hits
     /// once the update finishes (`dispatch_script` itself has no
     /// completion hook, since scripts/quick actions don't need one).
+    /// Why installing packages now is risky, when it is: the active Node.js
+    /// doesn't fit what the project requires. `None` when it fits, or when
+    /// that can't be told (no requirement, or one that can't be read).
+    fn install_warning(&self) -> Option<String> {
+        let requirement = self.project_requirement.as_ref()?;
+        let node = self.node_ver.as_deref()?.trim().trim_start_matches('v');
+        (npm_range_matches(node, &requirement.range) == Some(false)).then(|| {
+            format!(
+                "The active Node.js is {node}, but this project requires {} ({}).\n\n\
+                 Packages installed now may not match what the project builds with. \
+                 Pick a matching version above first, or continue anyway.",
+                requirement.range, requirement.source
+            )
+        })
+    }
+
+    /// Runs `run` (an install), asking first when the active Node.js doesn't
+    /// fit what the project requires. The header only warns while browsing;
+    /// an install is where a wrong version does lasting harm.
+    fn confirm_install(
+        &mut self,
+        what: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        run: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        let Some(warning) = self.install_warning() else {
+            return run(self, window, cx);
+        };
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Run {what} with an unsupported Node.js?"),
+            Some(&warning),
+            &["Run anyway", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            this.update_in(cx, |this, window, cx| run(this, window, cx)).ok();
+        })
+        .detach();
+    }
+
     fn update_all_outdated(
+        &mut self,
+        kind_ceiling: UpdateKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.confirm_install("the update", window, cx, move |this, window, cx| {
+            this.update_all_outdated_now(kind_ceiling, window, cx);
+        });
+    }
+
+    fn update_all_outdated_now(
         &mut self,
         kind_ceiling: UpdateKind,
         window: &mut Window,
@@ -1452,6 +1586,9 @@ struct Runtimes {
     /// The Node.js on the `PATH`, independent of the built-in manager.
     system_node: Option<String>,
     project: ProjectNode,
+    /// What the project requires, as written and with the file it came
+    /// from — read the same way as the npm manager reads it.
+    requirement: Option<NodeRequirement>,
 }
 
 /// Works out which Node.js and npm a script run in `project` will get, by
@@ -1482,11 +1619,13 @@ fn probe_runtimes(project: Option<PathBuf>) -> Runtimes {
         }
         None => (system_node.clone(), query_runtime("npm".into()).ok()),
     };
+    let requirement = project.as_deref().and_then(node_requirement);
     Runtimes {
         node,
         npm,
         built_in,
         system_node,
+        requirement,
         project: project_node,
     }
 }
@@ -1517,10 +1656,13 @@ fn init_discovery(cx: &mut Context<NodePanel>) {
 
 // ── Section header helper ─────────────────────────────────────────────
 
+/// A collapsible section. `count` is the number of things it lists, shown
+/// in the header; `None` for a section that isn't a list, where a number
+/// would mean nothing.
 fn section_container(
     cx: &Context<NodePanel>,
     title: &str,
-    count: usize,
+    count: Option<usize>,
     open: bool,
     body: impl IntoElement,
 ) -> impl IntoElement {
@@ -1552,9 +1694,11 @@ fn section_container(
                 .text_color(cx.theme().foreground)
                 .child(title.to_string()),
         )
-        .child(Tag::secondary().xsmall().child(count.to_string()))
-        .on_click(cx.listener(move |this, _e, _w, _cx| {
-            this.toggle(&key);
+        .when_some(count, |el, count| {
+            el.child(Tag::secondary().xsmall().child(count.to_string()))
+        })
+        .on_click(cx.listener(move |this, _e, _w, cx| {
+            this.toggle(&key, cx);
         }));
 
     Collapsible::new()
@@ -1684,7 +1828,7 @@ impl Render for NodePanel {
         let versions_section = section_container(
             cx,
             "Node Versions",
-            self.managed_versions.len(),
+            Some(self.managed_versions.len()),
             self.is_open("Node Versions", true),
             self.render_node_versions(cx),
         );
@@ -1692,7 +1836,7 @@ impl Render for NodePanel {
         let projects_section = section_container(
             cx,
             "Projects",
-            self.projects.len(),
+            Some(self.projects.len()),
             self.is_open("Projects", true),
             self.render_projects(cx),
         );
@@ -1700,7 +1844,7 @@ impl Render for NodePanel {
         let actions_section = section_container(
             cx,
             "Quick Actions",
-            0,
+            None,
             self.is_open("Quick Actions", true),
             self.render_quick_actions(cx),
         );
@@ -1708,8 +1852,8 @@ impl Render for NodePanel {
         let packages_section = section_container(
             cx,
             "Packages",
-            self.installed_pkgs.len(),
-            self.is_open("Packages", true),
+            Some(self.installed_pkgs.len()),
+            self.is_open("Packages", false),
             self.render_packages(cx),
         );
 
@@ -1720,8 +1864,8 @@ impl Render for NodePanel {
         let outdated_section = section_container(
             cx,
             "Outdated",
-            outdated_count,
-            self.is_open("Outdated", true),
+            Some(outdated_count),
+            self.is_open("Outdated", false),
             self.render_outdated(cx),
         );
 
@@ -1732,8 +1876,8 @@ impl Render for NodePanel {
         let vulnerabilities_section = section_container(
             cx,
             "Vulnerabilities",
-            vulnerable_count,
-            self.is_open("Vulnerabilities", true),
+            Some(vulnerable_count),
+            self.is_open("Vulnerabilities", false),
             self.render_vulnerabilities(cx),
         );
 
@@ -1741,7 +1885,7 @@ impl Render for NodePanel {
         let scripts_section = section_container(
             cx,
             "Scripts",
-            script_count,
+            Some(script_count),
             self.is_open("Scripts", true),
             self.render_scripts(window, cx),
         );
@@ -1749,7 +1893,7 @@ impl Render for NodePanel {
         let processes_section = section_container(
             cx,
             "Processes",
-            self.node_procs.len(),
+            Some(self.node_procs.len()),
             self.is_open("Processes", true),
             self.render_processes(cx),
         );
@@ -1769,7 +1913,9 @@ impl Render for NodePanel {
             body = body.child(section_container(
                 cx,
                 "SharePoint Framework",
-                self.sppkg_files.len(),
+                // Not a list: the built packages are listed inside it, where
+                // their count says what it is.
+                None,
                 self.is_open("SharePoint Framework", true),
                 self.render_spfx(cx),
             ));
@@ -1831,6 +1977,11 @@ impl EventEmitter<PanelEvent> for NodePanel {}
 impl Panel for NodePanel {
     fn persistent_name() -> &'static str {
         "Node Panel"
+    }
+
+    fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.panel_active = active;
+        self.update_procs_poll(cx);
     }
 
     fn panel_key() -> &'static str {
@@ -1915,12 +2066,37 @@ impl NodePanel {
             .iter()
             .find(|version| version.current)
             .map(|version| version.version.clone());
+        // Shown as the project writes it, with the file it came from — the
+        // same reading as the npm manager's — rather than the version
+        // manager's normalized form (`v20.x.x`).
+        let shown_requirement = |requested: &str| match &self.project_requirement {
+            Some(requirement) => format!("{} ({})", requirement.range, requirement.source),
+            None => requested.to_string(),
+        };
+        // Installing packages with a version the project doesn't support is
+        // allowed but asked about (`confirm_install`); here it is a warning.
+        let unsupported = self.install_warning().is_some();
+        // The Node.js in use fits, whichever it is (built-in or System).
+        let fits = match (&self.project_requirement, self.node_ver.as_deref()) {
+            (Some(requirement), Some(node)) => {
+                npm_range_matches(node.trim().trim_start_matches('v'), &requirement.range)
+                    == Some(true)
+            }
+            _ => false,
+        };
+        let in_use = self.node_ver.clone().unwrap_or_default();
         let project_line = self.project_node.requested.clone().map(|requested| {
+            let shown = shown_requirement(&requested);
             match self.project_node.installed.clone() {
-                Some(installed) if active.as_ref() == Some(&installed) => div()
+                _ if fits => div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!("Project asks for {requested} \u{2014} using {installed}"))
+                    .child(format!("Project asks for {shown} \u{2014} using {in_use}"))
+                    .into_any_element(),
+                Some(installed) if active.as_ref() == Some(&installed) && !unsupported => div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("Project asks for {shown} \u{2014} using {installed}"))
                     .into_any_element(),
                 Some(installed) => h_flex()
                     .gap_2()
@@ -1929,7 +2105,7 @@ impl NodePanel {
                         div()
                             .text_xs()
                             .text_color(cx.theme().warning)
-                            .child(format!("Project asks for {requested}")),
+                            .child(format!("Project asks for {shown}")),
                     )
                     .child(
                         Button::new("node-version-use-project")
@@ -1949,7 +2125,7 @@ impl NodePanel {
                             .text_xs()
                             .text_color(cx.theme().warning)
                             .child(format!(
-                                "Project asks for {requested}, which isn't installed"
+                                "Project asks for {shown}, which isn't installed"
                             )),
                     )
                     .child(
@@ -2709,7 +2885,15 @@ impl NodePanel {
                     .label(label)
                     .tooltip(format!("Run \"{cmd}\""))
                     .on_click(cx.listener(move |this, _e, window, cx| {
-                        this.dispatch_script(cmd, window, cx);
+                        // Installing asks first when the active Node.js
+                        // doesn't fit the project; the rest just run.
+                        if label == "install" {
+                            this.confirm_install(cmd, window, cx, move |this, window, cx| {
+                                this.dispatch_script(cmd, window, cx);
+                            });
+                        } else {
+                            this.dispatch_script(cmd, window, cx);
+                        }
                     })),
             );
         }
@@ -3367,7 +3551,17 @@ impl NodePanel {
                 ),
         );
 
-        if !self.sppkg_files.is_empty() {
+        if self.sppkg_files.is_empty() {
+            // Say so, rather than leave a gap where the packages would be.
+            col = col.child(
+                div()
+                    .px_3()
+                    .py_0p5()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("No .sppkg package built yet (gulp package-solution --ship)"),
+            );
+        } else {
             for f in &self.sppkg_files {
                 let fname = std::path::Path::new(f)
                     .file_name()

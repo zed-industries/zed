@@ -22,8 +22,11 @@
 //! - The Forge "Ecosystem security-findings aggregator" (a host `Dashboard`
 //!   feed) is dropped — this Zed host has no Dashboard consumer, so the panel
 //!   surfaces the local per-package `npm audit` list (`list_audit_vulns`).
-//! - The npm-engine check (`check_engine_compat`) is read from the project's
-//!   `package.json` `engines` vs the active node/npm.
+//! - The engines check (`npm_backend::engine_compat`) compares the active
+//!   node/npm with what the project requires — `.nvmrc`, `.node-version` or
+//!   `package.json` `engines`, the same files the Node panel reads — and says
+//!   which file it came from. A mismatch is a warning while browsing, and
+//!   installing asks for confirmation first (`run_checked`).
 
 use std::path::Path;
 
@@ -527,6 +530,15 @@ impl NpmManagerPanel {
                     }
                 }),
             );
+            // Reads the project's version files, so off the main thread too.
+            let engine = cx
+                .background_spawn({
+                    let root = root.clone();
+                    async move {
+                        Self::compute_engine(&root, node_ver.as_deref(), npm_ver.as_deref())
+                    }
+                })
+                .await;
 
             let _ = cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
@@ -559,8 +571,7 @@ impl NpmManagerPanel {
                         active.installed_loading = false;
                         active.outdated_loading = false;
                         active.audit_loading = false;
-                        active.engine =
-                            Self::compute_engine(&root, node_ver.as_deref(), npm_ver.as_deref());
+                        active.engine = engine;
                         panel.reload_in_flight = false;
                         cx.notify();
                     });
@@ -570,7 +581,8 @@ impl NpmManagerPanel {
         .detach();
     }
 
-    /// `engines.node`/`engines.npm` from package.json vs the active node/npm.
+    /// The active node/npm against what the project requires. Reads the
+    /// project's files: call it off the main thread.
     fn compute_engine(
         root: &str,
         node_ver: Option<&str>,
@@ -579,32 +591,7 @@ impl NpmManagerPanel {
         let (Some(node), Some(npm)) = (node_ver, npm_ver) else {
             return None;
         };
-        let pkg_path = format!("{root}/package.json");
-        let raw = std::fs::read_to_string(&pkg_path).ok();
-        let (node_range, npm_range) = raw
-            .as_deref()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-            .map(|value| {
-                (
-                    value
-                        .pointer("/engines/node")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("*")
-                        .to_string(),
-                    value
-                        .pointer("/engines/npm")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("*")
-                        .to_string(),
-                )
-            })
-            .unwrap_or(("*".to_string(), "*".to_string()));
-        Some(engine_compat(
-            Some(&node_range),
-            Some(&npm_range),
-            &node,
-            &npm,
-        ))
+        Some(engine_compat(Path::new(root), node, npm))
     }
 
     // ── Actions ─────────────────────────────────────────────────────────
@@ -627,7 +614,47 @@ impl NpmManagerPanel {
         cx: &mut Context<Self>,
     ) {
         let label = format!("install {name}");
-        self.run_or_reject(&label, install_args(name, version, dev), window, cx);
+        self.run_checked(&label, install_args(name, version, dev), window, cx);
+    }
+
+    /// Runs an install, asking first when the active Node.js or npm doesn't
+    /// fit what the project requires. Browsing only warns (the status line);
+    /// an install is where a wrong version does lasting harm — a lockfile and
+    /// `node_modules` built for the wrong runtime — so it is confirmed.
+    /// Nothing is asked when it fits, or when that can't be told.
+    fn run_checked(
+        &mut self,
+        label: &str,
+        args: Result<Vec<String>, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(warning) = self
+            .active()
+            .engine
+            .as_ref()
+            .and_then(|engine| engine.install_warning())
+        else {
+            return self.run_or_reject(label, args, window, cx);
+        };
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Run {label} with an unsupported version?"),
+            Some(&warning),
+            &["Run anyway", "Cancel"],
+            cx,
+        );
+        let label = label.to_string();
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            this.update_in(cx, |this, window, cx| {
+                this.run_or_reject(&label, args, window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Updates an installed package to the given version in the active project
@@ -675,7 +702,7 @@ impl NpmManagerPanel {
     /// installing each to its latest in a single Script Runner run.
     fn update_all(&mut self, ty: &str, window: &mut Window, cx: &mut Context<Self>) {
         match update_all_args(&self.active().outdated, ty) {
-            Ok(Some(args)) => self.kick_run("update all", args, window, cx),
+            Ok(Some(args)) => self.run_checked("update all", Ok(args), window, cx),
             Ok(None) => {}
             Err(error) => self.reject(error, cx),
         }

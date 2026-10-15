@@ -26,7 +26,7 @@ use gpui_component::{
     spinner::Spinner,
     v_flex,
 };
-use npm_backend::{PackageManager, UpdateKind, classify_update};
+use npm_backend::{PackageManager, UpdateKind, Verdict, classify_update};
 
 use crate::{
     ActSelectedPackage, NpmManagerPanel, OpenSelectedPackage, SelectNextPackage, SelectPrevPackage,
@@ -229,27 +229,25 @@ impl Render for GeneralPage {
                         status.child(div().text_color(theme.danger).truncate().child(err.clone()));
                 }
                 if let Some(engine) = &engine {
-                    let (color, text) = if engine.supported {
-                        (
-                            theme.success,
-                            format!(
-                                "node {} / {} — engines OK",
-                                engine.node_version, engine.npm_version
-                            ),
-                        )
-                    } else {
-                        (
-                            theme.danger,
-                            format!(
-                                "node {} / {} — engines {} require {}",
-                                engine.node_version,
-                                engine.npm_version,
-                                engine.node_range,
-                                engine.node_version
-                            ),
-                        )
+                    // A wrong version is a warning while browsing; installing
+                    // asks first (`NpmManagerPanel::run_checked`).
+                    let (verdict, text) = engine.summary();
+                    let color = match verdict {
+                        Verdict::Fine => theme.success,
+                        Verdict::Unknown => theme.muted_foreground,
+                        Verdict::Problem => theme.warning,
                     };
-                    status = status.child(div().text_color(color).truncate().child(text));
+                    status = status.child(
+                        div()
+                            .id("npm-engine-status")
+                            .text_color(color)
+                            .truncate()
+                            .child(text.clone())
+                            .tooltip(move |window, cx| {
+                                gpui_component::tooltip::Tooltip::new(text.clone())
+                                    .build(window, cx)
+                            }),
+                    );
                 }
                 status
             })

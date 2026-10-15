@@ -1,5 +1,6 @@
-//! Node.js runtime backend — NVM/runtime detection, filesystem helpers, and
-//! package.json editing support.
+//! Node.js runtime backend — runtime detection, filesystem helpers, and
+//! package.json editing support. Node.js versions themselves are managed by
+//! `node_versions`.
 //!
 //! No GPUI, no app-state dependency: every function here takes plain
 //! strings/paths and returns a plain value or `Result` — a host panel wires
@@ -22,12 +23,6 @@ pub struct DirEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_symlink: bool,
-}
-
-#[derive(Serialize, Clone)]
-pub struct NvmVersion {
-    pub version: String,
-    pub current: bool,
 }
 
 /// A directory that looks like a Node project: it directly contains a
@@ -251,82 +246,6 @@ pub fn query_runtime(exe: String) -> Result<String, String> {
     run_captured(&exe, &["--version"])
 }
 
-/// List installed NVM Node versions (`nvm list`), marking the current one.
-pub fn nvm_list() -> Result<Vec<NvmVersion>, String> {
-    let stdout = run_captured("nvm", &["list"])?;
-    Ok(parse_nvm_list(&stdout))
-}
-
-/// Parses `nvm list` output: one version per line, the active one prefixed
-/// with `*`. Lines that don't start with a version number (banners, "No
-/// installations recognized.") are ignored.
-fn parse_nvm_list(stdout: &str) -> Vec<NvmVersion> {
-    stdout
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-            let current = trimmed.starts_with('*');
-            let rest = trimmed.trim_start_matches('*').trim();
-            let version = rest.split_whitespace().next()?;
-            if version.chars().next()?.is_ascii_digit() {
-                Some(NvmVersion {
-                    version: version.to_string(),
-                    current,
-                })
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-/// List NVM versions available to install (`nvm list available`).
-pub fn nvm_list_available() -> Result<Vec<String>, String> {
-    let stdout = run_captured("nvm", &["list", "available"])?;
-    Ok(parse_nvm_list_available(&stdout))
-}
-
-/// Parses the `|`-delimited table `nvm list available` prints, keeping every
-/// cell that starts with a digit (the header and separator rows don't).
-fn parse_nvm_list_available(stdout: &str) -> Vec<String> {
-    let mut versions: Vec<String> = Vec::new();
-    for line in stdout.lines() {
-        if !line.contains('|') {
-            continue;
-        }
-        for cell in line.split('|') {
-            let v = cell.trim();
-            if v.chars()
-                .next()
-                .map(|c| c.is_ascii_digit())
-                .unwrap_or(false)
-            {
-                versions.push(v.to_string());
-            }
-        }
-    }
-    versions
-}
-
-/// Switch NVM to a specific version (`nvm use <version>`).
-pub fn nvm_use(version: &str) -> Result<String, String> {
-    run_captured("nvm", &["use", version])
-}
-
-/// Install an NVM version (`nvm install <version>`).
-pub fn nvm_install(version: &str) -> Result<String, String> {
-    run_captured("nvm", &["install", version])
-}
-
-/// Uninstall an NVM version (`nvm uninstall <version>`). The version must be
-/// an exact, already-installed version — no "latest"/"lts" aliases.
-pub fn nvm_uninstall(version: &str) -> Result<String, String> {
-    run_captured("nvm", &["uninstall", version])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,46 +258,6 @@ mod tests {
         let mut names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();
         names.sort();
         names
-    }
-
-    #[test]
-    fn nvm_list_marks_the_current_version() {
-        let stdout = "\n    21.6.1\n  * 20.11.0 (Currently using 64-bit executable)\n    18.19.0\n";
-        let versions = parse_nvm_list(stdout);
-        let summary: Vec<_> = versions
-            .iter()
-            .map(|v| (v.version.as_str(), v.current))
-            .collect();
-        assert_eq!(
-            summary,
-            vec![("21.6.1", false), ("20.11.0", true), ("18.19.0", false)]
-        );
-    }
-
-    #[test]
-    fn nvm_list_ignores_lines_that_are_not_versions() {
-        assert!(parse_nvm_list("").is_empty());
-        assert!(parse_nvm_list("No installations recognized.\n").is_empty());
-        assert!(parse_nvm_list("'nvm' is not recognized as an internal or external command").is_empty());
-    }
-
-    #[test]
-    fn nvm_list_available_reads_every_version_cell() {
-        let stdout = "
-|   CURRENT    |     LTS      |  OLD STABLE  | OLD UNSTABLE |
-|--------------|--------------|--------------|--------------|
-|    21.6.1    |   20.11.0    |   0.12.18    |   0.11.16    |
-|    21.6.0    |   20.10.0    |   0.12.17    |   0.11.15    |
-
-This is a partial list. For a complete list, visit https://nodejs.org/en/download/releases
-";
-        assert_eq!(
-            parse_nvm_list_available(stdout),
-            vec![
-                "21.6.1", "20.11.0", "0.12.18", "0.11.16", "21.6.0", "20.10.0", "0.12.17", "0.11.15"
-            ]
-        );
-        assert!(parse_nvm_list_available("no table here").is_empty());
     }
 
     #[test]

@@ -12777,6 +12777,7 @@ name = "node_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "db",
  "flows_panel",
  "fs",
  "gpui",
@@ -12931,6 +12932,7 @@ dependencies = [
 name = "npm_backend"
 version = "0.1.0"
 dependencies = [
+ "ide_env",
  "log",
  "semver",
  "serde",

@@ -87,8 +87,10 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
 };
 
-/// How often the local Python-process poll re-scans the system.
-const PYTHON_PROCS_TICK_INTERVAL: Duration = Duration::from_secs(2);
+/// How often the local Python-process poll re-scans the system while the
+/// list is on screen. It isn't run at all while the panel is hidden or the
+/// section collapsed (see `PythonPanel::update_procs_poll`).
+const PYTHON_PROCS_TICK_INTERVAL: Duration = Duration::from_secs(3);
 
 /// One Python-related process row — a process whose name contains "python"
 /// (case-insensitive).
@@ -283,7 +285,11 @@ pub struct PythonPanel {
     /// manifest changes on disk.
     _data_reload_task: Option<gpui::Task<()>>,
 
-    _procs_poll: gpui::Task<()>,
+    /// The process poll, running only while the list is on screen: the panel
+    /// shown in its dock and the Processes section open. Dropping it stops it.
+    _procs_poll: Option<gpui::Task<()>>,
+    /// Whether the dock is showing this panel (`Panel::set_active`).
+    panel_active: bool,
 }
 
 /// The opened project's first worktree, which the scan is rooted on — the
@@ -479,7 +485,9 @@ impl PythonPanel {
                 open,
                 _rescan_task: None,
                 _data_reload_task: None,
-                _procs_poll: Self::spawn_processes_poll(cx),
+                // Started when the panel is first shown (`set_active`).
+                _procs_poll: None,
+                panel_active: false,
             };
 
             if !cwd.is_empty() {
@@ -687,9 +695,26 @@ impl PythonPanel {
         *self.open.get(key).unwrap_or(&default)
     }
 
-    fn toggle(&mut self, key: &str) {
+    fn toggle(&mut self, key: &str, cx: &mut Context<Self>) {
         let e = self.open.entry(key.to_string()).or_insert(true);
         *e = !*e;
+        if key == "Processes" {
+            self.update_procs_poll(cx);
+        }
+        cx.notify();
+    }
+
+    /// Runs the process poll only while its list is on screen: the panel shown
+    /// and the Processes section open. Starting it scans at once, so the list
+    /// is current as soon as it appears; stopping it (dropping the task) ends
+    /// the scans. Nothing else reads the list, so nothing misses an update.
+    fn update_procs_poll(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.panel_active && self.is_open("Processes", true);
+        if !wanted {
+            self._procs_poll = None;
+        } else if self._procs_poll.is_none() {
+            self._procs_poll = Some(Self::spawn_processes_poll(cx));
+        }
     }
 
     /// The directory quick actions/reloads operate on: the selected
@@ -1171,6 +1196,11 @@ impl EventEmitter<PanelEvent> for PythonPanel {}
 impl Panel for PythonPanel {
     fn persistent_name() -> &'static str {
         "Python Panel"
+    }
+
+    fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.panel_active = active;
+        self.update_procs_poll(cx);
     }
 
     fn panel_key() -> &'static str {
@@ -2526,8 +2556,8 @@ fn section_container(
         .when(count > 0, |el| {
             el.child(Tag::secondary().xsmall().child(count.to_string()))
         })
-        .on_click(cx.listener(move |this, _e, _w, _cx| {
-            this.toggle(&key);
+        .on_click(cx.listener(move |this, _e, _w, cx| {
+            this.toggle(&key, cx);
         }));
 
     Collapsible::new()

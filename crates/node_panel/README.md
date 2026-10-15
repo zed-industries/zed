@@ -116,7 +116,9 @@ rescanning: `node_version()`, `detected_projects()`, `outdated_count()`,
 
 The process list is this panel's own lightweight `sysinfo` poll filtered by
 process name; Forge fed it from the Cockpit's broadcast tick, which does not
-exist here.
+exist here. It runs every 3 seconds, and only while the list is on screen:
+hiding the panel or collapsing **Processes** stops it, and showing it again
+refreshes at once. The Python panel's process list works the same way.
 
 ## Development
 

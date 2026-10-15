@@ -32,7 +32,7 @@ Each project has five pages in the left sidebar:
 
 | Page | What it does |
 | --- | --- |
-| General | Detected package manager and the `engines` check against your active Node/npm |
+| General | Detected package manager, and whether your active Node/npm fits what the project requires (`.nvmrc`, `.node-version` or `engines`, naming the file). A mismatch is a warning here, and installs ask before running |
 | Search | Search npmjs.com; **Install** from results, **Load more** to page |
 | Installed | Installed packages; **Remove** |
 | Updates | Outdated packages; **Update** |

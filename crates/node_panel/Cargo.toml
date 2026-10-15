@@ -13,6 +13,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+db.workspace = true
 flows_panel.workspace = true
 fs.workspace = true
 gpui.workspace = true

@@ -16,7 +16,13 @@ use std::process::{Command, Stdio};
 
 use semver::{Version, VersionReq};
 
+mod engines;
 mod path_env;
+
+pub use engines::{
+    EngineCompat, NodeRequirement, RequirementCheck, Verdict, engine_compat, node_requirement,
+    npm_range_matches,
+};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -67,15 +73,6 @@ pub enum UpdateKind {
     Major,
     /// Target is the current
     Current,
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct EngineCompat {
-    pub supported: bool,
-    pub node_range: String,
-    pub npm_range: String,
-    pub node_version: String,
-    pub npm_version: String,
 }
 
 /// Which package manager a project signals via its lockfile.
@@ -146,9 +143,12 @@ pub struct NpmPackageDetails {
 /// Runs the package manager CLI in `project_root` with `args`, returning
 /// captured stdout on success. Stderr is folded into the error string.
 ///
-/// On Windows the child is spawned with `CREATE_NO_WINDOW` to avoid a console
-/// flash, and the current Node runtime dir is prepended to `PATH` so the CLI
-/// can resolve its shell/Node dependencies (see `path_env`).
+/// Its `PATH` is the one `npm run` would give a script: the project's
+/// `node_modules/.bin` first, then the IDE's own runtimes (the built-in
+/// Node.js picked in the Node panel), then the machine's (see
+/// `path_env::path_with_node`). So this runs under the same Node.js as the
+/// IDE's terminals and scripts. On Windows the child is spawned with
+/// `CREATE_NO_WINDOW` to avoid a console flash.
 pub fn run_npm_cli(
     project_root: &str,
     cli_name: &str,
@@ -604,17 +604,11 @@ pub fn parse_npm_downloads(json: &serde_json::Value) -> Option<u64> {
     json.get("downloads").and_then(|v| v.as_u64())
 }
 
-/// Whether the active `node_version` satisfies the package's `engines.node`
-/// range. `None` when either side can't be parsed (which also covers
-/// `||`-joined ranges, which `semver` doesn't understand).
+/// Whether the active `node_version` satisfies a package's `engines.node`
+/// range, read the npm way (see [`npm_range_matches`]). `None` when either
+/// side can't be read, never a guess.
 pub fn node_engine_compatible(node_version: &str, range: &str) -> Option<bool> {
-    if range.trim().is_empty() || range.trim() == "*" {
-        return Some(true);
-    }
-    let (Ok(ver), Ok(req)) = (Version::parse(node_version), VersionReq::parse(range)) else {
-        return None;
-    };
-    Some(req.matches(&ver))
+    npm_range_matches(node_version, range)
 }
 
 /// The peer-dependency constraints in `peers` that the *installed* packages
@@ -692,35 +686,6 @@ pub fn peer_conflicts_for(
         .collect()
 }
 
-/// Engine check: `engines.node` / `engines.npm` from package.json vs the
-/// currently active node/npm. Missing engines ⇒ always supported.
-pub fn engine_compat(
-    engines_node: Option<&str>,
-    engines_npm: Option<&str>,
-    node_version: &str,
-    npm_version: &str,
-) -> EngineCompat {
-    let node_ver = Version::parse(node_version).unwrap_or_else(|_| Version::new(0, 0, 0));
-    let npm_ver = Version::parse(npm_version).unwrap_or_else(|_| Version::new(0, 0, 0));
-    let supported = match engines_node {
-        Some(range) => VersionReq::parse(range)
-            .map(|req| req.matches(&node_ver))
-            .unwrap_or(true),
-        None => true,
-    } && match engines_npm {
-        Some(range) => VersionReq::parse(range)
-            .map(|req| req.matches(&npm_ver))
-            .unwrap_or(true),
-        None => true,
-    };
-    EngineCompat {
-        supported,
-        node_range: engines_node.unwrap_or("*").to_string(),
-        npm_range: engines_npm.unwrap_or("*").to_string(),
-        node_version: node_version.to_string(),
-        npm_version: npm_version.to_string(),
-    }
-}
 
 /// Best-effort version of the active node/npm, parsing the `vX.Y.Z` prefix
 /// out of their `--version` output.
@@ -1080,9 +1045,12 @@ mod tests {
         assert_eq!(node_engine_compatible("20.11.0", " * "), Some(true));
         assert_eq!(node_engine_compatible("20.11.0", ">=18"), Some(true));
         assert_eq!(node_engine_compatible("16.20.0", ">=18"), Some(false));
-        // Unknown rather than a guess when either side can't be parsed.
-        assert_eq!(node_engine_compatible("20.11.0", "^18 || ^20"), None);
+        // npm's own syntax: alternatives and space-separated conditions.
+        assert_eq!(node_engine_compatible("20.11.0", "^18 || ^20"), Some(true));
+        assert_eq!(node_engine_compatible("22.22.3", ">=18.17.1 <19.0.0"), Some(false));
+        // Unknown rather than a guess when either side can't be read.
         assert_eq!(node_engine_compatible("v20", ">=18"), None);
+        assert_eq!(node_engine_compatible("20.11.0", "lts/iron"), None);
     }
 
     #[test]
@@ -1132,26 +1100,6 @@ mod tests {
         assert_eq!(classify_update("github:user/repo", "1.0.0"), UpdateKind::Major);
     }
 
-    #[test]
-    fn engine_compat_checks_both_node_and_npm() {
-        let ok = engine_compat(Some(">=18"), Some(">=9"), "20.11.0", "10.2.4");
-        assert!(ok.supported);
-        assert_eq!(ok.node_range, ">=18");
-        assert_eq!(ok.npm_range, ">=9");
-        assert_eq!(ok.node_version, "20.11.0");
-        assert_eq!(ok.npm_version, "10.2.4");
-
-        assert!(!engine_compat(Some(">=22"), None, "20.11.0", "10.2.4").supported);
-        assert!(!engine_compat(Some(">=18"), Some(">=11"), "20.11.0", "10.2.4").supported);
-
-        let unconstrained = engine_compat(None, None, "20.11.0", "10.2.4");
-        assert!(unconstrained.supported);
-        assert_eq!(unconstrained.node_range, "*");
-        assert_eq!(unconstrained.npm_range, "*");
-
-        // A range `semver` can't parse is not held against the project.
-        assert!(engine_compat(Some("^18 || ^20"), None, "16.0.0", "8.0.0").supported);
-    }
 
     #[test]
     fn version_from_cli_output() {
