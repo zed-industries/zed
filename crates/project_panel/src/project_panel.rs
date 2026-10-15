@@ -1168,7 +1168,7 @@ impl ProjectPanel {
                     || (settings.hide_root && visible_worktrees_count == 1));
             let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
 
-            let (has_git_repo, has_history, is_git_ignored) = {
+            let (has_git_repo, has_history) = {
                 let project_path = project::ProjectPath {
                     worktree_id,
                     path: entry.path.clone(),
@@ -1182,10 +1182,10 @@ impl ProjectPanel {
                         .project_path_git_status(&project_path, cx)
                         .is_some_and(|status| status.is_created());
 
-                let is_git_ignored = has_git_repo && worktree.is_path_ignored(&entry.path);
-
-                (has_git_repo, has_history, is_git_ignored)
+                (has_git_repo, has_history)
             };
+
+            let is_path_ignored = worktree.is_path_ignored(&entry.path);
 
             let has_pasteable_content = self.has_pasteable_content(cx);
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
@@ -1256,7 +1256,7 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
-                            .when(has_git_repo, |menu| {
+                            .when(has_git_repo && !is_path_ignored, |menu| {
                                 menu.separator()
                                     .when(!is_dir && self.has_git_changes(entry_id), |menu| {
                                         menu.action(
@@ -1269,18 +1269,18 @@ impl ProjectPanel {
                                         "Add to .git/info/exclude",
                                         Box::new(git::AddToGitInfoExclude),
                                     )
-                                    .when(has_history && !is_git_ignored, |menu| {
+                                    .when(has_history, |menu| {
                                         menu.action("View History", Box::new(git::FileHistory))
-                                    })
-                                    .when(!is_dir && !is_git_ignored, |menu| {
-                                        menu.action(
-                                            "Open File Permalink",
-                                            git::OpenFilePermalink.boxed_clone(),
-                                        )
-                                        .action(
-                                            "Copy File Permalink",
-                                            git::CopyFilePermalink.boxed_clone(),
-                                        )
+                                            .when(!is_dir, |menu| {
+                                                menu.action(
+                                                    "Open File Permalink",
+                                                    git::OpenFilePermalink.boxed_clone(),
+                                                )
+                                                .action(
+                                                    "Copy File Permalink",
+                                                    git::CopyFilePermalink.boxed_clone(),
+                                                )
+                                            })
                                     })
                             })
                             .when(!should_hide_rename, |menu| {
