@@ -369,7 +369,7 @@ mod tests {
         futures::pin_mut!(future, timeout);
         match futures::future::select(future, timeout).await {
             futures::future::Either::Left((result, _)) => result,
-            futures::future::Either::Right(_) => panic!("timed out during v2 request exchange"),
+            futures::future::Either::Right(_) => panic!("timed out during ACP v2 exchange"),
         }
     }
 
