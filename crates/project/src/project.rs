@@ -5143,37 +5143,6 @@ impl Project {
         })
     }
 
-    pub fn load_image_at_abs_path(
-        &self,
-        path: &str,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Arc<gpui::Image>>>> {
-        let resolve = self.resolve_abs_file_link(path, cx);
-        cx.spawn(async move |project, cx| {
-            let Some(resolved_path) = resolve.await? else {
-                return Ok(None);
-            };
-            match resolved_path {
-                ResolvedPath::ProjectPath { project_path, .. } => {
-                    let open_image =
-                        project.update(cx, |project, cx| project.open_image(project_path, cx))?;
-                    let image = open_image.await?;
-                    Ok(Some(image.read_with(cx, |image, _| image.image.clone())))
-                }
-                ResolvedPath::AbsPath { path, .. } => {
-                    let (fs, is_local) = project
-                        .read_with(cx, |project, _| (project.fs().clone(), project.is_local()))?;
-                    anyhow::ensure!(
-                        is_local,
-                        "cannot load an image outside the project's worktrees over a remote connection: {path}"
-                    );
-                    let bytes = fs.load_bytes(Path::new(&path)).await?;
-                    Ok(Some(image_store::create_gpui_image(bytes)?))
-                }
-            }
-        })
-    }
-
     pub fn resolve_image_at_abs_path(
         &self,
         path: &str,

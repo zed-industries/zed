@@ -389,47 +389,6 @@ async fn test_resolve_abs_file_link_rejects_non_utf8_target(cx: &mut gpui::TestA
 }
 
 #[gpui::test]
-async fn test_load_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-    let image_bytes = "P3\n1 1\n255\n255 0 0\n";
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/project"),
-        json!({
-            "docs": {"shot.ppm": image_bytes},
-            "sub": {},
-        }),
-    )
-    .await;
-    fs.insert_tree(path!("/outside"), json!({"shot.ppm": image_bytes}))
-        .await;
-    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-
-    for path in [
-        path!("/project/docs/shot.ppm"),
-        path!("/project/sub/../docs/shot.ppm"),
-        path!("/outside/shot.ppm"),
-        path!("/project/../outside/shot.ppm"),
-    ] {
-        let image = project
-            .update(cx, |project, cx| project.load_image_at_abs_path(path, cx))
-            .await
-            .unwrap()
-            .unwrap_or_else(|| panic!("{path} should load"));
-        assert_eq!(image.format, gpui::ImageFormat::Pnm, "{path}");
-        assert_eq!(image.bytes, image_bytes.as_bytes(), "{path}");
-    }
-
-    for path in [path!("/project/docs"), path!("/project/missing.ppm")] {
-        let image = project
-            .update(cx, |project, cx| project.load_image_at_abs_path(path, cx))
-            .await
-            .unwrap();
-        assert!(image.is_none(), "{path}");
-    }
-}
-
-#[gpui::test]
 async fn test_resolve_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let image_bytes = "P3\n1 1\n255\n255 0 0\n";
