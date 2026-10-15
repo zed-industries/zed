@@ -6403,9 +6403,12 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> Submission {
-        if let Some(submissions) = self.submissions.receipt_transport() {
-            let response = submissions.prompt(message.clone(), cx);
-            self.submit_receipt(message, response, cx)
+        if let Some(submissions) = self.submissions.receipt_transport().cloned() {
+            let id = self.register_submission(message.clone().into(), cx);
+            let response = submissions.submit(message, cx);
+            self.track_submission(id, cx, async move |_, _| {
+                Ok(Some(SubmissionResponse::Accepted(response.await?)))
+            })
         } else {
             let id = self.register_submission(message.clone().into(), cx);
             self.send_inner(id, message, push_user_message, cx)

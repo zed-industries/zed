@@ -4,7 +4,10 @@ use super::{
     enqueue_notification, first_class_terminal_auth_task, map_acp_error,
     mcp_configurations_for_project, runtime, transport, with_v2_client_ingress,
 };
-use acp_thread::{AcpThread, AgentConnection, AgentSessionConfigOptions, ElicitationStore};
+use acp_thread::{
+    AcpThread, AgentConnection, AgentSessionConfigOptions, ElicitationStore,
+    ReceiptSessionSubmissions, SubmissionDisconnected,
+};
 use action_log::ActionLog;
 use agent_client_protocol::{
     Agent, Client, ConnectTo, JsonRpcRequest, Lines, V2ConnectionTo,
@@ -12,8 +15,12 @@ use agent_client_protocol::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use futures::{FutureExt as _, channel::mpsc, future::Shared};
-use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntity};
+use futures::{
+    FutureExt as _,
+    channel::mpsc,
+    future::{LocalBoxFuture, Shared},
+};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use project::{AgentId, AgentServerStore, Project, agent_server_store::AgentServerCommand};
 use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 use task::SpawnInTerminal;
@@ -48,7 +55,28 @@ fn finish_request(request_id: acp::RequestId, cx: &mut AsyncApp, context: &Clien
     });
 }
 
-/// An unselected v2 backend with initialization, auth and initial session/config support.
+#[derive(Debug, thiserror::Error)]
+#[error("ACP ordered response callback ended")]
+struct ResponseCallbackDropped;
+
+fn validate_prompt_content(
+    capabilities: &acp::PromptCapabilities,
+    content: &[acp::ContentBlock],
+) -> Result<()> {
+    for block in content {
+        let supported = match block {
+            acp::ContentBlock::Text(_) | acp::ContentBlock::ResourceLink(_) => true,
+            acp::ContentBlock::Image(_) => capabilities.image.is_some(),
+            acp::ContentBlock::Audio(_) => capabilities.audio.is_some(),
+            acp::ContentBlock::Resource(_) => capabilities.embedded_context.is_some(),
+            _ => false,
+        };
+        anyhow::ensure!(supported, "Prompt content is not supported by this agent");
+    }
+    Ok(())
+}
+
+/// An unselected v2 backend with auth, initial sessions/config and receipt-driven prompts.
 pub struct AcpV2Connection {
     id: AgentId,
     connection: V2ConnectionTo<Agent>,
@@ -307,7 +335,19 @@ impl AcpV2Connection {
         if self.initialize_response.capabilities.session.is_none() {
             return Task::ready(Err(anyhow!("Sessions are not advertised by this agent")));
         }
-        self.scoped_request(request, cx)
+        if let Err(error) = self.validate_prompt_content(&request.prompt) {
+            return Task::ready(Err(error));
+        }
+        let response = Self::ordered_request(
+            &self.connection,
+            &self.dispatch_tx,
+            request,
+            || Ok(()),
+            |_| None,
+            |response, _| Ok(response),
+            cx,
+        );
+        cx.foreground_executor().spawn(response)
     }
 
     fn scoped_request<Request: JsonRpcRequest + 'static>(
@@ -425,10 +465,11 @@ impl AcpV2Connection {
         abandoned_session: fn(&Request::Response) -> Option<acp::SessionId>,
         apply: impl FnOnce(Request::Response, &mut AsyncApp) -> Result<Output> + 'static,
         cx: &App,
-    ) -> Task<Result<Output>> {
+    ) -> LocalBoxFuture<'static, Result<Output>> {
         let connection = connection.clone();
         let dispatch_tx = dispatch_tx.clone();
-        cx.spawn(async move |cx| {
+        let mut cx = cx.to_async();
+        async move {
             preflight()?;
             let (sender, received) = futures::channel::oneshot::channel();
             let (applied, application_finished) = futures::channel::oneshot::channel();
@@ -469,12 +510,13 @@ impl AcpV2Connection {
             });
             let response = received
                 .await
-                .context("ACP ordered response callback ended")?
+                .context(ResponseCallbackDropped)?
                 .map_err(map_acp_error)?;
-            match apply(response, cx) {
+            match apply(response, &mut cx) {
                 Ok(output) => {
                     enqueue_notification(&dispatch_tx, request_id, finish_request);
-                    // Keep abandonment cleanup armed until the result can be returned without yielding.
+                    // Keep cleanup armed through settlement, then return without yielding
+                    // after releasing SDK ordering so later EOF cannot overtake this result.
                     drain_foreground_queue(&dispatch_tx).await?;
                     applied.send(()).map_err(|_| {
                         anyhow!("ACP response ordering callback ended before application")
@@ -492,7 +534,8 @@ impl AcpV2Connection {
                     Err(error)
                 }
             }
-        })
+        }
+        .boxed_local()
     }
 }
 
@@ -535,7 +578,7 @@ impl AgentConnection for AcpV2Connection {
                 )
                 .collect::<Vec<_>>(),
         );
-        Self::ordered_request(
+        let response = Self::ordered_request(
             &self.connection,
             &self.dispatch_tx,
             request,
@@ -612,7 +655,33 @@ impl AgentConnection for AcpV2Connection {
                 }
             },
             cx,
-        )
+        );
+        cx.foreground_executor().spawn(response)
+    }
+
+    fn receipt_submissions(
+        &self,
+        session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn ReceiptSessionSubmissions>> {
+        let session = self.initialize_response.capabilities.session.as_ref()?;
+        Some(Rc::new(V2SessionSubmissions {
+            session_id: session_id.clone(),
+            sessions: self.sessions.clone(),
+            capabilities: session.prompt.clone().unwrap_or_default(),
+            connection: self.connection.clone(),
+            dispatch_tx: self.dispatch_tx.clone(),
+        }))
+    }
+
+    fn validate_prompt_content(&self, content: &[acp::ContentBlock]) -> Result<()> {
+        let session = self
+            .initialize_response
+            .capabilities
+            .session
+            .as_ref()
+            .context("This agent does not advertise session support")?;
+        validate_prompt_content(&session.prompt.clone().unwrap_or_default(), content)
     }
 
     fn supports_session_additional_directories(&self) -> bool {
@@ -771,7 +840,7 @@ impl AgentSessionConfigOptions for V2SessionConfigOptions {
             let value = value.clone();
             move || this.validate(&config_id, &value)
         };
-        AcpV2Connection::ordered_request(
+        let response = AcpV2Connection::ordered_request(
             &self.connection,
             &self.dispatch_tx,
             acp::SetSessionConfigOptionRequest::new(session_id.clone(), config_id, value),
@@ -800,7 +869,95 @@ impl AgentSessionConfigOptions for V2SessionConfigOptions {
                 Ok(response.config_options)
             },
             cx,
-        )
+        );
+        cx.foreground_executor().spawn(response)
+    }
+}
+
+struct V2SessionSubmissions {
+    session_id: acp::SessionId,
+    sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    capabilities: acp::PromptCapabilities,
+    connection: V2ConnectionTo<Agent>,
+    dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
+}
+
+impl V2SessionSubmissions {
+    fn request(
+        &self,
+        owner: WeakEntity<AcpThread>,
+        content: Vec<acp::ContentBlock>,
+        cx: &App,
+    ) -> LocalBoxFuture<'static, Result<acp::PromptResponse>> {
+        if let Err(error) = validate_prompt_content(&self.capabilities, &content) {
+            return futures::future::ready(Err(error)).boxed_local();
+        }
+        let sessions = self.sessions.clone();
+        let session_id = self.session_id.clone();
+        let connection = self.connection.clone();
+        let response = AcpV2Connection::ordered_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::PromptRequest::new(self.session_id.clone(), content),
+            move || {
+                anyhow::ensure!(
+                    owner.upgrade().is_some()
+                        && sessions
+                            .borrow()
+                            .get(&session_id)
+                            .is_some_and(|session| session.thread.entity_id() == owner.entity_id()),
+                    "Session has been released or replaced"
+                );
+                Ok(())
+            },
+            |_| None,
+            |response, _| Ok(response),
+            cx,
+        );
+        async move {
+            response.await.map_err(|error| {
+                if error.is::<ResponseCallbackDropped>()
+                    || connection.is_incoming_closed()
+                    || error
+                        .downcast_ref::<agent_client_protocol::Error>()
+                        .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+                {
+                    error.context(SubmissionDisconnected)
+                } else {
+                    error
+                }
+            })
+        }
+        .boxed_local()
+    }
+}
+
+impl ReceiptSessionSubmissions for V2SessionSubmissions {
+    fn prompt(
+        &self,
+        content: Vec<acp::ContentBlock>,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
+        let owner = self
+            .sessions
+            .borrow()
+            .get(&self.session_id)
+            .map(|session| session.thread.clone());
+        match owner {
+            Some(owner) => cx
+                .foreground_executor()
+                .spawn(self.request(owner, content, cx)),
+            None => Task::ready(Err(anyhow!("Session has been released"))),
+        }
+    }
+
+    fn submit(
+        &self,
+        content: Vec<acp::ContentBlock>,
+        cx: &mut Context<AcpThread>,
+    ) -> Task<Result<acp::PromptResponse>> {
+        cx.foreground_executor()
+            .spawn(self.request(cx.entity().downgrade(), content, cx))
     }
 }
 
@@ -841,6 +998,7 @@ mod tests {
     struct SessionHarness {
         client: Rc<AcpV2Connection>,
         project: Entity<Project>,
+        prompts: async_channel::Receiver<(acp::PromptRequest, Responder<acp::PromptResponse>)>,
         new_requests: async_channel::Receiver<(acp::NewSessionRequest, acp::RequestId)>,
         new_responses:
             async_channel::Sender<Result<acp::NewSessionResponse, agent_client_protocol::Error>>,
@@ -878,6 +1036,7 @@ mod tests {
                 Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
             >();
             let (close_sender, closes) = async_channel::unbounded();
+            let (prompt_sender, prompts) = async_channel::unbounded();
             let (sender, received) = futures::channel::oneshot::channel();
             let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
             let agent_task = cx.background_spawn(
@@ -958,6 +1117,15 @@ mod tests {
                         },
                         agent_client_protocol::on_receive_request!(),
                     )
+                    .on_receive_request(
+                        async move |request: acp::PromptRequest, responder, _| {
+                            prompt_sender
+                                .try_send((request, responder))
+                                .expect("prompt receiver");
+                            Ok(())
+                        },
+                        agent_client_protocol::on_receive_request!(),
+                    )
                     .connect_with(agent_transport, async move |agent| {
                         assert!(sender.send(agent).is_ok());
                         futures::future::pending::<Result<(), agent_client_protocol::Error>>().await
@@ -980,6 +1148,7 @@ mod tests {
             Self {
                 client: Rc::new(client),
                 project,
+                prompts,
                 new_requests,
                 new_responses,
                 config_requests,
@@ -1048,6 +1217,267 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_receipt_sdk_correlates_echoes_without_completing_activity(cx: &mut TestAppContext) {
+        use acp_thread::{
+            AgentThreadEntry, ForegroundActivity, SubmissionResponse, SubmissionState,
+        };
+        for echo_first in [true, false] {
+            let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+            let thread = harness.thread(cx).await;
+            assert!(thread.read_with(cx, |thread, _| thread.uses_reported_activity()));
+            let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+            harness
+                .agent
+                .send_notification(acp::UpdateSessionNotification::new(
+                    session_id.clone(),
+                    acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                        acp::RunningStateUpdate::new(),
+                    )),
+                ))
+                .expect("autonomous running");
+            cx.run_until_parked();
+            assert_eq!(
+                thread.read_with(cx, |thread, _| thread.foreground_activity()),
+                ForegroundActivity::Running
+            );
+            let content = vec![acp::ContentBlock::from("question")];
+            let submission = thread.update(cx, |thread, cx| thread.send(content.clone(), cx));
+            let submission_id = submission.id;
+            let (request, responder) = bounded(harness.prompts.recv(), cx).await.expect("prompt");
+            assert_eq!(request.prompt, content);
+            assert_eq!(request.session_id, session_id);
+            let echo = acp::UpdateSessionNotification::new(
+                session_id.clone(),
+                acp::SessionUpdate::UserMessage(
+                    acp::UserMessage::new("message").content(content.clone()),
+                ),
+            );
+            if echo_first {
+                harness
+                    .agent
+                    .send_notification(echo.clone())
+                    .expect("early echo");
+            }
+            let receipt = acp::PromptResponse::new("message").meta(meta("receipt"));
+            responder.respond(receipt.clone()).expect("acceptance");
+            assert!(matches!(bounded(submission, cx).await.expect("receipt"),
+                Some(SubmissionResponse::Accepted(accepted)) if accepted == receipt));
+            if !echo_first {
+                thread.read_with(cx, |thread, _| {
+                    assert!(matches!(
+                        thread.submission(submission_id).expect("un-echoed").state,
+                        SubmissionState::Accepted { echoed: false, .. }
+                    ));
+                });
+                harness.agent.send_notification(echo).expect("late echo");
+            }
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                let [AgentThreadEntry::UserMessage(message)] = thread.entries() else {
+                    panic!("one authoritative user message");
+                };
+                assert_eq!(message.content.source_blocks(), content.as_slice());
+                assert!(matches!(
+                    thread.submission(submission_id).expect("echoed").state,
+                    SubmissionState::Accepted { echoed: true, .. }
+                ));
+                assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            });
+            for state in [
+                acp::StateUpdate::RequiresAction(acp::RequiresActionStateUpdate::new()),
+                acp::StateUpdate::Idle(
+                    acp::IdleStateUpdate::new().stop_reason(acp::StopReason::EndTurn),
+                ),
+            ] {
+                harness
+                    .agent
+                    .send_notification(acp::UpdateSessionNotification::new(
+                        session_id.clone(),
+                        acp::SessionUpdate::StateUpdate(state),
+                    ))
+                    .expect("reported state with no prompt RPC");
+                cx.run_until_parked();
+            }
+            assert_eq!(
+                thread.read_with(cx, |thread, _| thread.foreground_activity()),
+                ForegroundActivity::Idle
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_receipt_sdk_distinguishes_preflight_rejection_and_transport_loss(
+        cx: &mut TestAppContext,
+    ) {
+        use acp_thread::{SubmissionDisconnected, SubmissionState};
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let unsupported: acp::ContentBlock = serde_json::from_value(json!({
+            "type": "image", "data": "AA==", "mimeType": "image/png"
+        }))
+        .expect("image content");
+        let submission = thread.update(cx, |thread, cx| thread.send(vec![unsupported], cx));
+        assert!(bounded(submission, cx).await.is_err());
+        assert!(harness.prompts.is_empty(), "preflight must not publish");
+        let rejected = thread.update(cx, |thread, cx| thread.send(vec!["rejected".into()], cx));
+        let rejected_id = rejected.id;
+        let (_, responder) = bounded(harness.prompts.recv(), cx).await.expect("prompt");
+        let rejection =
+            agent_client_protocol::Error::invalid_params().data(json!({"reason": "not inserted"}));
+        responder
+            .respond_with_error(rejection.clone())
+            .expect("reject");
+        let error = bounded(rejected, cx).await.expect_err("wire rejection");
+        assert_eq!(
+            error.downcast_ref::<agent_client_protocol::Error>(),
+            Some(&rejection)
+        );
+        let pending = thread.update(cx, |thread, cx| thread.send(vec!["unknown".into()], cx));
+        let pending_id = pending.id;
+        let (_, _responder) = bounded(harness.prompts.recv(), cx)
+            .await
+            .expect("pending prompt");
+        drop(harness._agent_task);
+        drop(harness.agent);
+        let error = bounded(pending, cx).await.expect_err("EOF");
+        assert!(
+            error.is::<SubmissionDisconnected>()
+                || error
+                    .downcast_ref::<agent_client_protocol::Error>()
+                    .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+        );
+        bounded(harness.client.connection.incoming_closed(), cx).await;
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.submission(rejected_id).expect("rejection").state,
+                SubmissionState::Failed(_)
+            ));
+            assert!(matches!(
+                thread.submission(pending_id).expect("uncertain").state,
+                SubmissionState::Disconnected { receipt: None }
+            ));
+            assert!(!thread.has_unsettled_submissions());
+        });
+        assert!(harness.prompts.is_empty(), "loss must not resend");
+    }
+
+    #[gpui::test]
+    async fn v2_receipt_sdk_rechecks_owner_before_publication(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        harness.client.sessions.borrow_mut().clear();
+        let replacement = harness.thread(cx).await;
+        let stale = thread.update(cx, |thread, cx| thread.send(vec!["stale owner".into()], cx));
+        cx.run_until_parked();
+        assert!(
+            harness.prompts.is_empty(),
+            "a stale owner cannot submit through its replacement"
+        );
+        assert!(bounded(stale, cx).await.is_err());
+
+        let submission =
+            replacement.update(cx, |thread, cx| thread.send(vec!["not sent".into()], cx));
+        harness.client.sessions.borrow_mut().clear();
+        assert!(bounded(submission, cx).await.is_err());
+        assert!(harness.prompts.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn v2_receipt_stdio_preserves_acceptance_before_immediate_eof(cx: &mut TestAppContext) {
+        use acp_thread::{SubmissionResponse, SubmissionState};
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            release_channel::init("0.0.0".parse().expect("version"), cx);
+        });
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("working directory");
+        let project = Project::example([directory.path()], &mut cx.to_async()).await;
+        let client = bounded(AcpV2Connection::stdio(
+            AgentId::new("receipt-stdio"), project.clone(),
+            AgentServerCommand {
+                path: "/bin/sh".into(),
+                args: vec!["-c".into(), r#"
+while IFS= read -r request; do
+    id=${request#*\"id\":}
+    id=${id%%,*}
+    case "$request" in
+        *'"method":"initialize"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"info":{"name":"receipt-agent","version":"1"},"capabilities":{"session":{}}}}\n' "$id"
+            ;;
+        *'"method":"session/new"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"stdio-session"}}\n' "$id"
+            ;;
+        *'"method":"session/prompt"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"messageId":"accepted","_meta":{"scope":"receipt"}}}\n' "$id"
+            exit 0
+            ;;
+        *) exit 43 ;;
+    esac
+done
+"#.into()],
+                env: None,
+            },
+            WeakEntity::new_invalid(), &mut cx.to_async(),
+        ), cx).await.expect("stdio connection");
+        let client = Rc::new(client);
+        let creation = cx.update(|cx| {
+            client
+                .clone()
+                .new_session(project, PathList::new(&[directory.path()]), cx)
+        });
+        let thread = bounded(creation, cx).await.expect("stdio owner");
+        let submission = thread.update(cx, |thread, cx| thread.send(vec!["question".into()], cx));
+        let id = submission.id;
+        let expected = acp::PromptResponse::new("accepted").meta(meta("receipt"));
+        assert!(
+            matches!(bounded(submission, cx).await.expect("acceptance before EOF"),
+            Some(SubmissionResponse::Accepted(receipt)) if receipt == expected)
+        );
+        bounded(client.connection.incoming_closed(), cx).await;
+        bounded(drain_foreground_queue(&client.dispatch_tx), cx)
+            .await
+            .expect("disconnect barrier");
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                matches!(&thread.submission(id).expect("retained acceptance").state,
+                SubmissionState::Disconnected { receipt: Some(receipt) } if receipt == &expected)
+            );
+            assert!(!thread.has_unsettled_submissions());
+        });
+    }
+
+    #[test]
+    fn v2_receipt_content_extensions_require_capabilities() {
+        for (block, capabilities) in [
+            (
+                json!({"type":"image","data":"AA==","mimeType":"image/png"}),
+                acp::PromptCapabilities::new().image(acp::PromptImageCapabilities::new()),
+            ),
+            (
+                json!({"type":"audio","data":"AA==","mimeType":"audio/wav"}),
+                acp::PromptCapabilities::new().audio(acp::PromptAudioCapabilities::new()),
+            ),
+            (
+                json!({"type":"resource","resource":{"uri":"file:///context","text":"context"}}),
+                acp::PromptCapabilities::new()
+                    .embedded_context(acp::PromptEmbeddedContextCapabilities::new()),
+            ),
+        ] {
+            let block = serde_json::from_value(block).expect("prompt block");
+            assert!(
+                validate_prompt_content(
+                    &acp::PromptCapabilities::default(),
+                    std::slice::from_ref(&block)
+                )
+                .is_err()
+            );
+            assert!(validate_prompt_content(&capabilities, &[block]).is_ok());
+        }
+    }
+
+    #[gpui::test]
     async fn v2_session_sdk_registers_initial_state_before_immediate_notifications(
         cx: &mut TestAppContext,
     ) {
@@ -1099,8 +1529,9 @@ mod tests {
                 harness
                     .client
                     .receipt_submissions(thread.session_id(), cx)
-                    .is_none()
+                    .is_some()
             );
+            assert!(thread.uses_reported_activity());
             assert!(
                 !harness.client.supports_load_session() && !harness.client.supports_close_session()
             );

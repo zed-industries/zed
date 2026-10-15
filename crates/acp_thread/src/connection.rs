@@ -3,7 +3,7 @@ use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
-use gpui::{Entity, SharedString, Task};
+use gpui::{Context, Entity, SharedString, Task};
 use language_model::DisabledReason;
 use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
@@ -196,6 +196,8 @@ pub trait AgentConnection {
         None
     }
 
+    /// Selected during thread construction, before backend registration may be complete.
+    /// Validate the submitting owner when publishing, not when selecting this capability.
     fn receipt_submissions(
         &self,
         _session_id: &acp_v2::SessionId,
@@ -326,6 +328,18 @@ pub trait ReceiptSessionSubmissions {
         content: Vec<acp_v2::ContentBlock>,
         cx: &mut App,
     ) -> Task<Result<acp_v2::PromptResponse>>;
+
+    /// Called in the submitting owner's context so transports can bind publication
+    /// to that owner, even when the capability was selected before registration.
+    /// Ordered transports must not yield between releasing their response barrier
+    /// and completing this task, or subsequent EOF may overtake the receipt.
+    fn submit(
+        &self,
+        content: Vec<acp_v2::ContentBlock>,
+        cx: &mut Context<AcpThread>,
+    ) -> Task<Result<acp_v2::PromptResponse>> {
+        self.prompt(content, cx)
+    }
 
     fn supports_retry(&self) -> bool {
         false
