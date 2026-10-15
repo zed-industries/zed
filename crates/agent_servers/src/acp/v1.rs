@@ -2841,6 +2841,36 @@ mod tests {
             }
         }
 
+        async fn receipt_session(
+            &self,
+            session_id: &str,
+            cx: &mut gpui::TestAppContext,
+        ) -> Entity<AcpThread> {
+            let (project, work_dirs) = self.thread.read_with(cx, |thread, _| {
+                (
+                    thread.project().clone(),
+                    thread.work_dirs().cloned().expect("working directories"),
+                )
+            });
+            let session_id = acp_v2::SessionId::new(session_id);
+            let connection = Rc::new(
+                acp_thread::StubAgentConnection::new()
+                    .with_receipt_submissions(true)
+                    .with_supports_load_session(true),
+            );
+            let thread = cx
+                .update(|cx| {
+                    connection.load_session(session_id.clone(), project, work_dirs, None, cx)
+                })
+                .await
+                .expect("receipt-capable model session");
+            cx.update(|cx| {
+                self.connection
+                    .register_session(session_id, &thread, None, None, None, cx);
+            });
+            thread
+        }
+
         fn send(&self, update: serde_json::Value, envelope_meta: Option<acp_v2::Meta>) {
             self.send_to("v2-terminal-session", update, envelope_meta);
         }
@@ -4880,6 +4910,206 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_state_sdk_reports_activity_without_prompt_submission(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use acp_thread::{AcpThreadEvent, ForegroundActivity};
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let thread = harness.receipt_session("reported-session", cx).await;
+        let stops = Rc::new(RefCell::new(Vec::new()));
+        let phases = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let stops = stops.clone();
+            let phases = phases.clone();
+            cx.subscribe(&thread, move |thread, event, cx| match event {
+                AcpThreadEvent::Stopped { stop_reason, .. } => {
+                    stops.borrow_mut().push(stop_reason.clone());
+                }
+                AcpThreadEvent::StatusChanged => {
+                    phases
+                        .borrow_mut()
+                        .push(thread.read(cx).foreground_activity());
+                }
+                _ => {}
+            })
+        });
+        for (state, phase) in [
+            (
+                json!({"state": "running", "_meta": {"scope": "state"}}),
+                ForegroundActivity::Running,
+            ),
+            (
+                json!({"state": "requires_action"}),
+                ForegroundActivity::RequiresAction,
+            ),
+            (json!({"state": "running"}), ForegroundActivity::Running),
+            (
+                json!({"state": "idle", "stopReason": "end_turn",
+                "usage": {"totalTokens": 26, "inputTokens": 17, "outputTokens": 9},
+                "_meta": {"scope": "idle"}}),
+                ForegroundActivity::Idle,
+            ),
+            (json!({"state": "idle"}), ForegroundActivity::Idle),
+            (
+                json!({"state": "_future_activity", "payload": {"retain": [null, 7]},
+                "_meta": {"scope": "future"}}),
+                ForegroundActivity::Running,
+            ),
+            (
+                json!({"state": "idle", "stopReason": "error",
+                "error": {"code": -32603, "message": "execution failed"}}),
+                ForegroundActivity::Idle,
+            ),
+        ] {
+            let expected: acp_v2::StateUpdate =
+                serde_json::from_value(state.clone()).expect("reported state");
+            let mut update = state;
+            update["sessionUpdate"] = json!("state_update");
+            harness.send_to(
+                "reported-session",
+                update,
+                Some(v2_terminal_meta("delivery")),
+            );
+            harness.drain(cx).await;
+            thread.read_with(cx, |thread, _| {
+                assert!(thread.uses_reported_activity());
+                assert_eq!(thread.foreground_activity(), phase);
+                assert_eq!(thread.foreground_state(), &expected);
+                assert!(thread.latest_submission_id().is_none());
+                assert!(!thread.has_unsettled_submissions());
+                assert!(thread.entries().is_empty());
+            });
+        }
+        assert_eq!(
+            *phases.borrow(),
+            [
+                ForegroundActivity::Running,
+                ForegroundActivity::RequiresAction,
+                ForegroundActivity::Running,
+                ForegroundActivity::Idle,
+                ForegroundActivity::Running,
+                ForegroundActivity::Idle,
+            ]
+        );
+        let stops = stops.borrow();
+        assert_eq!(stops.len(), 2);
+        assert_eq!(stops.first(), Some(&Some(acp_v2::StopReason::EndTurn)));
+        assert!(matches!(
+            stops.last(),
+            Some(Some(acp_v2::StopReason::Error(_)))
+        ));
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.had_error());
+            assert_eq!(thread.activity_generation(), 2);
+            let usage = thread.token_usage().expect("reported idle usage");
+            assert_eq!(usage.input_tokens, 17);
+            assert_eq!(usage.output_tokens, 9);
+        });
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_state_sdk_routes_only_to_live_receipt_owners(cx: &mut gpui::TestAppContext) {
+        use acp_thread::ForegroundActivity;
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        let first = harness.receipt_session("first", cx).await;
+        let second = harness.receipt_session("second", cx).await;
+        for (session_id, state) in [
+            ("first", "running"),
+            ("second", "requires_action"),
+            ("unknown", "running"),
+            ("v2-terminal-session", "running"),
+        ] {
+            harness.send_to(
+                session_id,
+                json!({"sessionUpdate": "state_update", "state": state}),
+                None,
+            );
+        }
+        harness.drain(cx).await;
+        assert_eq!(
+            first.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+        assert_eq!(
+            second.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::RequiresAction
+        );
+        harness.thread.read_with(cx, |thread, _| {
+            assert!(!thread.uses_reported_activity());
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+            assert_eq!(thread.activity_generation(), 0);
+        });
+        let wrong_session =
+            InboundSessionNotification::try_from(acp_v2::UpdateSessionNotification::new(
+                "first",
+                acp_v2::SessionUpdate::StateUpdate(acp_v2::StateUpdate::Idle(
+                    acp_v2::IdleStateUpdate::new(),
+                )),
+            ))
+            .expect("state notification");
+        second.update(cx, |thread, cx| {
+            assert!(wrong_session.apply(thread, cx).is_err());
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::RequiresAction
+            );
+        });
+
+        let released = cx.update(|cx| {
+            let session_id = acp_v2::SessionId::new("first");
+            harness
+                .connection
+                .release_session(session_id.clone(), first.downgrade(), cx);
+            harness
+                .connection
+                .pending_sessions
+                .borrow()
+                .get(&session_id)
+                .expect("closing receipt owner")
+                .task
+                .clone()
+        });
+        released.await.expect("release and drain the receipt owner");
+        harness.send_to(
+            "first",
+            json!({"sessionUpdate": "state_update", "state": "idle"}),
+            None,
+        );
+        harness.drain(cx).await;
+        assert_eq!(
+            first.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+
+        let weak_second = second.downgrade();
+        cx.update(|_| {
+            enqueue_notification(
+                &harness.connection.dispatch_tx,
+                InboundSessionNotification::try_from(acp_v2::UpdateSessionNotification::new(
+                    "second",
+                    acp_v2::SessionUpdate::StateUpdate(acp_v2::StateUpdate::Idle(
+                        acp_v2::IdleStateUpdate::new(),
+                    )),
+                ))
+                .expect("queued state notification"),
+                handle_v2_session_notification,
+            );
+            drop(second);
+        });
+        harness.drain(cx).await;
+        assert!(weak_second.upgrade().is_none());
+        assert_eq!(
+            first.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+    }
+
+    #[gpui::test]
     async fn v2_session_sdk_falls_through_unhandled_updates(cx: &mut gpui::TestAppContext) {
         let harness = V2SessionHarness::new(cx).await;
         harness.send(
@@ -4891,14 +5121,6 @@ mod tests {
         harness.drain(cx).await;
         let params = [
             serde_json::json!({
-                "sessionId": "v2-terminal-session", "_meta": {"scope": "known envelope"},
-                "futureOuter": {"preserve": [1, null, true]},
-                "update": {
-                    "sessionUpdate": "state_update", "state": "running",
-                    "_meta": {"scope": "known update"}, "futureKnownField": {"nested": "keep"}
-                }
-            }),
-            serde_json::json!({
                 "sessionId": "v2-terminal-session", "_meta": {"scope": "other envelope"},
                 "futureOuter": "keep",
                 "update": {
@@ -4908,13 +5130,11 @@ mod tests {
                 }
             }),
             serde_json::json!({
-                "sessionId": "v2-terminal-session",
-                "update": {"sessionUpdate": "state_update", "state": "running"}
-            }),
-            serde_json::json!({
-                "sessionId": "v2-terminal-session",
+                "sessionId": "v2-terminal-session", "_meta": {"scope": "known envelope"},
+                "futureOuter": {"preserve": [1, null, true]},
                 "update": {"sessionUpdate": "plan_update",
-                    "plan": {"type": "file", "planId": "unhandled-plan", "uri": "file:///tmp/plan.md"}}
+                    "plan": {"type": "file", "planId": "unhandled-plan", "uri": "file:///tmp/plan.md"},
+                    "_meta": {"scope": "known update"}, "futureKnownField": {"nested": "keep"}}
             }),
             serde_json::json!({
                 "sessionId": "v2-terminal-session",
