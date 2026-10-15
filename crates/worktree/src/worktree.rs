@@ -5629,10 +5629,20 @@ impl BackgroundScanner {
         let mut state = self.state.lock().await;
         // Identify any subdirectories that should not be scanned.
         let mut job_ix = 0;
+        let mut symlink_targets_in_batch = HashSet::default();
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if !self.should_scan_directory(&state, entry, ignore_stack.repo_root.is_some()) {
+                let mut should_scan =
+                    self.should_scan_directory(&state, entry, ignore_stack.repo_root.is_some());
+                if should_scan
+                    && self.settings.scan_symlinks == settings::ScanSymlinksSetting::Expanded
+                    && !state.scanned_dirs.contains(&entry.id)
+                    && let Some(target) = &entry.canonical_path
+                {
+                    should_scan = symlink_targets_in_batch.insert(target.clone());
+                }
+                if !should_scan {
                     log::debug!("defer scanning directory {:?}", entry.path);
                     entry.kind = EntryKind::UnloadedDir;
                     new_jobs[job_ix] = None;
@@ -6293,6 +6303,25 @@ impl BackgroundScanner {
         !self.share_private_files && self.settings.is_path_private(path)
     }
 
+    /// Several symlinks to the same directory would each get a full copy of its
+    /// subtree, and links nested inside those copies multiply again, so a few
+    /// fan-out links can grow the snapshot exponentially. Only one symlink path
+    /// per target is scanned eagerly; the others load when expanded.
+    fn is_target_loaded_via_other_symlink(state: &BackgroundScannerState, entry: &Entry) -> bool {
+        let Some(target) = entry.canonical_path.as_ref() else {
+            return false;
+        };
+        let Some(symlink_paths) = state.symlink_paths_by_target.get(target) else {
+            return false;
+        };
+        symlink_paths.iter().any(|path| {
+            path != &entry.path
+                && state.snapshot.entry_for_path(path).is_some_and(|other| {
+                    other.kind == EntryKind::Dir && other.canonical_path.as_ref() == Some(target)
+                })
+        })
+    }
+
     fn should_scan_directory(
         &self,
         state: &BackgroundScannerState,
@@ -6304,7 +6333,9 @@ impl BackgroundScanner {
         let scannable = state.scanning_enabled
             && (!entry.is_external
                 || self.settings.scan_symlinks == settings::ScanSymlinksSetting::Always)
-            && (!(entry.is_ignored || beyond_scan_depth) || entry.is_always_included);
+            && (!(entry.is_ignored || beyond_scan_depth) || entry.is_always_included)
+            && !(self.settings.scan_symlinks == settings::ScanSymlinksSetting::Expanded
+                && Self::is_target_loaded_via_other_symlink(state, entry));
 
         scannable
             || entry.path.file_name() == Some(DOT_GIT)
