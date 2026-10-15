@@ -15,12 +15,10 @@ use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
 use project::WorktreeId;
 use project::bookmark_store::ProjectBookmark;
 use project::{Project, ProjectPath, bookmark_store::BookmarkStore};
-use settings::Settings;
 use ui::{Divider, HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::Workspace;
-use workspace::item::ItemSettings;
 
 actions!(
     project_bookmarks,
@@ -208,15 +206,11 @@ impl ProjectBookmarksDelegate {
             })
             .map(|parent| SharedString::new(parent.display(path_style)))
             .unwrap_or_default();
-        let file_icon = ItemSettings::get_global(cx)
-            .file_icons
-            .then(|| FileIcons::get_icon(project_path.path.as_std_path(), cx))
-            .flatten()
-            .map(|icon| {
-                Icon::from_path(icon)
-                    .color(Color::Muted)
-                    .size(IconSize::Small)
-            });
+        let file_icon = FileIcons::get_icon(project_path.path.as_std_path(), cx).map(|icon| {
+            Icon::from_path(icon)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+        });
 
         h_flex()
             .w_full()

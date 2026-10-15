@@ -13972,7 +13972,6 @@ dependencies = [
  "picker_preview",
  "project",
  "serde_json",
- "settings",
  "text",
  "theme",
  "theme_settings",
