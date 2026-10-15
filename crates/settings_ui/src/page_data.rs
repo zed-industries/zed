@@ -5453,7 +5453,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 30] {
+    fn project_panel_section() -> [SettingsPageItem; 31] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5675,6 +5675,29 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .folder_indicator = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hide Empty Folder Chevrons",
+                description: "Hide the disclosure chevron on directories that are known to be empty.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("project_panel.hide_empty_folder_chevrons"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .hide_empty_folder_chevrons
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .hide_empty_folder_chevrons = value;
                     },
                 }),
                 metadata: None,
