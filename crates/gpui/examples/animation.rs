@@ -1,5 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use std::time::Duration;
 
 use anyhow::Result;
@@ -306,6 +309,9 @@ impl Render for AnimationExample {
 
 fn run_example() {
     application().with_assets(Assets {}).run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,

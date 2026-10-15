@@ -1,5 +1,5 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
@@ -318,21 +318,19 @@ impl AnyAgentTool for ContextServerTool {
         format_mcp_initial_title(&self.tool.name, &input).into()
     }
 
-    fn input_schema(
-        &self,
-        format: language_model::LanguageModelToolSchemaFormat,
-    ) -> Result<serde_json::Value> {
+    fn input_schema(&self) -> serde_json::Value {
         let mut schema = self.tool.input_schema.clone();
-        language_model::tool_schema::adapt_schema_to_format(&mut schema, format)?;
-        Ok(match schema {
+        schema = match schema {
             serde_json::Value::Null => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object", "properties": {} })
             }
             serde_json::Value::Object(map) if map.is_empty() => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object", "properties": {} })
             }
             _ => schema,
-        })
+        };
+        language_model::tool_schema::normalize_tool_schema(&mut schema);
+        schema
     }
 
     fn run(
@@ -405,18 +403,18 @@ impl AnyAgentTool for ContextServerTool {
                 match content {
                     context_server::types::ToolResponseContent::Text { text } => {
                         concatenated_text.push_str(&text);
-                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                        tool_call_content.push(acp::ToolCallContent::from(
                             acp::ContentBlock::Text(acp::TextContent::new(text.clone())),
-                        )));
+                        ));
                         llm_output.push(LanguageModelToolResultContent::Text(text.into()));
                     }
                     context_server::types::ToolResponseContent::Image { data, mime_type } => {
-                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                        tool_call_content.push(acp::ToolCallContent::from(
                             acp::ContentBlock::Image(acp::ImageContent::new(
                                 data.clone(),
                                 mime_type.clone(),
                             )),
-                        )));
+                        ));
                         let language_model_image = cx
                             .background_spawn({
                                 let mime_type = mime_type.clone();
@@ -457,7 +455,7 @@ impl AnyAgentTool for ContextServerTool {
             }
             if !tool_call_content.is_empty() {
                 event_stream
-                    .update_fields(acp::ToolCallUpdateFields::new().content(tool_call_content));
+                    .update_fields(|update| update.content(tool_call_content));
             }
             let raw_output = serde_json::Value::String(concatenated_text);
             Ok(AgentToolOutput {

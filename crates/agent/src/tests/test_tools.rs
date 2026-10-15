@@ -1,4 +1,5 @@
 use super::*;
+use agent_client_protocol::schema::v2 as acp;
 use gpui::{App, SharedString, Task};
 use std::future;
 use std::sync::Mutex;

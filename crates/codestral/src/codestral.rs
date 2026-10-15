@@ -239,10 +239,10 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         let snapshot = buffer.read(cx).snapshot();
 
         // Check if current completion is still valid
-        if let Some(current_completion) = self.current_completion.as_ref() {
-            if current_completion.interpolate(&snapshot).is_some() {
-                return;
-            }
+        if let Some(current_completion) = self.current_completion.as_ref()
+            && current_completion.interpolate(&snapshot).is_some()
+        {
+            return;
         }
 
         let http_client = self.http_client.clone();

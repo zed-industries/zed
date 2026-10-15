@@ -45,6 +45,7 @@ jobs:
         with:
           sparse-checkout: |
             script/github-guild-board.py
+            script/github_helpers.py
           sparse-checkout-cone-mode: false
 
       - name: Set up Python

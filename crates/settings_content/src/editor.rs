@@ -22,6 +22,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: bar
     pub cursor_shape: Option<CursorShape>,
+    /// Cursor movement animation settings.
+    pub cursor_animation: Option<CursorAnimationSettingsContent>,
     /// Determines how snippets are sorted relative to other completion items.
     ///
     /// Default: inline
@@ -168,6 +170,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub auto_signature_help: Option<bool>,
+
+    /// Whether to automatically detect the language of an untitled buffer from its contents.
+    /// Languages explicitly selected from the language selector are not changed.
+    ///
+    /// Default: true
+    pub language_detection: Option<bool>,
 
     /// Whether to show the signature help pop-up after completions or bracket pairs inserted.
     ///
@@ -356,6 +364,15 @@ impl RelativeLineNumbers {
             RelativeLineNumbers::Wrapped => true,
         }
     }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CursorAnimationSettingsContent {
+    /// Whether cursor movement animation is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
 }
 
 // Toolbar related settings
