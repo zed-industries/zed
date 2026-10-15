@@ -156,9 +156,8 @@ pub fn use_version(store: &Path, version: &str) -> Result<String, String> {
     if !python_in(&dir).is_file() {
         return Err(format!("Python {version} isn't installed"));
     }
-    let link = current_link(store);
-    remove_link(&link).map_err(|error| format!("Couldn't switch Python version: {error}"))?;
-    create_link(&dir, &link).map_err(|error| format!("Couldn't switch Python version: {error}"))?;
+    point_link(&dir, &current_link(store), store)
+        .map_err(|error| format!("Couldn't switch Python version: {error}"))?;
     Ok(format!("Now using Python {version}"))
 }
 
@@ -225,6 +224,57 @@ fn remove_link(link: &Path) -> std::io::Result<()> {
     } else {
         std::fs::remove_file(link)
     }
+}
+
+/// Points `link` at `target`, whether or not it exists yet.
+///
+/// The new link is made first, under a temporary name in `staging` (a
+/// folder on the same drive), and only then moved into place. A link that
+/// can't be made changes nothing, where removing the old one first would
+/// have left no version active. And `link` never stops existing in between,
+/// which a terminal that has it on its `PATH` would otherwise notice: on
+/// Linux and macOS the move replaces the old link in one step. On Windows a
+/// junction is a folder, which can't be moved over another, so the old one
+/// is moved aside first; the moment between the two moves is as short as it
+/// can be made, and a failed second move puts the old one back.
+fn point_link(target: &Path, link: &Path, staging: &Path) -> std::io::Result<()> {
+    let name = link
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let staged = staging.join(format!(".{name}.new-{}", std::process::id()));
+    remove_link(&staged)?;
+    create_link(target, &staged)?;
+
+    #[cfg(not(windows))]
+    if let Err(error) = std::fs::rename(&staged, link) {
+        remove_link(&staged).ok();
+        return Err(error);
+    }
+
+    #[cfg(windows)]
+    {
+        let old = staging.join(format!(".{name}.old-{}", std::process::id()));
+        let had_old = link.symlink_metadata().is_ok();
+        if had_old {
+            remove_link(&old).ok();
+            if let Err(error) = std::fs::rename(link, &old) {
+                remove_link(&staged).ok();
+                return Err(error);
+            }
+        }
+        if let Err(error) = std::fs::rename(&staged, link) {
+            if had_old {
+                std::fs::rename(&old, link).ok();
+            }
+            remove_link(&staged).ok();
+            return Err(error);
+        }
+        if had_old {
+            remove_link(&old).ok();
+        }
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -622,6 +672,14 @@ hhh  SHA256SUMS
         use_version(store.path(), "3.13.16").unwrap();
         let target = std::fs::canonicalize(&link).unwrap();
         assert!(target.ends_with("3.13.16"));
+        // A switch leaves nothing of its own behind in the store.
+        let leftovers: Vec<_> = std::fs::read_dir(store.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name())
+            .filter(|name| name.to_string_lossy().starts_with('.'))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
 
         use_system(store.path()).unwrap();
         assert!(!link.exists());

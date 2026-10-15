@@ -25,7 +25,7 @@ Open with `ctrl-k i` (`cmd-k i` on macOS), the status bar icon (tooltip
 | Packages | Installed packages |
 | Outdated | Packages with newer versions, with **Update all (patch)** / **Update all (minor)** |
 | Vulnerabilities | Known advisories for installed packages |
-| Processes | Running Python processes |
+| Processes | Running Python processes: what each is, this workspace's first, Stop |
 
 ### Python versions
 
@@ -51,6 +51,15 @@ folder in the IDE's data directory; nothing is installed on the machine.
 
 The header says where the interpreter in use comes from: `(venv)`,
 `(built-in)` or `(system)`.
+
+### Processes
+
+The same list as the Node panel's (see its
+[Processes](../node_panel/README.md#processes) section), for Python:
+`python`, `python3.12`, `pythonw` and the `py` launcher. **What** reads
+`flask run`, `uvicorn main:app`, `manage.py runserver` or a script's file
+name; this workspace's processes come first, the rest are under **Other**;
+**Stop** stops a process and everything it started, after asking.
 
 Useful to know:
 
@@ -87,6 +96,7 @@ Useful to know:
 | Detection, project scan, package and PyPI parsing | [`python_backend`](../python_backend/README.md) |
 | Vulnerability fetching (`fetch_all_vulnerabilities`) | [`python_manager_panel`](../python_manager_panel/README.md) |
 | Running commands | [`script_runner_panel`](../script_runner_panel/README.md) |
+| The process list | `runtime_processes`, shared with the Node panel |
 
 The vulnerability fetcher is reused from the manager crate rather than
 duplicated; this panel already depends on it for the Package Manager button.

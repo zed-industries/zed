@@ -21,9 +21,9 @@
 //!   instead, same as the other standalone-first ports.
 //! - A live Python-process list, fed by subscribing to the Cockpit panel's
 //!   own system-metrics tick broadcast and filtering it to "Python"
-//!   (`state.tick_tx`). Reimplemented here as this panel's own lightweight
-//!   `sysinfo` poll filtered by process name instead of cross-panel
-//!   plumbing — see `spawn_processes_poll`.
+//!   (`state.tick_tx`). Reimplemented as the `runtime_processes` crate's
+//!   `ProcessList`, which scans on its own and is shared with the Node
+//!   panel, instead of cross-panel plumbing.
 //! - `run_in_script_runner` — the framework/entry-point quick-action
 //!   buttons' "run this command" hook. `zed::zed::initialize_panels` hands
 //!   this panel a `WeakEntity<ScriptRunnerPanel>` once both panels have
@@ -47,7 +47,7 @@
 mod python_panel_settings;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -81,25 +81,11 @@ use script_runner_panel::command::{check_package_name, check_version, shell_path
 pub use python_panel_settings::PythonPanelSettings;
 use settings::{DockSide, Settings as _};
 use workspace::{Toast, notifications::NotificationId};
-use sysinfo::System;
+use runtime_processes::ProcessList;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
-
-/// How often the local Python-process poll re-scans the system while the
-/// list is on screen. It isn't run at all while the panel is hidden or the
-/// section collapsed (see `PythonPanel::update_procs_poll`).
-const PYTHON_PROCS_TICK_INTERVAL: Duration = Duration::from_secs(3);
-
-/// One Python-related process row — a process whose name contains "python"
-/// (case-insensitive).
-struct PythonProcess {
-    name: String,
-    pid: u32,
-    cpu_percent: f32,
-    memory_mb: f64,
-}
 
 /// The built-in version change the user has been asked to confirm, or is
 /// waiting on. An install carries the whole [`Download`], so the question
@@ -267,11 +253,9 @@ pub struct PythonPanel {
     requirements_count: usize,
     missing_deps: Vec<String>,
 
-    python_procs: Vec<PythonProcess>,
-    /// False until the first background process scan lands, so the
-    /// Processes section shows a loading row instead of claiming nothing
-    /// is running.
-    procs_loaded: bool,
+    /// The Python processes on the machine, shared with the Node panel's
+    /// list. It scans only while `update_procs_poll` says it is on screen.
+    processes: Entity<ProcessList>,
 
     open: HashMap<String, bool>,
 
@@ -285,9 +269,6 @@ pub struct PythonPanel {
     /// manifest changes on disk.
     _data_reload_task: Option<gpui::Task<()>>,
 
-    /// The process poll, running only while the list is on screen: the panel
-    /// shown in its dock and the Processes section open. Dropping it stops it.
-    _procs_poll: Option<gpui::Task<()>>,
     /// Whether the dock is showing this panel (`Panel::set_active`).
     panel_active: bool,
 }
@@ -296,8 +277,12 @@ pub struct PythonPanel {
 /// same choice `node_panel` and `dotnet_panel` make. `None` while no worktree
 /// is open.
 fn project_root(workspace: &Workspace, cx: &mut Context<Workspace>) -> Option<String> {
-    workspace
-        .project()
+    first_worktree_path(workspace.project(), cx)
+}
+
+/// The project's first worktree folder, which the panel is rooted on.
+fn first_worktree_path(project: &Entity<project::Project>, cx: &App) -> Option<String> {
+    project
         .read(cx)
         .worktrees(cx)
         .next()
@@ -402,7 +387,19 @@ impl PythonPanel {
         let workspace = cx.entity().downgrade();
 
         cx.new(|cx| {
-            cx.subscribe(&project, |this: &mut PythonPanel, _project, event, cx| {
+            cx.subscribe(&project, |this: &mut PythonPanel, project, event, cx| {
+                // A project opened after the panel was (a workspace restored
+                // late, a folder added): the panel follows it instead of
+                // staying on the folder it started with.
+                if matches!(
+                    event,
+                    project::Event::WorktreeAdded(_)
+                        | project::Event::WorktreeRemoved(_)
+                        | project::Event::WorktreeOrderChanged
+                ) && let Some(root) = first_worktree_path(&project, cx)
+                {
+                    this.set_root(root, cx);
+                }
                 if let project::Event::WorktreeUpdatedEntries(_, entries) = event {
                     let mut marker_touched = false;
                     let mut selected_manifest_touched = false;
@@ -448,6 +445,16 @@ impl PythonPanel {
             open.insert("Vulnerabilities".to_string(), true);
             open.insert("Processes".to_string(), true);
 
+            // Started when the panel is first shown (`set_active`). Its
+            // count is in the section header, so a scan redraws the panel.
+            let processes = cx.new(|_| {
+                ProcessList::new(
+                    runtime_processes::PYTHON,
+                    (!cwd.is_empty()).then(|| PathBuf::from(&cwd)),
+                )
+            });
+            cx.observe(&processes, |_, _, cx| cx.notify()).detach();
+
             let mut panel = PythonPanel {
                 focus_handle: cx.focus_handle(),
                 workspace,
@@ -480,13 +487,10 @@ impl PythonPanel {
                 requirements_path: None,
                 requirements_count: 0,
                 missing_deps: Vec::new(),
-                python_procs: Vec::new(),
-                procs_loaded: false,
+                processes,
                 open,
                 _rescan_task: None,
                 _data_reload_task: None,
-                // Started when the panel is first shown (`set_active`).
-                _procs_poll: None,
                 panel_active: false,
             };
 
@@ -704,17 +708,26 @@ impl PythonPanel {
         cx.notify();
     }
 
-    /// Runs the process poll only while its list is on screen: the panel shown
-    /// and the Processes section open. Starting it scans at once, so the list
-    /// is current as soon as it appears; stopping it (dropping the task) ends
-    /// the scans. Nothing else reads the list, so nothing misses an update.
+    /// Runs the process list's scans only while it is on screen: the panel
+    /// shown and the Processes section open.
     fn update_procs_poll(&mut self, cx: &mut Context<Self>) {
         let wanted = self.panel_active && self.is_open("Processes", true);
-        if !wanted {
-            self._procs_poll = None;
-        } else if self._procs_poll.is_none() {
-            self._procs_poll = Some(Self::spawn_processes_poll(cx));
+        self.processes
+            .update(cx, |list, cx| list.set_polling(wanted, cx));
+    }
+
+    /// Moves the panel to another workspace folder: rescans its projects
+    /// and re-places the processes. Nothing happens when it is already there.
+    fn set_root(&mut self, root: String, cx: &mut Context<Self>) {
+        if root == self.cwd {
+            return;
         }
+        let folder = PathBuf::from(&root);
+        self.cwd = root;
+        self.selected_project = None;
+        self.processes
+            .update(cx, |list, cx| list.set_root(Some(folder), cx));
+        self.scan_projects(cx);
     }
 
     /// The directory quick actions/reloads operate on: the selected
@@ -845,59 +858,6 @@ impl PythonPanel {
             });
         })
         .detach();
-    }
-
-    /// Refreshes `python_procs` from a locally-owned `sysinfo::System` every
-    /// `PYTHON_PROCS_TICK_INTERVAL`, filtered to process names containing
-    /// "python" — replaces subscribing to a host cockpit panel's broadcast
-    /// tick (see the module doc).
-    fn spawn_processes_poll(cx: &mut Context<Self>) -> gpui::Task<()> {
-        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            // Every sysinfo call here walks the whole process table, which
-            // takes long enough to stall the UI, so the scans run on the
-            // background executor and only the resulting rows hop back to
-            // the main thread via `this.update`.
-            let mut sys = cx.background_spawn(async { System::new_all() }).await;
-            loop {
-                let (scanned, procs) = cx
-                    .background_spawn(async move {
-                        sys.refresh_cpu_all();
-                        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-                        let cpu_count = sys.cpus().len() as f32;
-                        let procs: Vec<PythonProcess> = sys
-                            .processes()
-                            .iter()
-                            .filter(|(_, p)| {
-                                p.name().to_string_lossy().to_lowercase().contains("python")
-                            })
-                            .map(|(pid, p)| PythonProcess {
-                                name: p.name().to_string_lossy().to_string(),
-                                pid: pid.as_u32(),
-                                cpu_percent: p.cpu_usage() / cpu_count,
-                                memory_mb: p.memory() as f64 / 1_048_576.0,
-                            })
-                            .collect();
-                        (sys, procs)
-                    })
-                    .await;
-                sys = scanned;
-
-                let alive = this
-                    .update(cx, |this, cx| {
-                        this.python_procs = procs;
-                        this.procs_loaded = true;
-                        cx.notify();
-                    })
-                    .is_ok();
-                if !alive {
-                    break;
-                }
-
-                cx.background_executor()
-                    .timer(PYTHON_PROCS_TICK_INTERVAL)
-                    .await;
-            }
-        })
     }
 
     /// Diffs `requirements_path` against `installed_pkgs` into
@@ -1342,9 +1302,9 @@ impl Render for PythonPanel {
         let processes_section = section_container(
             cx,
             "Processes",
-            self.python_procs.len(),
+            self.processes.read(cx).len(),
             self.is_open("Processes", true),
-            self.render_processes(cx),
+            self.processes.clone(),
         );
 
         let mut body = div()
@@ -2428,88 +2388,6 @@ impl PythonPanel {
                     .text_color(cx.theme().muted_foreground)
                     .child("Not scanned yet"),
             );
-        }
-
-        col
-    }
-
-    fn render_processes(&self, cx: &Context<Self>) -> impl IntoElement {
-        let mut col = div().flex().flex_col();
-
-        if !self.procs_loaded {
-            col = col.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(Spinner::new().xsmall())
-                    .child("Loading processes\u{2026}"),
-            );
-        } else if self.python_procs.is_empty() {
-            col = col.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("No Python processes running"),
-            );
-        } else {
-            col = col.child(
-                div()
-                    .flex()
-                    .px_3()
-                    .py_0p5()
-                    .text_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().muted_foreground)
-                    .child(div().w_16().child("PID"))
-                    .child(div().flex_1().child("Name"))
-                    .child(div().w_16().text_right().child("CPU"))
-                    .child(div().w_16().text_right().child("Mem")),
-            );
-
-            for proc in &self.python_procs {
-                col = col.child(
-                    div()
-                        .flex()
-                        .px_3()
-                        .py_0p5()
-                        .text_xs()
-                        .text_color(cx.theme().foreground)
-                        .child(
-                            div()
-                                .w_16()
-                                .font_family("Cascadia Mono")
-                                .child(proc.pid.to_string()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .truncate()
-                                .font_family("Cascadia Mono")
-                                .child(proc.name.clone()),
-                        )
-                        .child(
-                            div()
-                                .w_16()
-                                .text_right()
-                                .font_family("Cascadia Mono")
-                                .child(format!("{:.1}%", proc.cpu_percent)),
-                        )
-                        .child(
-                            div()
-                                .w_16()
-                                .text_right()
-                                .font_family("Cascadia Mono")
-                                .child(format!("{:.0}MB", proc.memory_mb)),
-                        ),
-                );
-            }
         }
 
         col

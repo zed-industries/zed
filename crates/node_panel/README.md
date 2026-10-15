@@ -58,17 +58,28 @@ IDE's data directory.
 
 - **What** names each process from its command line: `next dev`,
   `npm run dev`, `gulp build`, `tsserver`, or a project script's file name.
-  Hover it for the full command line.
+  Hover it for the full command line. Anything in it that looks like a
+  secret (`--token=…`, `NPM_TOKEN=…`, a password in a URL) shows as `***`.
 - Processes started from this workspace come first. The rest of the
   machine's are folded under **Other**, including the IDE's own, marked
-  **IDE** (language servers and the like). Both lists are heaviest first.
+  **IDE** (language servers and the helpers they start). Both lists are
+  heaviest first. Only `node` itself is listed, not every program with
+  "node" in its name.
 - **Stop** asks for confirmation in the row, then stops the process and
   everything it started (stopping `npm run dev` also stops the server npm
-  ran). The IDE's own processes have no Stop.
+  ran), and says how it went: what is still running if something wouldn't
+  stop, or that the process may belong to an administrator or another user.
+  On Linux and macOS the processes are asked to finish first and given two
+  seconds; Windows can't ask a console program to finish from outside it,
+  so there they are ended at once. A row's process is checked by its start
+  time as well as its number, so Stop never reaches a later process that
+  the OS gave the same number. The IDE's own processes have no Stop.
 
-"This workspace" means started in the workspace folder or running a file
-from it, so a process started elsewhere that only uses the project is listed
-under Other.
+"This workspace" means started in the workspace folder, running a file from
+it, or started by a process that was: the server `npm run dev` runs belongs
+to the workspace wherever its files are. A process the IDE started from a
+terminal is not the IDE's own: the shell in between says so. When a project
+is opened after the panel, the panel moves to it.
 
 Useful to know:
 
@@ -113,12 +124,12 @@ rescanning: `node_version()`, `detected_projects()`, `outdated_count()`,
 | Installing and selecting Node.js versions | `node_versions`, on the [fnm](https://github.com/Schniz/fnm) library |
 | npm CLI and output parsing | [`npm_backend`](../npm_backend/README.md) |
 | Running commands | [`script_runner_panel`](../script_runner_panel/README.md) |
+| The process list | `runtime_processes`, shared with the Python panel |
 
-The process list is this panel's own lightweight `sysinfo` poll filtered by
-process name; Forge fed it from the Cockpit's broadcast tick, which does not
-exist here. It runs every 3 seconds, and only while the list is on screen:
-hiding the panel or collapsing **Processes** stops it, and showing it again
-refreshes at once. The Python panel's process list works the same way.
+The process list scans the machine's processes itself; Forge fed it from the
+Cockpit's broadcast tick, which does not exist here. It runs every 3
+seconds, and only while the list is on screen: hiding the panel or
+collapsing **Processes** stops it, and showing it again refreshes at once.
 
 ## Development
 

@@ -117,10 +117,22 @@ pub fn uninstall(store: &Path, version: &str) -> Result<String, String> {
 }
 
 /// Makes `version` the active one.
+///
+/// The manager's own `set_default` removes the old link before making the
+/// new one, which leaves no version active if making it fails. The link is
+/// re-pointed here instead, see [`point_link`].
 pub fn use_version(store: &Path, version: &str) -> Result<String, String> {
-    let chosen = manager(store)
-        .set_default(version_of(version))
+    let manager = manager(store);
+    let chosen = manager
+        .resolve(version_of(version))
         .map_err(|error| error.to_string())?;
+    let link = default_link(store);
+    if let Some(aliases) = link.parent() {
+        std::fs::create_dir_all(aliases)
+            .map_err(|error| format!("Couldn't switch Node.js version: {error}"))?;
+    }
+    point_link(&chosen.path, &link, &manager.base_dir())
+        .map_err(|error| format!("Couldn't switch Node.js version: {error}"))?;
     Ok(format!("Now using Node.js {}", chosen.version))
 }
 
@@ -128,19 +140,91 @@ pub fn use_version(store: &Path, version: &str) -> Result<String, String> {
 /// `node` is on the `PATH`. The installed versions stay installed.
 pub fn use_system(store: &Path) -> Result<String, String> {
     // The default is a link in the store's `aliases` folder; taking it away
-    // is all "no default" means. It is a directory junction on Windows and a
-    // symlink elsewhere, which are removed differently.
+    // is all "no default" means.
     let link = default_link(store);
     if link.symlink_metadata().is_err() {
         return Ok("Already using the system Node.js".to_string());
     }
-    let removed = if cfg!(windows) {
-        std::fs::remove_dir(&link)
-    } else {
-        std::fs::remove_file(&link)
-    };
-    removed.map_err(|error| format!("Couldn't switch to the system Node.js: {error}"))?;
+    remove_link(&link)
+        .map_err(|error| format!("Couldn't switch to the system Node.js: {error}"))?;
     Ok("Now using the system Node.js".to_string())
+}
+
+/// Points `link` at `target`, whether or not it exists yet.
+///
+/// The new link is made first, under a temporary name in `staging` (a
+/// folder on the same drive, outside `aliases`, where the manager would
+/// read it as an alias), and only then moved into place. A link that can't
+/// be made changes nothing, where removing the old one first would have
+/// left no version active. And `link` never stops existing in between,
+/// which a terminal that has it on its `PATH` would otherwise notice: on
+/// Linux and macOS the move replaces the old link in one step. On Windows a
+/// junction is a folder, which can't be moved over another, so the old one
+/// is moved aside first; the moment between the two moves is as short as it
+/// can be made, and a failed second move puts the old one back.
+fn point_link(target: &Path, link: &Path, staging: &Path) -> std::io::Result<()> {
+    let name = link
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let staged = staging.join(format!(".{name}.new-{}", std::process::id()));
+    remove_link(&staged)?;
+    create_link(target, &staged)?;
+
+    #[cfg(not(windows))]
+    if let Err(error) = std::fs::rename(&staged, link) {
+        remove_link(&staged).ok();
+        return Err(error);
+    }
+
+    #[cfg(windows)]
+    {
+        let old = staging.join(format!(".{name}.old-{}", std::process::id()));
+        let had_old = link.symlink_metadata().is_ok();
+        if had_old {
+            remove_link(&old).ok();
+            if let Err(error) = std::fs::rename(link, &old) {
+                remove_link(&staged).ok();
+                return Err(error);
+            }
+        }
+        if let Err(error) = std::fs::rename(&staged, link) {
+            if had_old {
+                std::fs::rename(&old, link).ok();
+            }
+            remove_link(&staged).ok();
+            return Err(error);
+        }
+        if had_old {
+            remove_link(&old).ok();
+        }
+    }
+    Ok(())
+}
+
+/// Removes a link if there is one. It is a directory junction on Windows
+/// and a symlink elsewhere, which are removed differently.
+fn remove_link(link: &Path) -> std::io::Result<()> {
+    if link.symlink_metadata().is_err() {
+        return Ok(());
+    }
+    if cfg!(windows) {
+        std::fs::remove_dir(link)
+    } else {
+        std::fs::remove_file(link)
+    }
+}
+
+/// A junction on Windows, which needs no privilege to create (a directory
+/// symlink does), as the manager's own links are.
+#[cfg(windows)]
+fn create_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    junction::create(target, link)
+}
+
+#[cfg(not(windows))]
+fn create_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
 }
 
 /// The active version, or `None` when the system Node.js is in use.
@@ -362,6 +446,21 @@ mod tests {
         assert_eq!(live_bin_dir(store.path()), entry);
         let target = std::fs::canonicalize(&link).unwrap();
         assert!(target.to_string_lossy().contains("v22.3.0"));
+        // A switch leaves nothing of its own behind: no stray link in the
+        // store, and no extra alias.
+        let leftovers: Vec<_> = std::fs::read_dir(store.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name())
+            .filter(|name| name.to_string_lossy().starts_with('.'))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+        let aliases: Vec<_> = std::fs::read_dir(link.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name())
+            .collect();
+        assert_eq!(aliases, vec![std::ffi::OsString::from("default")]);
 
         use_system(store.path()).unwrap();
         assert!(!link.exists());

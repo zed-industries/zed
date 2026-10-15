@@ -12790,11 +12790,11 @@ dependencies = [
  "npm_backend",
  "npm_manager_panel",
  "project",
+ "runtime_processes",
  "script_runner_panel",
  "serde",
  "serde_json",
  "settings",
- "sysinfo 0.39.6",
  "tempfile",
  "ui",
  "workspace",
@@ -12831,6 +12831,7 @@ name = "node_versions"
 version = "0.1.0"
 dependencies = [
  "fnm",
+ "junction",
  "paths",
  "tempfile",
 ]
@@ -16193,9 +16194,9 @@ dependencies = [
  "python_backend",
  "python_manager_panel",
  "python_versions",
+ "runtime_processes",
  "script_runner_panel",
  "settings",
- "sysinfo 0.39.6",
  "ui",
  "workspace",
 ]
@@ -17391,6 +17392,15 @@ name = "rtrb"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad8388ea1a9e0ea807e442e8263a699e7edcb320ecbcd21b4fa8ff859acce3ba"
+
+[[package]]
+name = "runtime_processes"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "sysinfo 0.39.6",
+]
 
 [[package]]
 name = "runtimelib"

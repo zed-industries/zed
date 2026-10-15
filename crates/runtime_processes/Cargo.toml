@@ -1,0 +1,16 @@
+[package]
+name = "runtime_processes"
+description = "The running processes of one runtime (Node.js, Python): what each is, whose it is, stopping one, and the list the Node and Python panels show them in."
+license = "Apache-2.0"
+edition.workspace = true
+version = "0.1.0"
+publish = false
+
+[lib]
+path = "src/runtime_processes.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+sysinfo.workspace = true

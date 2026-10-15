@@ -217,6 +217,7 @@ members = [
     "crates/reqwest_client",
     "crates/rope",
     "crates/rpc",
+    "crates/runtime_processes",
     "crates/rust_panel",
     "crates/sandbox",
     "crates/scheduler",
@@ -528,6 +529,7 @@ reqwest_client = { path = "crates/reqwest_client" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "3ee9745862279ce1d18db593155016e7ce024aeb", default-features = false, features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
+runtime_processes = { path = "crates/runtime_processes" }
 rust_panel = { path = "crates/rust_panel" }
 sandbox = { path = "crates/sandbox" }
 scheduler = { path = "crates/scheduler" }

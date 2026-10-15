@@ -16,5 +16,10 @@ doctest = false
 fnm.workspace = true
 paths.workspace = true
 
+# The link to the active version is a directory junction on Windows, which
+# needs no privilege to create (a directory symlink does).
+[target.'cfg(windows)'.dependencies]
+junction.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

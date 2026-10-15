@@ -9,9 +9,9 @@
 //!   instead, same as the other standalone-first ports.
 //! - A live Node-process list, fed by subscribing to the Cockpit panel's
 //!   own system-metrics tick broadcast and filtering it to the "Node"
-//!   section (`state.tick_tx`). Reimplemented here as this panel's own
-//!   lightweight `sysinfo` poll filtered by process name instead of
-//!   cross-panel plumbing — see `spawn_processes_poll`.
+//!   section (`state.tick_tx`). Reimplemented as the `runtime_processes`
+//!   crate's `ProcessList`, which scans on its own and is shared with the
+//!   Python panel, instead of cross-panel plumbing.
 //! - `run_in_script_runner` — the script run / quick-action / SPFx buttons'
 //!   "run this command" hook. `zed::zed::initialize_panels` now hands this
 //!   panel a `WeakEntity<ScriptRunnerPanel>` once both panels have loaded
@@ -32,9 +32,6 @@
 //! alongside this panel — see that crate's own doc comment.
 
 mod node_panel_settings;
-mod node_processes;
-
-use node_processes::NodeProcess;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -58,7 +55,6 @@ use gpui_component::{
     panel_header::PanelHeader,
     spinner::Spinner,
     tag::Tag,
-    tooltip::Tooltip,
 };
 use indexmap::IndexMap;
 use node_backend::{
@@ -76,7 +72,7 @@ use script_runner_panel::ScriptRunnerPanel;
 use script_runner_panel::command::{check_package_name, check_script_name};
 use db::kvp::KeyValueStore;
 use serde::Deserialize;
-use sysinfo::System;
+use runtime_processes::ProcessList;
 pub use node_panel_settings::NodePanelSettings;
 use settings::{DockSide, Settings as _};
 use workspace::{
@@ -85,12 +81,6 @@ use workspace::{
 };
 
 const PAGE_SIZE: usize = 6;
-
-/// How often the local Node-process poll re-scans the system.
-/// How often the process list refreshes while it is on screen. It isn't
-/// refreshed at all while the panel is hidden or the section collapsed (see
-/// `NodePanel::update_procs_poll`).
-const NODE_PROCS_TICK_INTERVAL: Duration = Duration::from_secs(3);
 
 /// Where the open/closed state of the panel's sections is remembered: the
 /// IDE's key-value store, shared by every window, so the panel opens the way
@@ -188,8 +178,12 @@ pub fn init(cx: &mut App) {
 /// `workspace_root`. Returns `None` when no worktree is open yet (so the
 /// caller can fall back to the process cwd).
 fn project_root(workspace: &Workspace, cx: &mut Context<Workspace>) -> Option<String> {
-    workspace
-        .project()
+    first_worktree_path(workspace.project(), cx)
+}
+
+/// The project's first worktree folder, which the panel is rooted on.
+fn first_worktree_path(project: &Entity<project::Project>, cx: &App) -> Option<String> {
+    project
         .read(cx)
         .worktrees(cx)
         .next()
@@ -278,16 +272,9 @@ pub struct NodePanel {
     /// go to the Script Runner panel, not here.
     script_output: Vec<String>,
 
-    /// Node processes on the machine, heaviest first.
-    node_procs: Vec<NodeProcess>,
-    /// False until the first background process scan lands, so the
-    /// Processes section shows a loading row instead of claiming nothing
-    /// is running.
-    procs_loaded: bool,
-    /// Whether the processes outside this workspace are listed or folded.
-    show_other_procs: bool,
-    /// The process whose Stop is waiting for confirmation, if any.
-    confirm_stop: Option<u32>,
+    /// The Node processes on the machine, shared with the Python panel's
+    /// list. It scans only while `update_procs_poll` says it is on screen.
+    processes: Entity<ProcessList>,
 
     spfx: SpfxInfo,
     sppkg_files: Vec<String>,
@@ -306,9 +293,6 @@ pub struct NodePanel {
     /// package data when its `package.json`/lockfile changes on disk.
     _data_reload_task: Option<gpui::Task<()>>,
 
-    /// The process poll, running only while the list is on screen: the panel
-    /// shown in its dock and the Processes section open. Dropping it stops it.
-    _procs_poll: Option<gpui::Task<()>>,
     /// Whether the dock is showing this panel (`Panel::set_active`).
     panel_active: bool,
 }
@@ -488,7 +472,19 @@ impl NodePanel {
         let workspace = cx.entity().downgrade();
 
         cx.new(|cx| {
-            cx.subscribe(&project, |this: &mut NodePanel, _project, event, cx| {
+            cx.subscribe(&project, |this: &mut NodePanel, project, event, cx| {
+                // A project opened after the panel was (a workspace restored
+                // late, a folder added): the panel follows it instead of
+                // staying on the folder it started with.
+                if matches!(
+                    event,
+                    project::Event::WorktreeAdded(_)
+                        | project::Event::WorktreeRemoved(_)
+                        | project::Event::WorktreeOrderChanged
+                ) && let Some(root) = first_worktree_path(&project, cx)
+                {
+                    this.set_root(root, cx);
+                }
                 if let project::Event::WorktreeUpdatedEntries(_, entries) = event {
                     let mut package_json_touched = false;
                     let mut selected_manifest_touched = false;
@@ -533,6 +529,16 @@ impl NodePanel {
             open.insert("Scripts".to_string(), true);
             open.insert("Processes".to_string(), true);
 
+            // Started when the panel is first shown (`set_active`). Its
+            // count is in the section header, so a scan redraws the panel.
+            let processes = cx.new(|_| {
+                ProcessList::new(
+                    runtime_processes::NODE,
+                    (!cwd.is_empty()).then(|| PathBuf::from(&cwd)),
+                )
+            });
+            cx.observe(&processes, |_, _, cx| cx.notify()).detach();
+
             let panel = NodePanel {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.clone(),
@@ -570,18 +576,13 @@ impl NodePanel {
                 new_script_name_input: None,
                 new_script_cmd_input: None,
                 script_output: Vec::new(),
-                node_procs: Vec::new(),
-                procs_loaded: false,
-                show_other_procs: false,
-                confirm_stop: None,
+                processes,
                 spfx: SpfxInfo::default(),
                 sppkg_files: Vec::new(),
                 open,
                 view_pkg: None,
                 _rescan_task: None,
                 _data_reload_task: None,
-                // Started when the panel is first shown (`set_active`).
-                _procs_poll: None,
                 panel_active: false,
             };
 
@@ -592,82 +593,26 @@ impl NodePanel {
         })
     }
 
-    /// Runs the process poll only while its list is on screen: the panel shown
-    /// and the Processes section open. Starting it scans at once, so the list
-    /// is current as soon as it appears; stopping it (dropping the task) ends
-    /// the scans. Nothing else reads the list, so nothing misses an update.
+    /// Runs the process list's scans only while it is on screen: the panel
+    /// shown and the Processes section open.
     fn update_procs_poll(&mut self, cx: &mut Context<Self>) {
         let wanted = self.panel_active && self.is_open("Processes", true);
-        if !wanted {
-            self._procs_poll = None;
-        } else if self._procs_poll.is_none() {
-            self._procs_poll = Some(Self::spawn_processes_poll(cx));
+        self.processes
+            .update(cx, |list, cx| list.set_polling(wanted, cx));
+    }
+
+    /// Moves the panel to another workspace folder: rescans its projects
+    /// and re-places the processes. Nothing happens when it is already there.
+    fn set_root(&mut self, root: String, cx: &mut Context<Self>) {
+        if root == self.cwd {
+            return;
         }
-    }
-
-    /// Stops `pid` and everything it started, once the user has confirmed
-    /// it. The list shows the result on the next poll tick.
-    fn stop_process(&mut self, pid: u32, cx: &mut Context<Self>) {
-        self.confirm_stop = None;
-        cx.notify();
-        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let result = cx
-                .background_spawn(async move { node_processes::stop_tree(pid) })
-                .await;
-            this.update(cx, |panel, cx| {
-                if let Err(error) = result {
-                    panel.script_output.push(format!("Error: {error}"));
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Refreshes `node_procs` from a locally-owned `sysinfo::System` every
-    /// `NODE_PROCS_TICK_INTERVAL`, filtered to process names containing
-    /// "node" (see `node_processes::scan`) — replaces subscribing to a host
-    /// cockpit panel's broadcast tick (see the module doc).
-    fn spawn_processes_poll(cx: &mut Context<Self>) -> gpui::Task<()> {
-        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            // Every sysinfo call here walks the whole process table, which
-            // takes long enough to stall the UI, so the scans run on the
-            // background executor and only the resulting rows hop back to
-            // the main thread via `this.update`.
-            let mut sys = cx.background_spawn(async { System::new_all() }).await;
-            loop {
-                let (scanned, procs) = cx
-                    .background_spawn(async move {
-                        let procs = node_processes::scan(&mut sys);
-                        (sys, procs)
-                    })
-                    .await;
-                sys = scanned;
-
-                let alive = this
-                    .update(cx, |this, cx| {
-                        // A confirmation for a process that has since exited
-                        // has nothing left to confirm.
-                        if let Some(pid) = this.confirm_stop
-                            && !procs.iter().any(|proc| proc.pid == pid)
-                        {
-                            this.confirm_stop = None;
-                        }
-                        this.node_procs = procs;
-                        this.procs_loaded = true;
-                        cx.notify();
-                    })
-                    .is_ok();
-                if !alive {
-                    break;
-                }
-
-                cx.background_executor()
-                    .timer(NODE_PROCS_TICK_INTERVAL)
-                    .await;
-            }
-        })
+        let folder = PathBuf::from(&root);
+        self.cwd = root;
+        self.selected_project = None;
+        self.processes
+            .update(cx, |list, cx| list.set_root(Some(folder), cx));
+        self.scan_projects(cx);
     }
 
     fn is_open(&self, key: &str, default: bool) -> bool {
@@ -1893,9 +1838,9 @@ impl Render for NodePanel {
         let processes_section = section_container(
             cx,
             "Processes",
-            Some(self.node_procs.len()),
+            Some(self.processes.read(cx).len()),
             self.is_open("Processes", true),
-            self.render_processes(cx),
+            self.processes.clone(),
         );
 
         let mut body = div()
@@ -3334,188 +3279,6 @@ impl NodePanel {
             )
             .with_priority(100),
         )
-    }
-
-    fn render_processes(&self, cx: &Context<Self>) -> impl IntoElement {
-        let mut col = div().flex().flex_col();
-
-        if !self.procs_loaded {
-            col = col.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(Spinner::new().xsmall())
-                    .child("Loading processes\u{2026}"),
-            );
-        } else if self.node_procs.is_empty() {
-            col = col.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("No Node processes running"),
-            );
-        } else {
-            // This workspace's own processes first; the rest of the
-            // machine's, including the IDE's own (language servers), folded
-            // under "Other". Both keep the poll's heaviest-first order.
-            let root = PathBuf::from(&self.cwd);
-            let (mine, others): (Vec<&NodeProcess>, Vec<&NodeProcess>) = self
-                .node_procs
-                .iter()
-                .partition(|proc| !proc.ide_owned && proc.belongs_to(&root));
-
-            col = col.child(
-                h_flex()
-                    .gap_2()
-                    .px_3()
-                    .py_0p5()
-                    .text_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().muted_foreground)
-                    .child(div().flex_1().child("What"))
-                    .child(div().w_12().text_right().child("PID"))
-                    .child(div().w_12().text_right().child("CPU"))
-                    .child(div().w_16().text_right().child("Mem"))
-                    .child(div().w_6()),
-            );
-
-            if mine.is_empty() {
-                col = col.child(
-                    div()
-                        .px_3()
-                        .py_1()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("None started from this workspace"),
-                );
-            }
-            for proc in &mine {
-                col = col.child(self.render_process_row(proc, cx));
-            }
-
-            if !others.is_empty() {
-                let open = self.show_other_procs;
-                col = col.child(
-                    h_flex()
-                        .id("node-procs-other-toggle")
-                        .gap_1()
-                        .px_3()
-                        .py_0p5()
-                        .text_xs()
-                        .cursor_pointer()
-                        .text_color(cx.theme().muted_foreground)
-                        .hover(|el| el.bg(cx.theme().list_hover))
-                        .child(
-                            Icon::new(if open {
-                                IconName::ChevronDown
-                            } else {
-                                IconName::ChevronRight
-                            })
-                            .xsmall(),
-                        )
-                        .child(format!("Other ({})", others.len()))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.show_other_procs = !this.show_other_procs;
-                            cx.notify();
-                        })),
-                );
-                if open {
-                    for proc in &others {
-                        col = col.child(self.render_process_row(proc, cx));
-                    }
-                }
-            }
-        }
-
-        col
-    }
-
-    /// One process: what it is (full command line on hover), its id, CPU and
-    /// memory, and Stop. Stop asks first, in the row itself. The IDE's own
-    /// processes have no Stop: ending a language server breaks an editor
-    /// feature, and the IDE would only start it again.
-    fn render_process_row(&self, proc: &NodeProcess, cx: &Context<Self>) -> AnyElement {
-        let pid = proc.pid;
-        let mono = |text: String| div().font_family("Cascadia Mono").child(text);
-        let command_line = proc.command_line.clone();
-
-        let what = h_flex()
-            .id(("node-proc-what", pid as usize))
-            .flex_1()
-            .min_w_0()
-            .gap_1()
-            .child(mono(proc.label.clone()).truncate())
-            .when(proc.ide_owned, |el| {
-                el.child(
-                    Tag::custom(
-                        cx.theme().info.opacity(0.2),
-                        cx.theme().info,
-                        cx.theme().info.opacity(0.3),
-                    )
-                    .xsmall()
-                    .child("IDE"),
-                )
-            })
-            .when(!command_line.is_empty(), |el| {
-                el.tooltip(move |window, cx| Tooltip::new(command_line.clone()).build(window, cx))
-            });
-
-        let action: AnyElement = if proc.ide_owned {
-            div().w_6().into_any_element()
-        } else if self.confirm_stop == Some(pid) {
-            h_flex()
-                .gap_1()
-                .child(
-                    Button::new(("node-proc-stop-confirm", pid as usize))
-                        .danger()
-                        .xsmall()
-                        .label("Stop")
-                        .tooltip("Stop this process and everything it started")
-                        .on_click(cx.listener(move |this, _, _, cx| this.stop_process(pid, cx))),
-                )
-                .child(
-                    Button::new(("node-proc-stop-cancel", pid as usize))
-                        .ghost()
-                        .xsmall()
-                        .label("Cancel")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.confirm_stop = None;
-                            cx.notify();
-                        })),
-                )
-                .into_any_element()
-        } else {
-            Button::new(("node-proc-stop", pid as usize))
-                .custom(ButtonCustomVariant::new(cx).foreground(cx.theme().muted_foreground))
-                .xsmall()
-                .icon(IconName::CircleX)
-                .tooltip("Stop\u{2026}")
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.confirm_stop = Some(pid);
-                    cx.notify();
-                }))
-                .into_any_element()
-        };
-
-        h_flex()
-            .gap_2()
-            .px_3()
-            .py_0p5()
-            .text_xs()
-            .text_color(cx.theme().foreground)
-            .child(what)
-            .child(mono(pid.to_string()).w_12().text_right())
-            .child(mono(format!("{:.1}%", proc.cpu_percent)).w_12().text_right())
-            .child(mono(format!("{:.0}MB", proc.memory_mb)).w_16().text_right())
-            .child(action)
-            .into_any_element()
     }
 
     fn render_spfx(&self, cx: &Context<Self>) -> impl IntoElement {

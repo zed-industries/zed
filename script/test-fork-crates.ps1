@@ -59,6 +59,7 @@ $forkCrates = @(
     'python_manager_panel',
     'python_panel',
     'rust_panel',
+    'runtime_processes',
     'script_runner_panel',
     'workflow_engine'
 )
