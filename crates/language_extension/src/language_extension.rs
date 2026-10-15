@@ -6,7 +6,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
 use gpui::{App, Entity, WeakEntity};
-use language::{ExtensionLanguagesUpdateOutcome, LanguageName, LanguageRegistration, LanguageRegistry};
+use language::{
+    ExtensionLanguagesUpdateOutcome, LanguageName, LanguageRegistration, LanguageRegistry,
+};
 use project::LspStore;
 
 #[derive(Clone)]
