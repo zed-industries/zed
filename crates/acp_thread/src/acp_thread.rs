@@ -4139,6 +4139,17 @@ impl AcpThread {
         }
     }
 
+    /// Settles receipt observations without declaring that remote execution stopped.
+    pub fn disconnect_submissions(&mut self, cx: &mut Context<Self>) {
+        let changed = self.submissions.disconnect();
+        if !changed.is_empty() {
+            for id in changed {
+                cx.emit(AcpThreadEvent::SubmissionUpdated(id));
+            }
+            cx.notify();
+        }
+    }
+
     fn register_submission(
         &mut self,
         content: Arc<[acp_v2::ContentBlock]>,
@@ -4168,13 +4179,38 @@ impl AcpThread {
         ) -> Result<Option<SubmissionResponse>>,
     ) -> Submission {
         let (sender, receiver) = oneshot::channel();
+        let (disconnect_sender, disconnect_receiver) = self
+            .uses_reported_activity()
+            .then(oneshot::channel::<()>)
+            .unzip();
         let task = cx.spawn(async move |this, cx| {
-            let response = complete(this.clone(), cx).await;
+            let response = {
+                let response = complete(this.clone(), cx);
+                futures::pin_mut!(response);
+                if let Some(disconnected) = disconnect_receiver {
+                    match futures::future::select(response, disconnected).await {
+                        futures::future::Either::Left((response, _)) => response,
+                        futures::future::Either::Right(_) => Err(anyhow!(SubmissionDisconnected)),
+                    }
+                } else {
+                    response.await
+                }
+            };
             let response = match response {
                 Err(error) if error.is::<SubmissionCancelled>() => Ok(None),
                 response => response,
             };
             let update = this.update(cx, |this, cx| {
+                if this.uses_reported_activity()
+                    && response.as_ref().err().is_some_and(|error| {
+                        error.is::<SubmissionDisconnected>()
+                            || error
+                                .downcast_ref::<agent_client_protocol::Error>()
+                                .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+                    })
+                {
+                    this.disconnect_submissions(cx);
+                }
                 let state = match &response {
                     Ok(Some(SubmissionResponse::Accepted(receipt))) => {
                         let echoed = this.entries.iter().any(|entry| {
@@ -4187,19 +4223,21 @@ impl AcpThread {
                     Ok(None) => SubmissionState::Cancelled,
                     Err(error) => SubmissionState::Failed(format!("{error:#}").into()),
                 };
-                this.submissions.settle(id, state);
+                let changed = this.submissions.settle(id, state);
                 // The thread owns settlement even when the response observer has gone away.
                 if let Err(Err(error)) = sender.send(response) {
                     log::debug!("Submission observer was dropped: {error:#}");
                 }
-                cx.emit(AcpThreadEvent::SubmissionUpdated(id));
-                cx.notify();
+                if changed {
+                    cx.emit(AcpThreadEvent::SubmissionUpdated(id));
+                    cx.notify();
+                }
             });
             if let Err(error) = update {
                 log::debug!("Submission thread was released: {error:#}");
             }
         });
-        self.submissions.track(id, task);
+        self.submissions.track(id, task, disconnect_sender);
         Submission::new(
             id,
             async move {
@@ -11041,6 +11079,288 @@ mod tests {
             .await
             .expect("receipt session should be created");
         (thread, connection)
+    }
+
+    #[gpui::test]
+    async fn test_receipt_disconnect_settles_waiters_and_preserves_recovery(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (thread, connection) = new_receipt_test_thread(cx).await;
+        let rejected = thread.update(cx, |thread, cx| {
+            thread.submit_receipt(
+                vec!["rejected".into()],
+                Task::ready(Err(anyhow!("not inserted"))),
+                cx,
+            )
+        });
+        let rejected_id = rejected.id;
+        assert!(rejected.await.is_err());
+        let receipt = acp_v2::PromptResponse::new("accepted-id").meta(acp_v2::Meta::from_iter([(
+            "retain".into(),
+            serde_json::json!([null, 7]),
+        )]));
+        let accepted = thread.update(cx, |thread, cx| {
+            thread.submit_receipt(
+                vec!["accepted".into()],
+                Task::ready(Ok(receipt.clone())),
+                cx,
+            )
+        });
+        let accepted_id = accepted.id;
+        assert!(matches!(
+            accepted.await.expect("receipt"),
+            Some(SubmissionResponse::Accepted(_))
+        ));
+        let pending_sender = connection.defer_next_receipt_response();
+        let pending = thread.update(cx, |thread, cx| thread.send(vec!["pending".into()], cx));
+        let pending_id = pending.id;
+        let unobserved_sender = connection.defer_next_receipt_response();
+        let unobserved = thread.update(cx, |thread, cx| thread.send(vec!["unobserved".into()], cx));
+        let unobserved_id = unobserved.id;
+        drop(unobserved);
+        cx.run_until_parked();
+        assert!(connection.take_receipt_prompt().is_some());
+        let updates = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let updates = updates.clone();
+            cx.subscribe(&thread, move |_, event, _| {
+                if let AcpThreadEvent::SubmissionUpdated(id) = event {
+                    updates.borrow_mut().push(*id);
+                }
+            })
+        });
+        thread.update(cx, |thread, cx| {
+            thread.disconnect_submissions(cx);
+            thread.disconnect_submissions(cx);
+            assert!(!thread.has_unsettled_submissions());
+            assert!(!thread.is_idle_for_retention());
+            assert!(
+                matches!(&thread.submission(accepted_id).expect("accepted").state,
+                SubmissionState::Disconnected { receipt: Some(accepted) } if accepted == &receipt)
+            );
+            for id in [pending_id, unobserved_id] {
+                assert!(matches!(
+                    thread.submission(id).expect("unknown acceptance").state,
+                    SubmissionState::Disconnected { receipt: None }
+                ));
+            }
+            assert!(
+                matches!(&thread.submission(rejected_id).expect("rejected").state,
+                SubmissionState::Failed(error) if error.contains("not inserted"))
+            );
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+            assert!(!thread.had_error());
+            assert!(thread.entries().is_empty());
+        });
+        cx.run_until_parked();
+        assert!(
+            pending
+                .await
+                .expect_err("disconnect response")
+                .is::<SubmissionDisconnected>()
+        );
+        assert_eq!(*updates.borrow(), [accepted_id, pending_id, unobserved_id]);
+        assert!(
+            pending_sender
+                .send(Ok(acp_v2::PromptResponse::new("too-late")))
+                .is_err()
+        );
+        assert!(
+            unobserved_sender
+                .send(Ok(acp_v2::PromptResponse::new("too-late")))
+                .is_err()
+        );
+        assert!(
+            connection.take_receipt_prompt().is_none(),
+            "disconnect must not resend"
+        );
+        thread.update(cx, |thread, cx| {
+            let expected = [
+                (rejected_id, "rejected"),
+                (accepted_id, "accepted"),
+                (pending_id, "pending"),
+                (unobserved_id, "unobserved"),
+            ];
+            assert_eq!(thread.recoverable_submissions().count(), expected.len());
+            for (id, content) in expected {
+                assert_eq!(
+                    thread
+                        .submission(id)
+                        .expect("retained content")
+                        .content
+                        .as_ref(),
+                    &[content.into()]
+                );
+                thread.forget_submission(id, cx);
+            }
+            assert!(thread.recoverable_submissions().next().is_none());
+            assert!(thread.is_idle_for_retention());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_receipt_disconnect_retains_ready_receipt_without_reopening(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let receipt = acp_v2::PromptResponse::new("ready-receipt");
+        let submission = thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("reported activity");
+            let submission =
+                thread.submit_receipt(vec!["ready".into()], Task::ready(Ok(receipt.clone())), cx);
+            thread.disconnect_submissions(cx);
+            submission
+        });
+        let id = submission.id;
+        assert!(matches!(submission.await.expect("ready receipt"),
+            Some(SubmissionResponse::Accepted(accepted)) if accepted == receipt));
+        thread.update(cx, |thread, cx| {
+            assert!(
+                !thread
+                    .submissions
+                    .settle(id, SubmissionState::Failed("late failure".into()))
+            );
+            assert!(!thread.submissions.settle(id, SubmissionState::Cancelled));
+            assert!(!thread.submissions.settle(
+                id,
+                SubmissionState::Accepted {
+                    receipt: acp_v2::PromptResponse::new("different-id"),
+                    echoed: true,
+                }
+            ));
+            thread.disconnect_submissions(cx);
+            assert!(
+                matches!(&thread.submission(id).expect("still disconnected").state,
+                SubmissionState::Disconnected { receipt: Some(accepted) } if accepted == &receipt)
+            );
+            assert!(!thread.has_unsettled_submissions());
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert_eq!(thread.activity_generation(), 1);
+            assert!(!thread.had_error());
+        });
+        cx.run_until_parked();
+        let weak_thread = thread.downgrade();
+        drop(thread);
+        cx.run_until_parked();
+        assert!(weak_thread.upgrade().is_none());
+    }
+
+    #[gpui::test]
+    async fn test_receipt_disconnect_classifies_transport_loss_before_cleanup(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for error in [
+            anyhow!(SubmissionDisconnected),
+            anyhow!(
+                agent_client_protocol::Error::internal_error().data(serde_json::json!({
+                    "reason": agent_client_protocol::INCOMING_TRANSPORT_CLOSED_REASON,
+                    "method": "session/prompt",
+                }))
+            ),
+        ] {
+            let (thread, _) = new_receipt_test_thread(cx).await;
+            let accepted = thread.update(cx, |thread, cx| {
+                thread.submit_receipt(
+                    vec!["accepted".into()],
+                    Task::ready(Ok(acp_v2::PromptResponse::new("accepted"))),
+                    cx,
+                )
+            });
+            let accepted_id = accepted.id;
+            accepted.await.expect("known acceptance");
+            let pending = thread.update(cx, |thread, cx| {
+                thread.submit_receipt(vec!["unknown".into()], Task::ready(Err(error)), cx)
+            });
+            let pending_id = pending.id;
+            assert!(pending.await.is_err());
+            thread.update(cx, |thread, cx| {
+                thread.disconnect_submissions(cx);
+                assert!(
+                    matches!(&thread.submission(accepted_id).expect("known").state,
+                    SubmissionState::Disconnected { receipt: Some(receipt) }
+                        if receipt.message_id == "accepted".into())
+                );
+                assert!(matches!(
+                    thread.submission(pending_id).expect("unknown").state,
+                    SubmissionState::Disconnected { receipt: None }
+                ));
+                assert!(!thread.has_unsettled_submissions());
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_receipt_disconnect_preserves_echoed_receipts(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let submission = thread.update(cx, |thread, cx| {
+            thread.submit_receipt(
+                vec!["confirmed".into()],
+                Task::ready(Ok(acp_v2::PromptResponse::new("confirmed-id"))),
+                cx,
+            )
+        });
+        let id = submission.id;
+        submission.await.expect("receipt");
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("confirmed-id").content(vec!["confirmed".into()]),
+                    cx,
+                )
+                .expect("confirmed echo");
+            thread.disconnect_submissions(cx);
+            assert!(matches!(
+                thread.submission(id).expect("confirmed history").state,
+                SubmissionState::Accepted { echoed: true, .. }
+            ));
+            assert!(!thread.has_unsettled_submissions());
+            assert!(thread.recoverable_submissions().next().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_receipt_disconnect_does_not_settle_legacy_prompts(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project,
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("legacy session");
+        let complete = connection.defer_next_prompt_response();
+        let submission = thread.update(cx, |thread, cx| thread.send(vec!["legacy".into()], cx));
+        let id = submission.id;
+        cx.run_until_parked();
+        thread.update(cx, |thread, cx| {
+            thread.disconnect_submissions(cx);
+            assert!(matches!(
+                thread.submission(id).expect("still pending").state,
+                SubmissionState::Pending
+            ));
+            assert!(thread.has_unsettled_submissions());
+        });
+        complete
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("legacy response");
+        assert!(matches!(
+            submission.await.expect("legacy completion"),
+            Some(SubmissionResponse::LegacyCompleted(_))
+        ));
     }
 
     #[gpui::test]

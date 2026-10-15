@@ -3471,7 +3471,7 @@ mod tests {
             (&mut request_response).now_or_never().is_none(),
             "session destruction does not cancel request-scoped feedback"
         );
-        cancel_elicitations_after_disconnect(connection.dispatch_tx.clone())
+        settle_after_disconnect(connection.dispatch_tx.clone())
             .await
             .expect("canonical disconnect cleanup");
         assert_eq!(
@@ -7596,16 +7596,91 @@ exit 7
         drop(dispatch_task);
     }
 
+    #[gpui::test]
+    async fn receipt_disconnect_sdk_eof_settles_retained_submission_owners(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let harness = V2SessionHarness::new(cx).await;
+        let (project, work_dirs) = harness.thread.read_with(cx, |thread, _| {
+            (
+                thread.project().clone(),
+                thread.work_dirs().cloned().expect("directories"),
+            )
+        });
+        let connection =
+            Rc::new(acp_thread::StubAgentConnection::new().with_receipt_submissions(true));
+        let thread = cx
+            .update(|cx| connection.clone().new_session(project, work_dirs, cx))
+            .await
+            .expect("receipt model owner");
+        cx.update(|cx| {
+            let session_id = thread.read(cx).session_id().clone();
+            harness
+                .connection
+                .register_session(session_id, &thread, None, None, None, cx);
+        });
+        let accepted = thread.update(cx, |thread, cx| {
+            thread.submit_receipt(
+                vec!["accepted".into()],
+                Task::ready(Ok(acp_v2::PromptResponse::new("accepted"))),
+                cx,
+            )
+        });
+        let accepted_id = accepted.id;
+        accepted.await.expect("known receipt");
+        let pending_sender = connection.defer_next_receipt_response();
+        let pending = thread.update(cx, |thread, cx| thread.send(vec!["pending".into()], cx));
+        let pending_id = pending.id;
+        cx.run_until_parked();
+        drop(harness._legacy_agent_task);
+        harness.connection.connection.incoming_closed().await;
+        drain_foreground_queue(&harness.connection.dispatch_tx)
+            .await
+            .expect("disconnect barrier");
+        assert!(
+            pending
+                .await
+                .expect_err("lost transport")
+                .is::<acp_thread::SubmissionDisconnected>()
+        );
+        if pending_sender
+            .send(Ok(acp_v2::PromptResponse::new("late")))
+            .is_ok()
+        {
+            cx.run_until_parked();
+        }
+        thread.read_with(cx, |thread, _| {
+            assert!(!thread.has_unsettled_submissions());
+            assert!(
+                matches!(&thread.submission(accepted_id).expect("retained receipt").state,
+                acp_thread::SubmissionState::Disconnected { receipt: Some(receipt) }
+                    if receipt.message_id == "accepted".into())
+            );
+            assert!(matches!(
+                thread
+                    .submission(pending_id)
+                    .expect("unknown acceptance")
+                    .state,
+                acp_thread::SubmissionState::Disconnected { receipt: None }
+            ));
+        });
+        assert!(
+            !harness
+                .thread
+                .read_with(cx, |thread, _| thread.uses_reported_activity())
+        );
+    }
+
     #[test]
     fn disconnect_cleanup_reports_queue_failures() {
         let (sender, receiver) = mpsc::unbounded::<ForegroundWork>();
         drop(receiver);
-        let error = futures::executor::block_on(cancel_elicitations_after_disconnect(sender))
+        let error = futures::executor::block_on(settle_after_disconnect(sender))
             .expect_err("closed dispatch queue must reject cleanup");
         assert_eq!(error.code, ErrorCode::InternalError);
 
         let (sender, mut receiver) = mpsc::unbounded::<ForegroundWork>();
-        let mut cleanup = Box::pin(cancel_elicitations_after_disconnect(sender));
+        let mut cleanup = Box::pin(settle_after_disconnect(sender));
         assert!(cleanup.as_mut().now_or_never().is_none());
         let accepted = futures::executor::block_on(receiver.next()).expect("accepted cleanup");
         drop(accepted);
@@ -7623,9 +7698,7 @@ exit 7
             active_request_scopes: None,
         };
         let (sender, mut receiver) = mpsc::unbounded::<ForegroundWork>();
-        let cleanup = cancel_elicitations_after_disconnect(sender.clone())
-            .boxed()
-            .shared();
+        let cleanup = settle_after_disconnect(sender.clone()).boxed().shared();
         let mut close_callback = Box::pin(cleanup.clone());
         let mut connection_finished = Box::pin(cleanup.clone());
         assert!(close_callback.as_mut().now_or_never().is_none());
