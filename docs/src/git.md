@@ -9,6 +9,42 @@ Zed has built-in Git support that lets you manage version control without leavin
 
 For operations that Zed doesn't support natively, you can use the integrated terminal.
 
+## Arc Repositories
+
+Zed Custom can automatically use arc2git-zed for Arc repositories while keeping
+ordinary Git repositories on the existing Git executable lookup. Configure the
+adapter once in user settings on the machine hosting the project. For SSH projects,
+use the remote server's settings, with a path on that server:
+
+```json
+{
+  "git": {
+    "arc_executable": "~/.local/libexec/arc2git-zed"
+  }
+}
+```
+
+The value must name an executable launcher using an absolute path or `~/`.
+The launcher must set up the adapter's runtime (including a compatible Python)
+itself; it is executed directly, without an interactive shell. If the adapter
+needs `ARC2GIT_REAL_GIT`, set it to the real Git executable inside the launcher.
+The launcher does not need to be named `git` or be on `PATH`.
+
+Zed checks parent directories for `.arcadia.root`, `.cloudia.root`, or an existing
+`.git/.arc2git-zed` marker. A closer ordinary `.git` directory or worktree file
+takes precedence over an enclosing Arc mount. Before scanning an opened Arc
+folder, Zed invokes the configured adapter with `-C <folder> --version` so that
+the adapter creates its metadata at the Arc root. Zed then uses the same adapter
+for that repository's Git operations. Missing adapters and failed initialization
+are reported as errors.
+
+This works for new Arc workspaces and existing mounts opened through Open Folder.
+There is no per-workspace selection or `.zed/settings.json` to maintain. The
+setting is read from user/server settings; project settings cannot select the
+executable. It does not change Git in terminals or other programs. After changing
+the setting, reopen the project. With `arc_executable` unset, existing behavior
+is preserved.
+
 ## Repository Activation
 
 When a project is rooted at a git repository, or at a subdirectory of one, all repositories in it are active immediately.

@@ -1,3 +1,4 @@
+pub mod arc_git;
 mod ignore;
 mod worktree_settings;
 
@@ -496,6 +497,13 @@ impl Worktree {
             .metadata(&abs_path)
             .await
             .context("failed to stat worktree path")?;
+
+        if visible && scanning_enabled && metadata.as_ref().is_some_and(|metadata| metadata.is_dir)
+        {
+            let executable =
+                cx.update(|cx| arc_git::ArcGitSettings::get_global(cx).executable.clone());
+            arc_git::initialize(fs.as_ref(), &abs_path, executable.as_deref()).await?;
+        }
 
         let fs_case_sensitive = fs.is_case_sensitive().await;
 

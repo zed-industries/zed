@@ -32,6 +32,109 @@ use util::{
     test::TempTree,
 };
 
+#[cfg(unix)]
+#[gpui::test]
+async fn test_arc_adapter_initializes_before_repository_discovery(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    cx.executor().allow_parking();
+    init_test(cx);
+    let temporary = TempTree::new(json!({
+        "arc mount 'quoted'": {".arcadia.root": "", "project": {}},
+        "git-project": {".git": {}, "file.rs": ""},
+        "launcher": ""
+    }));
+    let launcher = temporary.path().join("launcher");
+    std::fs::write(
+        &launcher,
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$(dirname "$0")/calls"
+[ "$1" = -C ] && [ "$3" = --version ]
+root="$2"
+while [ ! -e "$root/.arcadia.root" ]; do
+    [ "$root" != / ] || exit 1
+    root="$(dirname "$root")"
+done
+mkdir -p "$root/.git"
+touch "$root/.git/.arc2git-zed"
+printf 'ref: refs/heads/trunk\n' > "$root/.git/HEAD"
+printf 'git version arc2git-zed\n'
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.git.as_mut().unwrap().arc_executable =
+                    Some(launcher.to_string_lossy().into_owned());
+            });
+        });
+    });
+
+    let mount = temporary.path().join("arc mount 'quoted'");
+    let project = mount.join("project");
+    let fs = RealFs::new(None, cx.executor());
+    let tree = Worktree::local(
+        project.as_path(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    assert!(mount.join(".git/.arc2git-zed").is_file());
+    assert!(!project.join(".git").exists());
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.as_local().unwrap().repositories().len(), 1)
+    });
+    assert_eq!(
+        worktree::arc_git::executable_for_directory(fs.as_ref(), &mount, launcher.to_str())
+            .await
+            .unwrap(),
+        Some(launcher.clone())
+    );
+
+    // Existing Arc mounts take the same path on reopen, without project settings.
+    worktree::arc_git::initialize(fs.as_ref(), &project, launcher.to_str())
+        .await
+        .unwrap();
+    let calls = std::fs::read_to_string(temporary.path().join("calls")).unwrap();
+    assert_eq!(calls.lines().count(), 2);
+    assert!(
+        calls
+            .lines()
+            .all(|call| call == format!("-C {} --version", project.display()))
+    );
+
+    let ordinary = temporary.path().join("git-project");
+    worktree::arc_git::initialize(fs.as_ref(), &ordinary, Some("/missing-adapter"))
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(temporary.path().join("calls")).unwrap(),
+        calls
+    );
+    std::fs::write(&launcher, "#!/bin/sh\necho 'adapter failed' >&2\nexit 7\n").unwrap();
+    let error = worktree::arc_git::initialize(fs.as_ref(), &project, launcher.to_str())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("adapter failed"));
+    assert!(mount.join(".arcadia.root").is_file());
+    std::fs::write(&launcher, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::remove_file(mount.join(".git/HEAD")).unwrap();
+    let error = worktree::arc_git::initialize(fs.as_ref(), &project, launcher.to_str())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("did not initialize"));
+}
+
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
     init_test(cx);

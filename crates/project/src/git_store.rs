@@ -781,16 +781,29 @@ impl LocalRepositoryState {
                     HashMap::default()
                 });
         let search_paths = environment.get("PATH").map(|val| val.to_owned());
+        let arc_executable = cx.update(|cx| {
+            worktree::arc_git::ArcGitSettings::get_global(cx)
+                .executable
+                .clone()
+        });
         let backend = cx
             .background_spawn({
                 let fs = fs.clone();
                 async move {
-                    let system_git_binary_path = search_paths
-                        .and_then(|search_paths| {
-                            which::which_in("git", Some(search_paths), &work_directory_abs_path)
-                                .ok()
-                        })
-                        .or_else(|| which::which("git").ok());
+                    let arc_executable = worktree::arc_git::executable_for_directory(
+                        fs.as_ref(),
+                        &work_directory_abs_path,
+                        arc_executable.as_deref(),
+                    )
+                    .await?;
+                    let system_git_binary_path = arc_executable.or_else(|| {
+                        search_paths
+                            .and_then(|search_paths| {
+                                which::which_in("git", Some(search_paths), &work_directory_abs_path)
+                                    .ok()
+                            })
+                            .or_else(|| which::which("git").ok())
+                    });
                     fs.open_repo(&dot_git_abs_path, system_git_binary_path.as_deref())
                         .with_context(|| format!("opening repository at {dot_git_abs_path:?}"))
                 }

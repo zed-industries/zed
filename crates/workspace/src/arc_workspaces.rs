@@ -122,7 +122,8 @@ project="$mount/$relative"
 [[ -d "$project" ]] || { echo "Project directory does not exist: $project" >&2; exit 1; }
 project="$(cd -- "$project" && pwd -P)"
 [[ "$project" == "$mount/"* ]] || { echo 'Project directory escapes the Arc mount' >&2; exit 1; }
-# The non-interactive SSH PATH can miss the user's Git shim and its runtime.
+# Preserve PATH-based bootstrap for installations without git.arc_executable.
+# A configured adapter is initialized by Worktree::local before scanning.
 bash -lic 'git -C "$1" --version' zed-arc-workspace-git "$project" >&2
 printf '%s\n%s\n' "$mount" "$project"
 "#;

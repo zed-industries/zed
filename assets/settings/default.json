@@ -1821,6 +1821,9 @@
   "read_only_files": [],
   // Git gutter behavior configuration.
   "git": {
+    // Optional arc2git-zed launcher used automatically for Arc repositories.
+    // Set once in user settings on the machine hosting the project.
+    "arc_executable": null,
     // Global switch to enable or disable all git integration features.
     // If set to true, disables all git integration features.
     // If set to false, individual git integration features below will be independently enabled or disabled.

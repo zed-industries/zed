@@ -631,6 +631,12 @@ impl std::fmt::Debug for ContextServerCommand {
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
+    /// Absolute path (or ~/path) to an arc2git-zed launcher, used automatically
+    /// for Arc repositories. Configure once in user settings on the machine
+    /// hosting the project. Does not change Git in terminals or other programs.
+    ///
+    /// Default: null (use the existing Git lookup)
+    pub arc_executable: Option<String>,
     /// Whether or not to enable git integration.
     ///
     /// Default: true
