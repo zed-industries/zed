@@ -4,6 +4,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui_util::ResultExt as _;
 use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest};
 use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
@@ -19,7 +20,6 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::form_urlencoded;
-use util::ResultExt as _;
 
 pub const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai_subscribed");
 pub const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("SuperGrok");
