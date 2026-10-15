@@ -7505,6 +7505,7 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "gpui_apple",
+ "gpui_platform",
  "log",
  "objc2 0.6.3",
  "objc2-core-foundation",
@@ -7515,15 +7516,6 @@ dependencies = [
  "raw-window-handle",
  "slotmap",
  "uuid",
-]
-
-[[package]]
-name = "gpui_ios_example"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "gpui_ios",
- "gpui_platform",
 ]
 
 [[package]]
