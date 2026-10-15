@@ -1,10 +1,14 @@
 use crate::{AgentServer, AgentServerDelegate};
-use acp_thread::{AcpThread, AgentThreadEntry, ToolCallStatus};
+use acp_thread::{
+    AcpThread, AcpThreadEvent, AgentThreadEntry, ForegroundActivity, SubmissionResponse,
+    ToolCallStatus,
+};
 use agent_client_protocol::schema::v2 as acp_v2;
+use anyhow::{Context as _, Result, anyhow};
 use client::RefreshLlmTokenListener;
-use futures::{FutureExt, StreamExt, channel::mpsc, select};
+use futures::{FutureExt, StreamExt, channel::mpsc, channel::oneshot, select};
 use gpui::AppContext;
-use gpui::{Entity, TestAppContext};
+use gpui::{Entity, Task, TestAppContext};
 use indoc::indoc;
 use project::{FakeFs, Project};
 #[cfg(test)]
@@ -26,8 +30,7 @@ where
     let project = Project::test(fs.clone(), [], cx).await;
     let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
 
-    thread
-        .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
+    send_and_wait_for_turn(&thread, vec!["Hello from Zed!".into()], cx)
         .await
         .unwrap();
 
@@ -67,21 +70,17 @@ where
     .expect("failed to write file");
     let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
     let thread = new_test_thread(server(&fs, cx).await, project.clone(), tempdir.path(), cx).await;
-    thread
-        .update(cx, |thread, cx| {
-            thread.send(
-                vec![
-                    "Read the file ".into(),
-                    acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new(
-                        "foo.rs", "foo.rs",
-                    )),
-                    " and tell me what the content of the println! is".into(),
-                ],
-                cx,
-            )
-        })
-        .await
-        .unwrap();
+    send_and_wait_for_turn(
+        &thread,
+        vec![
+            "Read the file ".into(),
+            acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new("foo.rs", "foo.rs")),
+            " and tell me what the content of the println! is".into(),
+        ],
+        cx,
+    )
+    .await
+    .unwrap();
 
     thread.read_with(cx, |thread, cx| {
         assert!(matches!(
@@ -122,15 +121,13 @@ where
     let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
     let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
 
-    thread
-        .update(cx, |thread, cx| {
-            thread.send_raw(
-                &format!("Read {} and tell me what you see.", foo_path.display()),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
+    send_and_wait_for_turn(
+        &thread,
+        vec![format!("Read {} and tell me what you see.", foo_path.display()).into()],
+        cx,
+    )
+    .await
+    .unwrap();
     thread.read_with(cx, |thread, _cx| {
         assert!(thread.entries().iter().any(|entry| {
             matches!(
@@ -162,12 +159,11 @@ pub async fn test_tool_call_with_permission<T, F>(
     let fs = init_test(cx).await as Arc<dyn fs::Fs>;
     let project = Project::test(fs.clone(), [path!("/private/tmp").as_ref()], cx).await;
     let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
-    let full_turn = thread.update(cx, |thread, cx| {
-        thread.send_raw(
-            r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
-            cx,
-        )
-    });
+    let full_turn = send_and_wait_for_turn(
+        &thread,
+        vec![r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#.into()],
+        cx,
+    );
 
     run_until_first_tool_call(
         &thread,
@@ -251,12 +247,11 @@ where
 
     let project = Project::test(fs.clone(), [path!("/private/tmp").as_ref()], cx).await;
     let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
-    let _ = thread.update(cx, |thread, cx| {
-        thread.send_raw(
-            r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
-            cx,
-        )
-    });
+    let full_turn = send_and_wait_for_turn(
+        &thread,
+        vec![r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#.into()],
+        cx,
+    );
 
     let first_tool_call_ix = run_until_first_tool_call(
         &thread,
@@ -283,6 +278,7 @@ where
     });
 
     thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    full_turn.await.unwrap();
     thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[first_tool_call_ix] else {
             panic!();
@@ -290,12 +286,13 @@ where
         assert_eq!(tool_call.status(), ToolCallStatus::Canceled);
     });
 
-    thread
-        .update(cx, |thread, cx| {
-            thread.send_raw(r#"Stop running and say goodbye to me."#, cx)
-        })
-        .await
-        .unwrap();
+    send_and_wait_for_turn(
+        &thread,
+        vec!["Stop running and say goodbye to me.".into()],
+        cx,
+    )
+    .await
+    .unwrap();
     thread.read_with(cx, |thread, _| {
         assert!(matches!(
             &thread.entries().last().unwrap(),
@@ -313,8 +310,7 @@ where
     let project = Project::test(fs.clone(), [], cx).await;
     let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
 
-    thread
-        .update(cx, |thread, cx| thread.send_raw("Hello from test!", cx))
+    send_and_wait_for_turn(&thread, vec!["Hello from test!".into()], cx)
         .await
         .unwrap();
 
@@ -381,6 +377,59 @@ macro_rules! common_e2e_tests {
 pub use common_e2e_tests;
 
 // Helpers
+
+pub fn send_and_wait_for_turn(
+    thread: &Entity<AcpThread>,
+    content: Vec<acp_v2::ContentBlock>,
+    cx: &mut TestAppContext,
+) -> Task<Result<()>> {
+    cx.update(|cx| {
+        // These tests send sequential turns; otherwise a predecessor's stop could win this wait.
+        if thread.read(cx).foreground_activity() != ForegroundActivity::Idle
+            || thread.read(cx).has_unsettled_submissions()
+        {
+            return Task::ready(Err(anyhow!(
+                "send_and_wait_for_turn requires an idle thread with no unsettled submissions"
+            )));
+        }
+        let generation = thread.read(cx).activity_generation();
+        let (sender, receiver) = oneshot::channel();
+        let mut sender = Some(sender);
+        // Native acceptance can precede completion, and completion can precede polling the receipt.
+        let subscription = cx.subscribe(thread, move |_, event, _| {
+            if let AcpThreadEvent::Stopped {
+                activity_generation,
+                stop_reason,
+                ..
+            } = event
+                && *activity_generation > generation
+                && let Some(sender) = sender.take()
+            {
+                let result = match stop_reason {
+                    Some(acp_v2::StopReason::Error(reason)) => Err(match &reason.error {
+                        Some(error) => anyhow::Error::new((**error).clone()),
+                        None => anyhow!("Agent stopped with an error"),
+                    }),
+                    _ => Ok(()),
+                };
+                if sender.send(result).is_err() {
+                    log::debug!("Turn completion waiter was dropped");
+                }
+            }
+        });
+        let submission = thread.update(cx, |thread, cx| thread.send(content, cx));
+        cx.spawn(async move |_| {
+            let result = match submission.await? {
+                Some(SubmissionResponse::Accepted(_)) => receiver
+                    .await
+                    .context("Thread dropped before the turn stopped")?,
+                Some(SubmissionResponse::LegacyCompleted(_)) | None => Ok(()),
+            };
+            drop(subscription);
+            result
+        })
+    })
+}
 
 pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
     env_logger::try_init().ok();
@@ -476,4 +525,92 @@ pub fn get_zed_path() -> PathBuf {
     }
 
     zed_path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acp_thread::{AgentConnection, StubAgentConnection};
+    use agent_client_protocol::schema::v1 as acp_v1;
+    use std::rc::Rc;
+
+    async fn stub_thread(
+        receipt_submissions: bool,
+        cx: &mut TestAppContext,
+    ) -> (Rc<StubAgentConnection>, Entity<AcpThread>) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection =
+            Rc::new(StubAgentConnection::new().with_receipt_submissions(receipt_submissions));
+        let thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project,
+                    PathList::new(&[Path::new("/private/tmp")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("stub session");
+        (connection, thread)
+    }
+
+    #[gpui::test]
+    async fn test_e2e_helper_preserves_v1_completion(cx: &mut TestAppContext) {
+        let (connection, thread) = stub_thread(false, cx).await;
+        let response = connection.defer_next_prompt_response();
+        let mut completion = send_and_wait_for_turn(&thread, vec!["hello".into()], cx);
+        cx.run_until_parked();
+        assert!((&mut completion).now_or_never().is_none());
+        response
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("prompt response");
+        completion.await.expect("v1 completion");
+    }
+
+    #[gpui::test]
+    async fn test_e2e_helper_preserves_stop_before_receipt(cx: &mut TestAppContext) {
+        let (connection, thread) = stub_thread(true, cx).await;
+        let receipt = connection.defer_next_receipt_response();
+        let completion = send_and_wait_for_turn(&thread, vec!["fail".into()], cx);
+        send_and_wait_for_turn(&thread, vec!["overlapping".into()], cx)
+            .await
+            .expect_err("an unsettled receipt must reject overlapping prompts");
+        thread.update(cx, |thread, cx| {
+            cx.emit(AcpThreadEvent::Stopped {
+                activity_generation: thread.activity_generation(),
+                activity_duration: None,
+                stop_reason: Some(acp_v2::StopReason::EndTurn),
+            });
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(
+                        acp_v2::IdleStateUpdate::new()
+                            .stop_reason(acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new())),
+                    ),
+                    cx,
+                )
+                .expect("stopped");
+        });
+        cx.run_until_parked();
+        receipt
+            .send(Ok(acp_v2::PromptResponse::new("accepted")))
+            .expect("receipt");
+        assert_eq!(
+            completion
+                .await
+                .expect_err("error without details")
+                .to_string(),
+            "Agent stopped with an error"
+        );
+    }
 }
