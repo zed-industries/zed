@@ -2,8 +2,9 @@ use crate::RemoteSettings;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, PromptLevel, Render,
-    SharedString, Styled, Subscription, WeakEntity, Window, div, h_flex, px, v_flex,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement, PromptLevel, Render, SharedString, Styled, Subscription, WeakEntity, Window,
+    div, px,
 };
 use project::Fs;
 use remote::{SshConnectionOptions, SshPortForwardOption};
@@ -416,6 +417,8 @@ impl Focusable for PortForwardingPopover {
     }
 }
 
+impl EventEmitter<DismissEvent> for PortForwardingPopover {}
+
 impl Render for PortForwardingPopover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut list = v_flex().gap_1();
@@ -474,7 +477,13 @@ impl Render for PortForwardingPopover {
                             .truncate(),
                     ),
             )
-            .child(div().max_h(px(280.)).overflow_y_scroll().child(list))
+            .child(
+                div()
+                    .id("port-forward-list")
+                    .max_h(px(280.))
+                    .overflow_y_scroll()
+                    .child(list),
+            )
             .when(self.editor.is_none() && !self.is_saving, |this| {
                 this.child(
                     Button::new("add-port-forward", "Add port forward")
@@ -497,6 +506,13 @@ impl Render for PortForwardingPopover {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
+            .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                if this.editor.is_some() {
+                    this.cancel_edit(cx);
+                } else {
+                    cx.emit(DismissEvent);
+                }
+            }))
             .into_any_element()
     }
 }
@@ -556,7 +572,7 @@ impl PortForwardingPopover {
     fn render_editor(
         &self,
         editor: &ForwardEditor,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         h_flex()
@@ -590,9 +606,6 @@ impl PortForwardingPopover {
             )
             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
                 this.save_edit(window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                this.cancel_edit(cx);
             }))
     }
 }
