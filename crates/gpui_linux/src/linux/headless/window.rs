@@ -51,6 +51,8 @@ impl PlatformDisplay for HeadlessDisplay {
 struct HeadlessWindowState {
     bounds: Bounds<Pixels>,
     display: Rc<dyn PlatformDisplay>,
+    /// Held while this window exists, so the platform can tell that headless windows are open.
+    _lease: Rc<()>,
     input_handler: Option<PlatformInputHandler>,
     title: Option<String>,
     is_fullscreen: bool,
@@ -76,10 +78,15 @@ impl raw_window_handle::HasDisplayHandle for HeadlessWindow {
 }
 
 impl HeadlessWindow {
-    pub(crate) fn new(params: WindowParams, display: Rc<dyn PlatformDisplay>) -> Self {
+    pub(crate) fn new(
+        params: WindowParams,
+        display: Rc<dyn PlatformDisplay>,
+        lease: Rc<()>,
+    ) -> Self {
         Self(Rc::new(RefCell::new(HeadlessWindowState {
             bounds: params.bounds,
             display,
+            _lease: lease,
             input_handler: None,
             title: None,
             is_fullscreen: false,

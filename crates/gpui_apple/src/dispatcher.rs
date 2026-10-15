@@ -13,27 +13,21 @@ use mach2::{
 };
 
 use async_task::Runnable;
-use objc::{
-    class, msg_send,
-    runtime::{BOOL, YES},
-    sel, sel_impl,
-};
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString};
+use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString, NSThread};
 use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
-pub(crate) struct MacDispatcher;
+pub struct AppleDispatcher;
 
-impl MacDispatcher {
+impl AppleDispatcher {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl PlatformDispatcher for MacDispatcher {
+impl PlatformDispatcher for AppleDispatcher {
     fn is_main_thread(&self) -> bool {
-        let is_main_thread: BOOL = unsafe { msg_send![class!(NSThread), isMainThread] };
-        is_main_thread == YES
+        NSThread::isMainThread_class()
     }
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
@@ -80,22 +74,22 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {
-        MacActivity::begin(
+        AppleActivity::begin(
             reason,
             NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
         )
     }
 }
 
-pub(crate) struct MacActivity {
+pub struct AppleActivity {
     activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
 }
 
 // The activity token returned by NSProcessInfo is thread-safe
-unsafe impl Send for MacActivity {}
+unsafe impl Send for AppleActivity {}
 
-impl MacActivity {
-    pub(crate) fn begin(reason: &str, options: NSActivityOptions) -> ActivityGuard {
+impl AppleActivity {
+    pub fn begin(reason: &str, options: NSActivityOptions) -> ActivityGuard {
         let activity = Self {
             activity: NSProcessInfo::processInfo()
                 .beginActivityWithOptions_reason(options, &NSString::from_str(reason)),
@@ -104,7 +98,7 @@ impl MacActivity {
     }
 }
 
-impl Drop for MacActivity {
+impl Drop for AppleActivity {
     fn drop(&mut self) {
         unsafe { NSProcessInfo::processInfo().endActivity(&self.activity) };
     }

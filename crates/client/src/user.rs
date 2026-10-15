@@ -904,7 +904,7 @@ impl UserStore {
     fn handle_message_to_client(this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
         match message {
             MessageToClient::UserUpdated => {}
-            MessageToClient::NotificationsUpdated => return,
+            MessageToClient::NotificationsUpdated | MessageToClient::SettingsUpdated => return,
         }
 
         cx.spawn(async move |cx| {

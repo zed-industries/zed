@@ -1036,14 +1036,11 @@ impl EditPredictionButton {
             .copilot
             .enable_next_edit_suggestions
             .unwrap_or(true);
-        let copilot_config = copilot_chat::CopilotChatConfiguration {
-            enterprise_uri: all_language_settings
-                .edit_predictions
-                .copilot
+        let settings_url = copilot_settings_url(
+            settings::CopilotSettings::get_global(cx)
                 .enterprise_uri
-                .clone(),
-        };
-        let settings_url = copilot_settings_url(copilot_config.enterprise_uri.as_deref());
+                .as_deref(),
+        );
 
         ContextMenu::build(window, cx, |menu, window, cx| {
             let menu = self.build_language_settings_menu(menu, window, cx);
@@ -1809,18 +1806,15 @@ mod tests {
         cx.update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store
                 .set_user_settings(
-                    r#"{"edit_predictions":{"copilot":{"enterprise_uri":"https://my-company.ghe.com"}}}"#,
+                    r#"{"copilot":{"enterprise_uri":"https://my-company.ghe.com"}}"#,
                     cx,
                 )
                 .unwrap();
         });
 
         let url = cx.update(|cx| {
-            let all_language_settings = all_language_settings(None, cx);
             copilot_settings_url(
-                all_language_settings
-                    .edit_predictions
-                    .copilot
+                settings::CopilotSettings::get_global(cx)
                     .enterprise_uri
                     .as_deref(),
             )
@@ -1839,18 +1833,15 @@ mod tests {
         cx.update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store
                 .set_user_settings(
-                    r#"{"edit_predictions":{"copilot":{"enterprise_uri":"https://my-company.ghe.com/"}}}"#,
+                    r#"{"copilot":{"enterprise_uri":"https://my-company.ghe.com/"}}"#,
                     cx,
                 )
                 .unwrap();
         });
 
         let url = cx.update(|cx| {
-            let all_language_settings = all_language_settings(None, cx);
             copilot_settings_url(
-                all_language_settings
-                    .edit_predictions
-                    .copilot
+                settings::CopilotSettings::get_global(cx)
                     .enterprise_uri
                     .as_deref(),
             )
@@ -1867,11 +1858,8 @@ mod tests {
         });
 
         let url = cx.update(|cx| {
-            let all_language_settings = all_language_settings(None, cx);
             copilot_settings_url(
-                all_language_settings
-                    .edit_predictions
-                    .copilot
+                settings::CopilotSettings::get_global(cx)
                     .enterprise_uri
                     .as_deref(),
             )

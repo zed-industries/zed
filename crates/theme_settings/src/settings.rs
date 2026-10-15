@@ -4,8 +4,8 @@ use crate::schema::{status_colors_refinement, syntax_overrides, theme_colors_ref
 use crate::{merge_accent_colors, merge_player_colors};
 use collections::HashMap;
 use gpui::{
-    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, SharedString, Subscription,
-    Window, px,
+    App, Context, Font, FontFallbacks, FontStyle, FontWeight, Global, Pixels, SharedString,
+    Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::JsonSchema;
@@ -75,6 +75,8 @@ pub struct ThemeSettings {
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,
+    /// The font weight for headings in the markdown preview.
+    markdown_preview_heading_font_weight: FontWeight,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -442,6 +444,11 @@ impl ThemeSettings {
             .unwrap_or(&self.buffer_font.family)
     }
 
+    /// Returns the font weight to use for headings in the markdown preview.
+    pub fn markdown_preview_heading_font_weight(&self) -> FontWeight {
+        self.markdown_preview_heading_font_weight
+    }
+
     /// Returns the markdown preview font size.
     ///
     /// Note: the fallback deliberately uses `self.ui_font_size` instead of `ui_font_size(cx)`,
@@ -756,6 +763,10 @@ impl settings::Settings for ThemeSettings {
             markdown_preview_theme: markdown_preview
                 .and_then(|preview| preview.theme.clone())
                 .map(ThemeSelection::from),
+            markdown_preview_heading_font_weight: markdown_preview
+                .and_then(|preview| preview.heading_font_weight)
+                .map(|weight| weight.into_gpui())
+                .unwrap_or(FontWeight::SEMIBOLD),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),

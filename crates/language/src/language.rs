@@ -376,6 +376,12 @@ impl CachedLspAdapter {
         self.adapter.name()
     }
 
+    /// Returns whether the language server only starts for the given language
+    /// when it is explicitly listed in the `language_servers` setting.
+    pub fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.adapter.is_opt_in_for(language)
+    }
+
     pub async fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -656,6 +662,13 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         HashMap::default()
     }
 
+    /// Whether the `...` wildcard in the `language_servers` setting excludes this
+    /// language server for the given language, so that it only starts when
+    /// listed explicitly.
+    fn is_opt_in_for(&self, _language: &LanguageName) -> bool {
+        false
+    }
+
     /// Support custom initialize params.
     fn prepare_initialize_params(
         &self,
@@ -923,6 +936,7 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
     pub language_server_binary: LanguageServerBinary,
+    pub opt_in_languages: HashSet<LanguageName>,
 
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
@@ -1550,6 +1564,7 @@ impl Default for FakeLspAdapter {
                 arguments: vec![],
                 env: Default::default(),
             },
+            opt_in_languages: HashSet::default(),
             label_for_completion: None,
         }
     }
@@ -1650,6 +1665,10 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<CodeLabel> {
         let label_for_completion = self.label_for_completion.as_ref()?;
         label_for_completion(item, language)
+    }
+
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.opt_in_languages.contains(language)
     }
 
     fn is_extension(&self) -> bool {

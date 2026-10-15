@@ -18,7 +18,9 @@ ui.workspace = true
 workspace.workspace = true
 log.workspace = true
 indexmap.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 text.workspace = true
 
 [dev-dependencies]

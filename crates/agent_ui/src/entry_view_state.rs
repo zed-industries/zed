@@ -79,7 +79,7 @@ impl EntryViewState {
     }
 
     pub(crate) fn is_tool_call_content_visible(&self, tool_call: &ToolCall) -> bool {
-        self.is_tool_call_expanded(&tool_call.id) || tool_call.authorization().is_some()
+        self.is_tool_call_expanded(&tool_call.id) || tool_call.authorization_id().is_some()
     }
 
     pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v1::ToolCallId) {

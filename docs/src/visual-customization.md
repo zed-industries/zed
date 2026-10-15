@@ -87,7 +87,10 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "font_family": null,
     // Controls the font family for code blocks in the markdown preview.
     // If not specified, it falls back to the editor font family.
-    "code_font_family": null
+    "code_font_family": null,
+    // Controls the font weight for headings (H1 through H6) in the markdown preview,
+    // in CSS units from 100 to 900. Defaults to 600.
+    "heading_font_weight": 600
   }
 ```
 

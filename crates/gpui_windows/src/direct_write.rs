@@ -70,7 +70,9 @@ struct GPUState {
 }
 
 struct DirectWriteState {
-    gpu_state: GPUState,
+    /// Used to rasterize color glyphs. `None` while the platform is headless: shaping and
+    /// layout don't need a GPU, and nothing is drawn.
+    gpu_state: Option<GPUState>,
     system_font_collection: IDWriteFontCollection1,
     custom_font_collection: IDWriteFontCollection1,
     fonts: Vec<FontInfo>,
@@ -163,7 +165,8 @@ impl GPUState {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
+    /// Creates the text system, able to rasterize color glyphs once it has `directx_devices`.
+    pub(crate) fn new(directx_devices: Option<&DirectXDevices>) -> Result<Self> {
         let factory: IDWriteFactory5 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
         // The `IDWriteInMemoryFontFileLoader` here is supported starting from
         // Windows 10 Creators Update, which consequently requires the entire
@@ -176,7 +179,7 @@ impl DirectWriteTextSystem {
         let locale = HSTRING::from_wide(&locale);
         let text_renderer = TextRendererWrapper::new(locale.clone());
 
-        let gpu_state = GPUState::new(directx_devices)?;
+        let gpu_state = directx_devices.map(GPUState::new).transpose()?;
 
         let system_subpixel_rendering = get_system_subpixel_rendering();
         let system_ui_font_name = get_system_ui_font_name();
@@ -218,8 +221,15 @@ impl DirectWriteTextSystem {
         })
     }
 
+    /// Uses `directx_devices` to rasterize color glyphs, replacing any previous devices, for
+    /// example after the device was lost.
     pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) -> Result<()> {
         self.state.write().handle_gpu_lost(directx_devices)
+    }
+
+    /// Releases the GPU state, when the platform switches to headless mode.
+    pub(crate) fn release_gpu(&self) {
+        self.state.write().gpu_state = None;
     }
 }
 
@@ -885,6 +895,10 @@ impl DirectWriteState {
         // (`Map`/`Unmap`/`Draw`/`CopyResource`), which `DirectXRenderer` and `DirectXAtlas` also
         // touch. An immediate `ID3D11DeviceContext` is not thread-safe, so this must only run on
         // the main UI thread (which it always is; text rasterization never leaves that thread).
+        let gpu_state = self
+            .gpu_state
+            .as_ref()
+            .context("rasterizing color glyphs needs a GPU, which headless mode has none of")?;
         let bitmap_size = glyph_bounds.size;
         let subpixel_shift = params
             .subpixel_variant
@@ -981,7 +995,7 @@ impl DirectWriteState {
                     };
                     let bounds = bounds(point(color_bounds.left, color_bounds.top), color_size);
                     glyph_layers.push(GlyphLayerTexture::new(
-                        &self.gpu_state,
+                        gpu_state,
                         run_color,
                         bounds,
                         &alpha_data,
@@ -996,8 +1010,6 @@ impl DirectWriteState {
                 break;
             }
         }
-
-        let gpu_state = &self.gpu_state;
 
         let render_target_texture = {
             let mut texture = None;
@@ -1284,7 +1296,7 @@ impl DirectWriteState {
         try_to_recover_from_device_lost(|| {
             GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite")
         })
-        .map(|gpu_state| self.gpu_state = gpu_state)
+        .map(|gpu_state| self.gpu_state = Some(gpu_state))
     }
 }
 
@@ -2005,7 +2017,7 @@ mod tests {
     #[test]
     fn color_emoji_rasterization_is_stable_across_batches() -> Result<()> {
         let devices = DirectXDevices::new()?;
-        let text_system = DirectWriteTextSystem::new(&devices)?;
+        let text_system = DirectWriteTextSystem::new(Some(&devices))?;
 
         let font = Font {
             family: "Segoe UI Emoji".into(),

@@ -1,12 +1,12 @@
 use crate::types::TableCell;
-use gpui::{AnyElement, Entity};
+use gpui::{AnyElement, Entity, Hsla};
 use std::ops::Range;
 use ui::{ColumnWidthConfig, ResizableColumnsState, Table, UncheckedTableRow, div, prelude::*};
 
 use crate::{
     TableView,
     settings::RowRenderMechanism,
-    types::{AnyColumn, DisplayCellId, DisplayRow},
+    types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
 
 impl TableView {
@@ -98,7 +98,7 @@ impl TableView {
         this: &TableView,
         cols: usize,
         display_row: DisplayRow,
-        row_identifier_text_color: gpui::Hsla,
+        row_identifier_text_color: Hsla,
         row_height: Pixels,
         cx: &Context<TableView>,
     ) -> Option<UncheckedTableRow<AnyElement>> {
@@ -117,6 +117,18 @@ impl TableView {
             let cell_content = table_cell.display_value().cloned().unwrap_or_default();
 
             let display_cell_id = DisplayCellId::new(display_row, col);
+            let data_cell_id = DataCellId::new(data_row, col);
+
+            let is_focus_cell = this
+                .selection
+                .as_ref()
+                .is_some_and(|selection| selection.focus == data_cell_id);
+
+            let cell_bg = if is_focus_cell {
+                Some(cx.theme().colors().element_selected)
+            } else {
+                None
+            };
 
             let cell = div()
                 .size_full()
@@ -139,6 +151,7 @@ impl TableView {
             elements.push(
                 div()
                     .size_full()
+                    .when_some(cell_bg, |div, color| div.bg(color))
                     .when(this.settings.show_debug_info, |parent| {
                         parent.child(div().text_color(row_identifier_text_color).child(
                             match table_cell {
