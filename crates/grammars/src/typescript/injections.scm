@@ -197,3 +197,25 @@
   ])
   (#match? @_ecma_comment "^\\/\\*\\s*(css)\\s*\\*\\/")
   (#set! injection.language "css"))
+
+; '/* glsl */' or '/*glsl*/'
+(((comment) @_ecma_comment
+  [
+    (string
+      (string_fragment) @injection.content)
+    (template_string
+      (string_fragment) @injection.content)
+  ])
+  (#match? @_ecma_comment "^\\/\\*\\s*glsl\\s*\\*\\/")
+  (#set! injection.language "glsl"))
+
+; '/* wgsl */' or '/*wgsl*/'
+(((comment) @_ecma_comment
+  [
+    (string
+      (string_fragment) @injection.content)
+    (template_string
+      (string_fragment) @injection.content)
+  ])
+  (#match? @_ecma_comment "^\\/\\*\\s*wgsl\\s*\\*\\/")
+  (#set! injection.language "WGSL/WESL"))

@@ -2,7 +2,6 @@
 #  - 'community champion' for community champions
 #  - 'bot' for bot accounts
 #  - 'staff' for staff team members
-#  - 'guild' for guild members
 #  - 'first contribution' for first-time external contributors
 # Labels issues by author:
 #  - 'community champion' for community champions
@@ -12,6 +11,9 @@ name: PR Issue Labeler
 on:
   issues:
     types: [opened]
+  # zizmor: ignore[dangerous-triggers]
+  # Fork PRs must be labeled, but this workflow only passes GitHub-provided event
+  # metadata to a pinned action; it never checks out or executes PR code.
   pull_request_target:
     types: [opened]
 
@@ -30,6 +32,10 @@ jobs:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
           owner: zed-industries
+          repositories: zed
+          permission-issues: write
+          permission-members: read
+          permission-pull-requests: write
 
       - id: apply-authorship-label
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
@@ -40,8 +46,6 @@ jobs:
             const STAFF_LABEL = 'staff';
             const STAFF_TEAM_SLUG = 'staff';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
-            const GUILD_LABEL = 'guild';
-            const GUILD_TEAM_SLUG = 'guild-cohort-2';
             const COMMUNITY_CHAMPION_LABEL = 'community champion';
             const COMMUNITY_CHAMPIONS = [
               '0x2CA',
@@ -72,6 +76,7 @@ jobs:
               'findrakecil',
               'FloppyDisco',
               'gko',
+              'HalavicH',
               'huacnlee',
               'imumesh18',
               'injust',
@@ -138,7 +143,6 @@ jobs:
             };
 
             const isStaffMember = (author) => isTeamMember(STAFF_TEAM_SLUG, author);
-            const isGuildMember = (author) => isTeamMember(GUILD_TEAM_SLUG, author);
 
             const getIssueLabels = () => {
               if (listIncludesAuthor(COMMUNITY_CHAMPIONS, author)) {
@@ -163,10 +167,6 @@ jobs:
 
               if (listIncludesAuthor(COMMUNITY_CHAMPIONS, author)) {
                 labelsToAdd.push(COMMUNITY_CHAMPION_LABEL);
-              }
-
-              if (await isGuildMember(author)) {
-                labelsToAdd.push(GUILD_LABEL);
               }
 
               // We use inverted logic here due to a suspected GitHub bug where first-time contributors

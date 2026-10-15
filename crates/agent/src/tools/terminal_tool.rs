@@ -1,4 +1,5 @@
-use agent_client_protocol::schema::v1 as acp;
+use acp_thread::ProcessOutput;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -29,7 +30,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
 ///
-/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+/// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
 ///
 /// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
 ///
@@ -53,7 +54,7 @@ pub struct TerminalToolInput {
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
-    /// Working directory for the command. This must be one of the root directories of the project.
+    /// Working directory: a project root directory or any subdirectory of one, given by name or absolute path. E.g. `my-project/src`, `/home/user/my-project`, or on Windows `my-project\src` or `C:\Users\me\my-project`.
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
@@ -71,7 +72,7 @@ pub struct TerminalToolInput {
 ///
 /// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
 ///
-/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+/// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
 ///
 /// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
 ///
@@ -95,7 +96,7 @@ pub struct SandboxedTerminalToolInput {
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
-    /// Working directory for the command. This must be one of the root directories of the project.
+    /// Working directory: a project root directory or any subdirectory of one, given by name or absolute path. E.g. `my-project/src`, `/home/user/my-project`, or on Windows `my-project\src` or `C:\Users\me\my-project`.
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
@@ -143,8 +144,8 @@ pub struct SandboxedTerminalToolInput {
     #[cfg_attr(
         target_os = "macos",
         doc = "Sandboxed commands can already write to the project worktree \
-        directories and a per-command temporary directory, so only list paths \
-        outside those."
+        directories and a per-thread temporary directory (exposed via \
+        `$TMPDIR`), so only list paths outside those."
     )]
     /// Provide absolute or worktree-relative paths; each
     /// directory grants write access to its whole subtree. Prefer this over
@@ -156,6 +157,13 @@ pub struct SandboxedTerminalToolInput {
         doc = "\nOn Linux, every path here must be a directory that already exists. \
         Requesting a file, or a path that does not exist yet, is an error. To create new \
         files, request write access to the existing directory that will contain them."
+    )]
+    #[cfg_attr(
+        target_os = "windows",
+        doc = "\nEvery path here must be an existing directory, given as a Windows drive \
+        path (`C:\\...`) or a WSL absolute path (`/...`); a path that does not exist \
+        cannot be granted. To write somewhere new, request write access to the nearest \
+        existing parent directory."
     )]
     #[serde(default)]
     pub fs_write_paths: Vec<String>,
@@ -289,8 +297,8 @@ impl AgentTool for TerminalTool {
 
     const NAME: &'static str = "terminal";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Execute
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Execute
     }
 
     fn allow_in_restricted_mode() -> bool {
@@ -331,8 +339,8 @@ impl AgentTool for SandboxedTerminalTool {
 
     const NAME: &'static str = "sandboxed_terminal";
 
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Execute
+    fn kind() -> acp_v2::ToolKind {
+        acp_v2::ToolKind::Execute
     }
 
     fn allow_in_restricted_mode() -> bool {
@@ -558,13 +566,60 @@ async fn run_terminal_tool(
         if !path.is_dir() {
             return Err(format!(
                 "Cannot request sandbox write access to `{}`: on Linux, write access can only \
-                 be granted to directories that already exist. To create or modify files, \
-                 request write access to the existing directory that contains them, not the \
+                 be granted to directories that already exist. To create a new directory to write \
+                 into, use the `create_directory` tool (which creates it and grants write access to \
+                 exactly that directory) rather than requesting its parent. To modify existing \
+                 files, request write access to the existing directory that contains them, not the \
                  file path itself.",
                 path.display()
             ));
         }
     }
+
+    // Resolve each requested path to its canonical target now, at approval
+    // intake, and carry the pair forward. Persisting the resolved canonical is
+    // what lets enforcement rebuild the grant via a verifying reopen rather than
+    // re-resolving the requested path by string (closing a symlink TOCTOU). A
+    // path that can't be resolved is dropped — fail-closed.
+    #[cfg(not(target_os = "windows"))]
+    let write_paths: Vec<settings::GrantedWritePath> = write_paths
+        .into_iter()
+        .filter_map(|requested| match sandbox::resolve_canonical(&requested) {
+            Ok(resolved) => Some(settings::GrantedWritePath::resolved(requested, resolved)),
+            Err(error) => {
+                log::warn!(
+                    "could not resolve sandbox write path {}: {error}",
+                    requested.display()
+                );
+                None
+            }
+        })
+        .collect();
+    #[cfg(target_os = "windows")]
+    let write_paths: Vec<settings::GrantedWritePath> = {
+        let Some(release) = wsl_zed_release.clone() else {
+            return Err("Could not select a Linux Zed release for WSL sandboxing".to_string());
+        };
+        let mut resolved_paths = Vec::with_capacity(write_paths.len());
+        for requested in write_paths {
+            match sandbox::resolve_canonical_for_grant(requested.clone(), release.clone()).await {
+                Ok(resolved) => {
+                    resolved_paths.push(settings::GrantedWritePath::resolved_on_fs(
+                        requested,
+                        resolved.canonical,
+                        resolved.on_windows_fs,
+                    ));
+                }
+                Err(error) => {
+                    log::warn!(
+                        "could not resolve sandbox write path {} in WSL: {error:#}",
+                        requested.display()
+                    );
+                }
+            }
+        }
+        resolved_paths
+    };
 
     let request = crate::sandboxing::SandboxRequest {
         network,
@@ -572,6 +627,53 @@ async fn run_terminal_tool(
         unsandboxed: want_unsandboxed,
         write_paths,
     };
+
+    // Before any escalation prompt: if this command's sandbox will contain a
+    // path on a Windows drive (DrvFs) — from an explicit grant, a standing
+    // grant, or the default project directory — its integrity guarantees are
+    // weaker. When the warning is enabled, confirm with the user first. This
+    // gate is transient (never persisted): on "Continue" the normal flow
+    // (including any escalation prompt) proceeds; on "Abort" the command is
+    // cancelled. It recurs until the warning is disabled in settings.
+    //
+    // The warning only makes sense when a WSL sandbox will actually wrap the
+    // command, so it is skipped when the command is guaranteed to run without
+    // one (`unsandboxed_floor`: the user already turned the sandbox off for
+    // this thread) and when WSL is structurally absent (no registered distro —
+    // sandbox creation is guaranteed to fail, and the creation-failure
+    // fallback prompt handles that conversation instead).
+    if sandboxing
+        && !want_unsandboxed
+        && !unsandboxed_floor
+        && persistent.warn_ntfs_grants
+        && sandbox::wsl_distro_registered()
+    {
+        let effective = event_stream.effective_sandbox_request(&request, &persistent);
+        let contains_windows_fs = effective
+            .write_paths
+            .iter()
+            .any(|granted| granted.on_windows_fs)
+            || cx.update(|cx| {
+                let project = project.read(cx);
+                working_dir
+                    .as_deref()
+                    .is_some_and(|path| sandbox::path_is_on_windows_drive(path))
+                    || sandbox_worktree_writable_paths(project, cx)
+                        .iter()
+                        .any(|path| sandbox::path_is_on_windows_drive(path))
+            });
+        if contains_windows_fs
+            && let Err(error) = cx
+                .update(|cx| event_stream.authorize_windows_fs_warning(cx))
+                .await
+        {
+            // Carry the underlying error so a prompt-delivery failure is
+            // distinguishable from a genuine user abort.
+            return Ok(format!(
+                "Command cancelled: the user declined to run a command whose sandbox writes to a Windows drive ({error})."
+            ));
+        }
+    }
 
     if request.needs_escalation() {
         let reason = sandbox_input
@@ -683,6 +785,7 @@ async fn run_terminal_tool(
                             event_stream.authorize_sandbox_fallback(
                                 Some(input.command.clone()),
                                 error.user_facing_message(),
+                                Some(error.docs_section().to_string()),
                                 retries,
                                 cx,
                             )
@@ -718,12 +821,19 @@ async fn run_terminal_tool(
                 {
                     Ok(()) => Some(wrap),
                     Err(error) => {
-                        // The probe can't fail off Linux; keep failing open just
-                        // in case a future platform's probe ever does.
+                        // Off Linux the probe only fails when the policy itself
+                        // can't be built (e.g. a required write grant or `.git`
+                        // protection no longer exists or fails its verifying
+                        // reopen). Running the command anyway would silently
+                        // drop access the user approved — or a safety-critical
+                        // protection — so fail closed with the reason instead.
                         log::warn!(
                             "Failed to create a sandbox for an agent terminal command: {error:?}"
                         );
-                        None
+                        return Err(format!(
+                            "Cannot create a sandbox for this command: {}",
+                            error.user_facing_message()
+                        ));
                     }
                 }
             }
@@ -788,6 +898,7 @@ async fn run_terminal_tool(
                     event_stream.authorize_sandbox_fallback(
                         Some(input.command.clone()),
                         sandbox_error.user_facing_message(),
+                        Some(sandbox_error.docs_section().to_string()),
                         retries,
                         cx,
                     )
@@ -871,17 +982,15 @@ async fn run_terminal_tool(
     });
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
-    let fields = acp::ToolCallUpdateFields::new().content(vec![acp::ToolCallContent::Terminal(
-        acp::Terminal::new(terminal_id),
-    )]);
-    if let Some(reason) = &sandbox_not_applied {
-        event_stream.update_fields_with_meta(
-            fields,
-            Some(acp_thread::meta_with_sandbox_not_applied(reason)),
-        );
-    } else {
-        event_stream.update_fields(fields);
-    }
+    event_stream.update_fields(|update| {
+        let update = update.content(vec![acp_v2::ToolCallContent::Terminal(
+            acp_v2::Terminal::new(terminal_id),
+        )]);
+        match &sandbox_not_applied {
+            Some(reason) => update.meta(acp_thread::meta_with_sandbox_not_applied(reason)),
+            None => update,
+        }
+    });
 
     let timeout = input.timeout_ms.map(Duration::from_millis);
 
@@ -1137,7 +1246,7 @@ fn wsl_interop_blocked(content: &str) -> bool {
 }
 
 fn process_content(
-    output: acp::TerminalOutputResponse,
+    output: ProcessOutput,
     command: &str,
     timed_out: bool,
     user_stopped: bool,
@@ -1245,26 +1354,186 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
             None => Ok(None),
         }
     } else {
-        let input_path = Path::new(cd);
+        let path_style = project.path_style(cx);
+        let worktree_roots = project
+            .worktrees(cx)
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                // Skip single-file worktrees: a file can't be a working directory.
+                let root_dir = worktree.root_dir()?;
+                Some((worktree.root_name_str(), root_dir.to_path_buf()))
+            })
+            .collect::<Vec<_>>();
 
-        if input_path.is_absolute() {
-            if project
-                .worktrees(cx)
-                .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
-            {
-                return Ok(Some(input_path.into()));
-            }
-        } else if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
-            return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
+        if let Some(dir) = resolve_cd_in_worktrees(cd, path_style, &worktree_roots) {
+            return Ok(Some(dir));
         }
 
-        anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");
+        anyhow::bail!("`cd` directory {cd:?} was not in any root directory in the project.");
     }
+}
+
+/// Resolves a `cd` argument to an absolute worktree directory. `cd` may be a
+/// worktree's root name or an absolute path to a worktree or a subdirectory
+/// therein.
+///
+/// Absolute paths are classified with the project's [`PathStyle`] rather than
+/// the host's, so an absolute POSIX path resolves correctly on a Windows host
+/// driving a WSL/SSH project (#60040).
+///
+/// Both `cd` and the worktree roots are lexically normalized before prefix
+/// matching. This resolves `.` and `..` components up front, so a path that
+/// escapes a worktree does not have that worktree's root as a prefix and is
+/// rejected (#60014). On Windows-style projects it also unifies `/` and `\`
+/// separators, since models frequently write `C:/foo/bar` for a root stored
+/// as `C:\foo\bar`.
+fn resolve_cd_in_worktrees(
+    cd: &str,
+    path_style: util::paths::PathStyle,
+    worktree_roots: &[(&str, PathBuf)],
+) -> Option<PathBuf> {
+    let cd = path_style.normalize(cd);
+    let cd_path = Path::new(&cd);
+    let is_absolute = path_style.is_absolute(cd_path);
+
+    worktree_roots.iter().find_map(|(root_name, abs_path)| {
+        let prefix = if is_absolute {
+            path_style.normalize(abs_path.to_str()?)
+        } else {
+            (*root_name).to_string()
+        };
+        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix)).ok()?;
+        if subpath.is_empty() {
+            Some(abs_path.clone())
+        } else {
+            path_style.join_path(abs_path, subpath).ok()
+        }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_resolve_cd_uses_project_path_style() {
+        use util::paths::PathStyle::{Unix, Windows};
+
+        // Deliberately ambiguous root names to stress test path resolution.
+        let unix_roots: Vec<(&str, PathBuf)> = vec![
+            ("worktree", PathBuf::from("/a/worktree")),
+            ("worktree", PathBuf::from("/b/worktree")),
+        ];
+        // Worktree roots are stored with backslash separators on Windows, but
+        // models frequently write paths with forward slashes; both must match.
+        let windows_roots = vec![("worktree", PathBuf::from("C:\\work\\worktree"))];
+
+        // absolute paths
+        assert_eq!(
+            resolve_cd_in_worktrees("/b/worktree", Unix, &unix_roots),
+            Some(PathBuf::from("/b/worktree")),
+            "a POSIX-absolute path resolves under a POSIX project path style even on a Windows host"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree/src", Unix, &unix_roots),
+            Some(PathBuf::from("/a/worktree/src")),
+            "an absolute path inside a worktree resolves to the same path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/elsewhere", Unix, &unix_roots),
+            None,
+            "an absolute path outside every worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree/src/../docs", Unix, &unix_roots),
+            Some(PathBuf::from("/a/worktree/docs")),
+            "an absolute path that stays within its worktree via `..` resolves to the same path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree/../escape", Unix, &unix_roots),
+            None,
+            "an absolute path that escapes its worktree via `..` is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree/../../b/worktree", Unix, &unix_roots),
+            Some(PathBuf::from("/b/worktree")),
+            "a path whose `..` components lexically resolve into a valid worktree is accepted"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree//src/", Unix, &unix_roots),
+            Some(PathBuf::from("/a/worktree/src")),
+            "doubled and trailing separators are normalized away"
+        );
+
+        // relative root names
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree", Unix, &unix_roots),
+            Some(PathBuf::from("/a/worktree")),
+            "a root-relative path to a worktree root resolves to the first matching worktree"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree/src", Unix, &unix_roots),
+            Some(PathBuf::from("/a/worktree/src")),
+            "a root-relative path to a subdirectory resolves to the absolute path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree/src/../doc", Unix, &unix_roots),
+            Some(PathBuf::from("/a/worktree/doc")),
+            "a root-relative path to a subdirectory with `..` resolves to a clean absolute path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree/../escape", Unix, &unix_roots),
+            None,
+            "a root-relative path that escapes the worktree via `..` is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktreeextra", Unix, &unix_roots),
+            None,
+            "a root-relative path that is not any of the worktree roots is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("./worktree", Unix, &unix_roots),
+            Some(PathBuf::from("/a/worktree")),
+            "a leading `./` is normalized away"
+        );
+
+        // Windows paths
+        assert_eq!(
+            resolve_cd_in_worktrees("C:\\work\\worktree", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree")),
+            "Windows-absolute paths to root directories resolve"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("C:/work/worktree", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree")),
+            "forward-slash separators match a backslash-stored root"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("c:\\work\\worktree", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree")),
+            "drive letters match case-insensitively"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("C:/work/worktree/src", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree\\src")),
+            "Windows-absolute paths to subdirectories resolve regardless of separator style"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree\\src", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree\\src")),
+            "Windows-relative paths to subdirectories resolve to the absolute path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree/src", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree\\src")),
+            "forward-slash relative paths resolve under a Windows path style"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("C:\\work\\worktree\\..\\escape", Windows, &windows_roots),
+            None,
+            "a Windows-absolute path that escapes its worktree via `..` is rejected"
+        );
+    }
 
     #[test]
     fn test_initial_title_shows_full_multiline_command() {
@@ -1298,7 +1567,7 @@ mod tests {
 
     #[test]
     fn test_process_content_user_stopped() {
-        let output = acp::TerminalOutputResponse::new("partial output".to_string(), false);
+        let output = ProcessOutput::new("partial output".to_string(), false);
 
         let result = process_content(
             output,
@@ -1534,8 +1803,8 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_success_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("one\ntwo\nthree\nfour".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -1553,8 +1822,8 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_failure_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(1));
 
         let result = process_content(
             output,
@@ -1575,7 +1844,7 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_timeout_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false);
 
         let result = process_content(
             output,
@@ -1596,7 +1865,7 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_user_stopped_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false);
 
         let result = process_content(
             output,
@@ -1618,8 +1887,8 @@ mod tests {
 
     #[test]
     fn test_process_content_selected_output_has_no_explanatory_note() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -1639,7 +1908,7 @@ mod tests {
 
     #[test]
     fn test_process_content_user_stopped_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let output = ProcessOutput::new("".to_string(), false);
 
         let result = process_content(
             output,
@@ -1663,7 +1932,7 @@ mod tests {
 
     #[test]
     fn test_process_content_timed_out() {
-        let output = acp::TerminalOutputResponse::new("build output here".to_string(), false);
+        let output = ProcessOutput::new("build output here".to_string(), false);
 
         let result = process_content(
             output,
@@ -1687,7 +1956,7 @@ mod tests {
 
     #[test]
     fn test_process_content_timed_out_with_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let output = ProcessOutput::new("".to_string(), false);
 
         let result = process_content(
             output,
@@ -1711,8 +1980,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_success() {
-        let output = acp::TerminalOutputResponse::new("success output".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("success output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -1736,8 +2005,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_success_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -1756,8 +2025,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_error_exit() {
-        let output = acp::TerminalOutputResponse::new("error output".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+        let output = ProcessOutput::new("error output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(1));
 
         let result = process_content(
             output,
@@ -1781,8 +2050,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_error_exit_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+        let output = ProcessOutput::new("".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(1));
 
         let result = process_content(
             output,
@@ -1801,7 +2070,7 @@ mod tests {
 
     #[test]
     fn test_process_content_unexpected_termination() {
-        let output = acp::TerminalOutputResponse::new("some output".to_string(), false);
+        let output = ProcessOutput::new("some output".to_string(), false);
 
         let result = process_content(
             output,
@@ -1825,7 +2094,7 @@ mod tests {
 
     #[test]
     fn test_process_content_unexpected_termination_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let output = ProcessOutput::new("".to_string(), false);
 
         let result = process_content(
             output,
@@ -1907,7 +2176,7 @@ mod tests {
             !matches!(
                 rx.try_recv(),
                 Ok(Ok(crate::ThreadEvent::ToolCallUpdate(
-                    acp_thread::ToolCallUpdate::UpdateFields(_)
+                    acp_thread::ToolCallUpdate::V2(_)
                 )))
             ),
             "invalid command should not emit a terminal card update"
@@ -1924,11 +2193,17 @@ mod tests {
         fs.insert_tree("/root", serde_json::json!({})).await;
         let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let environment = std::rc::Rc::new(cx.update(|cx| {
-            crate::tests::FakeThreadEnvironment::default().with_terminal(
-                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+        let (environment, process_terminal_id) = cx.update(|cx| {
+            let terminal = crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0);
+            let terminal_id = crate::TerminalHandle::id(&terminal, &cx.to_async())
+                .expect("expected process terminal ID");
+            (
+                std::rc::Rc::new(
+                    crate::tests::FakeThreadEnvironment::default().with_terminal(terminal),
+                ),
+                terminal_id,
             )
-        }));
+        });
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -1955,13 +2230,19 @@ mod tests {
         });
 
         let update = rx.expect_update_fields().await;
+        let terminal_reference = update
+            .content
+            .value()
+            .and_then(|content| {
+                content.iter().find_map(|content| match content {
+                    acp_v2::ToolCallContent::Terminal(terminal) => Some(terminal),
+                    _ => None,
+                })
+            })
+            .expect("expected terminal content update in unconditional allow-all mode");
         assert!(
-            update.content.iter().any(|blocks| {
-                blocks
-                    .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
-            }),
-            "expected terminal content update in unconditional allow-all mode"
+            Arc::ptr_eq(&terminal_reference.terminal_id.0, &process_terminal_id.0),
+            "native terminal references must reuse the process terminal ID"
         );
 
         let result = task
@@ -2088,10 +2369,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "expected terminal content update for matching env-prefixed allow rule"
         );
@@ -2119,9 +2400,8 @@ mod tests {
         fs.insert_tree("/root", serde_json::json!({})).await;
         let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let output =
-            acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour\nfive".to_string(), false)
-                .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("one\ntwo\nthree\nfour\nfive".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
         let environment = std::rc::Rc::new(cx.update(|cx| {
             crate::tests::FakeThreadEnvironment::default().with_terminal(
                 crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
@@ -2156,10 +2436,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "expected terminal content update"
         );
@@ -2179,8 +2459,8 @@ mod tests {
         fs.insert_tree("/root", serde_json::json!({})).await;
         let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let output = acp::TerminalOutputResponse::new("command output".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("command output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
         let environment = std::rc::Rc::new(cx.update(|cx| {
             crate::tests::FakeThreadEnvironment::default().with_terminal(
                 crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
@@ -2311,10 +2591,7 @@ mod tests {
 
     #[test]
     fn test_terminal_tool_input_schema_mentions_forbidden_substitutions() {
-        let schema = <TerminalTool as crate::AgentTool>::input_schema(
-            language_model::LanguageModelToolSchemaFormat::JsonSchema,
-        );
-        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        let schema_json = <TerminalTool as crate::AgentTool>::input_schema().to_value();
         let schema_text = schema_json.to_string();
 
         assert!(
@@ -2356,10 +2633,7 @@ mod tests {
 
     #[test]
     fn test_terminal_tool_input_schema_mentions_head_and_tail_parameters() {
-        let schema = <TerminalTool as crate::AgentTool>::input_schema(
-            language_model::LanguageModelToolSchemaFormat::JsonSchema,
-        );
-        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        let schema_json = <TerminalTool as crate::AgentTool>::input_schema().to_value();
         let schema_text = schema_json.to_string();
 
         assert!(schema_text.contains("head_lines"));
@@ -2576,10 +2850,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "terminal-specific allow-all should bypass substitution rejection"
         );
@@ -2716,10 +2990,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "multi-assignment pattern should match and produce terminal content"
         );
@@ -2794,10 +3068,10 @@ mod tests {
 
         let update = rx.expect_update_fields().await;
         assert!(
-            update.content.iter().any(|blocks| {
+            update.content.value().is_some_and(|blocks| {
                 blocks
                     .iter()
-                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+                    .any(|content| matches!(content, acp_v2::ToolCallContent::Terminal(_)))
             }),
             "quoted whitespace value should match pattern with quoted form"
         );
@@ -3026,9 +3300,10 @@ mod tests {
         let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(input), event_stream, cx));
 
         let authorization = receiver.expect_authorization().await;
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
-                .expect("legacy allow_fs_write should request sandbox authorization details");
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization.tool_call.meta.clone().take(),
+        )
+        .expect("legacy allow_fs_write should request sandbox authorization details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
         assert!(details.allow_fs_write_all);
@@ -3044,33 +3319,37 @@ mod tests {
                 (
                     option.option_id.0.as_ref(),
                     option.name.as_ref(),
-                    option.kind,
+                    option.kind.clone(),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             options,
             vec![
-                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow",
+                    "Allow once",
+                    acp_v2::PermissionOptionKind::AllowOnce
+                ),
                 (
                     "allow_thread",
                     "Allow for this thread",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
                 (
                     "allow_always",
                     "Allow always",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
-                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+                ("deny", "Deny", acp_v2::PermissionOptionKind::RejectOnce),
             ]
         );
 
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("deny"),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .expect("authorization response should send");
 
@@ -3122,10 +3401,11 @@ mod tests {
         let authorization = receiver.expect_authorization().await;
         // The sandbox approval deliberately leaves the tool-call title untouched
         // so the card keeps showing the command being approved.
-        assert_eq!(authorization.tool_call.fields.title, None);
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
-                .expect("unsandboxed should request sandbox authorization details");
+        assert!(authorization.tool_call.title.is_undefined());
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization.tool_call.meta.clone().take(),
+        )
+        .expect("unsandboxed should request sandbox authorization details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
         assert!(!details.allow_fs_write_all);
@@ -3141,33 +3421,37 @@ mod tests {
                 (
                     option.option_id.0.as_ref(),
                     option.name.as_ref(),
-                    option.kind,
+                    option.kind.clone(),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             options,
             vec![
-                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow",
+                    "Allow once",
+                    acp_v2::PermissionOptionKind::AllowOnce
+                ),
                 (
                     "allow_thread",
                     "Allow for this thread",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
                 (
                     "allow_always",
                     "Allow always",
-                    acp::PermissionOptionKind::AllowAlways,
+                    acp_v2::PermissionOptionKind::AllowAlways,
                 ),
-                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+                ("deny", "Deny", acp_v2::PermissionOptionKind::RejectOnce),
             ]
         );
 
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("deny"),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .expect("authorization response should send");
 
@@ -3239,8 +3523,8 @@ mod tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("allow_always"),
-                acp::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionId::new("allow_always"),
+                acp_v2::PermissionOptionKind::AllowAlways,
             ))
             .expect("authorization response should send");
         task.await.expect("granted command should run");
@@ -3277,14 +3561,15 @@ mod tests {
             cx.update(|cx| tool2.run(crate::ToolInput::resolved(resolved2), event_stream2, cx));
 
         let authorization2 = receiver2.expect_authorization().await;
-        let details =
-            acp_thread::sandbox_authorization_details_from_meta(&authorization2.tool_call.meta)
-                .expect("the identical request should prompt for sandbox authorization again");
+        let details = acp_thread::sandbox_authorization_details_from_meta(
+            &authorization2.tool_call.meta.clone().take(),
+        )
+        .expect("the identical request should prompt for sandbox authorization again");
         assert!(
             details
                 .write_paths
                 .iter()
-                .any(|path| path.ends_with("build")),
+                .any(|path| path.requested.ends_with("build")),
             "re-prompt should request the same write path: {:?}",
             details.write_paths
         );
@@ -3292,8 +3577,8 @@ mod tests {
         authorization2
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("deny"),
-                acp::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionId::new("deny"),
+                acp_v2::PermissionOptionKind::RejectOnce,
             ))
             .expect("authorization response should send");
         let result = task2

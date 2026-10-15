@@ -4,26 +4,24 @@
 //! macOS screens have a y axis that goes up from the bottom of the screen and
 //! an origin at the bottom left of the main display.
 
-mod dispatcher;
 mod display;
 mod display_link;
 mod events;
 mod keyboard;
 mod pasteboard;
+mod system_notifications;
 
 #[cfg(feature = "screen-capture")]
 mod screen_capture;
 
-mod metal_atlas;
-pub mod metal_renderer;
+use gpui_apple::metal_renderer as renderer;
 
-use metal_renderer as renderer;
+pub mod metal_renderer {
+    pub use gpui_apple::metal_renderer::{PathRasterizationVertex, PathSprite, SurfaceBounds};
 
-#[cfg(feature = "font-kit")]
-mod open_type;
-
-#[cfg(feature = "font-kit")]
-mod text_system;
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    pub use gpui_apple::metal_renderer::MetalHeadlessRenderer;
+}
 
 mod platform;
 mod window;
@@ -40,15 +38,12 @@ use std::{
     ops::Range,
 };
 
-pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
+pub(crate) use gpui_apple::{AppleActivity, AppleDispatcher};
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;
-
-#[cfg(feature = "font-kit")]
-pub(crate) use text_system::*;
 
 pub use platform::MacPlatform;
 

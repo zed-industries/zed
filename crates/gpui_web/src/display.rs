@@ -8,7 +8,10 @@ pub struct WebDisplay {
     browser_window: web_sys::Window,
 }
 
-// Safety: WASM is single-threaded — there is no concurrent access to `web_sys::Window`.
+// Safety: `web_sys::Window` is only accessed from the main thread. Displays
+// are handed out as `Rc<dyn PlatformDisplay>` and read by GPUI on the
+// foreground thread; background worker threads (when the `multithreaded`
+// feature is enabled) never touch them.
 unsafe impl Send for WebDisplay {}
 unsafe impl Sync for WebDisplay {}
 
@@ -60,6 +63,12 @@ impl WebDisplay {
 }
 
 impl PlatformDisplay for WebDisplay {
+    // Browsers don't expose the refresh rate; it could only be estimated from
+    // `requestAnimationFrame` cadence.
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn id(&self) -> DisplayId {
         self.id
     }

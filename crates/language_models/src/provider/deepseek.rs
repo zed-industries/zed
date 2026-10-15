@@ -9,11 +9,13 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelCompletionStream, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolChoiceSupport, LanguageModelToolResultContent, LanguageModelToolUse,
+    MessageContent, ModelRateLimiters, ProviderSettingsView, RateLimiter, Role, StopReason,
+    TokenUsage, env_var, unavailable_error,
 };
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -46,6 +48,7 @@ pub struct DeepSeekSettings {
 pub struct DeepSeekLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -107,17 +110,46 @@ impl DeepSeekLanguageModelProvider {
             }
         });
 
-        Self { http_client, state }
+        Self {
+            http_client,
+            state,
+            request_limiters: ModelRateLimiters::default(),
+        }
     }
 
-    fn create_language_model(&self, model: deepseek::Model) -> Arc<dyn LanguageModel> {
-        Arc::new(DeepSeekLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        })
+    /// Every model this provider offers, keyed by id: the built-in models,
+    /// with settings entries added or overriding built-in ones.
+    fn deepseek_models(&self, cx: &App) -> IndexMap<String, deepseek::Model> {
+        let mut models = IndexMap::default();
+
+        for model in [deepseek::Model::V4_1Flash, deepseek::Model::V4Pro] {
+            models.insert(model.id().to_string(), model);
+        }
+
+        for available_model in &Self::settings(cx).available_models {
+            models.insert(
+                available_model.name.clone(),
+                deepseek::Model::Custom {
+                    name: available_model.name.clone(),
+                    display_name: available_model.display_name.clone(),
+                    max_tokens: available_model.max_tokens,
+                    max_output_tokens: available_model.max_output_tokens,
+                },
+            );
+        }
+
+        models
+    }
+
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<deepseek::Model, LanguageModelCompletionError> {
+        self.deepseek_models(cx)
+            .swap_remove(model.id.0.as_ref())
+            .ok_or_else(|| unavailable_error(model))
     }
 
     fn settings(cx: &App) -> &DeepSeekSettings {
@@ -155,35 +187,22 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiDeepSeek)
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(deepseek::Model::default()))
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
+        self.deepseek_models(cx)
+            .get(deepseek::Model::default().id())
+            .map(language_model)
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(deepseek::Model::default_fast()))
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
+        self.deepseek_models(cx)
+            .get(deepseek::Model::default_fast().id())
+            .map(language_model)
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = IndexMap::default();
-
-        models.insert("deepseek-v4-flash", deepseek::Model::V4Flash);
-        models.insert("deepseek-v4-pro", deepseek::Model::V4Pro);
-
-        for available_model in &Self::settings(cx).available_models {
-            models.insert(
-                &available_model.name,
-                deepseek::Model::Custom {
-                    name: available_model.name.clone(),
-                    display_name: available_model.display_name.clone(),
-                    max_tokens: available_model.max_tokens,
-                    max_output_tokens: available_model.max_output_tokens,
-                },
-            );
-        }
-
-        models
-            .into_values()
-            .map(|model| self.create_language_model(model))
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        self.deepseek_models(cx)
+            .values()
+            .map(language_model)
             .collect()
     }
 
@@ -211,18 +230,42 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
     }
 }
 
-pub struct DeepSeekLanguageModel {
-    id: LanguageModelId,
-    model: deepseek::Model,
-    state: Entity<State>,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-}
-
-impl DeepSeekLanguageModel {
+impl LanguageModelClient for DeepSeekLanguageModelProvider {
     fn stream_completion(
         &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        let request = match into_deepseek(request, &config, config.max_output_tokens()) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let stream = self.stream_deepseek_request(request, &request_limiter, cx);
+        let executor = cx.background_executor().clone();
+
+        async move {
+            let mapper = DeepSeekEventMapper::new();
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(stream.await?).boxed(),
+                executor,
+            ))
+        }
+        .boxed()
+    }
+}
+
+impl DeepSeekLanguageModelProvider {
+    fn stream_deepseek_request(
+        &self,
         request: deepseek::Request,
+        request_limiter: &RateLimiter,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<deepseek::StreamResponse>>>> {
         let http_client = self.http_client.clone();
@@ -235,7 +278,7 @@ impl DeepSeekLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
-        let future = self.request_limiter.stream(async move {
+        let future = request_limiter.stream(async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey {
                     provider: PROVIDER_NAME,
@@ -256,96 +299,44 @@ impl DeepSeekLanguageModel {
     }
 }
 
-impl LanguageModel for DeepSeekLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
-
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_thinking(&self) -> bool {
-        matches!(
-            self.model,
-            deepseek::Model::V4Flash | deepseek::Model::V4Pro
+fn language_model(model: &deepseek::Model) -> LanguageModel {
+    let supports_thinking = matches!(model, deepseek::Model::V4_1Flash | deepseek::Model::V4Pro);
+    LanguageModel {
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_thinking,
+        supported_effort_levels: if supports_thinking {
+            Arc::new([
+                LanguageModelEffortLevel {
+                    name: "Low".into(),
+                    value: "low".into(),
+                    is_default: false,
+                },
+                LanguageModelEffortLevel {
+                    name: "High".into(),
+                    value: "high".into(),
+                    is_default: true,
+                },
+                LanguageModelEffortLevel {
+                    name: "Max".into(),
+                    value: "max".into(),
+                    is_default: false,
+                },
+            ])
+        } else {
+            Arc::default()
+        },
+        tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        supports_images: model.supports_images(),
+        max_output_tokens: model.max_output_tokens(),
+        ..LanguageModel::new(
+            LanguageModelId::from(model.id().to_string()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("deepseek/{}", model.id()),
+            model.max_token_count(),
         )
-    }
-
-    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        if !self.supports_thinking() {
-            return Vec::new();
-        }
-
-        vec![
-            LanguageModelEffortLevel {
-                name: "High".into(),
-                value: "high".into(),
-                is_default: true,
-            },
-            LanguageModelEffortLevel {
-                name: "Max".into(),
-                value: "max".into(),
-                is_default: false,
-            },
-        ]
-    }
-
-    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        true
-    }
-
-    fn supports_images(&self) -> bool {
-        false
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("deepseek/{}", self.model.id())
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens()
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let request = into_deepseek(request, &self.model, self.max_output_tokens());
-        let stream = self.stream_completion(request, cx);
-
-        async move {
-            let mapper = DeepSeekEventMapper::new();
-            Ok(mapper.map_stream(stream.await?).boxed())
-        }
-        .boxed()
     }
 }
 
@@ -353,11 +344,18 @@ pub fn into_deepseek(
     request: LanguageModelRequest,
     model: &deepseek::Model,
     max_output_tokens: Option<u64>,
-) -> deepseek::Request {
+) -> Result<deepseek::Request> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("DeepSeek does not support custom tools");
+    }
+
     let thinking = deepseek_thinking(model, request.thinking_allowed);
     let thinking_enabled = thinking
         .as_ref()
         .is_some_and(|thinking| thinking.kind == deepseek::ThinkingType::Enabled);
+
+    let supports_images = model.supports_images();
 
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
@@ -373,15 +371,24 @@ pub fn into_deepseek(
                     };
 
                     if should_add {
-                        messages.push(match message.role {
-                            Role::User => deepseek::RequestMessage::User { content: text },
-                            Role::Assistant => deepseek::RequestMessage::Assistant {
-                                content: Some(text),
-                                tool_calls: Vec::new(),
-                                reasoning_content: current_reasoning.take(),
-                            },
-                            Role::System => deepseek::RequestMessage::System { content: text },
-                        });
+                        match message.role {
+                            Role::User => {
+                                add_user_message_content_part(
+                                    deepseek::MessagePart::Text { text },
+                                    &mut messages,
+                                );
+                            }
+                            Role::Assistant => {
+                                messages.push(deepseek::RequestMessage::Assistant {
+                                    content: Some(text),
+                                    tool_calls: Vec::new(),
+                                    reasoning_content: current_reasoning.take(),
+                                });
+                            }
+                            Role::System => {
+                                messages.push(deepseek::RequestMessage::System { content: text });
+                            }
+                        }
                     }
                 }
                 MessageContent::Thinking { text, .. } => {
@@ -389,16 +396,30 @@ pub fn into_deepseek(
                     current_reasoning.get_or_insert_default().push_str(&text);
                 }
                 MessageContent::RedactedThinking(_) => {}
+                MessageContent::Image(image) if message.role == Role::User => {
+                    add_user_message_content_part(
+                        deepseek::MessagePart::Image {
+                            image_url: deepseek::ImageUrl {
+                                url: image.to_base64_url(),
+                                detail: None,
+                            },
+                        },
+                        &mut messages,
+                    );
+                }
                 MessageContent::Image(_) => {}
                 MessageContent::Compaction(_) => {}
                 MessageContent::ToolUse(tool_use) => {
+                    let input = tool_use
+                        .input
+                        .as_json()
+                        .ok_or_else(|| anyhow!("DeepSeek does not support custom tool calls"))?;
                     let tool_call = deepseek::ToolCall {
                         id: tool_use.id.to_string(),
                         content: deepseek::ToolCallContent::Function {
                             function: deepseek::FunctionContent {
                                 name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         },
                     };
@@ -416,24 +437,32 @@ pub fn into_deepseek(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let mut text_parts: Vec<String> = Vec::new();
-                    for part in &tool_result.content {
-                        match part {
+                    let content: Vec<deepseek::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .filter_map(|part| match part {
                             LanguageModelToolResultContent::Text(text) => {
-                                text_parts.push(text.to_string());
+                                Some(deepseek::MessagePart::Text {
+                                    text: text.to_string(),
+                                })
                             }
-                            LanguageModelToolResultContent::Image(_) => {
-                                text_parts.push("[Tool responded with an image]".to_string());
+                            LanguageModelToolResultContent::Image(image) => {
+                                if supports_images {
+                                    Some(deepseek::MessagePart::Image {
+                                        image_url: deepseek::ImageUrl {
+                                            url: image.to_base64_url(),
+                                            detail: None,
+                                        },
+                                    })
+                                } else {
+                                    None
+                                }
                             }
-                        }
-                    }
-                    let content = if text_parts.is_empty() {
-                        "<Tool returned an empty string>".to_string()
-                    } else {
-                        text_parts.join("\n")
-                    };
+                        })
+                        .collect();
+
                     messages.push(deepseek::RequestMessage::Tool {
-                        content,
+                        content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
@@ -441,7 +470,7 @@ pub fn into_deepseek(
         }
     }
 
-    deepseek::Request {
+    Ok(deepseek::Request {
         model: model.id().to_string(),
         messages,
         stream: true,
@@ -466,14 +495,41 @@ pub fn into_deepseek(
         tools: request
             .tools
             .into_iter()
-            .map(|tool| deepseek::ToolDefinition::Function {
-                function: deepseek::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .map(|tool| {
+                let input_schema = match tool.input {
+                    language_model::LanguageModelRequestToolInput::Function {
+                        input_schema,
+                        ..
+                    } => input_schema,
+                    language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                        return Err(anyhow::anyhow!("DeepSeek does not support custom tools"));
+                    }
+                };
+                Ok(deepseek::ToolDefinition::Function {
+                    function: deepseek::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(input_schema),
+                    },
+                })
             })
-            .collect(),
+            .collect::<Result<_>>()?,
+    })
+}
+
+fn add_user_message_content_part(
+    new_part: deepseek::MessagePart,
+    messages: &mut Vec<deepseek::RequestMessage>,
+) {
+    match messages.last_mut() {
+        Some(deepseek::RequestMessage::User { content }) => {
+            content.push_part(new_part);
+        }
+        _ => {
+            messages.push(deepseek::RequestMessage::User {
+                content: deepseek::MessageContent::from(vec![new_part]),
+            });
+        }
     }
 }
 
@@ -482,7 +538,7 @@ fn deepseek_thinking(
     thinking_allowed: bool,
 ) -> Option<deepseek::Thinking> {
     let kind = match model {
-        deepseek::Model::V4Flash | deepseek::Model::V4Pro => {
+        deepseek::Model::V4_1Flash | deepseek::Model::V4Pro => {
             if thinking_allowed {
                 deepseek::ThinkingType::Enabled
             } else {
@@ -497,6 +553,7 @@ fn deepseek_thinking(
 
 fn into_deepseek_reasoning_effort(effort: Option<&str>) -> Option<deepseek::ReasoningEffort> {
     match effort {
+        Some("low") => Some(deepseek::ReasoningEffort::Low),
         Some("high") => Some(deepseek::ReasoningEffort::High),
         Some("max") => Some(deepseek::ReasoningEffort::Max),
         _ => None,
@@ -578,7 +635,7 @@ impl DeepSeekEventMapper {
                                 id: entry.id.clone().into(),
                                 name: entry.name.as_str().into(),
                                 is_input_complete: false,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: entry.arguments.clone(),
                                 thought_signature: None,
                             },
@@ -609,7 +666,7 @@ impl DeepSeekEventMapper {
                                 id: tool_call.id.clone().into(),
                                 name: tool_call.name.as_str().into(),
                                 is_input_complete: true,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments.clone(),
                                 thought_signature: None,
                             },
@@ -633,5 +690,67 @@ impl DeepSeekEventMapper {
         }
 
         events
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::{LanguageModelImage, LanguageModelRequestMessage};
+    use serde_json::json;
+
+    #[test]
+    fn serializes_deepseek_image_parts() -> Result<()> {
+        let image = LanguageModelImage {
+            source: SharedString::from("aGVsbG8="),
+        };
+        let image_url = image.to_base64_url();
+        let request = into_deepseek(
+            LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![
+                        MessageContent::Text("Describe this".to_string()),
+                        MessageContent::Image(image),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+            &deepseek::Model::V4_1Flash,
+            Some(1024),
+        )?;
+
+        assert_eq!(
+            serde_json::to_value(&request.messages)?,
+            json!([
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "text", "text": "Describe this" },
+                        { "type": "image_url", "image_url": { "url": image_url } }
+                    ]
+                }
+            ])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn request_output_limits_reach_deepseek_payloads() -> Result<()> {
+        for (limit, expected) in [(None, 4096), (Some(1024), 1024), (Some(8192), 4096)] {
+            let request = into_deepseek(
+                LanguageModelRequest {
+                    max_output_tokens: limit,
+                    ..Default::default()
+                },
+                &deepseek::Model::V4Pro,
+                Some(4096),
+            )?;
+            assert_eq!(serde_json::to_value(request)?["max_tokens"], expected);
+        }
+        Ok(())
     }
 }

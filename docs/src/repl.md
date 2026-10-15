@@ -13,15 +13,7 @@ Zed's built-in REPL uses [Jupyter kernels](https://docs.jupyter.org/en/latest/pr
     <video loop controls playsinline>
         <source
             src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
-            type='video/webm; codecs="vp8.0, vorbis"'
-        />
-        <source
-            src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
             type='video/mp4; codecs="avc1.4D401E, mp4a.40.2"'
-        />
-        <source
-          src="https://zed.dev/img/post/repl/typescript-deno-kernel-markdown.png"
-          type="image/png"
         />
     </video>
 </figure>
@@ -40,6 +32,8 @@ Zed supports running code in multiple languages. To get started, you need to ins
 - [Scala (Almond)](#scala)
 
 Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the {#action repl::RefreshKernelspecs} command to make them available in the editor.
+
+![Markdown documents become notebooks](https://images.zed.dev/blog/repl/typescript-deno-kernel-markdown.png)
 
 ## Using the REPL
 
@@ -73,13 +67,7 @@ style.use('ggplot')
 
 #### Global environment
 
-<div class="warning">
-
-On macOS, your system Python will _not_ work. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment.
-
-</div>
-
-To setup your current Python to have an available kernel, run:
+To set up your current Python to have an available kernel, run:
 
 ```sh
 pip install ipykernel
@@ -101,6 +89,8 @@ source activate myenv
 pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
+
+> Note: **On macOS, your system Python will _not_ work**. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment. Zed uses separate selections for the Python [toolchain](./configuring-languages.md#toolchains) and REPL kernel. If diagnostics differ from the REPL, align the toolchain with the kernel using {#action toolchain::Select}. Read more about the [toolchain selector for Python](./languages/python.md#selecting-a-toolchain).
 
 ### R (Ark Kernel) {#r-ark}
 
@@ -217,4 +207,4 @@ Available kernels:
   rust                  /Users/z/Library/Jupyter/kernels/rust
 ```
 
-> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want to explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
+> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want to explicitly control this, run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.

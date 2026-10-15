@@ -47,9 +47,11 @@
 //! would see from a direct network failure, no proxy fingerprint.
 
 mod allowlist;
+mod pinned_host;
 mod proxy;
 
 pub use allowlist::{Allowlist, HostPattern, HostPatternError};
+pub use pinned_host::{PinnedHost, PinnedHostError, is_forbidden_ip};
 pub use proxy::{
     DenyReason, ProxyConfig, ProxyEvent, ProxyHandle, RequestMethod, RequestOutcome, UpstreamProxy,
 };

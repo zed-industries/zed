@@ -279,7 +279,7 @@ impl Render for SecurityModal {
                                     &ToggleWorktreeSecurity,
                                     cx,
                                 )
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
                                 security_modal.trusted = Some(false);
@@ -293,7 +293,7 @@ impl Render for SecurityModal {
                             .layer(ui::ElevationIndex::ModalSurface)
                             .key_binding(
                                 KeyBinding::for_action(&menu::Confirm, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
                                 security_modal.trust_and_dismiss(cx);
@@ -518,7 +518,7 @@ fn validate_trust_scope(
         ),
         _ => PathBuf::from(trimmed),
     };
-    if !util::paths::is_absolute(&expanded.to_string_lossy(), path_style) {
+    if !path_style.is_absolute(&expanded) {
         return Err("Enter an absolute folder path".into());
     }
     if !project.starts_with(&expanded) {
@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn accepts_ancestor_or_equal() {
         let project = Path::new("/Users/me/dev/delta/wt/t1");
-        let style = PathStyle::Posix;
+        let style = PathStyle::Unix;
         assert_eq!(
             validate_trust_scope("/Users/me/dev/delta/wt", project, None, style).unwrap(),
             PathBuf::from("/Users/me/dev/delta/wt"),
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn rejects_non_ancestor_relative_or_empty() {
         let project = Path::new("/Users/me/dev/delta/wt/t1");
-        let style = PathStyle::Posix;
+        let style = PathStyle::Unix;
         assert!(validate_trust_scope("/Users/other", project, None, style).is_err());
         assert!(validate_trust_scope("relative/path", project, None, style).is_err());
         assert!(validate_trust_scope("   ", project, None, style).is_err());
@@ -565,7 +565,7 @@ mod tests {
     fn expands_leading_tilde() {
         let home = Path::new("/Users/me");
         let project = Path::new("/Users/me/dev/wt/t1");
-        let style = PathStyle::Posix;
+        let style = PathStyle::Unix;
         assert_eq!(
             validate_trust_scope("~/dev/wt", project, Some(home), style).unwrap(),
             PathBuf::from("/Users/me/dev/wt"),

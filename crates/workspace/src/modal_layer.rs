@@ -114,6 +114,11 @@ pub struct ModalLayer {
     // can reveal it again with its exact prior state. Left intact across
     // non-reopenable modals (e.g. the command palette), which may trigger the reopen.
     stashed_modal: Option<Box<dyn ModalViewHandle>>,
+    // Set when a reveal was requested while another modal was still active (e.g. the
+    // which-key popup that is dismissed only after the reopen action fires). The reveal
+    // then happens once that modal closes, so it doesn't matter whether the triggering
+    // modal is dismissed before or after the action dispatches.
+    reveal_stash_when_free: bool,
     dismiss_on_focus_lost: bool,
 }
 
@@ -132,6 +137,7 @@ impl ModalLayer {
         Self {
             active_modal: None,
             stashed_modal: None,
+            reveal_stash_when_free: false,
             dismiss_on_focus_lost: false,
         }
     }
@@ -148,15 +154,20 @@ impl ModalLayer {
         V: ModalView,
         B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
+        // Opening a modal explicitly supersedes any reveal that was waiting for the
+        // layer to become free.
+        self.reveal_stash_when_free = false;
+        let mut previous_focus_handle = window.focused(cx);
         if let Some(active_modal) = &self.active_modal {
             let should_close = active_modal.modal.view().downcast::<V>().is_ok();
+            previous_focus_handle = active_modal.previous_focus_handle.clone();
             let did_close = self.hide_modal(window, cx);
             if should_close || !did_close {
                 return;
             }
         }
         let new_modal = cx.new(|cx| build_view(window, cx));
-        self.show_modal(Box::new(new_modal), window, cx);
+        self.show_modal(Box::new(new_modal), previous_focus_handle, window, cx);
         cx.emit(ModalOpenedEvent);
     }
 
@@ -165,6 +176,7 @@ impl ModalLayer {
     fn show_modal(
         &mut self,
         modal: Box<dyn ModalViewHandle>,
+        previous_focus_handle: Option<FocusHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -181,7 +193,7 @@ impl ModalLayer {
                     }
                 }),
             ],
-            previous_focus_handle: window.focused(cx),
+            previous_focus_handle,
             focus_handle,
         });
         cx.defer_in(window, move |_, window, cx| {
@@ -193,13 +205,20 @@ impl ModalLayer {
     /// Reveals the most recently stashed reopenable modal, if any. Returns whether
     /// a modal was revealed.
     pub fn reveal_stashed_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.stashed_modal.is_none() {
+            return false;
+        }
         if self.active_modal.is_some() {
+            // Another modal is still closing (e.g. the which-key popup that dismisses
+            // only after this action fires). Reveal once it is gone; see `hide_modal`.
+            self.reveal_stash_when_free = true;
             return false;
         }
         let Some(modal) = self.stashed_modal.take() else {
             return false;
         };
-        self.show_modal(modal, window, cx);
+        let previous_focus_handle = window.focused(cx);
+        self.show_modal(modal, previous_focus_handle, window, cx);
         cx.emit(ModalOpenedEvent);
         true
     }
@@ -243,6 +262,12 @@ impl ModalLayer {
             cx.notify();
         }
         self.dismiss_on_focus_lost = false;
+        // A reveal was requested while this modal was still active; now that the layer
+        // is free, honor it.
+        if self.reveal_stash_when_free && self.active_modal.is_none() {
+            self.reveal_stash_when_free = false;
+            self.reveal_stashed_modal(window, cx);
+        }
         true
     }
 

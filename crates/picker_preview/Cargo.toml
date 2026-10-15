@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/picker_preview.rs"
 doctest = false
+test = false
 
 [dependencies]
 

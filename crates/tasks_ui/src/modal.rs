@@ -1052,10 +1052,11 @@ mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["test".to_string()],
+                    matcher: (LanguageMatcher {
+                        path_suffixes: vec!["test".into()],
                         ..LanguageMatcher::default()
-                    },
+                    })
+                    .into(),
                     ..LanguageConfig::default()
                 },
                 None,
@@ -1134,10 +1135,11 @@ mod tests {
                 Language::new(
                     LanguageConfig {
                         name: "TypeScript".into(),
-                        matcher: LanguageMatcher {
-                            path_suffixes: vec!["ts".to_string()],
+                        matcher: (LanguageMatcher {
+                            path_suffixes: vec!["ts".into()],
                             ..LanguageMatcher::default()
-                        },
+                        })
+                        .into(),
                         ..LanguageConfig::default()
                     },
                     None,
@@ -1166,10 +1168,11 @@ mod tests {
                 Language::new(
                     LanguageConfig {
                         name: "Rust".into(),
-                        matcher: LanguageMatcher {
-                            path_suffixes: vec!["rs".to_string()],
+                        matcher: (LanguageMatcher {
+                            path_suffixes: vec!["rs".into()],
                             ..LanguageMatcher::default()
-                        },
+                        })
+                        .into(),
                         ..LanguageConfig::default()
                     },
                     None,

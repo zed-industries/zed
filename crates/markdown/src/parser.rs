@@ -40,6 +40,10 @@ pub(crate) struct ParsedMarkdownData {
     pub metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+    /// Source spans of link reference definitions (`[id]: https://example.com`), which are
+    /// consumed by the parser and never appear in any event range.
+    pub link_definition_spans: Vec<Range<usize>>,
+    pub has_untagged_code_block: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -228,6 +232,47 @@ fn is_br_tag(html: &str) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("br"))
 }
 
+fn yaml_frontmatter_candidate(text: &str) -> Option<&str> {
+    let after_fence = text.strip_prefix("---")?;
+    let opening_whitespace_length = after_fence
+        .bytes()
+        .take_while(|byte| *byte != b'\n' && byte.is_ascii_whitespace())
+        .count();
+    let after_opening_line = after_fence
+        .get(opening_whitespace_length..)?
+        .strip_prefix('\n')?;
+
+    let first_content = after_opening_line.trim_start_matches([' ', '\t', '\u{b}', '\u{c}']);
+    if first_content.is_empty() || first_content.starts_with(['\r', '\n']) {
+        return None;
+    }
+
+    let mut line_start = text.len() - after_opening_line.len();
+    let lines = after_opening_line.split_inclusive('\n');
+    for line in lines {
+        if let Some(suffix) = line
+            .strip_prefix("---")
+            .or_else(|| line.strip_prefix("..."))
+        {
+            let suffix = suffix.trim_start_matches(' ');
+            let line_ending_length = if suffix.starts_with("\r\n") {
+                Some(2)
+            } else if suffix.starts_with(['\r', '\n']) {
+                Some(1)
+            } else if suffix.is_empty() {
+                Some(0)
+            } else {
+                None
+            };
+            if let Some(line_ending_length) = line_ending_length {
+                return text.get(..line_start + line.len() - suffix.len() + line_ending_length);
+            }
+        }
+        line_start += line.len();
+    }
+    None
+}
+
 pub(crate) fn parse_markdown_with_options(
     text: &str,
     parse_html: bool,
@@ -237,6 +282,7 @@ pub(crate) fn parse_markdown_with_options(
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
+    let mut has_untagged_code_block = false;
     let mut html_blocks = BTreeMap::default();
     let mut metadata_blocks = BTreeMap::default();
     let mut within_link = false;
@@ -245,13 +291,40 @@ pub(crate) fn parse_markdown_with_options(
     let mut within_table = false;
     let mut current_metadata_block_start = None;
     let mut metadata_block_content_range: Option<Range<usize>> = None;
-    let parse_options = if parse_metadata_blocks {
-        PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS)
-    } else {
-        PARSE_OPTIONS
-    };
-    let mut parser = Parser::new_ext(text, parse_options)
+    let mut frontmatter = Vec::new();
+    if parse_metadata_blocks && let Some(candidate) = yaml_frontmatter_candidate(text) {
+        let mut parser = Parser::new_ext(
+            candidate,
+            PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS),
+        )
         .into_offset_iter()
+        .peekable();
+        if let Some((
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::MetadataBlock(
+                MetadataBlockKind::YamlStyle,
+            )),
+            range,
+        )) = parser.peek()
+        {
+            let frontmatter_end = range.end;
+            frontmatter.extend(parser.take_while(|(_, range)| range.start < frontmatter_end));
+        }
+    }
+    let body_start = frontmatter.last().map_or(0, |(_, range)| range.end);
+    let parser = Parser::new_ext(&text[body_start..], PARSE_OPTIONS);
+    let mut link_definition_spans = parser
+        .reference_definitions()
+        .iter()
+        .map(|(_, definition)| definition.span.start + body_start..definition.span.end + body_start)
+        .collect::<Vec<_>>();
+    link_definition_spans.sort_by_key(|span| span.start);
+    let mut parser = frontmatter
+        .into_iter()
+        .chain(
+            parser
+                .into_offset_iter()
+                .map(|(event, range)| (event, range.start + body_start..range.end + body_start)),
+        )
         .peekable();
     while let Some((pulldown_event, range)) = parser.next() {
         if within_metadata && !parse_metadata_blocks {
@@ -331,7 +404,9 @@ pub(crate) fn parse_markdown_with_options(
                         ref info,
                     )) => {
                         within_code_block = true;
-                        let content_range = extract_code_block_content_range(&text[range.clone()]);
+                        let code_block_source = &text[range.clone()];
+                        let content_range = extract_code_block_content_range(code_block_source);
+                        let is_fenced_closed = content_range.end < code_block_source.len();
                         let content_range =
                             content_range.start + range.start..content_range.end + range.start;
 
@@ -340,17 +415,6 @@ pub(crate) fn parse_markdown_with_options(
                             .bytes()
                             .filter(|c| *c == b'\n')
                             .count();
-                        let is_fenced_closed = {
-                            let code_block_source = &text[range.clone()];
-                            code_block_source
-                                .trim_end()
-                                .lines()
-                                .last()
-                                .is_some_and(|line| {
-                                    let trimmed = line.trim_start();
-                                    trimmed.len() >= 3 && trimmed.chars().all(|c| c == '`')
-                                })
-                        };
 
                         let metadata = CodeBlockMetadata {
                             content_range,
@@ -360,6 +424,7 @@ pub(crate) fn parse_markdown_with_options(
 
                         let info = info.trim();
                         let kind = if info.is_empty() {
+                            has_untagged_code_block = true;
                             CodeBlockKind::Fenced
                             // Languages should never contain a slash, and PathRanges always should.
                             // (Models are told to specify them relative to a workspace root.)
@@ -686,6 +751,8 @@ pub(crate) fn parse_markdown_with_options(
         metadata_blocks,
         heading_slugs,
         footnote_definitions,
+        link_definition_spans,
+        has_untagged_code_block,
     }
 }
 
@@ -920,17 +987,51 @@ fn extract_code_content_range(text: &str) -> Range<usize> {
 
 pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
     let mut range = 0..text.len();
-    if text.starts_with("```") {
-        range.start += 3;
+    let Some(fence_character) = text
+        .as_bytes()
+        .first()
+        .copied()
+        .filter(|character| matches!(character, b'`' | b'~'))
+    else {
+        return range;
+    };
+    let opening_fence_len = text
+        .bytes()
+        .take_while(|character| *character == fence_character)
+        .count();
+    if opening_fence_len < 3 {
+        return range;
+    }
 
-        if let Some(newline_ix) = text[range.clone()].find('\n') {
-            range.start += newline_ix + 1;
+    range.start += opening_fence_len;
+    if let Some(newline_ix) = text[range.clone()].find('\n') {
+        range.start += newline_ix + 1;
+    }
+
+    let text_without_line_ending =
+        text.trim_end_matches(|character| matches!(character, '\r' | '\n'));
+    let closing_line_start = text_without_line_ending
+        .rfind('\n')
+        .map_or(0, |newline_ix| newline_ix + 1);
+    if closing_line_start >= range.start {
+        let closing_line = &text_without_line_ending[closing_line_start..];
+        let closing_fence = closing_line.trim_start_matches(' ');
+        let indentation_len = closing_line.len() - closing_fence.len();
+        let closing_fence_len = closing_fence
+            .bytes()
+            .take_while(|character| *character == fence_character)
+            .count();
+        let trailing_characters = &closing_fence[closing_fence_len..];
+        if indentation_len <= 3
+            && closing_fence_len >= opening_fence_len
+            && trailing_characters
+                .bytes()
+                .all(|character| matches!(character, b' ' | b'\t'))
+        {
+            range.end = closing_line_start;
         }
     }
 
-    if !range.is_empty() && text.ends_with("```") {
-        range.end -= 3;
-    }
     if range.start > range.end {
         range.end = range.start;
     }
@@ -1012,6 +1113,137 @@ mod tests {
                 ..Default::default()
             }
         )
+    }
+
+    #[test]
+    fn test_yaml_frontmatter_does_not_consume_body() {
+        for frontmatter in [
+            "",
+            "---\ntitle: Post\n---\n\n",
+            "---\r\ntitle: Post\r\n---\r\n\r\n",
+            "---\ntitle: Post\n...\n\n",
+            "--- \t\ntitle: Post\n---  \n\n",
+            "---\r\ntitle: Post\r\n...  \r\n\r\n",
+            "---\ntitle: Post\n---\r",
+        ] {
+            let body = "# Café\n\n[Before][target]\n\n---\n## First section\n\n**Bold** and [inside][target].\n\n---\n## Second section\n\n[target]: https://example.com\n";
+            let source = format!("{frontmatter}{body}");
+            let parsed = parse_markdown_with_options(&source, false, true, true);
+            assert_eq!(
+                parsed.metadata_blocks.len(),
+                usize::from(!frontmatter.is_empty())
+            );
+            assert_eq!(
+                parsed
+                    .events
+                    .iter()
+                    .filter(|(_, event)| *event == Rule)
+                    .count(),
+                2
+            );
+            assert_eq!(
+                parsed
+                    .events
+                    .iter()
+                    .filter(|(_, event)| matches!(event, Start(Heading { .. })))
+                    .count(),
+                3
+            );
+            assert_eq!(
+                parsed
+                    .events
+                    .iter()
+                    .filter(|(_, event)| *event == Start(Strong))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                parsed
+                    .events
+                    .iter()
+                    .filter(|(_, event)| {
+                        matches!(event, Start(Link { dest_url, .. }) if dest_url.as_ref() == "https://example.com")
+                    })
+                    .count(),
+                2
+            );
+            assert_eq!(
+                parsed
+                    .link_definition_spans
+                    .iter()
+                    .map(|range| &source[range.clone()])
+                    .collect::<Vec<_>>(),
+                vec!["[target]: https://example.com"]
+            );
+            for (range, _) in &parsed.events {
+                assert!(source.get(range.clone()).is_some());
+            }
+            assert_eq!(
+                parsed.heading_slugs["first-section"],
+                source.find("First section").expect("first section heading")
+            );
+        }
+    }
+
+    #[test]
+    fn test_yaml_frontmatter_rejects_blank_first_content_line() {
+        for blank_line in ["\n", "\r\n", " \t\n", " \t\r\n", "\u{b}\n", "\u{c}\n"] {
+            let source = format!("---\n{blank_line}# Body\n\n**Bold**\n---\n");
+            assert_eq!(yaml_frontmatter_candidate(&source), None, "{blank_line:?}");
+            assert_eq!(
+                parse_markdown_with_options(&source, false, true, true),
+                parse_markdown_with_options(&source, false, true, false),
+                "{blank_line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_body_separators_are_not_yaml_metadata() {
+        for source in [
+            "# Heading\n\n---\n**Bold**",
+            "# Heading\n\n> ---\n> **Bold**\n> ---\n",
+            "# Heading\n\n- item\n\n  ---\n  **Bold**\n\n  ---\n",
+            "\n---\n**Bold**\n---\n",
+            "",
+            "--",
+            "---",
+            "---not metadata",
+            "---\ntitle: Café\nBody with `---`",
+            "---\ntitle: Post\n---\t\n# Heading",
+            "---\n---\n# Heading",
+            "---\n...\n# Heading",
+            "---\n\nBody\n---\n# Heading",
+        ] {
+            assert_eq!(
+                parse_markdown_with_options(source, false, false, true),
+                parse_markdown_with_options(source, false, false, false),
+                "{source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_yaml_frontmatter_ignores_invalid_closing_fences() {
+        let content = "title: Café\n----\n---not a fence\n ---\n---\t\n...\t\n";
+        let source = format!("---\n{content}...\n# Body\n");
+        let parsed = parse_markdown_with_options(&source, false, true, true);
+        let metadata = parsed.metadata_blocks.get(&0).expect("frontmatter");
+        assert_eq!(&source[metadata.content_range.clone()], content);
+        assert_eq!(
+            parsed.heading_slugs["body"],
+            source.find("Body").expect("body heading")
+        );
+    }
+
+    #[test]
+    fn test_yaml_frontmatter_closing_fence_at_eof() {
+        for closing_fence in ["---", "...  "] {
+            let source = format!("---\ntitle: Café\n{closing_fence}");
+            let parsed = parse_markdown_with_options(&source, false, false, true);
+            let metadata = parsed.metadata_blocks.get(&0).expect("frontmatter");
+            assert_eq!(&source[metadata.content_range.clone()], "title: Café\n");
+        }
     }
 
     #[test]
@@ -1315,6 +1547,18 @@ mod tests {
                 ..Default::default()
             }
         );
+
+        for markdown in ["```mermaid\ngraph TD;\n~~~", "~~~~mermaid\ngraph TD;\n~~~"] {
+            let parsed = parse_markdown_with_options(markdown, false, false, false);
+            let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+                Start(CodeBlock { metadata, .. }) => Some(metadata),
+                _ => None,
+            });
+            assert_eq!(
+                metadata.map(|metadata| metadata.is_fenced_closed),
+                Some(false)
+            );
+        }
     }
 
     fn assert_code_block_does_not_emit_links(markdown: &str) {
@@ -1541,9 +1785,21 @@ mod tests {
         let input = "```python\nprint('hello')\nprint('world')\n```";
         assert_eq!(extract_code_block_content_range(input), 10..40);
 
+        let input = "~~~~mermaid\ngraph TD;\n~~~~";
+        let content_range = extract_code_block_content_range(input);
+        assert_eq!(&input[content_range], "graph TD;\n");
+
+        let input = "~~~mermaid\ngraph TD;\n    ~~~~";
+        let content_range = extract_code_block_content_range(input);
+        assert_eq!(&input[content_range], "graph TD;\n    ~~~~");
+
+        let input = "~~~mermaid\ngraph TD;\n   ~~~~ \t";
+        let content_range = extract_code_block_content_range(input);
+        assert_eq!(&input[content_range], "graph TD;\n");
+
         // Malformed input
         let input = "`````";
-        assert_eq!(extract_code_block_content_range(input), 3..3);
+        assert_eq!(extract_code_block_content_range(input), 5..5);
     }
 
     #[test]

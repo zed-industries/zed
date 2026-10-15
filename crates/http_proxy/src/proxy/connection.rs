@@ -11,13 +11,14 @@
 //! client sends on it cannot escape the policy decision. Per-TCP-connection
 //! event granularity, by design.
 
+use crate::pinned_host::{PinnedHost, PinnedHostError};
 use crate::proxy::{
     DenyReason, ProxyEvent, RequestMethod, RequestOutcome, RuntimeState, UpstreamProxy,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine as _;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpStream, ToSocketAddrs as _};
+use std::net::{IpAddr, Shutdown, SocketAddr, TcpStream, ToSocketAddrs as _};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
@@ -428,8 +429,9 @@ fn policy_denial(host: &str, port: u16, state: &RuntimeState) -> Option<DenyReas
 
 /// How an approved request will reach its destination.
 enum Route {
-    /// Connect directly to one of these resolved-and-vetted addresses.
-    Direct(Vec<SocketAddr>),
+    /// Connect directly to one of the addresses pinned when the host was
+    /// resolved and vetted.
+    Direct(PinnedHost),
     /// Tunnel through the upstream proxy with a CONNECT handshake.
     ViaUpstream(UpstreamProxy),
 }
@@ -460,74 +462,15 @@ fn plan_route(host: &str, port: u16, state: &RuntimeState) -> Result<Route, Rout
         return Ok(Route::ViaUpstream(upstream.clone()));
     }
 
-    let resolved: Vec<SocketAddr> = (host, port)
-        .to_socket_addrs()
-        .map_err(|error| RouteFailure::Error(anyhow!("resolving {host}:{port}: {error}")))?
-        .collect();
-    if resolved.is_empty() {
-        return Err(RouteFailure::Error(anyhow!(
-            "{host}:{port} did not resolve to any address"
-        )));
-    }
-
-    let vetted: Vec<SocketAddr> = if state.allowlist.allows_any() {
-        resolved
-    } else {
-        resolved
-            .into_iter()
-            .filter(|addr| !is_forbidden_ip(addr.ip()))
-            .collect()
-    };
-    if vetted.is_empty() {
-        return Err(RouteFailure::Denied(DenyReason::ResolvedToForbiddenIp {
-            host: host.to_string(),
-        }));
-    }
-    Ok(Route::Direct(vetted))
-}
-
-/// Whether a resolved address is in loopback / private / link-local space —
-/// destinations a hostname allowlist must never reach. The Seatbelt rule
-/// already blocks them for direct connections from the sandbox; the proxy
-/// (which runs outside the sandbox) must not reopen them.
-fn is_forbidden_ip(ip: IpAddr) -> bool {
-    // Escape hatch for the NixOS sandbox integration tests only: their echo
-    // servers live on the VM's private network, which this filter would
-    // otherwise reject. It is compiled in ONLY under the
-    // `nixos-integration-tests` feature (enabled via `sandbox/nixos-test` when
-    // building `bwrap_test_helper`), so in a real Zed build the env var has no
-    // effect and cannot disable DNS-rebinding/SSRF protection.
-    #[cfg(feature = "nixos-integration-tests")]
-    if std::env::var_os("ZED_SANDBOX_PROXY_ALLOW_LOCAL_IPS").is_some() {
-        return false;
-    }
-    match ip {
-        IpAddr::V4(v4) => is_forbidden_ipv4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_forbidden_ipv4(v4);
-            }
-            v6.is_loopback()
-                || v6.is_unspecified()
-                // Link-local (fe80::/10) and unique-local (fc00::/7); the
-                // dedicated `is_unicast_link_local` / `is_unique_local`
-                // methods are not yet stable.
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
+    match PinnedHost::resolve_for_allowlist(host, port, &state.allowlist) {
+        Ok(pinned) => Ok(Route::Direct(pinned)),
+        Err(PinnedHostError::AllAddressesForbidden { host }) => {
+            Err(RouteFailure::Denied(DenyReason::ResolvedToForbiddenIp {
+                host,
+            }))
         }
+        Err(error) => Err(RouteFailure::Error(anyhow!(error))),
     }
-}
-
-fn is_forbidden_ipv4(ip: Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local() // includes 169.254.169.254 cloud metadata
-        || ip.is_unspecified()
-        || ip.is_broadcast()
-        // Shared address space (RFC 6598, 100.64.0.0/10): CGNAT, and notably
-        // Tailscale-style overlay networks.
-        || (octets[0] == 100 && (octets[1] & 0xc0) == 64)
 }
 
 fn handle_connect(
@@ -726,7 +669,13 @@ fn handle_http_forward(
 /// handshake with the CONNECT path.
 fn open_route(route: &Route, host: &str, port: u16) -> Result<(TcpStream, Vec<u8>)> {
     match route {
-        Route::Direct(addrs) => Ok((connect_to_any(addrs, host, port)?, Vec::new())),
+        Route::Direct(pinned) => {
+            // Connect to the addresses pinned when the host was vetted, never
+            // re-resolving `host` here — that re-resolution is exactly the
+            // DNS-rebinding window `PinnedHost` exists to close.
+            let addrs: Vec<SocketAddr> = pinned.socket_addrs().collect();
+            Ok((connect_to_any(&addrs, host, port)?, Vec::new()))
+        }
         Route::ViaUpstream(upstream) => connect_via_upstream(host, port, upstream),
     }
 }
@@ -984,7 +933,8 @@ mod tests {
     fn plan_route_allows_loopback_when_allowlist_allows_any() {
         let state = runtime_state(Allowlist::any());
         match plan_route("localhost", 80, &state) {
-            Ok(Route::Direct(addrs)) => {
+            Ok(Route::Direct(pinned)) => {
+                let addrs: Vec<SocketAddr> = pinned.socket_addrs().collect();
                 assert!(!addrs.is_empty());
                 assert!(addrs.iter().all(|addr| addr.ip().is_loopback()));
             }
@@ -1077,35 +1027,7 @@ mod tests {
         assert!(!is_ip_literal("localhost"));
     }
 
-    #[test]
-    fn forbidden_ips_cover_local_space() {
-        for forbidden in [
-            "127.0.0.1",
-            "10.1.2.3",
-            "172.16.0.1",
-            "192.168.1.1",
-            "169.254.169.254",
-            "100.100.1.1",
-            "0.0.0.0",
-            "::1",
-            "::",
-            "fe80::1",
-            "fd00::1",
-            "::ffff:127.0.0.1",
-            "::ffff:10.0.0.1",
-        ] {
-            assert!(
-                is_forbidden_ip(forbidden.parse().unwrap()),
-                "{forbidden} should be forbidden"
-            );
-        }
-        for public in ["140.82.112.3", "8.8.8.8", "2606:4700::6810:84e5"] {
-            assert!(
-                !is_forbidden_ip(public.parse().unwrap()),
-                "{public} should be allowed"
-            );
-        }
-    }
+    // Forbidden-IP range coverage lives with the logic in `pinned_host.rs`.
 
     #[test]
     fn parsed_request_recognizes_connect() {

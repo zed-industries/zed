@@ -3,7 +3,7 @@ use std::rc::Rc;
 use collections::HashMap;
 use gpui::{Anchor, Entity, WeakEntity};
 use project::debugger::session::{ThreadId, ThreadStatus};
-use ui::{CommonAnimationExt, ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
+use ui::{CommonAnimationExt, ContextMenu, DropdownMenu, Indicator, Tooltip, prelude::*};
 use util::{maybe, truncate_and_trailoff};
 
 use crate::{
@@ -132,7 +132,7 @@ impl DebugPanel {
         let session_state_indicator = if is_terminated {
             Indicator::dot().color(Color::Error).into_any_element()
         } else if !is_started {
-            Icon::new(IconName::ArrowCircle)
+            Icon::new(IconName::LoadCircle)
                 .size(IconSize::Small)
                 .color(Color::Muted)
                 .with_rotate_animation(2)
@@ -147,7 +147,6 @@ impl DebugPanel {
         let trigger = h_flex()
             .gap_2()
             .child(session_state_indicator)
-            .justify_between()
             .child(
                 DebugPanel::dropdown_label(trigger_label)
                     .when(is_terminated, |this| this.strikethrough()),
@@ -212,8 +211,8 @@ impl DebugPanel {
             }),
         )
         .attach(Anchor::BottomLeft)
-        .style(DropdownStyle::Ghost)
-        .handle(self.session_picker_menu_handle.clone());
+        .handle(self.session_picker_menu_handle.clone())
+        .trigger_tooltip(Tooltip::text("Select a Debug Session"));
 
         Some(menu)
     }
@@ -325,7 +324,6 @@ impl DebugPanel {
                 )
                 .attach(Anchor::BottomLeft)
                 .disabled(session_terminated)
-                .style(DropdownStyle::Ghost)
                 .handle(self.thread_picker_menu_handle.clone()),
             )
         } else {

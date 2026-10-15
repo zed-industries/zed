@@ -120,7 +120,7 @@ impl ProjectBookmarksDelegate {
         if self.worktree_root_names.len() > 1 {
             self.worktree_root_names
                 .get(&worktree_id)
-                .map(|root_name| root_name.join(rel_path))
+                .map(|root_name| root_name.join(rel_path).into())
         } else {
             Some(rel_path.into_arc())
         }
