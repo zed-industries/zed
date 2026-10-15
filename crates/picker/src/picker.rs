@@ -172,6 +172,14 @@ pub trait PickerDelegate: Sized + 'static {
     fn separators_after_indices(&self) -> Vec<usize> {
         Vec::new()
     }
+    fn set_hovered_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.set_selected_index(ix, window, cx);
+    }
     fn set_selected_index(
         &mut self,
         ix: usize,
@@ -514,6 +522,32 @@ impl<D: PickerDelegate> Picker<D> {
         )
     }
 
+    pub fn list_with_preview_and_query_editor(
+        delegate: D,
+        preview: Arc<dyn PreviewBackend>,
+        query_editor: Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let head = Head::with_editor(
+            query_editor,
+            delegate.placeholder_text(window, cx),
+            Self::on_input_editor_event,
+            window,
+            cx,
+        );
+
+        let preview = Preview::new(preview);
+        Self::new(
+            delegate,
+            ContainerKind::List,
+            head,
+            Some(preview),
+            window,
+            cx,
+        )
+    }
+
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn nonsearchable_uniform_list(
@@ -769,6 +803,32 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         self.focus_handle(cx).focus(window, cx);
+    }
+
+    pub fn set_hovered_index(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let match_count = self.delegate.match_count();
+        if match_count == 0 {
+            return;
+        }
+
+        if !self.delegate.can_select(ix, window, cx) {
+            return;
+        }
+
+        let previous_index = self.delegate.selected_index();
+        self.delegate.set_hovered_index(ix, window, cx);
+        let current_index = self.delegate.selected_index();
+
+        if previous_index != current_index {
+            if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
+                action(window, cx);
+            }
+            if let Some(preview) = &mut self.preview
+                && let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
+            {
+                preview.update(update, window, cx);
+            }
+        }
     }
 
     /// Handles the selecting an index, and passing the change to the delegate.
@@ -1201,6 +1261,9 @@ impl<D: PickerDelegate> Picker<D> {
                 delegate_pending_update_matches.await;
                 this.update_in(cx, |this, window, cx| {
                     this.matches_updated(scroll_behavior, window, cx);
+                    if let Some(secondary) = this.confirm_on_update.take() {
+                        this.do_confirm(secondary, window, cx);
+                    }
                 })
             }),
         });
@@ -1245,9 +1308,6 @@ impl<D: PickerDelegate> Picker<D> {
             && let Some(preview) = &mut self.preview
         {
             preview.update(update, window, cx);
-        }
-        if let Some(secondary) = self.confirm_on_update.take() {
-            self.do_confirm(secondary, window, cx);
         }
         cx.notify();
     }
@@ -1388,7 +1448,7 @@ impl<D: PickerDelegate> Picker<D> {
             .when(self.delegate.select_on_hover(), |this| {
                 this.on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
                     if *hovered {
-                        this.set_selected_index(ix, None, false, window, cx);
+                        this.set_hovered_index(ix, window, cx);
                         cx.notify();
                     }
                 }))
@@ -1588,6 +1648,8 @@ mod tests {
         items: Vec<bool>,
         selected_index: usize,
         confirmed_index: Rc<Cell<Option<usize>>>,
+        confirmations: Vec<(usize, bool)>,
+        match_update: Option<(Duration, usize)>,
         supports_multi_select: bool,
         selected_items: Vec<usize>,
         multi_confirmed: Rc<Cell<Option<Vec<usize>>>>,
@@ -1599,6 +1661,8 @@ mod tests {
                 items,
                 selected_index: 0,
                 confirmed_index: Rc::new(Cell::new(None)),
+                confirmations: Vec::new(),
+                match_update: None,
                 supports_multi_select: false,
                 selected_items: Vec::new(),
                 multi_confirmed: Rc::new(Cell::new(None)),
@@ -1652,18 +1716,30 @@ mod tests {
             &mut self,
             _query: String,
             _window: &mut Window,
-            _cx: &mut Context<Picker<Self>>,
+            cx: &mut Context<Picker<Self>>,
         ) -> Task<()> {
-            Task::ready(())
+            let Some((delay, selected_index)) = self.match_update.take() else {
+                return Task::ready(());
+            };
+            let timer = cx.background_executor().timer(delay);
+            cx.spawn(async move |picker, cx| {
+                timer.await;
+                picker
+                    .update(cx, |picker, _| {
+                        picker.delegate.selected_index = selected_index;
+                    })
+                    .expect("picker should exist until matches finish");
+            })
         }
 
         fn confirm(
             &mut self,
-            _secondary: bool,
+            secondary: bool,
             _window: &mut Window,
             _cx: &mut Context<Picker<Self>>,
         ) {
             self.confirmed_index.set(Some(self.selected_index));
+            self.confirmations.push((self.selected_index, secondary));
         }
 
         fn supports_multi_select(&self) -> bool {
@@ -1730,6 +1806,55 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_refresh_waits_for_latest_matches_before_confirming(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for secondary in [false, true] {
+            let (picker, cx) = cx.add_window_view(|window, cx| {
+                Picker::uniform_list(TestDelegate::new(vec![true, true, true]), window, cx)
+            });
+            cx.run_until_parked();
+
+            picker.update_in(cx, |picker, window, cx| {
+                picker.delegate.match_update = Some((Duration::from_millis(100), 1));
+                picker.set_query("new query", window, cx);
+            });
+            cx.run_until_parked();
+
+            picker.update_in(cx, |picker, window, cx| {
+                if secondary {
+                    picker.secondary_confirm(&menu::SecondaryConfirm, window, cx);
+                } else {
+                    picker.confirm(&menu::Confirm, window, cx);
+                }
+                assert_eq!(picker.confirm_on_update, Some(secondary));
+                assert_eq!(picker.delegate.confirmations, Vec::new());
+
+                picker.delegate.match_update = Some((Duration::from_millis(50), 2));
+                picker.refresh(window, cx);
+                assert_eq!(picker.delegate.confirmations, Vec::new());
+                assert_eq!(picker.confirm_on_update, Some(secondary));
+            });
+            cx.run_until_parked();
+
+            cx.executor().advance_clock(Duration::from_millis(50));
+            cx.run_until_parked();
+            picker.read_with(cx, |picker, _| {
+                assert_eq!(picker.delegate.confirmations, vec![(2, secondary)]);
+                assert_eq!(picker.confirm_on_update, None);
+                assert!(picker.pending_update_matches.is_none());
+            });
+
+            cx.executor().advance_clock(Duration::from_millis(100));
+            cx.run_until_parked();
+            picker.read_with(cx, |picker, _| {
+                assert_eq!(picker.delegate.selected_index(), 2);
+                assert_eq!(picker.delegate.confirmations, vec![(2, secondary)]);
+            });
+        }
     }
 
     #[gpui::test]

@@ -3,13 +3,13 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
-    SplittableEditor,
+    DiffStyleControls, Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer,
+    MultiBuffer, SplittableEditor,
 };
 use futures::{FutureExt, select_biased};
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Font, IntoElement, Render, Task, WeakEntity, Window,
+    App, AppContext as _, AsyncApp, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    Font, IntoElement, Render, Task, WeakEntity, Window,
 };
 use language::{Buffer, HighlightedText, Point};
 use project::{Project, ProjectPath};
@@ -21,11 +21,12 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
+use ui::{Color, Icon, IconName, SharedString, prelude::*};
 use util::paths::PathExt as _;
 use workspace::{
-    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
+    item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -124,9 +125,24 @@ impl FileDiffView {
                 window,
                 cx,
             );
+            splittable.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
             splittable
-                .set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
-            splittable
+        });
+
+        let include_root = project.read(cx).visible_worktrees(cx).count() > 1;
+        let breadcrumb_path = |buffer: &Entity<Buffer>| {
+            buffer
+                .read(cx)
+                .snapshot()
+                .resolve_file_path(include_root, cx)
+                .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.to_string())
+        };
+        let old_path = breadcrumb_path(&old_buffer);
+        let new_path = breadcrumb_path(&new_buffer);
+        editor.update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, _| {
+                editor.set_breadcrumb_header(format!("{old_path} ↔ {new_path}"));
+            });
         });
 
         let (buffer_changes_tx, mut buffer_changes_rx) = watch::channel(());
@@ -214,13 +230,14 @@ pub async fn build_buffer_diff(
     let language_registry = new_buffer.read_with(cx, |buffer, _| buffer.language_registry());
 
     let diff = cx.new(|cx| {
-        BufferDiff::new(
+        let mut diff = BufferDiff::new(
             &new_buffer_snapshot.text,
             new_buffer_snapshot.language().cloned(),
             language_registry,
-            buffer_diff::DiffBaseKind::Custom,
             cx,
-        )
+        );
+        diff.set_operations(Arc::new(buffer_diff::RestoreDiffOperations));
+        diff
     });
 
     diff.update(cx, |diff, cx| {
@@ -248,16 +265,6 @@ impl Item for FileDiffView {
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff).color(Color::Muted))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
@@ -401,6 +408,57 @@ impl Item for FileDiffView {
 impl Render for FileDiffView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.editor.clone()
+    }
+}
+
+pub struct FileDiffStyleToolbar {
+    file_diff: Option<WeakEntity<FileDiffView>>,
+}
+
+impl FileDiffStyleToolbar {
+    pub fn new(_: &mut Context<Self>) -> Self {
+        Self { file_diff: None }
+    }
+
+    fn file_diff(&self) -> Option<Entity<FileDiffView>> {
+        self.file_diff.as_ref()?.upgrade()
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for FileDiffStyleToolbar {}
+
+impl ToolbarItemView for FileDiffStyleToolbar {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.file_diff = active_pane_item
+            .and_then(|item| item.act_as::<FileDiffView>(cx))
+            .map(|entity| entity.downgrade());
+
+        if self.file_diff.is_some() {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+}
+
+impl Render for FileDiffStyleToolbar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(file_diff) = self.file_diff() else {
+            return Empty.into_any_element();
+        };
+
+        let editor = file_diff.read(cx).editor.clone();
+
+        h_flex()
+            .pl_0p5()
+            .gap_1()
+            .child(DiffStyleControls::new(editor))
+            .into_any_element()
     }
 }
 
@@ -570,7 +628,34 @@ mod tests {
                     path!("test/new_file.txt")
                 )
             );
-        })
+            let (breadcrumbs, _) = diff_view.breadcrumbs(cx).unwrap();
+            assert_eq!(
+                breadcrumbs
+                    .iter()
+                    .map(|crumb| crumb.text.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["old_file.txt ↔ new_file.txt"]
+            );
+        });
+
+        let toolbar = cx.new(FileDiffStyleToolbar::new);
+        let location = toolbar.update_in(cx, |toolbar, window, cx| {
+            toolbar.set_active_pane_item(Some(&diff_view), window, cx)
+        });
+        assert_eq!(location, ToolbarItemLocation::PrimaryLeft);
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, _| toolbar.file_diff()),
+            Some(diff_view.clone())
+        );
+
+        let location = toolbar.update_in(cx, |toolbar, window, cx| {
+            toolbar.set_active_pane_item(None, window, cx)
+        });
+        assert_eq!(location, ToolbarItemLocation::Hidden);
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, _| toolbar.file_diff()),
+            None
+        );
     }
 
     #[gpui::test]

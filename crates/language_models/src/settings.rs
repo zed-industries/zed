@@ -158,7 +158,6 @@ impl settings::Settings for AllLanguageModelSettings {
                 ),
                 show_zen_models: opencode.show_zen_models.unwrap_or(true),
                 show_go_models: opencode.show_go_models.unwrap_or(true),
-                show_free_models: opencode.show_free_models.unwrap_or(true),
             },
             open_router: OpenRouterSettings {
                 api_url: open_router.api_url.unwrap(),

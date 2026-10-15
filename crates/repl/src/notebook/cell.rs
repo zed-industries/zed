@@ -1056,8 +1056,7 @@ impl RunnableCell for CodeCell {
     }
 
     fn execution_count(&self) -> Option<i32> {
-        self.execution_count
-            .and_then(|count| if count > 0 { Some(count) } else { None })
+        self.execution_count.filter(|&count| count > 0)
     }
 
     fn set_execution_count(&mut self, count: i32) -> &mut Self {

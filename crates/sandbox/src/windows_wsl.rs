@@ -261,6 +261,28 @@ pub fn path_is_on_windows_drive(path: &Path) -> bool {
     )
 }
 
+/// Whether WSL is structurally present: at least one distro is registered
+/// under `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`. A cheap
+/// registry read (no `wsl.exe` spawn), suitable for UI gating decisions like
+/// suppressing sandbox-integrity warnings on machines where no WSL sandbox
+/// could ever be constructed. It is *not* an availability guarantee: a
+/// registered distro can still fail the real environment probe (no `bwrap`,
+/// unhealthy WSL service, …), so enforcement paths must keep relying on
+/// [`probe_environment`]'s in-WSL round-trip.
+pub fn wsl_distro_registered() -> bool {
+    windows_registry::CURRENT_USER
+        .open("Software\\Microsoft\\Windows\\CurrentVersion\\Lxss")
+        .and_then(|lxss_key| {
+            Ok(lxss_key.keys()?.any(|key| {
+                lxss_key
+                    .open(&key)
+                    .and_then(|distro| distro.get_string("DistributionName"))
+                    .is_ok()
+            }))
+        })
+        .unwrap_or(false)
+}
+
 /// Resolve a requested write grant to the path we persist for it, in
 /// **platform-native** form: a Windows drive path stays `C:\...` (NTFS) and a
 /// WSL path stays a Linux-absolute `/...`. In both cases the path is resolved to

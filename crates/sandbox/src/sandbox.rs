@@ -141,6 +141,23 @@ pub fn path_is_on_windows_drive(path: &Path) -> bool {
     }
 }
 
+/// Whether WSL is structurally present (at least one registered distro), via a
+/// cheap registry read with no `wsl.exe` round-trip. Always `false` off
+/// Windows. Suitable only for UI gating (e.g. suppressing DrvFs
+/// sandbox-integrity warnings on machines where no WSL sandbox could ever be
+/// constructed); enforcement paths must keep relying on the real in-WSL probe,
+/// which is authoritative about whether a sandbox can actually be built.
+pub fn wsl_distro_registered() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows_wsl::wsl_distro_registered()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 impl SandboxPolicy {
     /// Combine two policy layers. Filesystem/network grants are unioned into the
     /// least-restrictive policy that satisfies both layers, while protected paths
@@ -229,7 +246,7 @@ fn linux_location_is_equal_or_descendant(
     location: &HostFilesystemLocation,
     ancestor: &HostFilesystemLocation,
 ) -> bool {
-    use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+    use std::os::fd::{AsFd as _, AsRawFd as _, FromRawFd as _, OwnedFd};
 
     if location == ancestor {
         return true;
@@ -253,15 +270,15 @@ fn linux_location_is_equal_or_descendant(
             OwnedFd::from_raw_fd(fd)
         };
 
-        let Some(parent_identity) = linux_fd_identity(parent.as_raw_fd()) else {
+        let Some(parent_identity) = linux_fd_identity(parent.as_fd()) else {
             log::warn!("failed to fstat parent fd while checking protected path overlap");
             return false;
         };
-        let Some(current_identity) = linux_fd_identity(current.as_raw_fd()) else {
+        let Some(current_identity) = linux_fd_identity(current.as_fd()) else {
             log::warn!("failed to fstat current fd while checking protected path overlap");
             return false;
         };
-        let Some(ancestor_identity) = linux_fd_identity(ancestor.linux_fd().as_raw_fd()) else {
+        let Some(ancestor_identity) = linux_fd_identity(ancestor.linux_fd().as_fd()) else {
             log::warn!("failed to fstat protected fd while checking protected path overlap");
             return false;
         };

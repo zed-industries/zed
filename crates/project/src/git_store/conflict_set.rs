@@ -90,6 +90,17 @@ impl ConflictSetSnapshot {
     }
 }
 
+/// Anchors for one side of a conflict. A non-empty side excludes text typed at
+/// its boundaries, while an empty side must be ordered (`start <= end`) and
+/// grow around text typed into it, so its anchors use the opposite biases.
+fn side_range(buffer: &text::BufferSnapshot, start: usize, end: usize) -> Range<Anchor> {
+    if start == end {
+        buffer.anchor_before(start)..buffer.anchor_after(end)
+    } else {
+        buffer.anchor_after(start)..buffer.anchor_before(end)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConflictRegion {
     pub ours_branch_name: SharedString,
@@ -233,14 +244,11 @@ impl ConflictSet {
 
                 let range = buffer.anchor_after(conflict_start.unwrap())
                     ..buffer.anchor_before(conflict_end);
-                let ours = buffer.anchor_after(ours_start.unwrap())
-                    ..buffer.anchor_before(ours_end.unwrap());
-                let theirs =
-                    buffer.anchor_after(theirs_start.unwrap())..buffer.anchor_before(theirs_end);
-
+                let ours = side_range(buffer, ours_start.unwrap(), ours_end.unwrap());
+                let theirs = side_range(buffer, theirs_start.unwrap(), theirs_end);
                 let base = base_start
                     .zip(base_end)
-                    .map(|(start, end)| buffer.anchor_after(start)..buffer.anchor_before(end));
+                    .map(|(start, end)| side_range(buffer, start, end));
 
                 conflicts.push(ConflictRegion {
                     ours_branch_name: ours_branch_name

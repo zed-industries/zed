@@ -1,8 +1,13 @@
 use crate::WebDispatcher;
 use anyhow::{Context as _, anyhow};
-use futures::{AsyncReadExt as _, channel::oneshot};
+use futures::{AsyncRead, AsyncReadExt as _, FutureExt as _, TryStreamExt as _, channel::oneshot};
 use http_client::{AsyncBody, HttpClient, RedirectPolicy};
-use std::sync::Arc;
+use std::{
+    io,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::*;
 
@@ -172,26 +177,24 @@ async fn fetch(
         }
     }
 
-    // The entire response body is eagerly buffered into memory via
-    // `arrayBuffer()`. The Fetch API does not expose a synchronous
-    // streaming interface; streaming would require `ReadableStream`
-    // interop which is significantly more complex.
-    let body_promise = web_response
-        .array_buffer()
-        .map_err(|error| anyhow!("failed to initiate response body read: {error:?}"))?;
-    let body_value = wasm_bindgen_futures::JsFuture::from(body_promise)
-        .await
-        .map_err(|error| anyhow!("failed to read response body: {error:?}"))?;
-    let array_buffer: js_sys::ArrayBuffer = body_value
-        .dyn_into()
-        .map_err(|error| anyhow!("response body is not an ArrayBuffer: {error:?}"))?;
-    let response_bytes = js_sys::Uint8Array::new(&array_buffer).to_vec();
+    let body = match web_response.body() {
+        Some(stream) => {
+            let reader = stream
+                .get_reader()
+                .dyn_into::<web_sys::ReadableStreamDefaultReader>()
+                .map_err(|error| {
+                    anyhow!("response body reader has an unexpected type: {error:?}")
+                })?;
+            AsyncBody::from_reader(ReadableStreamBody::new(reader))
+        }
+        None => AsyncBody::empty(),
+    };
 
-    builder
-        .body(AsyncBody::from(response_bytes))
-        .map_err(|error| anyhow!(error))
+    builder.body(body).map_err(|error| anyhow!(error))
 }
 
+// Request bodies are buffered into memory because streaming uploads require
+// half-duplex Fetch support that browsers largely don't ship yet.
 async fn read_body_to_bytes(mut body: AsyncBody) -> anyhow::Result<Option<Vec<u8>>> {
     let mut buffer = Vec::new();
     body.read_to_end(&mut buffer).await?;
@@ -199,5 +202,108 @@ async fn read_body_to_bytes(mut body: AsyncBody) -> anyhow::Result<Option<Vec<u8
         Ok(None)
     } else {
         Ok(Some(buffer))
+    }
+}
+
+const RESPONSE_BODY_CHANNEL_CAPACITY: usize = 8;
+
+struct ReadableStreamBody {
+    chunks: futures::stream::IntoAsyncRead<Pin<Box<async_channel::Receiver<io::Result<Vec<u8>>>>>>,
+    // Dropping this sender resolves the pump's cancellation future, which
+    // cancels the browser-side `ReadableStream`.
+    _cancellation: oneshot::Sender<()>,
+}
+
+impl ReadableStreamBody {
+    fn new(reader: web_sys::ReadableStreamDefaultReader) -> Self {
+        // The pump runs on the browser main thread while a worker may read the
+        // body. futures::mpsc's internal mutex can park the main thread.
+        let (chunks_sender, chunks_receiver) =
+            async_channel::bounded(RESPONSE_BODY_CHANNEL_CAPACITY);
+        let (cancellation, cancellation_receiver) = oneshot::channel();
+        wasm_bindgen_futures::spawn_local(pump_response_body(
+            reader,
+            chunks_sender,
+            cancellation_receiver,
+        ));
+        Self {
+            chunks: Box::pin(chunks_receiver).into_async_read(),
+            _cancellation: cancellation,
+        }
+    }
+}
+
+impl AsyncRead for ReadableStreamBody {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.chunks).poll_read(cx, buffer)
+    }
+}
+
+async fn pump_response_body(
+    reader: web_sys::ReadableStreamDefaultReader,
+    chunks: async_channel::Sender<io::Result<Vec<u8>>>,
+    cancellation: oneshot::Receiver<()>,
+) {
+    let cancellation = cancellation.fuse();
+    futures::pin_mut!(cancellation);
+
+    loop {
+        let read = wasm_bindgen_futures::JsFuture::from(reader.read()).fuse();
+        futures::pin_mut!(read);
+        let result = futures::select_biased! {
+            _ = cancellation => {
+                cancel_reader(&reader).await;
+                return;
+            }
+            result = read => result,
+        };
+
+        let chunk = result
+            .map_err(|error| io::Error::other(format!("response stream failed: {error:?}")))
+            .and_then(response_chunk);
+        match chunk {
+            Ok(Some(chunk)) => {
+                if chunks.send(Ok(chunk)).await.is_err() {
+                    cancel_reader(&reader).await;
+                    return;
+                }
+            }
+            Ok(None) => return,
+            Err(error) => {
+                if chunks.send(Err(error)).await.is_err() {
+                    log::debug!("response body receiver was dropped after a stream error");
+                }
+                return;
+            }
+        }
+    }
+}
+
+fn response_chunk(result: JsValue) -> io::Result<Option<Vec<u8>>> {
+    // `ReadableStreamReadResult` is a dictionary type, so there is no runtime
+    // class to check against; `unchecked_into` is the only available cast.
+    let result: web_sys::ReadableStreamReadResult = result.unchecked_into();
+    if result.get_done().unwrap_or(false) {
+        return Ok(None);
+    }
+
+    result
+        .get_value()
+        .dyn_into::<js_sys::Uint8Array>()
+        .map(|bytes| Some(bytes.to_vec()))
+        .map_err(|value| {
+            io::Error::other(format!(
+                "response stream yielded a non-byte chunk: {value:?}"
+            ))
+        })
+}
+
+async fn cancel_reader(reader: &web_sys::ReadableStreamDefaultReader) {
+    if let Err(error) = wasm_bindgen_futures::JsFuture::from(reader.cancel()).await {
+        log::debug!("failed to cancel response body reader: {error:?}");
     }
 }

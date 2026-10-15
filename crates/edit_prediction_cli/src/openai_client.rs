@@ -488,6 +488,7 @@ impl BatchingOpenAiClient {
                             content: Some(MessageContent::Plain(msg.content)),
                             tool_calls: Vec::new(),
                             reasoning_content: None,
+                            reasoning_details: None,
                         },
                         "system" => RequestMessage::System {
                             content: MessageContent::Plain(msg.content),

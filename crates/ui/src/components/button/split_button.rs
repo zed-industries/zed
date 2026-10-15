@@ -17,8 +17,15 @@ pub enum SplitButtonStyle {
 }
 
 pub enum SplitButtonKind {
+    Button(Button),
     ButtonLike(ButtonLike),
     IconButton(IconButton),
+}
+
+impl From<Button> for SplitButtonKind {
+    fn from(button: Button) -> Self {
+        Self::Button(button)
+    }
 }
 
 impl From<IconButton> for SplitButtonKind {
@@ -78,6 +85,7 @@ impl RenderOnce for SplitButton {
                 this.gap_px()
             })
             .child(div().flex_grow_1().child(match self.left {
+                SplitButtonKind::Button(button) => button.into_any_element(),
                 SplitButtonKind::ButtonLike(button) => button.into_any_element(),
                 SplitButtonKind::IconButton(icon) => icon.into_any_element(),
             }))

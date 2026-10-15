@@ -5,7 +5,7 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
     CodeLens, CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DelayMs,
-    DiffViewStyle, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
+    DiffViewStyle, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer, GitGutterWidth,
     GoToDefinitionFallback, GoToDefinitionScrollStrategy, MinimapThumb, MinimapThumbBorder,
     MultiCursorModifier, OpenResultsIn, ScrollBeyondLastLine, ScrollbarDiagnostics,
     SeedQuerySetting, ShowMinimap, SnippetSortOrder,
@@ -19,6 +19,7 @@ use ui::scrollbars::ShowScrollbar;
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
+    pub cursor_animation: CursorAnimationSettings,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
@@ -51,6 +52,7 @@ pub struct EditorSettings {
     pub search_wrap: bool,
     pub search: SearchSettings,
     pub auto_signature_help: bool,
+    pub language_detection: bool,
     pub show_signature_help_after_edits: bool,
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub go_to_definition_scroll_strategy: GoToDefinitionScrollStrategy,
@@ -70,6 +72,11 @@ pub struct EditorSettings {
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
     pub file_diff: FileDiffSettings,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct CursorAnimationSettings {
+    pub enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -149,7 +156,7 @@ pub struct Gutter {
     pub breakpoints: bool,
     pub bookmarks: bool,
     pub folds: bool,
-    pub git_gutter_width: Option<f32>,
+    pub git_gutter_width: settings::GitGutterWidth,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -195,6 +202,8 @@ pub struct SearchSettings {
     pub regex: bool,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
+    /// Start searching as you type in project search, without pressing Enter.
+    pub search_on_type: bool,
 }
 
 impl EditorSettings {
@@ -206,6 +215,7 @@ impl EditorSettings {
 impl Settings for EditorSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let editor = content.editor.clone();
+        let cursor_animation = editor.cursor_animation.unwrap();
         let scrollbar = editor.scrollbar.unwrap();
         let minimap = editor.minimap.unwrap();
         let gutter = editor.gutter.unwrap();
@@ -218,6 +228,9 @@ impl Settings for EditorSettings {
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
+            cursor_animation: CursorAnimationSettings {
+                enabled: cursor_animation.enabled.unwrap(),
+            },
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
             rounded_selection: editor.rounded_selection.unwrap(),
@@ -268,7 +281,7 @@ impl Settings for EditorSettings {
                 bookmarks: gutter.bookmarks.unwrap(),
                 breakpoints: gutter.breakpoints.unwrap(),
                 folds: gutter.folds.unwrap(),
-                git_gutter_width: gutter.git_gutter_width,
+                git_gutter_width: gutter.git_gutter_width.unwrap(),
             },
             scroll_beyond_last_line: editor.scroll_beyond_last_line.unwrap(),
             vertical_scroll_margin: editor.vertical_scroll_margin.unwrap() as f64,
@@ -297,8 +310,10 @@ impl Settings for EditorSettings {
                 include_ignored: search.include_ignored.unwrap(),
                 regex: search.regex.unwrap(),
                 center_on_match: search.center_on_match.unwrap(),
+                search_on_type: search.search_on_type.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
+            language_detection: editor.language_detection.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),
             go_to_definition_fallback: editor.go_to_definition_fallback.unwrap(),
             go_to_definition_scroll_strategy: editor.go_to_definition_scroll_strategy.unwrap(),
