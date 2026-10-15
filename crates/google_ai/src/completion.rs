@@ -22,7 +22,8 @@ pub fn into_google(
     model_id: String,
     mode: GoogleModelMode,
 ) -> Result<crate::GenerateContentRequest> {
-    fn map_content(content: Vec<MessageContent>) -> Result<Vec<Part>> {
+    let nest_function_response_media = !crate::uses_sibling_function_response_media(&model_id);
+    let map_content = |content: Vec<MessageContent>| -> Result<Vec<Part>> {
         let mut mapped_parts = Vec::new();
         for content in content {
             match content {
@@ -95,6 +96,11 @@ pub fn into_google(
                     } else {
                         text_output
                     };
+                    let (nested_images, sibling_images) = if nest_function_response_media {
+                        (images, Vec::new())
+                    } else {
+                        (Vec::new(), images)
+                    };
                     mapped_parts.push(Part::FunctionResponsePart(crate::FunctionResponsePart {
                         function_response: crate::FunctionResponse {
                             name: tool_result.tool_name.to_string(),
@@ -103,14 +109,15 @@ pub fn into_google(
                                 "output": output
                             }),
                             id: Some(tool_result.tool_use_id.to_string()),
+                            parts: nested_images,
                         },
                     }));
-                    mapped_parts.extend(images.into_iter().map(Part::InlineDataPart));
+                    mapped_parts.extend(sibling_images.into_iter().map(Part::InlineDataPart));
                 }
             }
         }
         Ok(mapped_parts)
-    }
+    };
 
     let thinking_config = thinking_config_for_request(&request, &model_id, mode);
     let max_output_tokens = request
@@ -209,9 +216,7 @@ fn thinking_config_for_request(
     model_id: &str,
     mode: GoogleModelMode,
 ) -> Option<ThinkingConfig> {
-    let supports_thinking =
-        matches!(mode, GoogleModelMode::Thinking { .. }) || is_google_thinking_model(model_id);
-    if !supports_thinking {
+    if !matches!(mode, GoogleModelMode::Thinking { .. }) {
         return None;
     }
 
@@ -231,9 +236,9 @@ fn thinking_config_for_request(
         {
             config.thinking_budget = Some(budget_tokens);
         }
-    } else if let Some(thinking_level) = disabled_thinking_level(model_id) {
+    } else if let Some(thinking_level) = crate::lowest_thinking_level(model_id) {
         config.thinking_level = Some(thinking_level);
-    } else if supports_thinking_budget_disable(model_id) {
+    } else if crate::supports_disabling_thinking(model_id) {
         config.thinking_budget = Some(0);
     }
 
@@ -246,41 +251,6 @@ impl ThinkingConfig {
             && self.thinking_level.is_none()
             && self.include_thoughts.is_none()
     }
-}
-
-fn is_google_thinking_model(model_id: &str) -> bool {
-    model_id.starts_with("gemini-2.5-")
-        || model_id.starts_with("gemini-3")
-        || model_id.starts_with("gemini-4")
-}
-
-fn disabled_thinking_level(model_id: &str) -> Option<ThinkingLevel> {
-    match model_id {
-        // Gemini 3.7 and 3.8 Flash and Gemini 4 Argon reject `MINIMAL` with a
-        // validation error, so `LOW` is the lowest level available to them.
-        model_id
-            if model_id.starts_with("gemini-3.7-flash")
-                || model_id.starts_with("gemini-3.8-flash")
-                || (model_id.starts_with("gemini-3") && model_id.contains("-pro"))
-                || (model_id.starts_with("gemini-4") && model_id.contains("-argon")) =>
-        {
-            Some(ThinkingLevel::Low)
-        }
-        model_id if model_id.starts_with("gemini-3") => Some(ThinkingLevel::Minimal),
-        _ => None,
-    }
-}
-
-fn supports_thinking_budget_disable(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "gemini-2.5-flash"
-            | "gemini-2.5-flash-lite"
-            | "gemini-2.5-flash-preview-latest"
-            | "gemini-2.5-flash-preview-04-17"
-            | "gemini-2.5-flash-preview-05-20"
-            | "gemini-2.5-flash-lite-preview-06-17"
-    )
 }
 
 pub struct GoogleEventMapper {
@@ -330,9 +300,13 @@ impl GoogleEventMapper {
         let mut stop_reason = None;
         if let Some(usage_metadata) = event.usage_metadata {
             update_usage(&mut self.usage, &usage_metadata);
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
-                convert_usage(&self.usage),
-            )))
+            // Streamed chunks carry an empty `usageMetadata` until the final one.
+            // Reporting usage before the prompt count is known would show zero context.
+            if self.usage.prompt_token_count.is_some() {
+                events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
+                    convert_usage(&self.usage),
+                )))
+            }
         }
 
         if let Some(prompt_feedback) = event.prompt_feedback
@@ -506,7 +480,10 @@ mod tests {
         Content, FunctionCall, FunctionCallPart, GenerateContentCandidate, GenerateContentResponse,
         Part, Role as GoogleRole,
     };
-    use language_model_core::{LanguageModelRequestMessage, LanguageModelRequestTool};
+    use language_model_core::{
+        LanguageModelImage, LanguageModelRequestMessage, LanguageModelRequestTool,
+        LanguageModelToolResult, LanguageModelToolResultContent,
+    };
     use serde_json::json;
 
     #[test]
@@ -693,6 +670,47 @@ mod tests {
     }
 
     #[test]
+    fn into_google_nests_tool_result_images_in_function_response() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                    tool_use_id: "call-1".into(),
+                    tool_name: "read_file".into(),
+                    is_error: false,
+                    content: vec![
+                        LanguageModelToolResultContent::Text("Read image file shot.png".into()),
+                        LanguageModelToolResultContent::Image(LanguageModelImage {
+                            source: "aW1hZ2U=".into(),
+                        }),
+                    ],
+                    output: None,
+                })],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let request = into_google(
+            request,
+            "gemini-4-argon".to_string(),
+            GoogleModelMode::Default,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        assert_eq!(
+            serialized["contents"][0]["parts"],
+            json!([{"functionResponse": {
+                "name": "read_file",
+                "response": {"output": "Read image file shot.png"},
+                "id": "call-1",
+                "parts": [{"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}}]
+            }}])
+        );
+    }
+
+    #[test]
     fn into_google_turns_off_budget_thinking_when_supported() {
         let mut request = text_request();
         request.thinking_allowed = false;
@@ -804,6 +822,48 @@ mod tests {
     }
 
     #[test]
+    fn usage_is_reported_only_once_prompt_tokens_are_known() {
+        let mut mapper = GoogleEventMapper::new();
+        let chunks = [
+            json!({
+                "candidates": [{"content": {"parts": [{"text": "Let's check"}], "role": "model"}}],
+                "usageMetadata": {}
+            }),
+            json!({
+                "candidates": [{
+                    "content": {"parts": [{"text": ""}], "role": "model"},
+                    "finishReason": "STOP"
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 33732,
+                    "cachedContentTokenCount": 30436,
+                    "candidatesTokenCount": 107,
+                    "totalTokenCount": 33839
+                }
+            }),
+        ];
+
+        let usage_updates: Vec<TokenUsage> = chunks
+            .into_iter()
+            .flat_map(|chunk| mapper.map_event(serde_json::from_value(chunk).unwrap()))
+            .filter_map(|event| match event {
+                Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => Some(usage),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            usage_updates,
+            vec![TokenUsage {
+                input_tokens: 3296,
+                output_tokens: 107,
+                cache_read_input_tokens: 30436,
+                cache_creation_input_tokens: 0,
+            }]
+        );
+    }
+
+    #[test]
     fn signed_non_thought_text_part_preserves_signature() {
         let part: Part = serde_json::from_value(json!({
             "text": "visible text",
@@ -883,31 +943,6 @@ mod tests {
             mapper.map_event(response).as_slice(),
             [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal))]
         ));
-    }
-
-    #[test]
-    fn test_disabled_thinking_level_per_model() {
-        assert_eq!(
-            disabled_thinking_level("gemini-4-argon"),
-            Some(ThinkingLevel::Low)
-        );
-        assert_eq!(
-            disabled_thinking_level("gemini-3.8-flash"),
-            Some(ThinkingLevel::Low)
-        );
-        assert_eq!(
-            disabled_thinking_level("gemini-3.7-flash"),
-            Some(ThinkingLevel::Low)
-        );
-        assert_eq!(
-            disabled_thinking_level("gemini-3.1-pro-preview"),
-            Some(ThinkingLevel::Low)
-        );
-        assert_eq!(
-            disabled_thinking_level("gemini-3.6-flash"),
-            Some(ThinkingLevel::Minimal)
-        );
-        assert_eq!(disabled_thinking_level("gemini-2.5-flash"), None);
     }
 
     #[test]

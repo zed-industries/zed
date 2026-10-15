@@ -850,7 +850,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_diff_sync(cx: &mut TestAppContext) {
+    async fn test_legacy_diff_sync(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -993,14 +993,14 @@ mod tests {
                 )
                 .unwrap()
         });
-        cx.update(|_, cx| {
-            connection.send_update(
-                session_id,
-                acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
-                    acp_v1::ContentBlock::Text(acp_v1::TextContent::new("hello")),
-                )),
-                cx,
-            );
+        thread.update(cx, |thread, cx| {
+            thread
+                .append_message_chunk(
+                    acp_thread::MessageKind::Assistant,
+                    acp_v2::ContentChunk::new("hello".into(), "after-elicitation"),
+                    cx,
+                )
+                .expect("append current message after elicitation");
         });
 
         let view_state = cx.new(|_cx| {

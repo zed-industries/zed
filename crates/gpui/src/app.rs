@@ -8,7 +8,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, atomic::Ordering::SeqCst},
+    sync::Arc,
     time::Duration,
 };
 
@@ -45,17 +45,17 @@ use crate::InspectorElementRegistry;
 use crate::asset_cache::CachedLoad;
 use crate::{
     Action, ActionBuildError, ActionRegistry, ActivationPolicy, ActivityGuard, Any, AnyView,
-    AnyWindowHandle, AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds,
-    ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayChanges, DisplayEvent,
-    DisplayId, EventEmitter, ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor,
-    Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph,
-    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
-    SystemNotificationResponse, Task, TextRenderingMode, TextSystem, ThermalState, Window,
-    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
-    WindowingRequest,
+    AnyWindowHandle, AppContext, AppLifecyclePhase, Arena, ArenaBox, Asset, AssetSource,
+    BackgroundExecutor, Bounds, ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase,
+    DisplayChanges, DisplayEvent, DisplayId, EventEmitter, ExternalDragPayload, FocusHandle,
+    FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
+    Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
+    PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
+    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
+    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
+    WindowInvalidator, WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -334,6 +334,7 @@ impl Application {
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
+type AppLifecycleHandler = Box<dyn FnMut(AppLifecyclePhase, &mut App) -> bool + 'static>;
 type DisplayHandler = Box<dyn FnMut(DisplayEvent, &mut App) -> bool + 'static>;
 
 /// The properties of a display that GPUI reports changes to.
@@ -831,7 +832,7 @@ pub struct App {
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
-    pub(crate) focus_handles: Arc<FocusMap>,
+    pub(crate) focus_handles: Arc<RwLock<FocusMap>>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
@@ -852,6 +853,8 @@ pub struct App {
     displays: HashMap<DisplayId, DisplayState>,
     pub(crate) system_sleep_observers: SubscriberSet<(), Handler>,
     pub(crate) system_wake_observers: SubscriberSet<(), Handler>,
+    app_lifecycle_observers: SubscriberSet<(), AppLifecycleHandler>,
+    memory_warning_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -967,7 +970,7 @@ impl App {
                 windows: SlotMap::with_key(),
                 window_update_stack: Vec::new(),
                 window_handles: FxHashMap::default(),
-                focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
+                focus_handles: Arc::new(RwLock::new(FocusMap::default())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
                 keyboard_layout,
                 keyboard_mapper,
@@ -990,6 +993,8 @@ impl App {
                 displays: read_displays(platform.as_ref()),
                 system_sleep_observers: SubscriberSet::new(),
                 system_wake_observers: SubscriberSet::new(),
+                app_lifecycle_observers: SubscriberSet::new(),
+                memory_warning_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
@@ -1080,6 +1085,32 @@ impl App {
                     cx.system_wake_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_app_lifecycle(Box::new({
+            let app = Rc::downgrade(&app);
+            move |phase| {
+                if let Some(app) = app.upgrade() {
+                    app.borrow_mut().update(|cx| {
+                        cx.app_lifecycle_observers
+                            .clone()
+                            .retain(&(), |callback| callback(phase, cx));
+                    });
+                }
+            }
+        }));
+
+        platform.on_memory_warning(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    app.borrow_mut().update(|cx| {
+                        cx.memory_warning_observers
+                            .clone()
+                            .retain(&(), |callback| callback(cx));
+                    });
                 }
             }
         }));
@@ -1694,6 +1725,42 @@ impl App {
         subscription
     }
 
+    /// Observes mobile application lifecycle changes. Desktop platforms do not
+    /// emit these events. On iOS these currently describe the single connected
+    /// scene, not individual windows.
+    ///
+    /// Save important changes incrementally: neither disconnection nor quit is
+    /// guaranteed before the system terminates a backgrounded application.
+    /// Dropping the returned subscription removes the observer.
+    pub fn on_app_lifecycle(
+        &self,
+        mut callback: impl FnMut(AppLifecyclePhase, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.app_lifecycle_observers.insert(
+            (),
+            Box::new(move |phase, cx| {
+                callback(phase, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Observes mobile memory-pressure warnings so applications can release
+    /// expendable caches. Dropping the subscription removes the observer.
+    pub fn on_memory_warning(&self, mut callback: impl FnMut(&mut App) + 'static) -> Subscription {
+        let (subscription, activate) = self.memory_warning_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Returns the appearance of the application's windows.
     pub fn window_appearance(&self) -> WindowAppearance {
         self.platform.window_appearance()
@@ -2087,25 +2154,36 @@ impl App {
 
     /// Repeatedly called during `flush_effects` to handle a focused handle being dropped.
     fn release_dropped_focus_handles(&mut self) {
-        self.focus_handles
-            .clone()
-            .write()
-            .retain(|handle_id, focus| {
-                if focus.ref_count.load(SeqCst) == 0 {
-                    for window_handle in self.windows() {
-                        window_handle
-                            .update(self, |_, window, cx| {
-                                if window.focus == Some(handle_id) {
-                                    window.blur(cx);
-                                }
-                            })
-                            .unwrap();
-                    }
-                    false
-                } else {
-                    true
-                }
-            });
+        let focus_handles = self.focus_handles.clone();
+        let mut focus_handles = focus_handles.write();
+        let FocusMap {
+            handles,
+            dropped_handles,
+        } = &mut *focus_handles;
+        if dropped_handles.is_empty() {
+            return;
+        }
+
+        let windows = self
+            .windows
+            .values()
+            .filter_map(|window| {
+                let window = window.as_ref()?;
+                dropped_handles
+                    .contains(&window.focus?)
+                    .then_some(window.handle)
+            })
+            .collect::<SmallVec<[_; 1]>>();
+        for handle_id in dropped_handles.drain(..) {
+            handles.remove(handle_id);
+        }
+        drop(focus_handles);
+
+        for window_handle in windows {
+            window_handle
+                .update(self, |_, window, cx| window.blur(cx))
+                .ok();
+        }
     }
 
     fn apply_notify_effect(&mut self, emitter: EntityId) {

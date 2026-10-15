@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
-    StatusCode, http::HeaderMap,
+    StatusCode, Url, http::HeaderMap,
 };
 pub use language_model_core::{GOOGLE_AI_API_URL as API_URL, ModelMode as GoogleModelMode};
 use language_model_core::{
@@ -12,6 +12,185 @@ use language_model_core::{
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod completion;
+
+// Google's model catalog reports token limits and whether a model thinks, but not the facts
+// below. Update these lists when Google releases or retires models.
+
+/// Catalog entries Zed doesn't offer: models that produce media or serve specialized APIs,
+/// and `-latest` aliases, which silently retarget to models already listed by version.
+///
+/// Matched by ID segment so that new versions of these families stay excluded.
+fn is_excluded_model(model_id: &str) -> bool {
+    model_id.split('-').any(|segment| {
+        matches!(
+            segment,
+            "latest"
+                | "image"
+                | "banana"
+                | "tts"
+                | "audio"
+                | "live"
+                | "transcribe"
+                | "customtools"
+                | "computer"
+                | "robotics"
+                | "research"
+                | "omni"
+                | "embedding"
+        )
+    })
+}
+
+/// Models that budget thinking in tokens rather than accepting thinking levels.
+fn uses_thinking_budget(model_id: &str) -> bool {
+    matches!(
+        model_id,
+        "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
+    )
+}
+
+/// Thinking-budget models whose thinking can be turned off with a zero budget.
+pub(crate) fn supports_disabling_thinking(model_id: &str) -> bool {
+    matches!(model_id, "gemini-2.5-flash" | "gemini-2.5-flash-lite")
+}
+
+/// Models that take tool result media as sibling parts of the function response.
+///
+/// Google documents media nested under `functionResponse.parts` for Gemini 3 and later, which
+/// reject sibling media with "Requests ending with a model turn are not supported".
+pub(crate) fn uses_sibling_function_response_media(model_id: &str) -> bool {
+    matches!(
+        model_id,
+        "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
+    )
+}
+
+/// Level-based models that accept `MINIMAL`; the others reject it and start at `LOW`.
+fn supports_minimal_thinking(model_id: &str) -> bool {
+    matches!(
+        model_id,
+        "gemini-3-flash-preview"
+            | "gemini-3.5-flash"
+            | "gemini-3.5-flash-lite"
+            | "gemini-3.6-flash"
+    )
+}
+
+/// The thinking level Zed selects for a level-based model until the user picks another.
+fn default_thinking_level(model_id: &str) -> ThinkingLevel {
+    match model_id {
+        "gemini-3.5-flash-lite" => ThinkingLevel::Minimal,
+        "gemini-3-flash-preview" | "gemini-3.1-pro-preview" => ThinkingLevel::High,
+        _ => ThinkingLevel::Medium,
+    }
+}
+
+/// The least thinking a model accepts, sent when a request asks for none but the model can't
+/// turn thinking off. `None` for thinking-budget models.
+pub(crate) fn lowest_thinking_level(model_id: &str) -> Option<ThinkingLevel> {
+    if uses_thinking_budget(model_id) {
+        None
+    } else if supports_minimal_thinking(model_id) {
+        Some(ThinkingLevel::Minimal)
+    } else {
+        Some(ThinkingLevel::Low)
+    }
+}
+
+/// Whether the ID has a version after `gemini-`, as in `gemini-3.1-pro-preview`.
+///
+/// Every Gemini text model is versioned. Unversioned IDs such as `gemini-flash-latest` or
+/// `gemini-nano-banana-2.1` are aliases or other model families, so Zed doesn't offer them.
+fn is_versioned_model(model_id: &str) -> bool {
+    model_id
+        .strip_prefix("gemini-")
+        .and_then(|rest| rest.split_once('-'))
+        .is_some_and(|(version, _)| {
+            version
+                .split('.')
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        })
+}
+
+/// Fetches the models available to the API key, following every catalog page.
+///
+/// Entries that aren't general-purpose text models are skipped; see [`Model::from_listed`].
+///
+/// See <https://ai.google.dev/api/models#method:-models.list>.
+///
+/// # Errors
+/// Returns a completion error if a request fails or a response cannot be decoded.
+pub async fn list_models(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    extra_headers: &CustomHeaders,
+) -> Result<Vec<Model>, LanguageModelCompletionError> {
+    let mut models = Vec::new();
+    let mut page_token: Option<String> = None;
+    loop {
+        // `v1` omits preview models such as `gemini-3.1-pro-preview`, which completions
+        // reach through `v1beta`, so list them from the same API version.
+        let mut url = Url::parse(&format!("{}/v1beta/models", api_url.trim_end_matches('/')))
+            .map_err(|error| LanguageModelCompletionError::Other(error.into()))?;
+        url.query_pairs_mut().append_pair("pageSize", "1000");
+        if let Some(token) = &page_token {
+            url.query_pairs_mut().append_pair("pageToken", token);
+        }
+        let request = HttpRequest::builder()
+            .method(Method::GET)
+            .uri(url.as_str())
+            .header("x-goog-api-key", api_key.trim())
+            .header("Accept", "application/json")
+            .extra_headers(extra_headers)
+            .body(AsyncBody::empty())
+            .map_err(|error| LanguageModelCompletionError::BuildRequestBody {
+                provider: GOOGLE_PROVIDER_NAME,
+                error,
+            })?;
+        let mut response =
+            client
+                .send(request)
+                .await
+                .map_err(|error| LanguageModelCompletionError::HttpSend {
+                    provider: GOOGLE_PROVIDER_NAME,
+                    host: url.host_str().unwrap_or(api_url).to_owned(),
+                    error,
+                })?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| LanguageModelCompletionError::ApiReadResponseError {
+                provider: GOOGLE_PROVIDER_NAME,
+                error,
+            })?;
+        if !status.is_success() {
+            return Err(completion_error_from_response(status, &headers, body));
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Page {
+            #[serde(default)]
+            models: Vec<ListModelEntry>,
+            next_page_token: Option<String>,
+        }
+        let page: Page = serde_json::from_str(&body).map_err(|error| {
+            LanguageModelCompletionError::DeserializeResponse {
+                provider: GOOGLE_PROVIDER_NAME,
+                error,
+            }
+        })?;
+        models.extend(page.models.into_iter().filter_map(Model::from_listed));
+        page_token = page.next_page_token.filter(|token| !token.is_empty());
+        if page_token.is_none() {
+            return Ok(models);
+        }
+    }
+}
 
 pub async fn stream_generate_content(
     client: &dyn HttpClient,
@@ -546,6 +725,8 @@ pub struct FunctionResponse {
     pub response: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<InlineDataPart>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -631,324 +812,123 @@ impl<'de> Deserialize<'de> for ModelName {
     }
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
-pub enum Model {
-    #[serde(rename = "gemini-3.5-flash-lite")]
-    #[default]
-    Gemini35FlashLite,
-    #[serde(rename = "gemini-3-flash-preview")]
-    Gemini3Flash,
-    #[serde(rename = "gemini-3.5-flash")]
-    Gemini35Flash,
-    #[serde(rename = "gemini-3.6-flash")]
-    Gemini36Flash,
-    #[serde(rename = "gemini-3.7-flash")]
-    Gemini37Flash,
-    #[serde(rename = "gemini-3.8-flash")]
-    Gemini38Flash,
-    #[serde(rename = "gemini-3.1-pro-preview")]
-    Gemini31Pro,
-    #[serde(rename = "gemini-4-argon")]
-    Gemini4Argon,
-    #[serde(rename = "custom")]
-    Custom {
-        name: String,
-        /// The name displayed in the UI, such as in the agent panel model dropdown menu.
-        display_name: Option<String>,
-        max_tokens: u64,
-        #[serde(default)]
-        mode: GoogleModelMode,
-    },
+/// A Gemini model and the request settings Zed uses for it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Model {
+    pub id: String,
+    pub display_name: String,
+    pub max_input_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub mode: GoogleModelMode,
+    /// Empty for models that budget thinking by tokens instead of by level.
+    pub supported_thinking_levels: Vec<ThinkingLevel>,
+    pub default_thinking_level: Option<ThinkingLevel>,
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
-        Self::Gemini35FlashLite
-    }
-
-    pub fn id(&self) -> &str {
-        match self {
-            Self::Gemini35FlashLite => "gemini-3.5-flash-lite",
-            Self::Gemini3Flash => "gemini-3-flash-preview",
-            Self::Gemini35Flash => "gemini-3.5-flash",
-            Self::Gemini36Flash => "gemini-3.6-flash",
-            Self::Gemini37Flash => "gemini-3.7-flash",
-            Self::Gemini38Flash => "gemini-3.8-flash",
-            Self::Gemini31Pro => "gemini-3.1-pro-preview",
-            Self::Gemini4Argon => "gemini-4-argon",
-            Self::Custom { name, .. } => name,
+    /// Builds a model from a catalog entry, or `None` if Zed doesn't offer it.
+    fn from_listed(entry: ListModelEntry) -> Option<Self> {
+        let id = entry.name.strip_prefix("models/")?;
+        let generates_content = entry
+            .supported_generation_methods
+            .iter()
+            .any(|method| method == "generateContent");
+        if !is_versioned_model(id) || is_excluded_model(id) || !generates_content {
+            return None;
         }
-    }
-    pub fn request_id(&self) -> &str {
-        match self {
-            Self::Gemini35FlashLite => "gemini-3.5-flash-lite",
-            Self::Gemini3Flash => "gemini-3-flash-preview",
-            Self::Gemini35Flash => "gemini-3.5-flash",
-            Self::Gemini36Flash => "gemini-3.6-flash",
-            Self::Gemini37Flash => "gemini-3.7-flash",
-            Self::Gemini38Flash => "gemini-3.8-flash",
-            Self::Gemini31Pro => "gemini-3.1-pro-preview",
-            Self::Gemini4Argon => "gemini-4-argon",
-            Self::Custom { name, .. } => name,
-        }
-    }
+        let max_input_tokens = entry.input_token_limit.filter(|limit| *limit > 0)?;
+        let max_output_tokens = entry.output_token_limit.filter(|limit| *limit > 0)?;
 
-    pub fn display_name(&self) -> &str {
-        match self {
-            Self::Gemini35FlashLite => "Gemini 3.5 Flash-Lite",
-            Self::Gemini3Flash => "Gemini 3 Flash",
-            Self::Gemini35Flash => "Gemini 3.5 Flash",
-            Self::Gemini36Flash => "Gemini 3.6 Flash",
-            Self::Gemini37Flash => "Gemini 3.7 Flash",
-            Self::Gemini38Flash => "Gemini 3.8 Flash",
-            Self::Gemini31Pro => "Gemini 3.1 Pro",
-            Self::Gemini4Argon => "Gemini 4 Argon",
-            Self::Custom {
-                name, display_name, ..
-            } => display_name.as_ref().unwrap_or(name),
-        }
-    }
+        let (mode, supported_thinking_levels, default_thinking_level) =
+            match (entry.thinking, lowest_thinking_level(id)) {
+                (false, _) => (GoogleModelMode::Default, Vec::new(), None),
+                (true, None) => (
+                    GoogleModelMode::Thinking {
+                        budget_tokens: None,
+                    },
+                    Vec::new(),
+                    None,
+                ),
+                (true, Some(lowest)) => (
+                    GoogleModelMode::Thinking {
+                        budget_tokens: None,
+                    },
+                    [
+                        ThinkingLevel::Minimal,
+                        ThinkingLevel::Low,
+                        ThinkingLevel::Medium,
+                        ThinkingLevel::High,
+                    ]
+                    .into_iter()
+                    .skip_while(|level| *level != lowest)
+                    .collect(),
+                    Some(default_thinking_level(id)),
+                ),
+            };
 
-    pub fn max_token_count(&self) -> u64 {
-        match self {
-            Self::Gemini35FlashLite
-            | Self::Gemini3Flash
-            | Self::Gemini35Flash
-            | Self::Gemini36Flash
-            | Self::Gemini37Flash
-            | Self::Gemini38Flash
-            | Self::Gemini31Pro
-            | Self::Gemini4Argon => 1_048_576,
-            Self::Custom { max_tokens, .. } => *max_tokens,
-        }
-    }
-
-    pub fn max_output_tokens(&self) -> Option<u64> {
-        match self {
-            Model::Gemini35FlashLite
-            | Model::Gemini3Flash
-            | Model::Gemini35Flash
-            | Model::Gemini36Flash
-            | Model::Gemini37Flash
-            | Model::Gemini38Flash
-            | Model::Gemini31Pro
-            | Model::Gemini4Argon => Some(65_536),
-            Model::Custom { .. } => None,
-        }
-    }
-
-    pub fn supports_tools(&self) -> bool {
-        true
-    }
-
-    pub fn supports_images(&self) -> bool {
-        true
+        Some(Self {
+            id: id.to_string(),
+            display_name: entry.display_name.unwrap_or_else(|| id.to_string()),
+            max_input_tokens,
+            max_output_tokens: Some(max_output_tokens),
+            mode,
+            supported_thinking_levels,
+            default_thinking_level,
+        })
     }
 
     pub fn supports_thinking(&self) -> bool {
-        matches!(
-            self,
-            Self::Gemini35FlashLite
-                | Self::Gemini3Flash
-                | Self::Gemini35Flash
-                | Self::Gemini36Flash
-                | Self::Gemini37Flash
-                | Self::Gemini38Flash
-                | Self::Gemini31Pro
-                | Self::Gemini4Argon
-                | Self::Custom {
-                    mode: GoogleModelMode::Thinking { .. },
-                    ..
-                }
-        )
+        matches!(self.mode, GoogleModelMode::Thinking { .. })
     }
 
-    pub fn supported_thinking_levels(&self) -> &'static [ThinkingLevel] {
-        match self {
-            Self::Gemini35FlashLite
-            | Self::Gemini3Flash
-            | Self::Gemini35Flash
-            | Self::Gemini36Flash => &[
-                ThinkingLevel::Minimal,
-                ThinkingLevel::Low,
-                ThinkingLevel::Medium,
-                ThinkingLevel::High,
-            ],
-            Self::Gemini37Flash | Self::Gemini38Flash | Self::Gemini31Pro | Self::Gemini4Argon => {
-                &[
-                    ThinkingLevel::Low,
-                    ThinkingLevel::Medium,
-                    ThinkingLevel::High,
-                ]
-            }
-            _ => &[],
-        }
-    }
-
-    pub fn default_thinking_level(&self) -> Option<ThinkingLevel> {
-        match self {
-            Self::Gemini35FlashLite => Some(ThinkingLevel::Minimal),
-            Self::Gemini3Flash => Some(ThinkingLevel::High),
-            Self::Gemini35Flash => Some(ThinkingLevel::Medium),
-            Self::Gemini36Flash => Some(ThinkingLevel::Medium),
-            Self::Gemini37Flash => Some(ThinkingLevel::Medium),
-            Self::Gemini38Flash => Some(ThinkingLevel::Medium),
-            Self::Gemini31Pro => Some(ThinkingLevel::High),
-            Self::Gemini4Argon => Some(ThinkingLevel::Medium),
-            _ => None,
-        }
-    }
-
-    pub fn mode(&self) -> GoogleModelMode {
-        match self {
-            Self::Gemini35FlashLite
-            | Self::Gemini3Flash
-            | Self::Gemini35Flash
-            | Self::Gemini36Flash
-            | Self::Gemini37Flash
-            | Self::Gemini38Flash
-            | Self::Gemini31Pro
-            | Self::Gemini4Argon => GoogleModelMode::Thinking {
-                budget_tokens: None,
-            },
-            Self::Custom { mode, .. } => *mode,
-        }
+    /// Whether the model accepts requests that turn off reasoning entirely.
+    pub fn supports_disabling_thinking(&self) -> bool {
+        supports_disabling_thinking(&self.id)
     }
 }
 
-impl std::fmt::Display for Model {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.id())
-    }
+/// An entry returned by the `models.list` endpoint.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListModelEntry {
+    name: String,
+    display_name: Option<String>,
+    input_token_limit: Option<u64>,
+    output_token_limit: Option<u64>,
+    #[serde(default)]
+    supported_generation_methods: Vec<String>,
+    #[serde(default)]
+    thinking: bool,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use strum::IntoEnumIterator;
 
     #[test]
-    fn test_gemini_3_6_flash_model_metadata() {
-        let model = Model::Gemini36Flash;
-        assert_eq!(model.id(), "gemini-3.6-flash");
-        assert_eq!(model.request_id(), "gemini-3.6-flash");
-        assert_eq!(model.display_name(), "Gemini 3.6 Flash");
-
-        let serialized = serde_json::to_value(&model).unwrap();
-        assert_eq!(serialized, json!("gemini-3.6-flash"));
-        let deserialized: Model = serde_json::from_value(json!("gemini-3.6-flash")).unwrap();
-        assert_eq!(deserialized, Model::Gemini36Flash);
-    }
-
-    #[test]
-    fn test_gemini_3_5_flash_lite_model_metadata() {
-        let model = Model::Gemini35FlashLite;
-        assert_eq!(model.id(), "gemini-3.5-flash-lite");
-        assert_eq!(model.request_id(), "gemini-3.5-flash-lite");
-        assert_eq!(model.display_name(), "Gemini 3.5 Flash-Lite");
+    fn test_lowest_thinking_level_per_model() {
         assert_eq!(
-            model.supported_thinking_levels(),
-            &[
-                ThinkingLevel::Minimal,
-                ThinkingLevel::Low,
-                ThinkingLevel::Medium,
-                ThinkingLevel::High
-            ]
+            lowest_thinking_level("gemini-3.6-flash"),
+            Some(ThinkingLevel::Minimal)
         );
-        assert_eq!(model.default_thinking_level(), Some(ThinkingLevel::Minimal));
-
-        let serialized = serde_json::to_value(&model).unwrap();
-        assert_eq!(serialized, json!("gemini-3.5-flash-lite"));
-        let deserialized: Model = serde_json::from_value(json!("gemini-3.5-flash-lite")).unwrap();
-        assert_eq!(deserialized, Model::Gemini35FlashLite);
-    }
-
-    #[test]
-    fn test_gemini_3_7_flash_model_metadata() {
-        let model = Model::Gemini37Flash;
-        assert_eq!(model.id(), "gemini-3.7-flash");
-        assert_eq!(model.request_id(), "gemini-3.7-flash");
-        assert_eq!(model.display_name(), "Gemini 3.7 Flash");
         assert_eq!(
-            model.supported_thinking_levels(),
-            &[
-                ThinkingLevel::Low,
-                ThinkingLevel::Medium,
-                ThinkingLevel::High
-            ]
+            lowest_thinking_level("gemini-3.8-flash"),
+            Some(ThinkingLevel::Low)
         );
-
-        let serialized = serde_json::to_value(&model).unwrap();
-        assert_eq!(serialized, json!("gemini-3.7-flash"));
-        let deserialized: Model = serde_json::from_value(json!("gemini-3.7-flash")).unwrap();
-        assert_eq!(deserialized, Model::Gemini37Flash);
-    }
-
-    #[test]
-    fn test_gemini_3_8_flash_model_metadata() {
-        let model = Model::Gemini38Flash;
-        assert_eq!(model.id(), "gemini-3.8-flash");
-        assert_eq!(model.request_id(), "gemini-3.8-flash");
-        assert_eq!(model.display_name(), "Gemini 3.8 Flash");
-        assert_eq!(model.max_token_count(), 1_048_576);
-        assert_eq!(model.max_output_tokens(), Some(65_536));
-        assert!(model.supports_thinking());
         assert_eq!(
-            model.supported_thinking_levels(),
-            &[
-                ThinkingLevel::Low,
-                ThinkingLevel::Medium,
-                ThinkingLevel::High
-            ]
+            lowest_thinking_level("gemini-4-argon"),
+            Some(ThinkingLevel::Low)
         );
-        assert_eq!(model.default_thinking_level(), Some(ThinkingLevel::Medium));
-
-        let serialized = serde_json::to_value(&model).unwrap();
-        assert_eq!(serialized, json!("gemini-3.8-flash"));
-        let deserialized: Model = serde_json::from_value(json!("gemini-3.8-flash")).unwrap();
-        assert_eq!(deserialized, Model::Gemini38Flash);
+        assert_eq!(lowest_thinking_level("gemini-2.5-flash"), None);
     }
 
     #[test]
-    fn test_gemini_4_argon_model_metadata() {
-        let model = Model::Gemini4Argon;
-        assert_eq!(model.id(), "gemini-4-argon");
-        assert_eq!(model.request_id(), "gemini-4-argon");
-        assert_eq!(model.display_name(), "Gemini 4 Argon");
-        assert_eq!(model.max_token_count(), 1_048_576);
-        assert_eq!(model.max_output_tokens(), Some(65_536));
-        assert!(model.supports_thinking());
-        assert_eq!(
-            model.supported_thinking_levels(),
-            &[
-                ThinkingLevel::Low,
-                ThinkingLevel::Medium,
-                ThinkingLevel::High
-            ]
-        );
-        assert_eq!(model.default_thinking_level(), Some(ThinkingLevel::Medium));
-
-        let serialized = serde_json::to_value(&model).unwrap();
-        assert_eq!(serialized, json!("gemini-4-argon"));
-        let deserialized: Model = serde_json::from_value(json!("gemini-4-argon")).unwrap();
-        assert_eq!(deserialized, Model::Gemini4Argon);
-    }
-
-    #[test]
-    fn test_max_output_tokens_leave_room_for_input() {
-        // The agent reserves `max_output_tokens` from the shared context window,
-        // so an output limit equal to the window leaves no room for input.
-        for model in Model::iter() {
-            if let Some(max_output_tokens) = model.max_output_tokens() {
-                assert!(
-                    max_output_tokens < model.max_token_count(),
-                    "{} reserves its whole context window for output",
-                    model.id()
-                );
-            }
-        }
+    fn test_is_versioned_model() {
+        assert!(is_versioned_model("gemini-3.1-pro-preview"));
+        assert!(is_versioned_model("gemini-4-argon"));
+        assert!(!is_versioned_model("gemini-flash-latest"));
+        assert!(!is_versioned_model("gemini-nano-banana-2.1"));
     }
 
     #[test]
