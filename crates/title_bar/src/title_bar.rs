@@ -37,7 +37,7 @@ use project::{
     Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
     trusted_worktrees::TrustedWorktrees,
 };
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionOptions, SshConnectionOptions};
 use settings::{Settings as _, SettingsStore};
 
 use std::any::TypeId;
@@ -47,8 +47,9 @@ use std::time::Duration;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, ButtonLike, ContextMenu, ContextMenuEntry, IconWithIndicator, Indicator, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
+    Avatar, ButtonLike, ContextMenu, ContextMenuEntry, IconButton, IconWithIndicator, Indicator,
+    PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    utils::platform_title_bar_height,
 };
 use update_version::UpdateVersion;
 use util::ResultExt;
@@ -64,6 +65,38 @@ pub use onboarding_banner::restore_banner;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
+// Keeps the popover previewable in local debug workspaces; fixture edits never write settings.
+#[cfg(debug_assertions)]
+const SHOW_PORT_FORWARDING_PREVIEW: bool = true;
+
+fn port_forwarding_popover_trigger(
+    workspace: WeakEntity<Workspace>,
+    options: SshConnectionOptions,
+    preview_only: bool,
+) -> AnyElement {
+    PopoverMenu::new("ssh-port-forwarding")
+        .menu(move |window, cx| {
+            let workspace_entity = workspace.upgrade()?;
+            let fs = workspace_entity.read(cx).app_state().fs.clone();
+            Some(recent_projects::PortForwardingPopover::popover(
+                options.clone(),
+                workspace.clone(),
+                fs,
+                preview_only,
+                window,
+                cx,
+            ))
+        })
+        .trigger_with_tooltip(
+            IconButton::new("ssh-port-forwarding-trigger", IconName::ArrowRightLeft)
+                .style(ButtonStyle::Subtle)
+                .icon_size(IconSize::Small)
+                .aria_label("Port forwarding"),
+            Tooltip::text("Port forwarding"),
+        )
+        .anchor(Anchor::TopLeft)
+        .into_any_element()
+}
 
 fn linked_worktree_name_anchor<'a>(
     main_worktree_path: Option<&'a Path>,
@@ -612,7 +645,23 @@ impl TitleBar {
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let workspace = self.workspace.clone();
 
-        let options = self.project.read(cx).remote_connection_options(cx)?;
+        let options = self.project.read(cx).remote_connection_options(cx);
+        let Some(options) = options else {
+            #[cfg(debug_assertions)]
+            if SHOW_PORT_FORWARDING_PREVIEW {
+                let options = SshConnectionOptions {
+                    host: "for-testing-only".into(),
+                    nickname: Some("for-testing-only".to_owned()),
+                    ..Default::default()
+                };
+                return Some(port_forwarding_popover_trigger(workspace, options, true));
+            }
+            return None;
+        };
+        let port_forwarding_options = match &options {
+            RemoteConnectionOptions::Ssh(options) => Some(options.clone()),
+            _ => None,
+        };
         let host: SharedString = options.display_name().into();
 
         let (nickname, tooltip_title, icon) = match options {
@@ -657,48 +706,57 @@ impl TitleBar {
 
         let meta = SharedString::from(meta);
 
-        Some(
-            PopoverMenu::new("remote-project-menu")
-                .menu(move |window, cx| {
-                    let workspace_entity = workspace.upgrade()?;
-                    let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
-                    Some(recent_projects::RemoteServerProjects::popover(
-                        fs,
-                        workspace.clone(),
-                        None,
-                        window,
-                        cx,
-                    ))
-                })
-                .trigger_with_tooltip(
-                    ButtonLike::new("remote_project")
-                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .max_w_32()
-                                .child(
-                                    IconWithIndicator::new(
-                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                        Some(Indicator::dot().color(indicator_color)),
-                                    )
-                                    .indicator_border_color(Some(
-                                        cx.theme().colors().title_bar_background,
-                                    ))
-                                    .into_any_element(),
+        let remote_workspace = workspace.clone();
+        let remote_connection_menu = PopoverMenu::new("remote-project-menu")
+            .menu(move |window, cx| {
+                let workspace_entity = remote_workspace.upgrade()?;
+                let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
+                Some(recent_projects::RemoteServerProjects::popover(
+                    fs,
+                    remote_workspace.clone(),
+                    None,
+                    window,
+                    cx,
+                ))
+            })
+            .trigger_with_tooltip(
+                ButtonLike::new("remote_project")
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .max_w_32()
+                            .child(
+                                IconWithIndicator::new(
+                                    Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                    Some(Indicator::dot().color(indicator_color)),
                                 )
-                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
-                        ),
-                    move |_window, cx| {
-                        Tooltip::with_meta(
-                            tooltip_title,
-                            Some(&OpenRemote::default()),
-                            meta.clone(),
-                            cx,
-                        )
-                    },
-                )
-                .anchor(gpui::Anchor::TopLeft)
+                                .indicator_border_color(Some(
+                                    cx.theme().colors().title_bar_background,
+                                ))
+                                .into_any_element(),
+                            )
+                            .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                    ),
+                move |_window, cx| {
+                    Tooltip::with_meta(
+                        tooltip_title,
+                        Some(&OpenRemote::default()),
+                        meta.clone(),
+                        cx,
+                    )
+                },
+            )
+            .anchor(gpui::Anchor::TopLeft)
+            .into_any_element();
+
+        Some(
+            h_flex()
+                .gap_1()
+                .child(remote_connection_menu)
+                .when_some(port_forwarding_options, |this, options| {
+                    this.child(port_forwarding_popover_trigger(workspace, options, false))
+                })
                 .into_any_element(),
         )
     }
