@@ -7137,7 +7137,7 @@ dependencies = [
 [[package]]
 name = "fnm"
 version = "1.39.0"
-source = "git+https://github.com/mentenaz/fnm?rev=04adb7b8f7919e3aa0243f87e66d53f8eccb2683#04adb7b8f7919e3aa0243f87e66d53f8eccb2683"
+source = "git+https://github.com/mentenaz/fnm?rev=4a35f31866ab0cb6117c93087151bca03b0cadbf#4a35f31866ab0cb6117c93087151bca03b0cadbf"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7156,6 +7156,7 @@ dependencies = [
  "reqwest 0.12.24",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tar",
  "tempfile",
  "thiserror 1.0.69",
