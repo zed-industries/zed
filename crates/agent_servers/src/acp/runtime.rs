@@ -1,6 +1,6 @@
 use super::{
-    AcpDebugLog, ClientContext, ForegroundWork, cancel_elicitations_after_disconnect,
-    drain_foreground_queue, exited_load_error_after_drain,
+    AcpDebugLog, ClientContext, ForegroundWork, drain_foreground_queue,
+    exited_load_error_after_drain, settle_after_disconnect,
 };
 use acp_thread::LoadError;
 use agent_client_protocol::{Error, Result as RpcResult};
@@ -91,9 +91,7 @@ impl Drop for ClientRuntime {
 pub(super) fn disconnect_cleanup(
     sender: mpsc::UnboundedSender<ForegroundWork>,
 ) -> DisconnectCleanup {
-    cancel_elicitations_after_disconnect(sender)
-        .boxed()
-        .shared()
+    settle_after_disconnect(sender).boxed().shared()
 }
 
 pub(super) async fn publish_connection<Connection>(
