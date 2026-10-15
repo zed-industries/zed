@@ -7475,7 +7475,11 @@ impl Sidebar {
                     )
             })
             .when(right_window_controls, |this| {
-                this.children(Self::render_right_window_controls(window, cx))
+                this
+                    // Without projects, nothing flex-grows to push right-side window controls
+                    // to the edge.
+                    .when(no_open_projects, |this| this.justify_end())
+                    .children(Self::render_right_window_controls(window, cx))
             })
     }
 
