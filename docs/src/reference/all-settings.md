@@ -5490,6 +5490,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ```json [settings]
 {
   "title_bar": {
+    "show": "always",
     "show_branch_status_icon": false,
     "show_branch_name": true,
     "show_worktree_name": true,
@@ -5507,6 +5508,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 **Options**
 
+- `show`: When to show the title bar: `"always"` (default), `"never"`, or `"hide_in_full_screen"`.
 - `show_branch_status_icon`: Whether to show git status indicators on the branch icon in the titlebar
 - `show_branch_name`: Whether to show the branch name button in the titlebar
 - `show_worktree_name`: Whether to show the worktree name button in the titlebar
