@@ -516,7 +516,7 @@ struct AutoindentRequestEntry {
     /// This is stored here because the anchor in range is created after
     /// the edit, so it cannot be used with the before_edit snapshot.
     old_row: Option<u32>,
-    indent_size: IndentSize,
+    tab_size: u32,
     original_indent_column: Option<u32>,
     only_explicit_outdents: bool,
 }
@@ -2124,7 +2124,7 @@ impl Buffer {
 
     fn compute_autoindents(
         &self,
-    ) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>> + use<>> {
+    ) -> Option<impl Future<Output = BTreeMap<u32, u32>> + use<>> {
         let max_rows_between_yields = 100;
         let snapshot = self.snapshot();
         if snapshot.syntax.is_empty() || self.autoindent_requests.is_empty() {
@@ -2133,24 +2133,25 @@ impl Buffer {
 
         let autoindent_requests = self.autoindent_requests.clone();
         Some(async move {
-            let mut indent_sizes = BTreeMap::<u32, (IndentSize, bool)>::new();
+            let mut indent_columns = BTreeMap::<u32, (u32, bool)>::new();
+            let mut tab_sizes_by_new_row = Vec::new();
             for request in autoindent_requests {
                 // Resolve each edited range to its row in the current buffer and in the
                 // buffer before this batch of edits.
                 let mut row_ranges = Vec::new();
                 let mut old_to_new_rows = BTreeMap::new();
-                let mut language_indent_sizes_by_new_row = Vec::new();
                 for entry in &request.entries {
                     let position = entry.range.start;
                     let new_row = position.to_point(&snapshot).row;
                     let new_end_row = entry.range.end.to_point(&snapshot).row + 1;
-                    language_indent_sizes_by_new_row.push((new_row, entry.indent_size));
+                    tab_sizes_by_new_row.push((new_row, entry.tab_size));
 
                     if let Some(old_row) = entry.old_row {
                         old_to_new_rows.insert(old_row, new_row);
                     }
                     row_ranges.push((
                         new_row..new_end_row,
+                        entry.tab_size,
                         entry.original_indent_column,
                         entry.only_explicit_outdents,
                     ));
@@ -2159,11 +2160,11 @@ impl Buffer {
                 // Build a map containing the suggested indentation for each of the edited lines
                 // with respect to the state of the buffer before these edits. This map is keyed
                 // by the rows for these lines in the current state of the buffer.
-                let mut old_suggestions = BTreeMap::<u32, (IndentSize, bool)>::default();
+                let mut old_suggestions = BTreeMap::<u32, (u32, bool)>::default();
                 let old_edited_ranges =
                     contiguous_ranges(old_to_new_rows.keys().copied(), max_rows_between_yields);
-                let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
-                let mut language_indent_size = IndentSize::default();
+                let mut tab_sizes = tab_sizes_by_new_row.iter().peekable();
+                let mut current_tab_size = 4;
                 for old_edited_range in old_edited_ranges {
                     let suggestions = request
                         .before_edit
@@ -2174,16 +2175,17 @@ impl Buffer {
                         if let Some(suggestion) = suggestion {
                             let new_row = *old_to_new_rows.get(&old_row).unwrap();
 
-                            // Find the indent size based on the language for this row.
-                            while let Some((row, size)) = language_indent_sizes.peek() {
+                            // Find the tab size based on the language/settings for this row.
+                            while let Some((row, size)) = tab_sizes.peek() {
                                 if *row > new_row {
                                     break;
                                 }
-                                language_indent_size = *size;
-                                language_indent_sizes.next();
+                                current_tab_size = *size;
+                                tab_sizes.next();
                             }
 
-                            let suggested_indent = old_to_new_rows
+                            let tab_size = current_tab_size.max(1);
+                            let basis_col = old_to_new_rows
                                 .get(&suggestion.basis_row)
                                 .and_then(|from_row| {
                                     Some(old_suggestions.get(from_row).copied()?.0)
@@ -2191,11 +2193,16 @@ impl Buffer {
                                 .unwrap_or_else(|| {
                                     request
                                         .before_edit
-                                        .logical_indent_size_for_line(suggestion.basis_row)
-                                })
-                                .with_delta(suggestion.delta, language_indent_size);
+                                        .logical_visual_indent_for_line(suggestion.basis_row, tab_size)
+                                });
+
+                            let suggested_col = match suggestion.delta {
+                                Ordering::Greater => basis_col.saturating_add(tab_size),
+                                Ordering::Less => basis_col.saturating_sub(tab_size),
+                                Ordering::Equal => basis_col,
+                            };
                             old_suggestions
-                                .insert(new_row, (suggested_indent, suggestion.within_error));
+                                .insert(new_row, (suggested_col, suggestion.within_error));
                         }
                     }
                     yield_now().await;
@@ -2203,9 +2210,9 @@ impl Buffer {
 
                 // Compute new suggestions for each line, but only include them in the result
                 // if they differ from the old suggestion for that line.
-                let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
-                let mut language_indent_size = IndentSize::default();
-                for (row_range, original_indent_column, only_explicit_outdents) in row_ranges {
+                let mut tab_sizes = tab_sizes_by_new_row.iter().peekable();
+                let mut current_tab_size = 4;
+                for (row_range, entry_tab_size, original_indent_column, only_explicit_outdents) in row_ranges {
                     let new_edited_row_range = if request.is_block_mode {
                         row_range.start..row_range.start + 1
                     } else {
@@ -2218,34 +2225,40 @@ impl Buffer {
                         .flatten();
                     for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
                         if let Some(suggestion) = suggestion {
-                            // Find the indent size based on the language for this row.
-                            while let Some((row, size)) = language_indent_sizes.peek() {
+                            // Find the tab size for this row.
+                            while let Some((row, size)) = tab_sizes.peek() {
                                 if *row > new_row {
                                     break;
                                 }
-                                language_indent_size = *size;
-                                language_indent_sizes.next();
+                                current_tab_size = *size;
+                                tab_sizes.next();
                             }
 
-                            let suggested_indent = indent_sizes
+                            let tab_size = current_tab_size.max(1);
+                            let basis_col = indent_columns
                                 .get(&suggestion.basis_row)
                                 .copied()
                                 .map(|e| e.0)
                                 .unwrap_or_else(|| {
-                                    snapshot.logical_indent_size_for_line(suggestion.basis_row)
-                                })
-                                .with_delta(suggestion.delta, language_indent_size);
+                                    snapshot.logical_visual_indent_for_line(suggestion.basis_row, tab_size)
+                                });
+
+                            let suggested_col = match suggestion.delta {
+                                Ordering::Greater => basis_col.saturating_add(tab_size),
+                                Ordering::Less => basis_col.saturating_sub(tab_size),
+                                Ordering::Equal => basis_col,
+                            };
 
                             if old_suggestions.get(&new_row).is_none_or(
-                                |(old_indentation, was_within_error)| {
-                                    suggested_indent != *old_indentation
+                                |(old_col, was_within_error)| {
+                                    suggested_col != *old_col
                                         && (!suggestion.within_error || *was_within_error)
                                 },
                             ) && (!only_explicit_outdents || suggestion.explicit_outdent)
                             {
-                                indent_sizes.insert(
+                                indent_columns.insert(
                                     new_row,
-                                    (suggested_indent, request.ignore_empty_lines),
+                                    (suggested_col, request.ignore_empty_lines),
                                 );
                             }
                         }
@@ -2254,34 +2267,25 @@ impl Buffer {
                     if let (true, Some(original_indent_column)) =
                         (request.is_block_mode, original_indent_column)
                     {
-                        let new_indent =
-                            if let Some((indent, _)) = indent_sizes.get(&row_range.start) {
-                                *indent
+                        let base_row = row_range.start;
+                        let tab_size = entry_tab_size.max(1);
+                        let new_visual_column =
+                            if let Some((col, _)) = indent_columns.get(&base_row) {
+                                *col
                             } else {
-                                snapshot.indent_size_for_line(row_range.start)
+                                snapshot.visual_indent_for_line(base_row, tab_size)
                             };
-                        let delta = new_indent.len as i64 - original_indent_column as i64;
-                        if delta != 0 {
-                            for row in row_range.skip(1) {
-                                indent_sizes.entry(row).or_insert_with(|| {
-                                    let mut size = snapshot.indent_size_for_line(row);
-                                    // A line with no indentation has an arbitrary
-                                    // indent kind, so it can adopt the new kind.
-                                    if size.len == 0 {
-                                        size.kind = new_indent.kind;
-                                    }
-                                    if size.kind == new_indent.kind {
-                                        match delta.cmp(&0) {
-                                            Ordering::Greater => size.len += delta as u32,
-                                            Ordering::Less => {
-                                                size.len = size.len.saturating_sub(-delta as u32)
-                                            }
-                                            Ordering::Equal => {}
-                                        }
-                                    }
-                                    (size, request.ignore_empty_lines)
-                                });
-                            }
+                        let delta = new_visual_column as i64 - original_indent_column as i64;
+                        for row in row_range.skip(1) {
+                            indent_columns.entry(row).or_insert_with(|| {
+                                let current_col = snapshot.visual_indent_for_line(row, tab_size);
+                                let target_col = if delta >= 0 {
+                                    current_col.saturating_add(delta as u32)
+                                } else {
+                                    current_col.saturating_sub((-delta) as u32)
+                                };
+                                (target_col, request.ignore_empty_lines)
+                            });
                         }
                     }
 
@@ -2289,13 +2293,14 @@ impl Buffer {
                 }
             }
 
-            indent_sizes
+
+            indent_columns
                 .into_iter()
-                .filter_map(|(row, (indent, ignore_empty_lines))| {
+                .filter_map(|(row, (col, ignore_empty_lines))| {
                     if ignore_empty_lines && snapshot.line_len(row) == 0 {
                         None
                     } else {
-                        Some((row, indent))
+                        Some((row, col))
                     }
                 })
                 .collect()
@@ -2304,7 +2309,7 @@ impl Buffer {
 
     fn apply_autoindents(
         &mut self,
-        indent_sizes: BTreeMap<u32, IndentSize>,
+        indents: BTreeMap<u32, u32>,
         cx: &mut Context<Self>,
     ) {
         self.autoindent_requests.clear();
@@ -2312,11 +2317,25 @@ impl Buffer {
             tx.send(()).ok();
         }
 
-        let edits: Vec<_> = indent_sizes
+        let snapshot = self.snapshot();
+        let edits: Vec<_> = indents
             .into_iter()
-            .filter_map(|(row, indent_size)| {
-                let current_size = indent_size_for_line(self, row);
-                Self::edit_for_indent_size_adjustment(row, current_size, indent_size)
+            .filter_map(|(row, target_col)| {
+                let position = Point::new(row, 0);
+                let settings = snapshot.settings_at(position, cx);
+                let tab_size = settings.tab_size.get().max(1);
+                let desired_indent = if settings.hard_tabs {
+                    let num_tabs = (target_col / tab_size) as usize;
+                    let num_spaces = (target_col % tab_size) as usize;
+                    let mut s = String::with_capacity(num_tabs + num_spaces);
+                    s.extend(iter::repeat('\t').take(num_tabs));
+                    s.extend(iter::repeat(' ').take(num_spaces));
+                    s
+                } else {
+                    iter::repeat(' ').take(target_col as usize).collect::<String>()
+                };
+
+                Self::edit_for_visual_indent_adjustment(self, row, &desired_indent)
             })
             .collect();
 
@@ -2325,6 +2344,36 @@ impl Buffer {
         if preserve_preview {
             self.refresh_preview();
         }
+    }
+
+    /// Create a minimal edit replacing leading whitespace on `row` with `desired_indent`.
+    pub fn edit_for_visual_indent_adjustment(
+        buffer: &Self,
+        row: u32,
+        desired_indent: &str,
+    ) -> Option<(Range<Point>, String)> {
+        let current_chars: Vec<char> = buffer
+            .chars_at(Point::new(row, 0))
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+
+        let desired_chars: Vec<char> = desired_indent.chars().collect();
+
+        let common_prefix_len = current_chars
+            .iter()
+            .zip(desired_chars.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        if common_prefix_len == current_chars.len() && common_prefix_len == desired_chars.len() {
+            return None;
+        }
+
+        let start = Point::new(row, common_prefix_len as u32);
+        let end = Point::new(row, current_chars.len() as u32);
+        let replacement: String = desired_chars[common_prefix_len..].iter().collect();
+
+        Some((start..end, replacement))
     }
 
     /// Create a minimal edit that will cause the given row to be indented
@@ -3029,26 +3078,27 @@ impl Buffer {
                         }
                     }
 
+                    let tab_size = before_edit.settings_at(range.start, cx).tab_size.get();
                     let mut original_indent_column = None;
                     if let AutoindentMode::Block {
                         original_indent_columns,
                     } = &mode
                     {
                         original_indent_column = Some(if new_text.starts_with('\n') {
-                            indent_size_for_text(
+                            visual_column_for_text(
                                 new_text[range_of_insertion_to_indent.clone()].chars(),
+                                tab_size,
                             )
-                            .len
                         } else {
                             original_indent_columns
                                 .get(ix)
                                 .copied()
                                 .flatten()
                                 .unwrap_or_else(|| {
-                                    indent_size_for_text(
+                                    visual_column_for_text(
                                         new_text[range_of_insertion_to_indent.clone()].chars(),
+                                        tab_size,
                                     )
-                                    .len
                                 })
                         });
 
@@ -3068,7 +3118,7 @@ impl Buffer {
                         } else {
                             Some(old_start.row)
                         },
-                        indent_size: before_edit.language_indent_size_at(range.start, cx),
+                        tab_size,
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
                     }
@@ -3133,7 +3183,7 @@ impl Buffer {
             .map(|range| AutoindentRequestEntry {
                 range: before_edit.anchor_before(range.start)..before_edit.anchor_after(range.end),
                 old_row: None,
-                indent_size: before_edit.language_indent_size_at(range.start, cx),
+                tab_size: before_edit.settings_at(range.start, cx).tab_size.get(),
                 original_indent_column: None,
                 only_explicit_outdents: false,
             })
@@ -3695,6 +3745,11 @@ impl Deref for Buffer {
 }
 
 impl BufferSnapshot {
+    /// Returns visual indentation column for a given line using the given tab size.
+    pub fn visual_indent_for_line(&self, row: u32, tab_size: u32) -> u32 {
+        visual_indent_for_line(self, row, tab_size)
+    }
+
     /// Returns [`IndentSize`] for a given line that respects user settings and
     /// language preferences.
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
@@ -3768,6 +3823,56 @@ impl BufferSnapshot {
         }
         let opening_row = Point::from_ts_point(node.start_position()).row;
         (opening_row < row).then(|| self.indent_size_for_line(opening_row))
+    }
+
+    pub fn block_comment_closing_visual_indent(&self, position: Point, tab_size: u32) -> Option<u32> {
+        let row = position.row;
+        let indent_len = self.indent_size_for_line(row).len;
+        let delimiter_start = Point::new(row, indent_len);
+        let language = self.language_scope_at(delimiter_start)?;
+        if !matches!(language.override_name(), Some("comment" | "string")) {
+            return None;
+        }
+
+        let delimiter_len = [language.documentation_comment(), language.block_comment()]
+            .into_iter()
+            .flatten()
+            .find_map(|config| {
+                let delimiter = config.end.trim_start();
+                if delimiter.is_empty() {
+                    return None;
+                }
+                let mut chars = self.chars_at(delimiter_start);
+                if !delimiter
+                    .chars()
+                    .all(|expected| chars.next() == Some(expected))
+                {
+                    return None;
+                }
+                if !chars.take_while(|c| *c != '\n').all(char::is_whitespace) {
+                    return None;
+                }
+                Some(delimiter.len() as u32)
+            })?;
+        if position.column < indent_len + delimiter_len {
+            return None;
+        }
+
+        let delimiter_end = Point::new(row, indent_len + delimiter_len);
+        let node = self.syntax_ancestor(delimiter_start..delimiter_end)?;
+        if Point::from_ts_point(node.end_position()) != delimiter_end {
+            return None;
+        }
+        let opening_row = Point::from_ts_point(node.start_position()).row;
+        (opening_row < row).then(|| self.visual_indent_for_line(opening_row, tab_size))
+    }
+
+    /// Like [`Self::visual_indent_for_line`], but reports the indentation a row
+    /// logically sits at, which differs from its physical indentation on the
+    /// closing line of a block comment.
+    pub fn logical_visual_indent_for_line(&self, row: u32, tab_size: u32) -> u32 {
+        self.block_comment_closing_visual_indent(Point::new(row, self.line_len(row)), tab_size)
+            .unwrap_or_else(|| self.visual_indent_for_line(row, tab_size))
     }
 
     /// Like [`Self::indent_size_for_line`], but reports the indentation a row
@@ -5608,6 +5713,14 @@ pub struct WordsQuery<'a> {
 
 fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
     indent_size_for_text(text.chars_at(Point::new(row, 0)))
+}
+
+fn visual_indent_for_line(text: &text::BufferSnapshot, row: u32, tab_size: u32) -> u32 {
+    visual_column_for_text(text.chars_at(Point::new(row, 0)), tab_size)
+}
+
+fn visual_column_for_text(text: impl IntoIterator<Item = char>, tab_size: u32) -> u32 {
+    text::visual_column_for_text(text, tab_size)
 }
 
 fn indent_size_for_text(text: impl Iterator<Item = char>) -> IndentSize {
