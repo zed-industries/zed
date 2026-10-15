@@ -12833,6 +12833,7 @@ dependencies = [
  "fnm",
  "junction",
  "paths",
+ "serde_json",
  "tempfile",
 ]
 

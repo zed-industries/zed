@@ -5,20 +5,17 @@
 //! first: no fnm, no nvm. The versions live in a folder of the IDE's own
 //! ([`store_dir`]), apart from any version manager the user may have.
 //!
-//! One version is *active*: the one the user picked, marked by the store's
-//! `default` link. A process runs under it by having that link put first on
-//! its `PATH` ([`path_env`]), so choosing a version here changes what the IDE
-//! launches — including terminals it has already opened — and nothing else
-//! on the machine. With nothing picked, whatever `node` is already on the
-//! `PATH` (the "system" Node.js) is used as it is. What a project's version
-//! file asks for is reported, for the user to act on, and never applied by
-//! itself.
+//! One version is the IDE-wide *default*, marked by the store's `default`
+//! link; with none, whatever `node` is already on the `PATH` (the "system"
+//! Node.js) is used as it is. On top of it each workspace has a choice of its
+//! own ([`NodeChoice`]): follow the project's version file, the system
+//! Node.js, or a pinned version. A process runs under its workspace's choice
+//! by having the workspace's own link first on its `PATH` ([`bin_dirs_for`]),
+//! so a switch reaches the workspace's terminals that are already open, and
+//! no other workspace's, and nothing else on the machine.
 //!
 //! Like `node_backend`, this has no GPUI or app-state dependency. Every call
 //! blocks on disk or network, so call them from a background thread.
-//!
-//! The `workspace` module adds a choice per workspace on top of the IDE-wide
-//! one.
 
 mod workspace;
 
@@ -51,6 +48,9 @@ pub struct ProjectNode {
     pub requested: Option<String>,
     /// The installed version that satisfies it, when one does.
     pub installed: Option<String>,
+    /// Whether the request comes from the SharePoint generator's
+    /// `.yo-rc.json` (see [`project_node`]) rather than a version file.
+    pub from_spfx_generator: bool,
 }
 
 /// Where the built-in manager keeps its Node.js versions: a `node_versions`
@@ -247,37 +247,77 @@ pub fn active(store: &Path) -> Option<NodeVersion> {
 }
 
 /// What `project` asks for and whether it is installed.
+///
+/// A version file (`.nvmrc`, `.node-version`, `engines.node` in
+/// `package.json`) in the project or a folder above it comes first. Without
+/// one, an SPFx project's `.yo-rc.json` is read: the SharePoint generator
+/// records there the Node.js it was run with (`nodeVersion`). That is the
+/// version the project was made on rather than a requirement, so only its
+/// major version is asked for (`22.23.0` asks for `22`): the newest
+/// installed Node 22 satisfies it.
 pub fn project_node(store: &Path, project: &Path) -> ProjectNode {
     let manager = manager(store);
-    let Some((directory, requested)) = request_of(&manager, project) else {
+    if let Some((directory, requested)) = request_of(&manager, project) {
+        let installed = manager
+            .resolve_for(directory)
+            .ok()
+            .flatten()
+            .map(|version| version.version);
+        return ProjectNode {
+            requested: Some(requested),
+            installed,
+            from_spfx_generator: false,
+        };
+    }
+    let Some(major) = spfx_generator_major(project) else {
         return ProjectNode::default();
     };
-    let installed = manager
-        .resolve_for(directory)
-        .ok()
-        .flatten()
-        .map(|version| version.version);
+    let installed = manager.resolve(&major).ok().map(|version| version.version);
     ProjectNode {
-        requested: Some(requested),
+        requested: Some(major),
         installed,
+        from_spfx_generator: true,
     }
 }
 
-/// Downloads and unpacks the version `project` asks for. An error when it
-/// asks for nothing.
+/// Downloads and unpacks the version `project` asks for (see
+/// [`project_node`]): for an SPFx project without a version file, the
+/// newest release of its generator's major version. An error when it asks
+/// for nothing.
 pub fn install_for_project(store: &Path, project: &Path) -> Result<String, String> {
     let manager = manager(store);
-    let (directory, _) = request_of(&manager, project)
-        .ok_or_else(|| "This project doesn't ask for a Node.js version".to_string())?;
-    let installed = manager
-        .install_for(directory)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "This project doesn't ask for a Node.js version".to_string())?;
+    let nothing_asked = || "This project doesn't ask for a Node.js version".to_string();
+    let installed = match request_of(&manager, project) {
+        Some((directory, _)) => manager
+            .install_for(directory)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(nothing_asked)?,
+        None => {
+            let major = spfx_generator_major(project).ok_or_else(nothing_asked)?;
+            manager.install(&major).map_err(|error| error.to_string())?
+        }
+    };
     Ok(format!(
         "Installed {} to {}",
         installed.version,
         installed.path.to_string_lossy()
     ))
+}
+
+/// The major version of the Node.js the SharePoint generator recorded for
+/// `project`, in its `.yo-rc.json` or one in a folder above it: `22` for
+/// `"nodeVersion": "22.23.0"`. `None` for anything else.
+fn spfx_generator_major(project: &Path) -> Option<String> {
+    project.ancestors().find_map(|directory| {
+        let raw = std::fs::read_to_string(directory.join(".yo-rc.json")).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let recorded = json
+            .get("@microsoft/generator-sharepoint")?
+            .get("nodeVersion")?
+            .as_str()?;
+        let major = recorded.trim().trim_start_matches('v').split('.').next()?;
+        (!major.is_empty() && major.chars().all(|c| c.is_ascii_digit())).then(|| major.to_string())
+    })
 }
 
 /// The active version's own folder, holding `node`, `npm` and `npx`. `None`
@@ -398,6 +438,67 @@ mod tests {
         assert_eq!(active_bin_dir(store.path()), None);
         // The version is still installed.
         assert_eq!(names(&list(store.path()).unwrap()), vec!["v22.3.0"]);
+    }
+
+    #[test]
+    fn an_spfx_project_asks_for_its_generators_major_version() {
+        let store = store(&["v20.11.1", "v22.3.0", "v22.9.0"]);
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join(".yo-rc.json"),
+            r#"{ "@microsoft/generator-sharepoint": { "version": "1.23.2", "nodeVersion": "22.23.0" } }"#,
+        )
+        .unwrap();
+
+        // Any Node 22 will do, the newest installed one first; and a
+        // subfolder is the same project.
+        let status = project_node(store.path(), project.path());
+        assert_eq!(status.requested.as_deref(), Some("22"));
+        assert_eq!(status.installed.as_deref(), Some("v22.9.0"));
+        assert!(status.from_spfx_generator);
+        let nested = project.path().join("src").join("webparts");
+        std::fs::create_dir_all(&nested).unwrap();
+        assert_eq!(project_node(store.path(), &nested), status);
+
+        // On Auto the workspace follows it.
+        let resolved = resolve(store.path(), &NodeChoice::Auto, Some(project.path()));
+        assert_eq!(resolved.source, ChoiceSource::ProjectFile);
+        assert!(resolved.dirs[0].to_string_lossy().contains("v22.9.0"));
+
+        // A version file still comes first.
+        std::fs::write(project.path().join(".nvmrc"), "20\n").unwrap();
+        let status = project_node(store.path(), project.path());
+        assert_eq!(status.installed.as_deref(), Some("v20.11.1"));
+        assert!(!status.from_spfx_generator);
+    }
+
+    #[test]
+    fn an_spfx_project_whose_major_version_isnt_installed_says_so() {
+        let store = store(&["v20.11.1"]);
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join(".yo-rc.json"),
+            r#"{ "@microsoft/generator-sharepoint": { "nodeVersion": "v22.23.0" } }"#,
+        )
+        .unwrap();
+        let status = project_node(store.path(), project.path());
+        assert_eq!(status.requested.as_deref(), Some("22"));
+        assert_eq!(status.installed, None);
+
+        let resolved = resolve(store.path(), &NodeChoice::Auto, Some(project.path()));
+        assert_eq!(resolved.source, ChoiceSource::Default);
+        assert_eq!(resolved.missing.as_deref(), Some("22"));
+
+        // Another generator's file, or none recorded, asks for nothing.
+        std::fs::write(
+            project.path().join(".yo-rc.json"),
+            r#"{ "generator-other": { "nodeVersion": "22.23.0" } }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            project_node(store.path(), project.path()),
+            ProjectNode::default()
+        );
     }
 
     #[test]

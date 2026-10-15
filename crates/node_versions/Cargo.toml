@@ -15,6 +15,8 @@ doctest = false
 [dependencies]
 fnm.workspace = true
 paths.workspace = true
+# Reads the Node.js version an SPFx project records in `.yo-rc.json`.
+serde_json.workspace = true
 
 # The link to the active version is a directory junction on Windows, which
 # needs no privilege to create (a directory symlink does).

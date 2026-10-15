@@ -61,7 +61,7 @@ use node_backend::{
     DetectedNodeProject, query_runtime, read_text_file, reveal_in_explorer, scan_node_projects,
     write_file,
 };
-use node_versions::{NodeVersion, ProjectNode};
+use node_versions::{ChoiceSource, NodeChoice, NodeVersion, ProjectNode};
 use npm_backend::{
     NodeRequirement, NpmAuditVuln, NpmInstalledPkg, NpmOutdatedPkg, UpdateKind, classify_update,
     detect_package_manager, list_audit_vulns, list_installed, list_outdated, node_requirement,
@@ -86,6 +86,43 @@ const PAGE_SIZE: usize = 6;
 /// IDE's key-value store, shared by every window, so the panel opens the way
 /// it was last left.
 const OPEN_SECTIONS_KEY: &str = "node_panel_open_sections";
+
+/// Where a workspace's Node.js choice is remembered, followed by its root
+/// folder.
+const CHOICE_KEY_PREFIX: &str = "node_panel_choice:";
+
+/// A workspace's Node.js choice as it is saved:
+/// `{"mode":"auto"}`, `{"mode":"system"}` or
+/// `{"mode":"pinned","version":"v22.3.0"}`.
+#[derive(serde::Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+enum SavedChoice {
+    Auto,
+    System,
+    Pinned { version: String },
+}
+
+impl From<&NodeChoice> for SavedChoice {
+    fn from(choice: &NodeChoice) -> Self {
+        match choice {
+            NodeChoice::Auto => Self::Auto,
+            NodeChoice::System => Self::System,
+            NodeChoice::Pinned { version } => Self::Pinned {
+                version: version.clone(),
+            },
+        }
+    }
+}
+
+impl From<SavedChoice> for NodeChoice {
+    fn from(saved: SavedChoice) -> Self {
+        match saved {
+            SavedChoice::Auto => Self::Auto,
+            SavedChoice::System => Self::System,
+            SavedChoice::Pinned { version } => Self::Pinned { version },
+        }
+    }
+}
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -158,11 +195,12 @@ pub fn init(cx: &mut App) {
     // Script Runner and workflow actions all ask `ide_env` what to put first
     // on a new process's `PATH`.
     //
-    // What goes on the `PATH` is the store's link to the active version, the
-    // same folder whatever is active, so a terminal that is already open
-    // follows a switch made here.
-    ide_env::register(|_directory| {
-        vec![node_versions::live_bin_dir(&node_versions::store_dir())]
+    // Each workspace has a Node.js choice of its own, and a link in the
+    // store that follows it: a process started in the workspace gets that
+    // link on its `PATH`, so a terminal that is already open follows a
+    // switch made in its own window's panel, and no other window's.
+    ide_env::register(|directory| {
+        node_versions::bin_dirs_for(&node_versions::store_dir(), directory)
     });
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -215,6 +253,12 @@ pub struct NodePanel {
     /// a patch release apart and look the same at a glance.
     node_is_built_in: bool,
     not_found: bool,
+    /// This workspace's Node.js choice: it applies to this workspace only.
+    node_choice: NodeChoice,
+    /// Where the version in use came from, and a version that was asked for
+    /// (pinned, or by the project) but isn't installed.
+    choice_source: ChoiceSource,
+    choice_missing: Option<String>,
     /// The Node.js already on this machine's `PATH`, whoever put it there.
     /// Shown as the "System" entry; `None` when there isn't one.
     system_node_ver: Option<String>,
@@ -548,6 +592,10 @@ impl NodePanel {
                 npm_ver: None,
                 not_found: false,
                 node_is_built_in: false,
+                // Until the saved choice is read (`restore_node_choice`).
+                node_choice: NodeChoice::Auto,
+                choice_source: ChoiceSource::Default,
+                choice_missing: None,
                 system_node_ver: None,
                 project_node: ProjectNode::default(),
                 project_requirement: None,
@@ -588,9 +636,88 @@ impl NodePanel {
 
             init_discovery(cx);
             Self::restore_open_sections(cx);
+            Self::restore_node_choice(cwd.clone(), cx);
 
             panel
         })
+    }
+
+    /// The workspace folder whose Node.js choice this panel shows and sets.
+    fn root_dir(&self) -> Option<PathBuf> {
+        (!self.cwd.is_empty()).then(|| PathBuf::from(&self.cwd))
+    }
+
+    /// Reads the workspace at `root`'s saved Node.js choice (Auto when none
+    /// was saved), registers it, so the workspace's processes get its link,
+    /// and points that link at it.
+    fn restore_node_choice(root: String, cx: &mut Context<Self>) {
+        if root.is_empty() {
+            return;
+        }
+        let kvp = KeyValueStore::global(cx);
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let key = format!("{CHOICE_KEY_PREFIX}{root}");
+            let folder = PathBuf::from(&root);
+            let choice: NodeChoice = cx
+                .background_spawn(async move {
+                    let choice = kvp
+                        .read_kvp(&key)
+                        .ok()
+                        .flatten()
+                        .and_then(|json| serde_json::from_str::<SavedChoice>(&json).ok())
+                        .map(NodeChoice::from)
+                        .unwrap_or_default();
+                    node_versions::set_choice(&folder, choice.clone());
+                    node_versions::sync_workspace(&node_versions::store_dir(), &folder).ok();
+                    choice
+                })
+                .await;
+            this.update(cx, |panel, cx| {
+                // The panel may have moved to another folder meanwhile.
+                if panel.cwd == root {
+                    panel.node_choice = choice;
+                    panel.refresh_runtime_versions(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Gives this workspace `choice`: remembered for the next session, and
+    /// applied at once to the workspace's link, so its open terminals follow.
+    /// No other window's workspace changes.
+    fn set_node_choice(&mut self, choice: NodeChoice, cx: &mut Context<Self>) {
+        let Some(root) = self.root_dir() else {
+            return;
+        };
+        self.node_choice = choice.clone();
+        cx.notify();
+
+        let key = format!("{CHOICE_KEY_PREFIX}{}", self.cwd);
+        let json = serde_json::to_string(&SavedChoice::from(&choice)).ok();
+        let kvp = KeyValueStore::global(cx);
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = cx
+                .background_spawn(async move {
+                    node_versions::set_choice(&root, choice);
+                    node_versions::sync_workspace(&node_versions::store_dir(), &root)
+                })
+                .await;
+            if let Some(json) = json {
+                kvp.write_kvp(key, json).await.ok();
+            }
+            this.update(cx, |panel, cx| {
+                if let Err(error) = result {
+                    panel.script_output.push(format!("Error: {error}"));
+                }
+                panel.refresh_runtime_versions(cx);
+                panel.load_managed_versions(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Runs the process list's scans only while it is on screen: the panel
@@ -613,6 +740,9 @@ impl NodePanel {
         self.processes
             .update(cx, |list, cx| list.set_root(Some(folder), cx));
         self.scan_projects(cx);
+        // The new folder has a Node.js choice of its own.
+        self.node_choice = NodeChoice::Auto;
+        Self::restore_node_choice(self.cwd.clone(), cx);
     }
 
     fn is_open(&self, key: &str, default: bool) -> bool {
@@ -1042,9 +1172,11 @@ impl NodePanel {
     /// projects or reloads the version list.
     fn refresh_runtime_versions(&mut self, cx: &mut Context<Self>) {
         let project = self.run_dir();
+        let root = self.root_dir();
+        let choice = self.node_choice.clone();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let runtimes = cx
-                .background_spawn(async move { probe_runtimes(project) })
+                .background_spawn(async move { probe_runtimes(project, root, choice) })
                 .await;
             let _ = cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
@@ -1075,6 +1207,8 @@ impl NodePanel {
         self.system_node_ver = runtimes.system_node;
         self.project_node = runtimes.project;
         self.project_requirement = runtimes.requirement;
+        self.choice_source = runtimes.source;
+        self.choice_missing = runtimes.missing;
     }
 
     fn load_managed_versions(&mut self, cx: &mut Context<Self>) {
@@ -1102,10 +1236,21 @@ impl NodePanel {
         .detach();
     }
 
-    /// Makes `version` the active one, or with `None` hands the choice back
-    /// to the system Node.js. Either way this only changes what the IDE
-    /// launches: nothing else on the machine is switched.
+    /// Pins `version` for this workspace, or with `None` gives it the system
+    /// Node.js. Only this workspace changes: other windows keep theirs, and
+    /// nothing else on the machine is switched.
+    ///
+    /// With no workspace folder (nothing open) there is no workspace to give
+    /// it to, and the IDE-wide default is switched instead.
     fn switch_version(&mut self, version: Option<String>, cx: &mut Context<Self>) {
+        if self.root_dir().is_some() {
+            let choice = match version {
+                Some(version) => NodeChoice::Pinned { version },
+                None => NodeChoice::System,
+            };
+            self.set_node_choice(choice, cx);
+            return;
+        }
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let result = cx
                 .background_spawn(async move {
@@ -1132,6 +1277,43 @@ impl NodePanel {
                     });
                 }
             });
+        })
+        .detach();
+    }
+
+    /// Writes `.nvmrc` with `version` in the selected project, unless it
+    /// already has one. The project then asks for that version: on Auto the
+    /// workspace follows it, and the header says so.
+    fn create_version_file(&mut self, version: String, cx: &mut Context<Self>) {
+        let Some(project) = self.selected_project.clone() else {
+            return;
+        };
+        let path = PathBuf::from(project).join(".nvmrc");
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = cx
+                .background_spawn(async move {
+                    if path.exists() {
+                        return Err(".nvmrc already exists".to_string());
+                    }
+                    write_file(path.to_string_lossy().into_owned(), format!("{version}\n"))
+                        .map(|()| format!("Created .nvmrc ({version})"))
+                })
+                .await;
+            this.update(cx, |panel, cx| {
+                match result {
+                    Ok(output) => panel.script_output.push(output),
+                    Err(error) => panel.script_output.push(format!("Error: {error}")),
+                }
+                // Re-points the workspace's link, which follows the new file
+                // on Auto, and refreshes the header.
+                let choice = panel.node_choice.clone();
+                if panel.root_dir().is_some() {
+                    panel.set_node_choice(choice, cx);
+                } else {
+                    panel.refresh_runtime_versions(cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -1534,19 +1716,27 @@ struct Runtimes {
     /// What the project requires, as written and with the file it came
     /// from — read the same way as the npm manager reads it.
     requirement: Option<NodeRequirement>,
+    /// Where the workspace's Node.js came from.
+    source: ChoiceSource,
+    /// A version asked for but not installed.
+    missing: Option<String>,
 }
 
-/// Works out which Node.js and npm a script run in `project` will get, by
-/// asking them for their versions. Blocks on several process launches, so
-/// call it from a background thread.
-fn probe_runtimes(project: Option<PathBuf>) -> Runtimes {
+/// Works out which Node.js and npm a script run in `project` will get under
+/// the workspace at `root`'s `choice`, by asking them for their versions.
+/// Blocks on several process launches, so call it from a background thread.
+fn probe_runtimes(project: Option<PathBuf>, root: Option<PathBuf>, choice: NodeChoice) -> Runtimes {
     let store = node_versions::store_dir();
     let system_node = query_runtime("node".into()).ok();
     let project_node = project
         .as_deref()
         .map(|project| node_versions::project_node(&store, project))
         .unwrap_or_default();
-    let bin_dir = node_versions::active_bin_dir(&store);
+    // What the workspace's link points at: one link serves the whole
+    // workspace, so its version files are the root's. An entry that leads
+    // nowhere (the IDE-wide default when there is none) is the system one.
+    let resolved = node_versions::resolve(&store, &choice, root.as_deref());
+    let bin_dir = resolved.dirs.first().filter(|dir| dir.exists()).cloned();
     let built_in = bin_dir.is_some();
     let (node, npm) = match bin_dir {
         // A built-in version applies: ask the executables in its own folder.
@@ -1572,6 +1762,8 @@ fn probe_runtimes(project: Option<PathBuf>) -> Runtimes {
         system_node,
         requirement,
         project: project_node,
+        source: resolved.source,
+        missing: resolved.missing,
     }
 }
 
@@ -1579,7 +1771,7 @@ fn init_discovery(cx: &mut Context<NodePanel>) {
     cx.spawn(
         async move |this: WeakEntity<NodePanel>, cx: &mut AsyncApp| {
             let runtimes = cx
-                .background_spawn(async { probe_runtimes(None) })
+                .background_spawn(async { probe_runtimes(None, None, NodeChoice::Auto) })
                 .await;
 
             let _ = cx.update(|app| {
@@ -1990,10 +2182,16 @@ impl Panel for NodePanel {
 
 impl NodePanel {
     fn render_versions(&self, cx: &Context<Self>) -> impl IntoElement {
-        let source = if self.node_is_built_in {
-            "built-in"
-        } else {
-            "system"
+        // Where this workspace's Node.js comes from. The IDE-wide default is
+        // the system Node.js when no built-in version is the default.
+        let source = match (self.node_is_built_in, self.choice_source) {
+            (false, _) => "system",
+            (true, ChoiceSource::Pinned) => "pinned",
+            (true, ChoiceSource::ProjectFile) if self.project_node.from_spfx_generator => {
+                "project file (.yo-rc.json)"
+            }
+            (true, ChoiceSource::ProjectFile) => "project file",
+            (true, _) => "IDE default",
         };
         let text = match (&self.node_ver, &self.npm_ver) {
             (Some(n), Some(pm)) => format!("Node.js {n} ({source})  |  npm {pm}"),
@@ -2001,21 +2199,43 @@ impl NodePanel {
             _ => "Node.js isn't installed".into(),
         };
 
-        // What the selected project's own version file asks for. It is never
-        // applied by itself: the version in use is the one picked below, and
-        // this line only says how the two compare. When the matching version
-        // is installed but isn't the one picked, switching is a click away;
-        // when it isn't installed, installing it is.
+        // What the selected project's own version file asks for, and how it
+        // compares with the version in use. On Auto the workspace's own
+        // version file is followed when that version is installed; otherwise
+        // the pick below wins. When the matching version is installed but
+        // isn't in use, pinning it is a click away; when it isn't installed,
+        // installing it is.
         let active = self
-            .managed_versions
-            .iter()
-            .find(|version| version.current)
-            .map(|version| version.version.clone());
+            .node_is_built_in
+            .then(|| self.node_ver.clone())
+            .flatten()
+            .map(|version| version.trim().to_string());
+        // A pinned version that has since been removed: say what is used
+        // instead.
+        let pinned_missing = match (&self.node_choice, &self.choice_missing) {
+            (NodeChoice::Pinned { .. }, Some(missing)) => Some(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().warning)
+                    .child(format!(
+                        "Pinned {missing} isn't installed \u{2014} using the {} instead",
+                        match (self.node_is_built_in, self.choice_source) {
+                            (false, _) => "system Node.js",
+                            (true, ChoiceSource::ProjectFile) => "project's version",
+                            (true, _) => "IDE default",
+                        }
+                    )),
+            ),
+            _ => None,
+        };
         // Shown as the project writes it, with the file it came from — the
         // same reading as the npm manager's — rather than the version
         // manager's normalized form (`v20.x.x`).
         let shown_requirement = |requested: &str| match &self.project_requirement {
             Some(requirement) => format!("{} ({})", requirement.range, requirement.source),
+            None if self.project_node.from_spfx_generator => {
+                format!("Node {requested} (.yo-rc.json)")
+            }
             None => requested.to_string(),
         };
         // Installing packages with a version the project doesn't support is
@@ -2030,6 +2250,61 @@ impl NodePanel {
             _ => false,
         };
         let in_use = self.node_ver.clone().unwrap_or_default();
+        // A Node project that says nothing about its Node.js version: offer
+        // to write one down, so the project runs the same one in every
+        // window, and in other tools (nvm, fnm, CI). An SPFx project records
+        // the Node.js the SharePoint generator was run with, which is the
+        // version it was made on; otherwise the one in use.
+        let asks_for_nothing =
+            self.project_node.requested.is_none() && self.project_requirement.is_none();
+        let wants_version_file = self.selected_project.is_some()
+            && (asks_for_nothing || self.project_node.from_spfx_generator);
+        let version_file_notice = wants_version_file
+            .then(|| {
+                // An SPFx project's generator version is a major version (`22`),
+                // which is also what the file then asks for: any Node 22.
+                let from_generator = self
+                    .project_node
+                    .from_spfx_generator
+                    .then(|| self.project_node.requested.clone())
+                    .flatten();
+                let (message, label_source) = if from_generator.is_some() {
+                    ("Project version only in .yo-rc.json", ", from .yo-rc.json")
+                } else {
+                    ("No Node.js version file in this project", "")
+                };
+                let version = from_generator
+                    .unwrap_or_else(|| in_use.clone())
+                    .trim()
+                    .trim_start_matches('v')
+                    .to_string();
+                (!version.is_empty()).then(|| {
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(message),
+                        )
+                        .child(
+                            Button::new("node-version-create-nvmrc")
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Plus)
+                                .label(format!("Create .nvmrc ({version}{label_source})"))
+                                .tooltip(
+                                    "Writes .nvmrc with this version, so this project runs it \
+                                     everywhere: on Auto here, and in nvm, fnm and CI",
+                                )
+                                .on_click(cx.listener(move |this, _e, _w, cx| {
+                                    this.create_version_file(version.clone(), cx);
+                                })),
+                        )
+                })
+            })
+            .flatten();
         let project_line = self.project_node.requested.clone().map(|requested| {
             let shown = shown_requirement(&requested);
             match self.project_node.installed.clone() {
@@ -2106,7 +2381,9 @@ impl NodePanel {
                     .text_color(cx.theme().primary)
                     .child(text),
             )
+            .children(pinned_missing)
             .children(project_line)
+            .children(version_file_notice)
     }
 
     fn render_node_versions(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -2219,11 +2496,83 @@ impl NodePanel {
                         );
                 }
 
-                // The Node.js on the `PATH`, however it got there. It is in
-                // use whenever no built-in version is active, and picking it
+                // The rows below are this workspace's choice: Auto, System or
+                // one pinned version. With no workspace folder they are the
+                // IDE-wide default, as they used to be.
+                let has_workspace = self.root_dir().is_some();
+                // The built-in version this workspace runs, if it runs one.
+                let in_use = self
+                    .node_is_built_in
+                    .then(|| self.node_ver.clone())
+                    .flatten()
+                    .map(|version| version.trim().to_string());
+                if has_workspace {
+                    let auto_current = self.node_choice == NodeChoice::Auto;
+                    let auto_hint = match (self.choice_source, in_use.as_deref()) {
+                        (ChoiceSource::ProjectFile, Some(version))
+                            if self.project_node.from_spfx_generator =>
+                        {
+                            format!("Auto ({version}, from .yo-rc.json)")
+                        }
+                        (ChoiceSource::ProjectFile, Some(version)) => {
+                            format!("Auto ({version}, from the project's version file)")
+                        }
+                        (_, Some(version)) => format!("Auto ({version}, the IDE default)"),
+                        (_, None) => "Auto (the system Node.js)".to_string(),
+                    };
+                    col = col.child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .px_3()
+                            .py_0p5()
+                            .text_xs()
+                            .child(
+                                div()
+                                    .w_3()
+                                    .flex_shrink_0()
+                                    .text_color(if auto_current {
+                                        cx.theme().primary
+                                    } else {
+                                        cx.theme().muted_foreground
+                                    })
+                                    .child(if auto_current { "\u{25CF}" } else { "\u{25CB}" }),
+                            )
+                            .child(
+                                Button::new("node-version-auto")
+                                    .custom(ButtonCustomVariant::new(cx).foreground(
+                                        if auto_current {
+                                            cx.theme().primary
+                                        } else {
+                                            cx.theme().foreground
+                                        },
+                                    ))
+                                    .xsmall()
+                                    .label(if auto_current {
+                                        auto_hint
+                                    } else {
+                                        "Auto".to_string()
+                                    })
+                                    .tooltip(
+                                        "The version the project's .nvmrc, .node-version or \
+                                         package.json asks for when it is installed, \
+                                         otherwise the IDE default",
+                                    )
+                                    .on_click(cx.listener(|this, _e, _w, cx| {
+                                        this.set_node_choice(NodeChoice::Auto, cx);
+                                    })),
+                            ),
+                    );
+                }
+
+                // The Node.js on the `PATH`, however it got there. Picking it
                 // hands the choice back without removing anything.
                 if let Some(system) = &self.system_node_ver {
-                    let system_current = !self.managed_versions.iter().any(|v| v.current);
+                    let system_current = if has_workspace {
+                        self.node_choice == NodeChoice::System
+                    } else {
+                        !self.managed_versions.iter().any(|v| v.current)
+                    };
                     let color = if system_current {
                         cx.theme().primary
                     } else {
@@ -2264,14 +2613,29 @@ impl NodePanel {
                     );
                 }
 
+                let bare = |version: &str| {
+                    node_versions::version_of(version)
+                        .trim_start_matches('v')
+                        .to_string()
+                };
                 for v in &self.managed_versions {
-                    let marker = if v.current { "\u{25CF}" } else { "\u{25CB}" };
-                    let marker_color = if v.current {
+                    // Pinned for this workspace, or, with no workspace, the
+                    // IDE-wide default.
+                    let selected = if has_workspace {
+                        matches!(
+                            &self.node_choice,
+                            NodeChoice::Pinned { version } if bare(version) == bare(&v.version)
+                        )
+                    } else {
+                        v.current
+                    };
+                    let marker = if selected { "\u{25CF}" } else { "\u{25CB}" };
+                    let marker_color = if selected {
                         cx.theme().primary
                     } else {
                         cx.theme().muted_foreground
                     };
-                    let color = if v.current {
+                    let color = if selected {
                         cx.theme().primary
                     } else {
                         cx.theme().foreground
@@ -2306,10 +2670,13 @@ impl NodePanel {
                                             .custom(ButtonCustomVariant::new(cx).foreground(color))
                                             .xsmall()
                                             .label(v.version.clone())
-                                            .tooltip(if v.current {
-                                                "Current version"
-                                            } else {
-                                                "Use this version"
+                                            .tooltip(match (selected, has_workspace) {
+                                                (true, true) => "Pinned for this workspace",
+                                                (true, false) => "Current version",
+                                                (false, true) => {
+                                                    "Pin this version for this workspace"
+                                                }
+                                                (false, false) => "Use this version",
                                             })
                                             .on_click(cx.listener(move |this, _e, _w, cx| {
                                                 this.switch_version(
