@@ -15,7 +15,7 @@ use std::{
 
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AuthorizationKind, SelectedPermissionOutcome,
-    ThreadStatus,
+    ThreadStatus, ToolCallStatus,
 };
 use agent_client_protocol::schema::v2 as acp;
 use agent_settings::{AgentProfile, AgentProfileId};
@@ -93,6 +93,7 @@ struct ProbeState {
     searches: RefCell<HashMap<String, SearchRecord>>,
     change_operations: RefCell<HashMap<String, ChangeOperationRecord>>,
     terminal_operations: RefCell<HashMap<String, String>>,
+    terminal_creations: RefCell<HashMap<String, (String, Value)>>,
     clipboard_operations: RefCell<HashMap<String, String>>,
 }
 
@@ -242,7 +243,7 @@ impl ProbePermissions {
             capabilities.extend(["terminal.list", "terminal.snapshot"]);
         }
         if self.terminal_read && self.terminal_input {
-            capabilities.push("terminal.input");
+            capabilities.extend(["terminal.input", "terminal.create", "terminal.resize"]);
         }
         if self.remote_clipboard {
             capabilities.extend(["clipboard.read", "clipboard.write"]);
@@ -287,7 +288,9 @@ impl ProbePermissions {
             }
             "thread.settings.update" | "thread.queue.clear" => self.agent_settings,
             "terminal.list" | "terminal.snapshot" => self.terminal_read,
-            "terminal.input" => self.terminal_read && self.terminal_input,
+            "terminal.input" | "terminal.create" | "terminal.resize" => {
+                self.terminal_read && self.terminal_input
+            }
             "clipboard.read" | "clipboard.write" => self.remote_clipboard,
             "task.list" | "task.stop" => self.task_control,
             "task.catalog" | "task.run" => self.task_start,
@@ -445,6 +448,7 @@ pub fn init(cx: &mut App) {
                 searches: RefCell::new(HashMap::new()),
                 change_operations: RefCell::new(HashMap::new()),
                 terminal_operations: RefCell::new(HashMap::new()),
+                terminal_creations: RefCell::new(HashMap::new()),
                 clipboard_operations: RefCell::new(HashMap::new()),
             },
         ))
@@ -542,7 +546,8 @@ fn expose_thread(state: &Rc<ProbeState>, thread: &Entity<AcpThread>, cx: &mut Ap
     let subscription = cx.subscribe(thread, {
         let state = state.clone();
         let id = id.clone();
-        move |_thread, event: &AcpThreadEvent, _cx| {
+        move |thread, event: &AcpThreadEvent, cx| {
+            let activity = thread_activity_value(thread.read(cx));
             let mut events = state.events.borrow_mut();
             let record = events.entry(id.clone()).or_default();
             let Some(sequence) = record.last_sequence.checked_add(1) else {
@@ -552,6 +557,7 @@ fn expose_thread(state: &Rc<ProbeState>, thread: &Entity<AcpThread>, cx: &mut Ap
             record.records.push_back(json!({
                 "sequence": sequence,
                 "kind": event_kind(event),
+                "activity": activity,
             }));
             if record.records.len() > 256 {
                 record.records.pop_front();
@@ -564,6 +570,68 @@ fn expose_thread(state: &Rc<ProbeState>, thread: &Entity<AcpThread>, cx: &mut Ap
         .borrow_mut()
         .insert(id.clone(), subscription);
     state.exposed_threads.borrow_mut().insert(id);
+}
+
+fn thread_activity_value(thread: &AcpThread) -> Value {
+    if thread.is_compacting() {
+        return json!({
+            "phase": "compacting",
+            "label": "Compacting context",
+            "detail": "Zed is summarizing earlier conversation history",
+        });
+    }
+
+    for entry in thread.entries().iter().rev() {
+        let AgentThreadEntry::ToolCall(tool) = entry else {
+            continue;
+        };
+        let detail = tool
+            .tool_name
+            .as_ref()
+            .or(tool.name.as_ref())
+            .map(ToString::to_string);
+        match tool.status() {
+            ToolCallStatus::WaitingForConfirmation => {
+                return json!({
+                    "phase": "waiting_for_approval",
+                    "label": "Waiting for approval",
+                    "detail": detail,
+                });
+            }
+            ToolCallStatus::Pending => {
+                return json!({
+                    "phase": "preparing_tool",
+                    "label": "Preparing a tool",
+                    "detail": detail,
+                });
+            }
+            ToolCallStatus::InProgress => {
+                return json!({
+                    "phase": "running_tool",
+                    "label": "Running a tool",
+                    "detail": detail,
+                });
+            }
+            ToolCallStatus::Completed
+            | ToolCallStatus::Failed
+            | ToolCallStatus::Rejected
+            | ToolCallStatus::Canceled => {}
+        }
+    }
+
+    if thread.current_turn_id().is_some() {
+        json!({
+            "phase": "responding",
+            "label": "Agent is responding",
+            "detail": null,
+        })
+    } else {
+        json!({
+            "phase": "idle",
+            "label": "Ready",
+            "detail": null,
+        })
+    }
 }
 
 fn event_kind(event: &AcpThreadEvent) -> &'static str {
@@ -721,6 +789,7 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
                                 "had_error": thread.had_error(),
                                 "agent_error": agent_error,
                                 "retry_status": retry_status,
+                                "activity": thread_activity_value(thread),
                             })
                         },
                     )
@@ -850,6 +919,7 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
                     "image_recovery": image_recovery,
                     "rewind_points": rewind_points,
                     "retry_status": retry_status,
+                    "activity": thread_activity_value(thread),
                     "pending_approvals": pending_approvals(thread, cx),
                     "subagents": subagent_snapshots(thread, server_view.as_ref(), cx),
                     "entries_markdown": entries,
@@ -977,9 +1047,11 @@ fn handle_request(request: ProbeRequest, state: &ProbeState, cx: &mut App) -> Va
         "thread.queue.clear" => clear_queue(&request, state, cx),
         "thread.edit_review" => edit_review_state(&request, state, cx),
         "thread.edit_review.respond" => edit_review_response(&request, state, cx),
+        "terminal.create" => terminal_create(&request, state, cx),
         "terminal.list" => terminal_list(&request, state, cx),
         "terminal.snapshot" => terminal_snapshot(&request, state, cx),
         "terminal.input" => terminal_input(&request, state, cx),
+        "terminal.resize" => terminal_resize(&request, state, cx),
         "clipboard.read" | "clipboard.write" => remote_clipboard(&request, state, cx),
         "task.list" => task_list(&request, state, cx),
         "task.stop" => task_stop(&request, state, cx),
@@ -3640,6 +3712,88 @@ fn loaded_threads(project_root: &Path, cx: &App) -> Vec<Entity<AcpThread>> {
         .collect()
 }
 
+fn terminal_create(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    if !matches_instance(request, state) {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    if !params_contain_only(&request.params, &["instance_id", "epoch", "thread_id"]) {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let Some(thread_id) = request.params.get("thread_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if !state.exposed_threads.borrow().contains(thread_id)
+        || !loaded_threads(&state.project_root, cx)
+            .iter()
+            .any(|thread| thread.read(cx).session_id().to_string() == thread_id)
+    {
+        return error(&request.request_id, "THREAD_NOT_EXPOSED");
+    }
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some((existing, response)) = state.terminal_creations.borrow().get(&request.request_id) {
+        return if existing == &digest {
+            response.clone()
+        } else {
+            error(&request.request_id, "REQUEST_ID_CONFLICT")
+        };
+    }
+    if state.terminal_creations.borrow().len() >= 256 {
+        return error(&request.request_id, "RATE_LIMITED");
+    }
+    let Some(workspace) = loaded_project_workspaces(&state.project_root, cx)
+        .into_iter()
+        .next()
+    else {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    };
+    let working_directory = state.project_root.clone();
+    let creation = cx.with_window(workspace.entity_id(), |window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
+                project.create_terminal_shell(Some(working_directory), cx)
+            })
+        })
+    });
+    let Some(creation) = creation else {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    };
+    let response = success(&request.request_id, json!({"outcome": "pending"}));
+    state
+        .terminal_creations
+        .borrow_mut()
+        .insert(request.request_id.clone(), (digest, response.clone()));
+    let state = cx.global::<ProbeGlobal>().0.clone();
+    let request_id = request.request_id.clone();
+    cx.spawn(async move |cx| {
+        let created = creation.await;
+        cx.update(|cx| {
+            let response = match created {
+                Ok(terminal) => {
+                    match loaded_terminal_views(&state.project_root, cx)
+                        .into_iter()
+                        .find(|view| view.read(cx).terminal().entity_id() == terminal.entity_id())
+                    {
+                        Some(view) => success(
+                            &request_id,
+                            json!({"outcome": "ready", "terminal": terminal_value(&view, cx)}),
+                        ),
+                        None => error(&request_id, "TERMINAL_UNAVAILABLE"),
+                    }
+                }
+                Err(_) => error(&request_id, "TERMINAL_UNAVAILABLE"),
+            };
+            if let Some((_, stored)) = state.terminal_creations.borrow_mut().get_mut(&request_id) {
+                *stored = response;
+            }
+        });
+    })
+    .detach();
+    response
+}
+
 fn terminal_list(request: &ProbeRequest, state: &ProbeState, cx: &App) -> Value {
     let terminals = loaded_terminal_views(&state.project_root, cx)
         .iter()
@@ -3773,6 +3927,18 @@ fn terminal_input(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> V
     if input.is_empty() || input.len() > MAX_TERMINAL_INPUT_BYTES {
         return error(&request.request_id, "INVALID_REQUEST");
     }
+    let requested_size = match (
+        request.params.get("columns").and_then(Value::as_u64),
+        request.params.get("rows").and_then(Value::as_u64),
+    ) {
+        (None, None) => None,
+        (Some(columns), Some(rows))
+            if (24..=240).contains(&columns) && (8..=120).contains(&rows) =>
+        {
+            Some((columns, rows))
+        }
+        _ => return error(&request.request_id, "INVALID_REQUEST"),
+    };
     let digest = match payload_digest(&request.params) {
         Ok(digest) => digest,
         Err(code) => return error(&request.request_id, code),
@@ -3794,7 +3960,16 @@ fn terminal_input(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> V
         return error(&request.request_id, "TERMINAL_UNAVAILABLE");
     };
     let terminal = view.read(cx).terminal().clone();
-    terminal.update(cx, |terminal, _| terminal.input(input.as_bytes().to_vec()));
+    terminal.update(cx, |terminal, cx| {
+        if let Some((columns, rows)) = requested_size {
+            let mut bounds = terminal.last_content().terminal_bounds;
+            bounds.bounds.size.width = bounds.cell_width * columns as f32;
+            bounds.bounds.size.height = bounds.line_height * rows as f32;
+            terminal.set_size(bounds);
+        }
+        terminal.input(input.as_bytes().to_vec());
+        cx.notify();
+    });
     state
         .terminal_operations
         .borrow_mut()
@@ -3802,6 +3977,68 @@ fn terminal_input(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> V
     success(
         &request.request_id,
         json!({"outcome": "accepted", "duplicate": false}),
+    )
+}
+
+fn terminal_resize(request: &ProbeRequest, state: &ProbeState, cx: &mut App) -> Value {
+    if request.params.get("instance_id").and_then(Value::as_str) != Some(state.instance_id.as_str())
+        || request.params.get("epoch").and_then(Value::as_str) != Some(state.epoch.as_str())
+    {
+        return error(&request.request_id, "INSTANCE_UNAVAILABLE");
+    }
+    if !params_contain_only(
+        &request.params,
+        &["instance_id", "epoch", "terminal_id", "columns", "rows"],
+    ) {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let Some(id) = request.params.get("terminal_id").and_then(Value::as_str) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let Some(columns) = request.params.get("columns").and_then(Value::as_u64) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    let Some(rows) = request.params.get("rows").and_then(Value::as_u64) else {
+        return error(&request.request_id, "INVALID_REQUEST");
+    };
+    if !(24..=240).contains(&columns) || !(8..=120).contains(&rows) {
+        return error(&request.request_id, "INVALID_REQUEST");
+    }
+    let digest = match payload_digest(&request.params) {
+        Ok(digest) => digest,
+        Err(code) => return error(&request.request_id, code),
+    };
+    if let Some(existing) = state.terminal_operations.borrow().get(&request.request_id) {
+        return if existing == &digest {
+            success(
+                &request.request_id,
+                json!({"outcome": "accepted", "duplicate": true}),
+            )
+        } else {
+            error(&request.request_id, "REQUEST_ID_CONFLICT")
+        };
+    }
+    let Some(view) = loaded_terminal_views(&state.project_root, cx)
+        .into_iter()
+        .find(|view| terminal_id(view) == id)
+    else {
+        return error(&request.request_id, "TERMINAL_UNAVAILABLE");
+    };
+    let terminal = view.read(cx).terminal().clone();
+    terminal.update(cx, |terminal, cx| {
+        let mut bounds = terminal.last_content().terminal_bounds;
+        bounds.bounds.size.width = bounds.cell_width * columns as f32;
+        bounds.bounds.size.height = bounds.line_height * rows as f32;
+        terminal.set_size(bounds);
+        cx.notify();
+    });
+    state
+        .terminal_operations
+        .borrow_mut()
+        .insert(request.request_id.clone(), digest);
+    success(
+        &request.request_id,
+        json!({"outcome": "accepted", "duplicate": false, "columns": columns, "rows": rows}),
     )
 }
 
