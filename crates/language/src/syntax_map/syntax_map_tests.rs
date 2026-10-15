@@ -1077,6 +1077,63 @@ fn test_combined_injection_with_leading_content_layer_ordering(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_markdown_injections_with_same_start_and_different_ends(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let markdown = markdown_lang();
+    let markdown_inline = Arc::new(
+        markdown_inline_lang()
+            .with_injection_query(include_str!(
+                "../../../grammars/src/markdown-inline/injections.scm"
+            ))
+            .unwrap(),
+    );
+    let html = Arc::new(html_lang());
+    registry.add(markdown.clone());
+    registry.add(markdown_inline.clone());
+    registry.add(html.clone());
+
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "a\n\n$x$ <b>\n".to_string(),
+    );
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(markdown.clone(), &buffer);
+    assert!(syntax_map.contains_unknown_injections());
+
+    for (range, replacement, document_end, inline_end, latex_end) in
+        [(4..5, "中", 13, 12, 8), (4..7, "x", 11, 10, 6)]
+    {
+        buffer.edit([(range, replacement)]);
+        syntax_map.interpolate(&buffer);
+        syntax_map.reparse(markdown.clone(), &buffer);
+
+        assert_eq!(
+            syntax_map
+                .snapshot
+                .layers
+                .iter()
+                .map(|layer| (
+                    layer.depth,
+                    layer.range.to_offset(&buffer),
+                    layer.content.language_id(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, 0..document_end, Some(markdown.id)),
+                (1, 0..1, Some(markdown_inline.id)),
+                (1, 3..inline_end, Some(markdown_inline.id)),
+                (2, 0..1, Some(html.id)),
+                (2, 3..inline_end, Some(html.id)),
+                (2, 3..latex_end, None),
+            ],
+        );
+        assert!(syntax_map.contains_unknown_injections());
+    }
+}
+
+#[gpui::test]
 fn test_comment_triggered_injection_toggle(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
