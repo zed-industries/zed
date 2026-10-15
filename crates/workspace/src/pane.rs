@@ -3310,13 +3310,26 @@ impl Pane {
                                         .is_some()
                                 })
                             });
+                            let has_history = has_git_repo
+                                && project_path.as_ref().is_some_and(|project_path| {
+                                    pane.read(cx).project.upgrade().is_some_and(|project| {
+                                        !project
+                                            .read(cx)
+                                            .git_store()
+                                            .read(cx)
+                                            .project_path_git_status(project_path, cx)
+                                            .is_some_and(|status| status.is_created())
+                                    })
+                                });
                             let relative_path = project_path
                                 .as_ref()
                                 .map(|project_path| project_path.path.clone())
                                 .filter(|_| has_relative_path);
 
                             let visible_in_project_panel = relative_path.is_some()
-                                && worktree.is_some_and(|worktree| worktree.read(cx).is_visible());
+                                && worktree
+                                    .as_ref()
+                                    .is_some_and(|worktree| worktree.read(cx).is_visible());
                             let is_local = pane.read(cx).project.upgrade().is_some_and(|project| {
                                 let project = project.read(cx);
                                 project.is_local() || project.is_via_wsl_with_host_interop(cx)
@@ -3328,6 +3341,13 @@ impl Pane {
                                 .is_some_and(|project| project.read(cx).is_remote());
 
                             let entry_id = entry.to_proto();
+
+                            let is_path_ignored =
+                                project_path.as_ref().is_some_and(|project_path| {
+                                    worktree.as_ref().is_some_and(|worktree| {
+                                        worktree.read(cx).is_path_ignored(&project_path.path)
+                                    })
+                                });
 
                             menu = menu
                                 .separator()
@@ -3358,7 +3378,7 @@ impl Pane {
                                         }),
                                     )
                                 })
-                                .when(has_git_repo, |menu| {
+                                .when(has_history && !is_path_ignored, |menu| {
                                     menu.separator().when_some(
                                         project_path.clone(),
                                         |menu, project_path| {
