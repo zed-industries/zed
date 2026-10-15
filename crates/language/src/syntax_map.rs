@@ -115,7 +115,7 @@ pub(crate) fn flattened_highlight_regions(
     flatten_capture_regions(range, capture_refs)
 }
 
-fn flatten_capture_regions(
+pub(crate) fn flatten_capture_regions(
     range: Range<usize>,
     mut captures: impl Iterator<Item = (Range<usize>, HighlightCaptureRef)>,
 ) -> Vec<HighlightCaptureRegion> {
@@ -347,7 +347,7 @@ struct ChangedRegion {
 #[derive(Default)]
 struct ChangeRegionSet(Vec<ChangedRegion>);
 
-struct TextProvider<'a>(&'a Rope);
+pub(crate) struct TextProvider<'a>(pub(crate) &'a Rope);
 
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
@@ -1042,28 +1042,6 @@ impl SyntaxSnapshot {
 
             max_depth = layer.depth;
         }
-    }
-
-    pub fn single_tree_captures<'a>(
-        range: Range<usize>,
-        text: &'a Rope,
-        tree: &'a tree_sitter::Tree,
-        language: &'a Arc<Language>,
-        query: fn(&Grammar) -> Option<&Query>,
-    ) -> SyntaxMapCaptures<'a> {
-        SyntaxMapCaptures::new(
-            range,
-            text,
-            [SyntaxLayer {
-                language,
-                tree,
-                included_sub_ranges: None,
-                depth: 0,
-                offset: (0, tree_sitter::Point::new(0, 0)),
-            }]
-            .into_iter(),
-            query,
-        )
     }
 
     pub fn captures<'a>(
