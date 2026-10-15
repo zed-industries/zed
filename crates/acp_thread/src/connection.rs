@@ -1,5 +1,5 @@
 use crate::{AcpThread, ElicitationStore};
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -20,6 +20,10 @@ pub struct ClientUserMessageId(SharedString);
 impl ClientUserMessageId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string().into())
+    }
+
+    pub fn message_id(&self) -> acp_v2::MessageId {
+        acp_v2::MessageId::new(self.0.as_ref())
     }
 }
 
@@ -112,7 +116,7 @@ pub trait AgentConnection {
     /// Load an existing session by ID.
     fn load_session(
         self: Rc<Self>,
-        _session_id: acp_v1::SessionId,
+        _session_id: acp_v2::SessionId,
         _project: Entity<Project>,
         _work_dirs: PathList,
         _title: Option<SharedString>,
@@ -129,7 +133,7 @@ pub trait AgentConnection {
     /// Close an existing session. Allows the agent to free the session from memory.
     fn close_session(
         self: Rc<Self>,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &mut App,
     ) -> Task<Result<()>> {
         Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
@@ -143,7 +147,7 @@ pub trait AgentConnection {
     /// Resume an existing session by ID without replaying previous messages.
     fn resume_session(
         self: Rc<Self>,
-        _session_id: acp_v1::SessionId,
+        _session_id: acp_v2::SessionId,
         _project: Entity<Project>,
         _work_dirs: PathList,
         _title: Option<SharedString>,
@@ -164,17 +168,17 @@ pub trait AgentConnection {
         false
     }
 
-    fn auth_methods(&self) -> &[acp_v1::AuthMethod];
+    fn auth_methods(&self) -> &[acp_v2::AuthMethod];
 
     fn terminal_auth_task(
         &self,
-        _method: &acp_v1::AuthMethodId,
+        _method: &acp_v2::AuthMethodId,
         _cx: &App,
     ) -> Option<Task<Result<SpawnInTerminal>>> {
         None
     }
 
-    fn authenticate(&self, method: acp_v1::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
+    fn authenticate(&self, method: acp_v2::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
     fn supports_logout(&self) -> bool {
         false
@@ -194,7 +198,7 @@ pub trait AgentConnection {
 
     fn receipt_submissions(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn ReceiptSessionSubmissions>> {
         None
@@ -206,23 +210,27 @@ pub trait AgentConnection {
         Ok(())
     }
 
-    /// This completion-based path retains a legacy response; receipt transports
-    /// acknowledge acceptance separately through `receipt_submissions`.
+    /// Receipt transports acknowledge acceptance through `receipt_submissions`
+    /// instead of implementing this completion-based path.
     fn prompt(
         &self,
-        params: acp_v2::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp_v1::PromptResponse>>;
+        _params: acp_v2::PromptRequest,
+        _cx: &mut App,
+    ) -> Task<Result<acp_v1::PromptResponse>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "This agent does not support completion-based prompts"
+        )))
+    }
 
     fn retry(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionRetry>> {
         None
     }
 
-    fn cancel(&self, session_id: &acp_v1::SessionId, cx: &mut App);
+    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App);
 
     /// Request-scoped elicitations are connection-level because they can arrive before a session
     /// thread exists. Session-scoped elicitations stay in the thread timeline, but use
@@ -233,7 +241,7 @@ pub trait AgentConnection {
 
     fn truncate(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionTruncate>> {
         None
@@ -241,7 +249,7 @@ pub trait AgentConnection {
 
     fn set_title(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionSetTitle>> {
         None
@@ -253,7 +261,7 @@ pub trait AgentConnection {
     /// This allows sharing the selector in UI components.
     fn model_selector(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
     ) -> Option<Rc<dyn AgentModelSelector>> {
         None
     }
@@ -264,7 +272,7 @@ pub trait AgentConnection {
 
     fn session_modes(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionModes>> {
         None
@@ -272,7 +280,7 @@ pub trait AgentConnection {
 
     fn session_config_options(
         &self,
-        _session_id: &acp_v1::SessionId,
+        _session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
         None
@@ -316,6 +324,16 @@ pub trait ReceiptSessionSubmissions {
         content: Vec<acp_v2::ContentBlock>,
         cx: &mut App,
     ) -> Task<Result<acp_v2::PromptResponse>>;
+
+    fn supports_retry(&self) -> bool {
+        false
+    }
+
+    fn retry(&self, _cx: &mut App) -> Task<Result<acp_v2::PromptResponse>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Receipt-driven retry is not supported"
+        )))
+    }
 }
 
 pub trait AgentSessionRetry {
@@ -331,17 +349,17 @@ pub trait AgentTelemetry {
     /// storage with telemetry events.
     fn thread_data(
         &self,
-        session_id: &acp_v1::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &mut App,
     ) -> Task<Result<serde_json::Value>>;
 }
 
 pub trait AgentSessionModes {
-    fn current_mode(&self) -> acp_v1::SessionModeId;
+    fn current_mode(&self) -> acp_v2::SessionConfigValueId;
 
-    fn all_modes(&self) -> Vec<acp_v1::SessionMode>;
+    fn all_modes(&self) -> Vec<acp_v2::SessionConfigSelectOption>;
 
-    fn set_mode(&self, mode: acp_v1::SessionModeId, cx: &mut App) -> Task<Result<()>>;
+    fn set_mode(&self, mode: acp_v2::SessionConfigValueId, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentSessionConfigOptions {
@@ -368,14 +386,14 @@ pub trait AgentSessionConfigOptions {
 pub struct AgentSessionListRequest {
     pub cwd: Option<PathBuf>,
     pub cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentSessionListResponse {
     pub sessions: Vec<AgentSessionInfo>,
     pub next_cursor: Option<String>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 impl AgentSessionListResponse {
@@ -390,16 +408,16 @@ impl AgentSessionListResponse {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSessionInfo {
-    pub session_id: acp_v1::SessionId,
+    pub session_id: acp_v2::SessionId,
     pub work_dirs: Option<PathList>,
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
     pub created_at: Option<DateTime<Utc>>,
-    pub meta: Option<acp_v1::Meta>,
+    pub meta: Option<acp_v2::Meta>,
 }
 
 impl AgentSessionInfo {
-    pub fn new(session_id: impl Into<acp_v1::SessionId>) -> Self {
+    pub fn new(session_id: impl Into<acp_v2::SessionId>) -> Self {
         Self {
             session_id: session_id.into(),
             work_dirs: None,
@@ -409,14 +427,56 @@ impl AgentSessionInfo {
             meta: None,
         }
     }
+
+    pub fn apply_update(&mut self, update: acp_v2::SessionInfoUpdate) -> bool {
+        let mut changed = false;
+        if !update.title.is_undefined() {
+            let title = update.title.take().map(SharedString::from);
+            changed |= self.title != title;
+            self.title = title;
+        }
+
+        let updated_at = match update.updated_at {
+            MaybeUndefined::Undefined => None,
+            MaybeUndefined::Null => Some(None),
+            MaybeUndefined::Value(updated_at) => match DateTime::parse_from_rfc3339(&updated_at) {
+                Ok(updated_at) => Some(Some(updated_at.with_timezone(&Utc))),
+                Err(_) => {
+                    log::warn!("Ignoring invalid session information timestamp");
+                    None
+                }
+            },
+        };
+        if let Some(updated_at) = updated_at {
+            changed |= self.updated_at != updated_at;
+            self.updated_at = updated_at;
+        }
+
+        if !update.meta.is_undefined() {
+            let meta = update.meta.take();
+            changed |= self.meta != meta;
+            self.meta = meta;
+        }
+        changed
+    }
+}
+
+pub fn session_info_update_from_v1(update: acp_v1::SessionInfoUpdate) -> acp_v2::SessionInfoUpdate {
+    let mut converted = acp_v2::SessionInfoUpdate::new()
+        .title(update.title)
+        .updated_at(update.updated_at);
+    if let Some(meta) = update.meta {
+        converted = converted.meta(meta);
+    }
+    converted
 }
 
 #[derive(Debug, Clone)]
 pub enum SessionListUpdate {
     Refresh,
     SessionInfo {
-        session_id: acp_v1::SessionId,
-        update: acp_v1::SessionInfoUpdate,
+        session_id: acp_v2::SessionId,
+        update: acp_v2::SessionInfoUpdate,
     },
 }
 
@@ -431,7 +491,7 @@ pub trait AgentSessionList {
         false
     }
 
-    fn delete_session(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) -> Task<Result<()>> {
+    fn delete_session(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!("delete_session not supported")))
     }
 
@@ -454,6 +514,35 @@ impl dyn AgentSessionList {
     }
 }
 
+/// Read protocol fields without replacing the concrete SDK error or its context chain.
+#[derive(Clone, Copy)]
+pub struct ProtocolErrorInfo<'a> {
+    pub code: i32,
+    pub message: &'a str,
+    pub data: Option<&'a serde_json::Value>,
+}
+
+impl<'a> ProtocolErrorInfo<'a> {
+    pub fn from_error(error: &'a anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<acp_v1::Error>() {
+            return Some(Self {
+                code: error.code.into(),
+                message: &error.message,
+                data: error.data.as_ref(),
+            });
+        }
+        error.downcast_ref::<acp_v2::Error>().map(|error| Self {
+            code: error.code.into(),
+            message: &error.message,
+            data: error.data.as_ref(),
+        })
+    }
+
+    pub fn is_auth_required(&self) -> bool {
+        self.code == i32::from(acp_v2::ErrorCode::AuthRequired)
+    }
+}
+
 #[derive(Debug)]
 pub struct AuthRequired {
     pub description: Option<String>,
@@ -467,6 +556,19 @@ impl AuthRequired {
     pub fn with_description(mut self, description: String) -> Self {
         self.description = Some(description);
         self
+    }
+
+    pub fn from_error(error: &anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<Self>() {
+            return Some(Self {
+                description: error.description.clone(),
+            });
+        }
+        let error = ProtocolErrorInfo::from_error(error)?;
+        error.is_auth_required().then(|| Self {
+            description: (error.message != acp_v2::ErrorCode::AuthRequired.to_string())
+                .then(|| error.message.to_owned()),
+        })
     }
 }
 
@@ -572,8 +674,8 @@ impl AgentModelList {
 
 #[derive(Debug, Clone)]
 pub struct PermissionOptionChoice {
-    pub allow: acp_v1::PermissionOption,
-    pub deny: acp_v1::PermissionOption,
+    pub allow: acp_v2::PermissionOption,
+    pub deny: acp_v2::PermissionOption,
     pub sub_patterns: Vec<String>,
 }
 
@@ -597,7 +699,8 @@ impl PermissionOptionChoice {
             None
         };
 
-        crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind).params(params)
+        crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind.clone())
+            .params(params)
     }
 }
 
@@ -614,7 +717,7 @@ pub struct PermissionPattern {
 
 #[derive(Debug, Clone)]
 pub enum PermissionOptions {
-    Flat(Vec<acp_v1::PermissionOption>),
+    Flat(Vec<acp_v2::PermissionOption>),
     Dropdown(Vec<PermissionOptionChoice>),
     DropdownWithPatterns {
         choices: Vec<PermissionOptionChoice>,
@@ -634,8 +737,8 @@ impl PermissionOptions {
 
     pub fn option_for_id(
         &self,
-        id: &acp_v1::PermissionOptionId,
-    ) -> Option<&acp_v1::PermissionOption> {
+        id: &acp_v2::PermissionOptionId,
+    ) -> Option<&acp_v2::PermissionOption> {
         match self {
             Self::Flat(options) => options.iter().find(|option| &option.option_id == id),
             Self::Dropdown(choices) | Self::DropdownWithPatterns { choices, .. } => {
@@ -654,8 +757,8 @@ impl PermissionOptions {
 
     pub fn first_option_of_kind(
         &self,
-        kind: acp_v1::PermissionOptionKind,
-    ) -> Option<&acp_v1::PermissionOption> {
+        kind: acp_v2::PermissionOptionKind,
+    ) -> Option<&acp_v2::PermissionOption> {
         match self {
             PermissionOptions::Flat(options) => options.iter().find(|option| option.kind == kind),
             PermissionOptions::Dropdown(options) => options.iter().find_map(|choice| {
@@ -681,13 +784,13 @@ impl PermissionOptions {
         }
     }
 
-    pub fn allow_once_option_id(&self) -> Option<acp_v1::PermissionOptionId> {
-        self.first_option_of_kind(acp_v1::PermissionOptionKind::AllowOnce)
+    pub fn allow_once_option_id(&self) -> Option<acp_v2::PermissionOptionId> {
+        self.first_option_of_kind(acp_v2::PermissionOptionKind::AllowOnce)
             .map(|option| option.option_id.clone())
     }
 
-    pub fn deny_once_option_id(&self) -> Option<acp_v1::PermissionOptionId> {
-        self.first_option_of_kind(acp_v1::PermissionOptionKind::RejectOnce)
+    pub fn deny_once_option_id(&self) -> Option<acp_v2::PermissionOptionId> {
+        self.first_option_of_kind(acp_v2::PermissionOptionKind::RejectOnce)
             .map(|option| option.option_id.clone())
     }
 
@@ -735,10 +838,11 @@ impl PermissionOptions {
             &always_choice.deny
         };
 
-        let outcome = crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind)
-            .params(Some(crate::SelectedPermissionParams::Terminal {
-                patterns: checked_patterns,
-            }));
+        let outcome =
+            crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind.clone())
+                .params(Some(crate::SelectedPermissionParams::Terminal {
+                    patterns: checked_patterns,
+                }));
         Some(outcome)
     }
 }
@@ -810,14 +914,16 @@ mod test_support {
 
     #[derive(Clone)]
     pub struct StubAgentConnection {
-        sessions: Arc<Mutex<HashMap<acp_v1::SessionId, Session>>>,
-        permission_requests: HashMap<acp_v1::ToolCallId, PermissionOptions>,
-        next_prompt_updates: Arc<Mutex<Vec<acp_v1::SessionUpdate>>>,
+        sessions: Arc<Mutex<HashMap<acp_v2::SessionId, Session>>>,
+        permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
+        next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+        set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
+        cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
@@ -825,6 +931,14 @@ mod test_support {
         supports_set_title: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
+        prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
+    }
+
+    enum StubPromptUpdate {
+        Legacy(Box<acp_v1::SessionUpdate>),
+        Application(
+            Box<dyn FnOnce(&mut AcpThread, &mut gpui::Context<AcpThread>) -> Result<()> + Send>,
+        ),
     }
 
     struct Session {
@@ -846,6 +960,8 @@ mod test_support {
                 next_receipt_response: Default::default(),
                 receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
+                set_title_calls: Default::default(),
+                cancel_calls: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_receipt_submissions: false,
@@ -855,11 +971,30 @@ mod test_support {
                 supports_set_title: true,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
+                prompt_capabilities_rx: watch::Receiver::constant(
+                    acp_v2::PromptCapabilities::new()
+                        .image(acp_v2::PromptImageCapabilities::new())
+                        .audio(acp_v2::PromptAudioCapabilities::new())
+                        .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+                ),
             }
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
-            *self.next_prompt_updates.lock() = updates;
+            *self.next_prompt_updates.lock() = updates
+                .into_iter()
+                .map(|update| StubPromptUpdate::Legacy(Box::new(update)))
+                .collect();
+        }
+
+        pub fn set_next_prompt_action(
+            &self,
+            update: impl FnOnce(&mut AcpThread, &mut gpui::Context<AcpThread>) -> Result<()>
+            + Send
+            + 'static,
+        ) {
+            *self.next_prompt_updates.lock() =
+                vec![StubPromptUpdate::Application(Box::new(update))];
         }
 
         pub fn defer_next_prompt_response(
@@ -887,6 +1022,14 @@ mod test_support {
             self.receipt_prompt.lock().take()
         }
 
+        pub fn take_set_title_calls(&self) -> Vec<(acp_v2::SessionId, SharedString)> {
+            std::mem::take(&mut *self.set_title_calls.lock())
+        }
+
+        pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
+            std::mem::take(&mut *self.cancel_calls.lock())
+        }
+
         pub fn defer_next_truncate(&self) -> oneshot::Sender<()> {
             let (sender, receiver) = oneshot::channel();
             assert!(self.next_truncate.lock().replace(receiver).is_none());
@@ -895,7 +1038,7 @@ mod test_support {
 
         pub fn with_permission_requests(
             mut self,
-            permission_requests: HashMap<acp_v1::ToolCallId, PermissionOptions>,
+            permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         ) -> Self {
             self.permission_requests = permission_requests;
             self
@@ -913,6 +1056,14 @@ mod test_support {
 
         pub fn with_retry(mut self) -> Self {
             self.supports_retry = true;
+            self
+        }
+
+        pub fn with_prompt_capabilities(
+            mut self,
+            prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
+        ) -> Self {
+            self.prompt_capabilities_rx = prompt_capabilities_rx;
             self
         }
 
@@ -941,7 +1092,7 @@ mod test_support {
 
         fn create_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             work_dirs: PathList,
             title: Option<SharedString>,
@@ -957,12 +1108,7 @@ mod test_support {
                     project,
                     action_log,
                     session_id.clone(),
-                    watch::Receiver::constant(
-                        acp_v1::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
+                    self.prompt_capabilities_rx.clone(),
                     cx,
                 )
             });
@@ -978,7 +1124,7 @@ mod test_support {
 
         pub fn send_update(
             &self,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             update: acp_v1::SessionUpdate,
             cx: &mut App,
         ) {
@@ -998,7 +1144,7 @@ mod test_support {
                 .unwrap();
         }
 
-        pub fn end_turn(&self, session_id: acp_v1::SessionId, stop_reason: acp_v1::StopReason) {
+        pub fn end_turn(&self, session_id: acp_v2::SessionId, stop_reason: acp_v1::StopReason) {
             self.sessions
                 .lock()
                 .get_mut(&session_id)
@@ -1020,13 +1166,13 @@ mod test_support {
             self.telemetry_id.clone()
         }
 
-        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
             &[]
         }
 
         fn model_selector(
             &self,
-            _session_id: &acp_v1::SessionId,
+            _session_id: &acp_v2::SessionId,
         ) -> Option<Rc<dyn AgentModelSelector>> {
             Some(self.model_selector_impl())
         }
@@ -1037,7 +1183,7 @@ mod test_support {
             work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let session_id = acp_v1::SessionId::new(StubSessionCounter::next(cx).to_string());
+            let session_id = acp_v2::SessionId::new(StubSessionCounter::next(cx).to_string());
             let thread = self.create_session(session_id, project, work_dirs, None, cx);
             Task::ready(Ok(thread))
         }
@@ -1052,7 +1198,7 @@ mod test_support {
 
         fn load_session(
             self: Rc<Self>,
-            session_id: acp_v1::SessionId,
+            session_id: acp_v2::SessionId,
             project: Entity<Project>,
             work_dirs: PathList,
             title: Option<SharedString>,
@@ -1068,7 +1214,7 @@ mod test_support {
 
         fn authenticate(
             &self,
-            _method_id: acp_v1::AuthMethodId,
+            _method_id: acp_v2::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             unimplemented!()
@@ -1083,15 +1229,15 @@ mod test_support {
             params: acp_v2::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
-            let params = match crate::content::prompt_to_v1(params) {
-                Ok(params) => params,
-                Err(error) => return Task::ready(Err(error)),
-            };
+            let session_id = params.session_id.clone();
+            if let Err(error) = crate::content::prompt_to_v1(params) {
+                return Task::ready(Err(error));
+            }
             let mut sessions = self.sessions.lock();
             let Session {
                 thread,
                 response_tx,
-            } = sessions.get_mut(&params.session_id).unwrap();
+            } = sessions.get_mut(&session_id).unwrap();
             let mut tasks = vec![];
             if let Some(receiver) = self.next_prompt_response.lock().take() {
                 cx.spawn(async move |_| receiver.await?)
@@ -1105,10 +1251,11 @@ mod test_support {
             } else {
                 for update in self.next_prompt_updates.lock().drain(..) {
                     let thread = thread.clone();
-                    let update = update.clone();
-                    let permission_request = if let acp_v1::SessionUpdate::ToolCall(tool_call) =
-                        &update
-                        && let Some(options) = self.permission_requests.get(&tool_call.tool_call_id)
+                    let permission_request = if let StubPromptUpdate::Legacy(update) = &update
+                        && let acp_v1::SessionUpdate::ToolCall(tool_call) = update.as_ref()
+                        && let Some(options) = self
+                            .permission_requests
+                            .get(&acp_v2::ToolCallId::new(tool_call.tool_call_id.0.clone()))
                     {
                         Some((tool_call.clone(), options.clone()))
                     } else {
@@ -1127,9 +1274,12 @@ mod test_support {
                                 })??
                                 .await;
                         }
-                        thread.update(cx, |thread, cx| {
-                            thread.handle_session_update(update.clone(), cx).unwrap();
-                        })?;
+                        thread.update(cx, |thread, cx| match update {
+                            StubPromptUpdate::Legacy(update) => thread
+                                .handle_session_update(*update, cx)
+                                .map_err(anyhow::Error::from),
+                            StubPromptUpdate::Application(update) => update(thread, cx),
+                        })??;
                         anyhow::Ok(())
                     });
                     tasks.push(task);
@@ -1153,7 +1303,7 @@ mod test_support {
 
         fn receipt_submissions(
             &self,
-            session_id: &acp_v1::SessionId,
+            session_id: &acp_v2::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn ReceiptSessionSubmissions>> {
             self.supports_receipt_submissions.then(|| {
@@ -1168,14 +1318,15 @@ mod test_support {
 
         fn retry(
             &self,
-            _session_id: &acp_v1::SessionId,
+            _session_id: &acp_v2::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionRetry>> {
             self.supports_retry
                 .then(|| Rc::new(StubAgentSessionRetry) as Rc<dyn AgentSessionRetry>)
         }
 
-        fn cancel(&self, session_id: &acp_v1::SessionId, _cx: &mut App) {
+        fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
+            self.cancel_calls.lock().push(session_id.clone());
             if let Some(end_turn_tx) = self
                 .sessions
                 .lock()
@@ -1190,16 +1341,20 @@ mod test_support {
 
         fn set_title(
             &self,
-            _session_id: &acp_v1::SessionId,
+            session_id: &acp_v2::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionSetTitle>> {
-            self.supports_set_title
-                .then(|| Rc::new(StubAgentSessionSetTitle) as _)
+            self.supports_set_title.then(|| {
+                Rc::new(StubAgentSessionSetTitle {
+                    session_id: session_id.clone(),
+                    calls: self.set_title_calls.clone(),
+                }) as _
+            })
         }
 
         fn truncate(
             &self,
-            _session_id: &acp_v1::SessionId,
+            _session_id: &acp_v2::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             // Capability checks also call this; only run may consume the gate.
@@ -1213,10 +1368,14 @@ mod test_support {
         }
     }
 
-    struct StubAgentSessionSetTitle;
+    struct StubAgentSessionSetTitle {
+        session_id: acp_v2::SessionId,
+        calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
+    }
 
     impl AgentSessionSetTitle for StubAgentSessionSetTitle {
-        fn run(&self, _title: SharedString, _cx: &mut App) -> Task<Result<()>> {
+        fn run(&self, title: SharedString, _cx: &mut App) -> Task<Result<()>> {
+            self.calls.lock().push((self.session_id.clone(), title));
             Task::ready(Ok(()))
         }
     }
@@ -1237,8 +1396,8 @@ mod test_support {
     }
 
     struct StubReceiptSessionSubmissions {
-        session_id: acp_v1::SessionId,
-        sessions: Arc<Mutex<HashMap<acp_v1::SessionId, Session>>>,
+        session_id: acp_v2::SessionId,
+        sessions: Arc<Mutex<HashMap<acp_v2::SessionId, Session>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
@@ -1333,3 +1492,143 @@ mod test_support {
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test_support::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    #[test]
+    fn session_info_id_preserves_backing_arc_and_legacy_serialization() {
+        for value in ["", "session/ \0 雪 😀"] {
+            let backing: Arc<str> = value.into();
+            let info = AgentSessionInfo::new(acp_v2::SessionId::new(backing.clone()));
+            assert!(Arc::ptr_eq(&info.session_id.0, &backing));
+            let wire_id = acp_v1::SessionId::new(backing);
+            let serialized = serde_json::to_value(&info.session_id).expect("application ID");
+            assert_eq!(serialized, json!(value));
+            assert_eq!(
+                serialized,
+                serde_json::to_value(&wire_id).expect("legacy ID"),
+            );
+            let restored = AgentSessionInfo::new(
+                serde_json::from_value::<acp_v2::SessionId>(serialized).expect("restored ID"),
+            );
+            assert_eq!(restored, info);
+        }
+    }
+
+    #[test]
+    fn session_info_patches_preserve_legacy_fields_and_apply_tristate_updates() {
+        let timestamp = "2026-03-04T05:06:07+02:30";
+        let updated_at = DateTime::parse_from_rfc3339(timestamp)
+            .expect("valid timestamp")
+            .with_timezone(&Utc);
+        let original_meta = acp_v2::Meta::from_iter([(
+            "original".into(),
+            json!({"nested": [1, {"value": "retained"}]}),
+        )]);
+        let original = AgentSessionInfo {
+            session_id: acp_v2::SessionId::new("opaque/session"),
+            work_dirs: Some(PathList::new(&[std::path::Path::new("/workspace")])),
+            title: Some("Original title".into()),
+            updated_at: Some(updated_at),
+            created_at: Some(updated_at),
+            meta: Some(original_meta),
+        };
+
+        for (wire, title, expected_updated_at, meta, changed) in [
+            (
+                json!({}),
+                original.title.clone(),
+                original.updated_at,
+                original.meta.clone(),
+                false,
+            ),
+            (
+                json!({"title": null, "updatedAt": null}),
+                None,
+                None,
+                original.meta.clone(),
+                true,
+            ),
+            (
+                json!({"title": "", "updatedAt": timestamp, "_meta": {}}),
+                Some("".into()),
+                Some(updated_at),
+                Some(acp_v2::Meta::new()),
+                true,
+            ),
+            (
+                json!({"_meta": {"replacement": {"value": []}}}),
+                original.title.clone(),
+                original.updated_at,
+                Some(acp_v2::Meta::from_iter([(
+                    "replacement".into(),
+                    json!({"value": []}),
+                )])),
+                true,
+            ),
+            (
+                json!({"_meta": null}),
+                original.title.clone(),
+                original.updated_at,
+                original.meta.clone(),
+                false,
+            ),
+        ] {
+            let legacy: acp_v1::SessionInfoUpdate =
+                serde_json::from_value(wire).expect("legacy patch");
+            let converted = session_info_update_from_v1(legacy.clone());
+            assert_eq!(
+                serde_json::to_value(&converted).expect("shared patch wire"),
+                serde_json::to_value(&legacy).expect("normalized legacy patch wire")
+            );
+
+            let mut info = original.clone();
+            assert_eq!(info.apply_update(converted.clone()), changed);
+            assert_eq!(
+                info,
+                AgentSessionInfo {
+                    title,
+                    updated_at: expected_updated_at,
+                    meta,
+                    ..original.clone()
+                }
+            );
+            assert!(!info.apply_update(converted), "identical patch is a no-op");
+        }
+
+        let mut info = original.clone();
+        assert!(info.apply_update(acp_v2::SessionInfoUpdate::new().meta(None::<acp_v2::Meta>)));
+        assert_eq!(
+            info,
+            AgentSessionInfo {
+                meta: None,
+                ..original.clone()
+            }
+        );
+        assert!(info.apply_update(acp_v2::SessionInfoUpdate::new().meta(acp_v2::Meta::new())));
+        assert_eq!(info.meta, Some(acp_v2::Meta::new()));
+
+        let mut info = original.clone();
+        assert!(
+            info.apply_update(
+                acp_v2::SessionInfoUpdate::new()
+                    .title("New title")
+                    .updated_at("invalid private timestamp")
+            )
+        );
+        assert_eq!(
+            info,
+            AgentSessionInfo {
+                title: Some("New title".into()),
+                ..original
+            }
+        );
+        assert!(!info.apply_update(
+            acp_v2::SessionInfoUpdate::new().updated_at("invalid private timestamp")
+        ));
+    }
+}
