@@ -153,11 +153,11 @@ impl ForegroundWorkItem for ForegroundBarrier {
     }
 }
 
-struct ElicitationDisconnectWork {
+struct ClientDisconnectWork {
     acknowledgment: futures::channel::oneshot::Sender<()>,
 }
 
-impl ForegroundWorkItem for ElicitationDisconnectWork {
+impl ForegroundWorkItem for ClientDisconnectWork {
     fn run(self: Box<Self>, cx: &mut AsyncApp, context: &ClientContext) {
         if let Some(scopes) = &context.active_request_scopes {
             scopes.borrow_mut().clear();
@@ -172,6 +172,7 @@ impl ForegroundWorkItem for ElicitationDisconnectWork {
             if let Some(thread) = thread.upgrade() {
                 thread.update(cx, |thread, cx| {
                     thread.cancel_outstanding_elicitations(cx);
+                    thread.disconnect_submissions(cx);
                     cx.notify();
                 });
             }
@@ -189,11 +190,11 @@ impl ForegroundWorkItem for ElicitationDisconnectWork {
     }
 }
 
-async fn cancel_elicitations_after_disconnect(
+async fn settle_after_disconnect(
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
 ) -> Result<(), acp::Error> {
     let (acknowledgment, received) = futures::channel::oneshot::channel();
-    let work: ForegroundWork = Box::new(ElicitationDisconnectWork { acknowledgment });
+    let work: ForegroundWork = Box::new(ClientDisconnectWork { acknowledgment });
     if let Err(error) = dispatch_tx.unbounded_send(work) {
         error.into_inner().reject();
         return Err(dispatch_queue_closed_error());

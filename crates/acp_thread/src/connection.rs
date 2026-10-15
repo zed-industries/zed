@@ -319,6 +319,8 @@ pub trait AgentSessionClientUserMessageIds {
 /// A session-bound prompt transport whose response acknowledges acceptance, not completion.
 /// Implementations must report foreground state separately through `AcpThread::update_session_state`.
 pub trait ReceiptSessionSubmissions {
+    /// Transport loss must carry [`crate::SubmissionDisconnected`] (which may be
+    /// added as error context) rather than claiming that the agent rejected insertion.
     fn prompt(
         &self,
         content: Vec<acp_v2::ContentBlock>,
