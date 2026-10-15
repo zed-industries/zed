@@ -690,6 +690,7 @@ impl Render for StagedDiffToolbar {
 #[cfg(test)]
 mod tests {
     use crate::project_diff::{self, ProjectDiff};
+    use editor::actions::OpenExcerpts;
     use git::repository::RepoPath;
     use gpui::TestAppContext;
     use language::Point;
@@ -814,6 +815,77 @@ mod tests {
             );
             assert_eq!(active_item.tab_content_text(0, cx), "Staged Changes");
             assert!(!active_item.can_save(cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_to_file_opens_the_worktree_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let contents = "one\nTWO\nthree\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": contents,
+                }
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", "one\ntwo\nthree\n".to_owned())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", contents.to_owned())],
+        );
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let worktree_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/src/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(move |window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            StagedDiff::deploy_at(workspace, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        let diff_editor = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<StagedDiff>(cx)
+                .unwrap()
+                .read(cx)
+                .diff
+                .read(cx)
+                .editor()
+                .read(cx)
+                .rhs_editor()
+                .clone()
+        });
+        diff_editor.update_in(cx, |editor, window, cx| {
+            editor.open_excerpts(&OpenExcerpts, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update(cx, |workspace, cx| {
+            let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            assert_eq!(
+                editor.read(cx).active_buffer(cx).unwrap().entity_id(),
+                worktree_buffer.entity_id()
+            );
+            assert!(!editor.read(cx).read_only(cx));
         });
     }
 

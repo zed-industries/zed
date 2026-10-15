@@ -15279,6 +15279,57 @@ async fn test_staged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_backing_buffer_for_historic_snapshot(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let contents = "one\nTWO\nthree\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": contents,
+            }
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", "one\ntwo\nthree\n".to_owned())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("src/main.rs", contents.to_owned())]);
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let worktree_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let (_, index_text_buffer) = project
+        .update(cx, |project, cx| project.open_staged_diff(worktree_buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    // A historic snapshot buffer resolves to the worktree buffer for the same file...
+    assert_eq!(
+        project.read_with(cx, |project, cx| project
+            .backing_buffer_for_historic_file(&index_text_buffer, cx)
+            .map(|buffer| buffer.entity_id())),
+        Some(worktree_buffer.entity_id()),
+    );
+    // ...but a real, file-backed buffer does not resolve.
+    assert!(
+        project.read_with(cx, |project, cx| project
+            .backing_buffer_for_historic_file(&worktree_buffer, cx)
+            .is_none())
+    );
+}
+
+#[gpui::test]
 async fn test_base_text_buffers_released_when_diffs_dropped(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
