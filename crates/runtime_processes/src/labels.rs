@@ -250,7 +250,7 @@ mod tests {
             ),
             (
                 &["python", "manage.py", "runserver", "8000"],
-                "manage.py runserver",
+                "manage.py runserver 8000",
             ),
             (
                 &[
