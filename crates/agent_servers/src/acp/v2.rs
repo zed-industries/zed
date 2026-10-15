@@ -279,7 +279,7 @@ impl AcpV2Connection {
                 "Authentication method is not supported for agent-managed login"
             )));
         }
-        self.auth_request(request, cx)
+        self.scoped_request(request, cx)
     }
 
     pub fn supports_logout(&self) -> bool {
@@ -294,10 +294,23 @@ impl AcpV2Connection {
         if !self.supports_logout() {
             return Task::ready(Err(anyhow!("Logout is not advertised by this agent")));
         }
-        self.auth_request(request, cx)
+        self.scoped_request(request, cx)
     }
 
-    fn auth_request<Request: JsonRpcRequest + 'static>(
+    /// Dropping this acceptance RPC only requests RPC cancellation, not cancellation of
+    /// accepted session work. Callers still own session registration and submission tracking.
+    pub fn request_prompt_receipt(
+        &self,
+        request: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
+        if self.initialize_response.capabilities.session.is_none() {
+            return Task::ready(Err(anyhow!("Sessions are not advertised by this agent")));
+        }
+        self.scoped_request(request, cx)
+    }
+
+    fn scoped_request<Request: JsonRpcRequest + 'static>(
         &self,
         request: Request,
         cx: &mut App,
@@ -811,6 +824,8 @@ mod tests {
         agent: V2ConnectionTo<Client>,
         logins: Arc<Mutex<Vec<(acp::LoginAuthRequest, acp::RequestId)>>>,
         logouts: Arc<Mutex<Vec<acp::LogoutAuthRequest>>>,
+        prompts: async_channel::Receiver<(acp::PromptRequest, Responder<acp::PromptResponse>)>,
+        session_cancellations: Arc<Mutex<Vec<acp::CancelSessionNotification>>>,
         _agent_task: Task<Result<(), agent_client_protocol::Error>>,
     }
 
@@ -1665,6 +1680,8 @@ done
             let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
             let logins = Arc::new(Mutex::new(Vec::new()));
             let logouts = Arc::new(Mutex::new(Vec::new()));
+            let (prompt_sender, prompts) = async_channel::unbounded();
+            let session_cancellations = Arc::new(Mutex::new(Vec::new()));
             let (sender, received) = futures::channel::oneshot::channel();
             let agent_task = cx.background_spawn(
                 Agent
@@ -1764,6 +1781,28 @@ done
                         },
                         agent_client_protocol::on_receive_request!(),
                     )
+                    .on_receive_request(
+                        async move |request: acp::PromptRequest, responder, _| {
+                            prompt_sender
+                                .try_send((request, responder))
+                                .expect("prompt request receiver");
+                            Ok(())
+                        },
+                        agent_client_protocol::on_receive_request!(),
+                    )
+                    .on_receive_notification(
+                        {
+                            let session_cancellations = session_cancellations.clone();
+                            async move |notification: acp::CancelSessionNotification, _| {
+                                session_cancellations
+                                    .lock()
+                                    .expect("session cancellation log")
+                                    .push(notification);
+                                Ok(())
+                            }
+                        },
+                        agent_client_protocol::on_receive_notification!(),
+                    )
                     .connect_with(agent_transport, async move |agent| {
                         assert!(sender.send(agent).is_ok());
                         futures::future::pending::<Result<(), agent_client_protocol::Error>>().await
@@ -1788,6 +1827,8 @@ done
                 agent,
                 logins,
                 logouts,
+                prompts,
+                session_cancellations,
                 _agent_task: agent_task,
             })
         }
@@ -1800,10 +1841,237 @@ done
             match futures::future::select(update, timeout).await {
                 futures::future::Either::Left(_) => {}
                 futures::future::Either::Right(_) => {
-                    panic!("timed out registering auth elicitation")
+                    panic!("timed out registering request elicitation")
                 }
             }
         }
+
+        fn request_input(
+            &self,
+            parent_id: acp::RequestId,
+            cx: &mut TestAppContext,
+        ) -> Task<Result<acp::CreateElicitationResponse, agent_client_protocol::Error>> {
+            let request = self.agent.send_request(acp::CreateElicitationRequest::new(
+                acp::ElicitationFormMode::new(
+                    acp::ElicitationRequestScope::new(parent_id),
+                    acp::ElicitationSchema::new(),
+                ),
+                "Prompt input",
+            ));
+            cx.background_spawn(request.block_task())
+        }
+    }
+
+    fn session_agent_response() -> acp::InitializeResponse {
+        acp::InitializeResponse::new(
+            ProtocolVersion::V2,
+            acp::Implementation::new("prompt-test-agent", "1"),
+        )
+        .capabilities(acp::AgentCapabilities::new().session(acp::SessionCapabilities::new()))
+    }
+
+    #[gpui::test]
+    async fn v2_prompt_sdk_returns_receipt_without_waiting_for_execution(cx: &mut TestAppContext) {
+        let harness = Harness::new(session_agent_response(), cx)
+            .await
+            .expect("connect");
+        let request: acp::PromptRequest = serde_json::from_value(json!({
+            "sessionId": "session-a",
+            "prompt": [
+                {"type": "text", "text": "Question", "_meta": {"scope": "text"}},
+                {"type": "resource_link", "uri": "file:///project/context.rs", "name": "Context",
+                    "_meta": {"scope": "link"}}
+            ],
+            "_meta": {"scope": "prompt"}
+        }))
+        .expect("prompt request");
+        let receipt = cx.update(|cx| harness.client.request_prompt_receipt(request.clone(), cx));
+        let (received, responder) = bounded(harness.prompts.recv(), cx)
+            .await
+            .expect("published prompt");
+        assert_eq!(received, request);
+        let cancellation = responder.cancellation();
+        let input = harness.request_input(responder.id().clone(), cx);
+        harness.registered(cx).await;
+        let expected = acp::PromptResponse::new("accepted-message").meta(meta("receipt"));
+        responder
+            .respond(expected.clone())
+            .expect("accept the prompt");
+        assert_eq!(
+            bounded(receipt, cx).await.expect("acceptance receipt"),
+            expected
+        );
+        assert_eq!(
+            bounded(input, cx)
+                .await
+                .expect("finish prompt input")
+                .action,
+            acp::ElicitationAction::Cancel
+        );
+        assert!(!cancellation.is_cancelled());
+        assert!(harness.prompts.is_empty(), "acceptance must not resubmit");
+        assert!(
+            harness
+                .session_cancellations
+                .lock()
+                .expect("session cancellation log")
+                .is_empty()
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_prompt_sdk_requires_sessions_and_preserves_rejections(cx: &mut TestAppContext) {
+        let harness = Harness::new(
+            acp::InitializeResponse::new(
+                ProtocolVersion::V2,
+                acp::Implementation::new("no-sessions", "1"),
+            ),
+            cx,
+        )
+        .await
+        .expect("connect without sessions");
+        let receipt = cx.update(|cx| {
+            harness.client.request_prompt_receipt(
+                acp::PromptRequest::new("missing-session", vec!["Question".into()]),
+                cx,
+            )
+        });
+        assert!(bounded(receipt, cx).await.is_err());
+        assert!(
+            harness.prompts.is_empty(),
+            "missing capability must reject before publication"
+        );
+
+        let harness = Harness::new(session_agent_response(), cx)
+            .await
+            .expect("connect");
+        let receipt = cx.update(|cx| {
+            harness.client.request_prompt_receipt(
+                acp::PromptRequest::new("session-b", vec!["Rejected".into()]),
+                cx,
+            )
+        });
+        let (request, responder) = bounded(harness.prompts.recv(), cx)
+            .await
+            .expect("published prompt");
+        assert_eq!(request.session_id, acp::SessionId::new("session-b"));
+        let rejection = agent_client_protocol::Error::new(-32000, "Prompt was not inserted")
+            .data(json!({"reason": {"retain": [null, 7]}}));
+        responder
+            .respond_with_error(rejection.clone())
+            .expect("reject the prompt");
+        let error = bounded(receipt, cx).await.expect_err("rejected prompt");
+        assert_eq!(
+            error.downcast_ref::<agent_client_protocol::Error>(),
+            Some(&rejection)
+        );
+        assert!(harness.prompts.is_empty(), "rejection must not retry");
+    }
+
+    #[gpui::test]
+    async fn v2_prompt_sdk_drop_cancels_only_its_rpc_and_eof_settles_waiters(
+        cx: &mut TestAppContext,
+    ) {
+        let harness = Harness::new(session_agent_response(), cx)
+            .await
+            .expect("connect");
+        let unpublished = cx.update(|cx| {
+            harness.client.request_prompt_receipt(
+                acp::PromptRequest::new("unpublished", vec!["Never sent".into()]),
+                cx,
+            )
+        });
+        drop(unpublished);
+        cx.run_until_parked();
+        assert!(harness.prompts.is_empty());
+
+        let first = cx.update(|cx| {
+            harness
+                .client
+                .request_prompt_receipt(acp::PromptRequest::new("first", vec!["First".into()]), cx)
+        });
+        let (_, first_responder) = bounded(harness.prompts.recv(), cx)
+            .await
+            .expect("first prompt");
+        let first_cancellation = first_responder.cancellation();
+        let first_id = first_responder.id().clone();
+        let first_input = harness.request_input(first_id.clone(), cx);
+        harness.registered(cx).await;
+        let second = cx.update(|cx| {
+            harness.client.request_prompt_receipt(
+                acp::PromptRequest::new("second", vec!["Second".into()]),
+                cx,
+            )
+        });
+        let (_, second_responder) = bounded(harness.prompts.recv(), cx)
+            .await
+            .expect("second prompt");
+        let second_cancellation = second_responder.cancellation();
+        let second_input = harness.request_input(second_responder.id().clone(), cx);
+        harness.registered(cx).await;
+        drop(first);
+        bounded(first_cancellation.cancelled(), cx).await;
+        assert_eq!(
+            bounded(first_input, cx)
+                .await
+                .expect("cancel first input")
+                .action,
+            acp::ElicitationAction::Cancel
+        );
+        assert!(!second_cancellation.is_cancelled());
+        let store = harness.client.request_elicitations();
+        store.read_with(cx, |store, _| {
+            assert_eq!(
+                store
+                    .elicitations()
+                    .iter()
+                    .filter(|entry| matches!(entry.status, ElicitationStatus::Pending { .. }))
+                    .count(),
+                1
+            );
+        });
+        let late_input = harness.request_input(first_id, cx);
+        assert_eq!(
+            bounded(late_input, cx)
+                .await
+                .expect_err("closed prompt scope")
+                .code,
+            ErrorCode::InvalidParams
+        );
+        first_responder
+            .respond(acp::PromptResponse::new("late-acceptance"))
+            .expect("late acceptance");
+        drop(harness._agent_task);
+        drop(harness.agent);
+        let error = bounded(second, cx)
+            .await
+            .expect_err("EOF must settle the pending RPC");
+        assert!(
+            error
+                .downcast_ref::<agent_client_protocol::Error>()
+                .is_some()
+        );
+        bounded(harness.client.connection.incoming_closed(), cx).await;
+        bounded(drain_foreground_queue(&harness.client.dispatch_tx), cx)
+            .await
+            .expect("disconnect cleanup");
+        assert!(bounded(second_input, cx).await.is_err());
+        store.read_with(cx, |store, _| {
+            assert!(
+                store
+                    .elicitations()
+                    .iter()
+                    .all(|entry| matches!(entry.status, ElicitationStatus::Canceled))
+            );
+        });
+        assert!(harness.prompts.is_empty(), "disconnect must not resend");
+        assert!(
+            harness
+                .session_cancellations
+                .lock()
+                .expect("session cancellation log")
+                .is_empty()
+        );
     }
 
     #[gpui::test]
