@@ -1,4 +1,4 @@
-use crate::{AcpThread, ElicitationStore};
+use crate::{AcpThread, ElicitationStore, ReceiptSubmission};
 use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -323,32 +323,22 @@ pub trait AgentSessionClientUserMessageIds {
 pub trait ReceiptSessionSubmissions {
     /// Transport loss must carry [`crate::SubmissionDisconnected`] (which may be
     /// added as error context) rather than claiming that the agent rejected insertion.
-    fn prompt(
-        &self,
-        content: Vec<acp_v2::ContentBlock>,
-        cx: &mut App,
-    ) -> Task<Result<acp_v2::PromptResponse>>;
-
-    /// Called in the submitting owner's context so transports can bind publication
-    /// to that owner, even when the capability was selected before registration.
-    /// Ordered transports must not yield between releasing their response barrier
-    /// and completing this task, or subsequent EOF may overtake the receipt.
+    /// The owner context binds publication even when capability selection preceded registration.
     fn submit(
         &self,
         content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<AcpThread>,
-    ) -> Task<Result<acp_v2::PromptResponse>> {
-        self.prompt(content, cx)
-    }
+    ) -> ReceiptSubmission;
 
     fn supports_retry(&self) -> bool {
         false
     }
 
-    fn retry(&self, _cx: &mut App) -> Task<Result<acp_v2::PromptResponse>> {
+    fn retry(&self, _cx: &mut Context<AcpThread>) -> ReceiptSubmission {
         Task::ready(Err(anyhow::anyhow!(
             "Receipt-driven retry is not supported"
         )))
+        .into()
     }
 }
 
@@ -1420,19 +1410,20 @@ mod test_support {
     }
 
     impl ReceiptSessionSubmissions for StubReceiptSessionSubmissions {
-        fn prompt(
+        fn submit(
             &self,
             content: Vec<acp_v2::ContentBlock>,
-            cx: &mut App,
-        ) -> Task<Result<acp_v2::PromptResponse>> {
+            cx: &mut gpui::Context<AcpThread>,
+        ) -> ReceiptSubmission {
             if !self.sessions.lock().contains_key(&self.session_id) {
-                return Task::ready(Err(anyhow::Error::msg("Unknown receipt session")));
+                return Task::ready(Err(anyhow::Error::msg("Unknown receipt session"))).into();
             }
             *self.receipt_prompt.lock() = Some(content);
             match self.next_receipt_response.lock().take() {
-                Some(receiver) => cx.spawn(async move |_| Ok(receiver.await??)),
+                Some(receiver) => cx.spawn(async move |_, _| Ok(receiver.await??)),
                 None => Task::ready(Err(anyhow::Error::msg("No deferred receipt response"))),
             }
+            .into()
         }
     }
 

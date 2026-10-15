@@ -1,6 +1,9 @@
 use crate::ReceiptSessionSubmissions;
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{
+    channel::oneshot,
+    future::{BoxFuture, LocalBoxFuture},
+};
 use gpui::{SharedString, Task};
 use std::collections::BTreeMap;
 use std::{
@@ -26,6 +29,37 @@ impl SubmissionId {
 pub enum SubmissionResponse {
     LegacyCompleted(acp_v1::PromptResponse),
     Accepted(acp_v2::PromptResponse),
+}
+
+/// The transport response and, for ordered transports, acknowledgement of model application.
+/// The shared tracker applies the outcome before acknowledging; transports must not
+/// wait for that acknowledgement before producing their response.
+pub struct ReceiptSubmission {
+    pub(crate) response: LocalBoxFuture<'static, anyhow::Result<acp_v2::PromptResponse>>,
+    pub(crate) applied: Option<oneshot::Sender<bool>>,
+}
+
+impl ReceiptSubmission {
+    /// The acknowledgement reports successful or failed model application.
+    /// Dropping it instead means application was abandoned.
+    pub fn ordered(
+        response: LocalBoxFuture<'static, anyhow::Result<acp_v2::PromptResponse>>,
+        applied: oneshot::Sender<bool>,
+    ) -> Self {
+        Self {
+            response,
+            applied: Some(applied),
+        }
+    }
+}
+
+impl From<Task<anyhow::Result<acp_v2::PromptResponse>>> for ReceiptSubmission {
+    fn from(response: Task<anyhow::Result<acp_v2::PromptResponse>>) -> Self {
+        Self {
+            response: Box::pin(response),
+            applied: None,
+        }
+    }
 }
 
 /// A local receipt withdrawn by cancellation before the message was accepted.

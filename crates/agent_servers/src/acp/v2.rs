@@ -6,7 +6,7 @@ use super::{
 };
 use acp_thread::{
     AcpThread, AgentConnection, AgentSessionConfigOptions, ElicitationStore,
-    ReceiptSessionSubmissions, SubmissionDisconnected,
+    ReceiptSessionSubmissions, ReceiptSubmission, SubmissionDisconnected,
 };
 use action_log::ActionLog;
 use agent_client_protocol::{
@@ -457,31 +457,48 @@ impl AcpV2Connection {
             .mcp_servers(servers))
     }
 
-    fn ordered_request<Request: JsonRpcRequest + 'static, Output: 'static>(
+    fn ordered_response<Request: JsonRpcRequest + 'static>(
         connection: &V2ConnectionTo<Agent>,
         dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>,
         request: Request,
         preflight: impl FnOnce() -> Result<()> + 'static,
         abandoned_session: fn(&Request::Response) -> Option<acp::SessionId>,
-        apply: impl FnOnce(Request::Response, &mut AsyncApp) -> Result<Output> + 'static,
-        cx: &App,
-    ) -> LocalBoxFuture<'static, Result<Output>> {
+    ) -> (
+        LocalBoxFuture<'static, Result<Request::Response>>,
+        futures::channel::oneshot::Sender<bool>,
+    ) {
         let connection = connection.clone();
         let dispatch_tx = dispatch_tx.clone();
-        let mut cx = cx.to_async();
-        async move {
+        let (applied, application_finished) = futures::channel::oneshot::channel();
+        let response = async move {
             preflight()?;
             let (sender, received) = futures::channel::oneshot::channel();
-            let (applied, application_finished) = futures::channel::oneshot::channel();
             let request = connection.prepare_request(request);
             let request_id = request.id().clone();
             let cancellation = request.cancellation_handle();
             enqueue_notification(&dispatch_tx, request_id.clone(), register_request);
             let published = request.on_receiving_result({
                 let connection = connection.clone();
+                let dispatch_tx = dispatch_tx.clone();
+                let request_id = request_id.clone();
                 async move |result: Result<Request::Response, agent_client_protocol::Error>| {
                     let abandoned = result.as_ref().ok().and_then(abandoned_session);
-                    if !(sender.send(result).is_ok() && application_finished.await.is_ok())
+                    let successful_response = result.is_ok();
+                    let application = if sender.send(result).is_ok() {
+                        application_finished.await.ok()
+                    } else {
+                        None
+                    };
+                    enqueue_notification(
+                        &dispatch_tx,
+                        request_id,
+                        if successful_response && application == Some(true) {
+                            finish_request
+                        } else {
+                            cancel_request_elicitations
+                        },
+                    );
+                    if application.is_none()
                         && let Some(session_id) = abandoned
                     {
                         // Register cleanup, but never await later traffic in an ordered callback.
@@ -493,6 +510,7 @@ impl AcpV2Connection {
                             })
                             .log_err();
                     }
+                    drain_foreground_queue(&dispatch_tx).await.log_err();
                     Ok(())
                 }
             });
@@ -508,32 +526,43 @@ impl AcpV2Connection {
                     enqueue_notification(&dispatch_tx, request_id, cancel_request_elicitations);
                 }
             });
-            let response = received
-                .await
-                .context(ResponseCallbackDropped)?
-                .map_err(map_acp_error)?;
-            match apply(response, &mut cx) {
-                Ok(output) => {
-                    enqueue_notification(&dispatch_tx, request_id, finish_request);
-                    // Keep cleanup armed through settlement, then return without yielding
-                    // after releasing SDK ordering so later EOF cannot overtake this result.
-                    drain_foreground_queue(&dispatch_tx).await?;
-                    applied.send(()).map_err(|_| {
-                        anyhow!("ACP response ordering callback ended before application")
-                    })?;
-                    guard.abort();
-                    Ok(output)
-                }
-                Err(error) => {
-                    enqueue_notification(&dispatch_tx, request_id, cancel_request_elicitations);
-                    // A rejected duplicate ID belongs to an existing owner, not an abandoned creation.
-                    applied.send(()).map_err(|_| {
-                        anyhow!("ACP response ordering callback ended before application")
-                    })?;
-                    guard.abort();
-                    Err(error)
-                }
+            let response = received.await.context(ResponseCallbackDropped)?;
+            guard.abort();
+            response.map_err(map_acp_error)
+        }
+        .boxed_local();
+        (response, applied)
+    }
+
+    fn ordered_request<Request: JsonRpcRequest + 'static, Output: 'static>(
+        connection: &V2ConnectionTo<Agent>,
+        dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>,
+        request: Request,
+        preflight: impl FnOnce() -> Result<()> + 'static,
+        abandoned_session: fn(&Request::Response) -> Option<acp::SessionId>,
+        apply: impl FnOnce(Request::Response, &mut AsyncApp) -> Result<Output> + 'static,
+        cx: &App,
+    ) -> LocalBoxFuture<'static, Result<Output>> {
+        let (response, applied) = Self::ordered_response(
+            connection,
+            dispatch_tx,
+            request,
+            preflight,
+            abandoned_session,
+        );
+        let dispatch_tx = dispatch_tx.clone();
+        let mut cx = cx.to_async();
+        async move {
+            let result = response.await.and_then(|response| apply(response, &mut cx));
+            if result.is_ok() {
+                drain_foreground_queue(&dispatch_tx).await?;
             }
+            if applied.send(result.is_ok()).is_err() && result.is_ok() {
+                return Err(anyhow!(
+                    "ACP response ordering callback ended before application"
+                ));
+            }
+            result
         }
         .boxed_local()
     }
@@ -887,15 +916,14 @@ impl V2SessionSubmissions {
         &self,
         owner: WeakEntity<AcpThread>,
         content: Vec<acp::ContentBlock>,
-        cx: &App,
-    ) -> LocalBoxFuture<'static, Result<acp::PromptResponse>> {
+    ) -> ReceiptSubmission {
         if let Err(error) = validate_prompt_content(&self.capabilities, &content) {
-            return futures::future::ready(Err(error)).boxed_local();
+            return Task::ready(Err(error)).into();
         }
         let sessions = self.sessions.clone();
         let session_id = self.session_id.clone();
         let connection = self.connection.clone();
-        let response = AcpV2Connection::ordered_request(
+        let (response, applied) = AcpV2Connection::ordered_response(
             &self.connection,
             &self.dispatch_tx,
             acp::PromptRequest::new(self.session_id.clone(), content),
@@ -911,10 +939,8 @@ impl V2SessionSubmissions {
                 Ok(())
             },
             |_| None,
-            |response, _| Ok(response),
-            cx,
         );
-        async move {
+        let response = async move {
             response.await.map_err(|error| {
                 if error.is::<ResponseCallbackDropped>()
                     || connection.is_incoming_closed()
@@ -928,36 +954,18 @@ impl V2SessionSubmissions {
                 }
             })
         }
-        .boxed_local()
+        .boxed_local();
+        ReceiptSubmission::ordered(response, applied)
     }
 }
 
 impl ReceiptSessionSubmissions for V2SessionSubmissions {
-    fn prompt(
-        &self,
-        content: Vec<acp::ContentBlock>,
-        cx: &mut App,
-    ) -> Task<Result<acp::PromptResponse>> {
-        let owner = self
-            .sessions
-            .borrow()
-            .get(&self.session_id)
-            .map(|session| session.thread.clone());
-        match owner {
-            Some(owner) => cx
-                .foreground_executor()
-                .spawn(self.request(owner, content, cx)),
-            None => Task::ready(Err(anyhow!("Session has been released"))),
-        }
-    }
-
     fn submit(
         &self,
         content: Vec<acp::ContentBlock>,
         cx: &mut Context<AcpThread>,
-    ) -> Task<Result<acp::PromptResponse>> {
-        cx.foreground_executor()
-            .spawn(self.request(cx.entity().downgrade(), content, cx))
+    ) -> ReceiptSubmission {
+        self.request(cx.entity().downgrade(), content)
     }
 }
 
@@ -1303,6 +1311,73 @@ mod tests {
                 ForegroundActivity::Idle
             );
         }
+    }
+
+    #[gpui::test]
+    async fn v2_receipt_sdk_holds_later_traffic_until_model_application(cx: &mut TestAppContext) {
+        use acp_thread::SubmissionState;
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let content = vec![acp::ContentBlock::from("question")];
+        let (response, applied) = AcpV2Connection::ordered_response(
+            &harness.client.connection,
+            &harness.client.dispatch_tx,
+            acp::PromptRequest::new(session_id.clone(), content.clone()),
+            || Ok(()),
+            |_| None,
+        );
+        let (delivered, received) = futures::channel::oneshot::channel();
+        let (release, held) = futures::channel::oneshot::channel();
+        let request = ReceiptSubmission::ordered(
+            async move {
+                let response = response.await;
+                delivered.send(()).expect("receipt delivery");
+                held.await.expect("application gate");
+                response
+            }
+            .boxed_local(),
+            applied,
+        );
+        let submission = thread.update(cx, |thread, cx| {
+            thread.submit_receipt(content.clone(), request, cx)
+        });
+        let id = submission.id;
+        drop(submission);
+        let (_, responder) = bounded(harness.prompts.recv(), cx).await.expect("prompt");
+        responder
+            .respond(acp::PromptResponse::new("message"))
+            .expect("acceptance");
+        harness
+            .agent
+            .send_notification(acp::UpdateSessionNotification::new(
+                session_id,
+                acp::SessionUpdate::UserMessage(acp::UserMessage::new("message").content(content)),
+            ))
+            .expect("following echo");
+        bounded(received, cx)
+            .await
+            .expect("transport received receipt");
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.entries().is_empty(),
+                "later traffic must wait for model application"
+            );
+            assert!(matches!(
+                thread.submission(id).expect("pending").state,
+                SubmissionState::Pending
+            ));
+        });
+        release.send(()).expect("apply receipt");
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.entries().len(), 1);
+            assert!(matches!(
+                thread.submission(id).expect("echoed").state,
+                SubmissionState::Accepted { echoed: true, .. }
+            ));
+        });
     }
 
     #[gpui::test]
@@ -1864,7 +1939,8 @@ done
             .config_options
             .borrow_mut()
             .clear();
-        assert!(bounded(setting, cx).await.is_err());
+        let error = bounded(setting, cx).await.expect_err("stale config");
+        assert!(error.to_string().contains("not offered"), "{error}");
         assert!(
             harness.config_requests.is_empty(),
             "stale preflight must not publish a config RPC"
