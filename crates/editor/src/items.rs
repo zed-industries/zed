@@ -664,6 +664,7 @@ impl Item for Editor {
             } else {
                 buffer.clip_point(data.cursor_position, Bias::Left)
             };
+            let destination_anchor = buffer.anchor_before(offset);
 
             let mut scroll_anchor = data.scroll_anchor;
             if !buffer.can_resolve(&scroll_anchor.anchor) {
@@ -674,12 +675,23 @@ impl Item for Editor {
 
             drop(buffer);
 
-            if newest_selection.head() == offset {
+            let was_folded = |cx: &mut Context<Self>| {
+                self.display_snapshot(cx)
+                    .folds_in_range(offset..offset)
+                    .next()
+                    .is_some()
+            };
+            let buffer_was_folded = |cx: &Context<Self>| {
+                destination_anchor
+                    .buffer_id()
+                    .is_some_and(|buffer_id| self.is_buffer_folded(buffer_id, cx))
+            };
+            if newest_selection.head() == offset && !was_folded(cx) && !buffer_was_folded(cx) {
                 false
             } else {
                 self.set_scroll_anchor(scroll_anchor, window, cx);
                 self.change_selections(
-                    SelectionEffects::default().nav_history(false),
+                    SelectionEffects::default().nav_history(false).unfold(),
                     window,
                     cx,
                     |s| s.select_ranges([offset..offset]),
@@ -807,6 +819,7 @@ impl Item for Editor {
 
         h_flex()
             .gap_1()
+            .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
             .when(params.truncate_title_middle, |this| {
                 this.w_full().min_w_0().overflow_hidden()
             })
@@ -1216,17 +1229,6 @@ impl Item for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
-        let editor_id = cx.entity_id();
-        // Inactive tabs aren't rendered, so the preview actions can't be dispatched to them.
-        let is_active_in_pane = self
-            .workspace()
-            .and_then(|workspace| workspace.read(cx).pane_for_item_id(editor_id))
-            .and_then(|pane| pane.read(cx).active_item())
-            .is_some_and(|item| item.item_id() == editor_id);
-        if !is_active_in_pane {
-            return Vec::new();
-        }
-
         let mut actions = Vec::new();
 
         let is_markdown = self
