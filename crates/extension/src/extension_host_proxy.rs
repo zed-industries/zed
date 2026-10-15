@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{App, EntityId, Global, ReadGlobal, SharedString, Task};
-use language::{BinaryStatus, ExtensionLanguagesUpdate, LanguageName, LanguageRegistration};
+use language::{BinaryStatus, ExtensionLanguagesUpdateOutcome, LanguageName, LanguageRegistration};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
@@ -230,14 +230,14 @@ impl ExtensionGrammarProxy for ExtensionHostProxy {
 pub trait ExtensionLanguageProxy: Send + Sync + 'static {
     /// Applies the removals before the registrations, as a single update.
     ///
-    /// The returned update contains exactly one status per registration, in the
+    /// The returned outcome contains exactly one status per registration, in the
     /// order the registrations were passed.
     fn update_languages(
         &self,
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
         registrations: Vec<LanguageRegistration>,
-    ) -> ExtensionLanguagesUpdate;
+    ) -> ExtensionLanguagesUpdateOutcome;
 }
 
 impl ExtensionLanguageProxy for ExtensionHostProxy {
@@ -247,9 +247,9 @@ impl ExtensionLanguageProxy for ExtensionHostProxy {
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
         registrations: Vec<LanguageRegistration>,
-    ) -> ExtensionLanguagesUpdate {
+    ) -> ExtensionLanguagesUpdateOutcome {
         let Some(proxy) = self.language_proxy.read().clone() else {
-            return ExtensionLanguagesUpdate::rejected(registrations.len());
+            return ExtensionLanguagesUpdateOutcome::rejected(registrations.len());
         };
         proxy.update_languages(languages_to_remove, grammars_to_remove, registrations)
     }

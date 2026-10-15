@@ -68,21 +68,20 @@ impl LanguageRegistrationStatus {
 
 /// The outcome of [`LanguageRegistry::update_extension_languages`].
 #[derive(Debug, Default)]
-pub struct ExtensionLanguagesUpdate {
+pub struct ExtensionLanguagesUpdateOutcome {
     removed: Vec<LanguageName>,
     registrations: SmallVec<[LanguageRegistrationStatus; 8]>,
 }
 
-impl ExtensionLanguagesUpdate {
-    /// An update in which nothing was removed and every registration was rejected.
+impl ExtensionLanguagesUpdateOutcome {
+    /// An outcome in which nothing was removed and every registration was rejected.
     pub fn rejected(registration_count: usize) -> Self {
         Self {
             removed: Vec::new(),
-            registrations: std::iter::repeat_n(
+            registrations: SmallVec::from_elem(
                 LanguageRegistrationStatus::Rejected,
                 registration_count,
-            )
-            .collect(),
+            ),
         }
     }
 
@@ -477,7 +476,7 @@ impl LanguageRegistry {
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
         registrations: Vec<LanguageRegistration>,
-    ) -> ExtensionLanguagesUpdate {
+    ) -> ExtensionLanguagesUpdateOutcome {
         let state = &mut *self.state.write();
 
         let removed = state
@@ -505,7 +504,8 @@ impl LanguageRegistry {
                     }
                     None => {
                         log::warn!(
-                            "not registering extension language {name}: a language with this name is already registered outside of extensions"
+                            "not registering extension language {name}: \
+                            a language with this name is already registered outside of extensions"
                         );
                         LanguageRegistrationStatus::Rejected
                     }
@@ -518,7 +518,7 @@ impl LanguageRegistry {
             !removed.contains(&name) && !reloaded.contains(&name)
         });
         state.grammars.retain(|name, grammar| {
-            !grammars_to_remove.contains(name) || matches!(grammar, AvailableGrammar::Native(_))
+            matches!(grammar, AvailableGrammar::Native(_)) || !grammars_to_remove.contains(name)
         });
 
         let changed = !languages_to_remove.is_empty()
@@ -529,7 +529,7 @@ impl LanguageRegistry {
             state.reload_count += 1;
             *state.subscription.0.borrow_mut() = ();
         }
-        ExtensionLanguagesUpdate {
+        ExtensionLanguagesUpdateOutcome {
             removed,
             registrations,
         }

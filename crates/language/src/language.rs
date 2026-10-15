@@ -61,7 +61,7 @@ pub use language_core::{
     serialize_regex,
 };
 pub use language_registry::{
-    ExtensionLanguagesUpdate, LanguageLoader, LanguageName, LanguageRegistration,
+    ExtensionLanguagesUpdateOutcome, LanguageLoader, LanguageName, LanguageRegistration,
     LanguageRegistrationStatus, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
 };
 use lsp::{
