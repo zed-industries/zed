@@ -6604,6 +6604,22 @@ impl Project {
         &self.buffer_store
     }
 
+    /// Returns the real worktree buffer backing  read-only snapshot
+    /// buffer — such as the git index text buffer shown in a staged diff — so that
+    /// opening the snapshot navigates to the file on disk instead of the snapshot.
+    pub fn backing_buffer_for_historic_file(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<Entity<Buffer>> {
+        let file = buffer.read(cx).file()?;
+        if !matches!(file.disk_state(), DiskState::Historic { .. }) {
+            return None;
+        }
+
+        let project_path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone()
+        };
+        self.buffer_store().read(cx).get_by_path(&project_path)
+    }
+
     pub fn git_store(&self) -> &Entity<GitStore> {
         &self.git_store
     }

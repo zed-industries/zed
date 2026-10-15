@@ -10680,7 +10680,16 @@ impl Editor {
                         workspace.active_pane().clone()
                     };
 
+                    let project = workspace.project().clone();
                     for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
+                        // A snapshot buffer (e.g. the git index text buffer shown in a staged diff) is
+                        // a read-only view; resolve it to the real worktree buffer so that opening an
+                        // excerpt lands on the file on disk rather than the snapshot.
+                        let buffer = project
+                            .read(cx)
+                            .backing_buffer_for_historic_file(&buffer, cx)
+                            .unwrap_or(buffer);
+
                         let buffer_read = buffer.read(cx);
                         let (has_file, is_project_file) = if let Some(file) = buffer_read.file() {
                             (true, project::File::from_dyn(Some(file)).is_some())
@@ -10756,8 +10765,13 @@ impl Editor {
                                 cx,
                                 |s| {
                                     s.select_ranges(ranges.into_iter().map(|range| {
-                                        let range = buffer_snapshot.anchor_before(range.start)
-                                            ..buffer_snapshot.anchor_after(range.end);
+                                        // These offsets were computed against the snapshot buffer and may be
+                                        // stale or out of bounds for the buffer we're actually opening, so
+                                        // clamp them before converting to anchors.
+                                        let start = buffer_snapshot.clip_offset(range.start.0, Bias::Left);
+                                        let end = buffer_snapshot.clip_offset(range.end.0, Bias::Right);
+                                        let range = buffer_snapshot.anchor_before(start)
+                                            ..buffer_snapshot.anchor_after(end);
                                         multibuffer_snapshot
                                             .buffer_anchor_range_to_anchor_range(range)
                                             .unwrap()
