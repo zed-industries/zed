@@ -818,6 +818,11 @@ mod tests {
         acp::Meta::from_iter([("scope".to_owned(), json!(scope))])
     }
 
+    fn session_path(relative: &str) -> std::path::PathBuf {
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        std::path::Path::new(root).join(relative)
+    }
+
     struct SessionHarness {
         client: Rc<AcpV2Connection>,
         project: Entity<Project>,
@@ -845,8 +850,10 @@ mod tests {
                 cx.set_global(store);
             });
             let filesystem = fs::FakeFs::new(cx.executor());
-            filesystem.insert_tree("/", json!({"a": {}, "b": {}})).await;
-            let project = Project::test(filesystem, [std::path::Path::new("/a")], cx).await;
+            filesystem
+                .insert_tree(session_path(""), json!({"a": {}, "b": {}}))
+                .await;
+            let project = Project::test(filesystem, [session_path("a").as_path()], cx).await;
             let (new_sender, new_requests) = async_channel::unbounded();
             let (new_responses, new_received) = async_channel::unbounded::<
                 Result<acp::NewSessionResponse, agent_client_protocol::Error>,
@@ -972,23 +979,39 @@ mod tests {
             cx.update(|cx| {
                 self.client.clone().new_session(
                     self.project.clone(),
-                    PathList::new(&[std::path::Path::new("/a"), std::path::Path::new("/b")]),
+                    PathList::new(&[session_path("a"), session_path("b")]),
                     cx,
                 )
             })
         }
 
         async fn thread(&self, cx: &mut TestAppContext) -> Entity<AcpThread> {
-            let creation = self.create(cx);
-            bounded(self.new_requests.recv(), cx)
-                .await
-                .expect("creation request");
+            let mut creation = self.create(cx);
+            self.new_request(&mut creation, cx).await;
             self.new_responses
                 .try_send(Ok(initial_response()))
                 .expect("initial response");
             let thread = bounded(creation, cx).await.expect("create thread");
             cx.run_until_parked();
             thread
+        }
+
+        async fn new_request(
+            &self,
+            creation: &mut Task<Result<Entity<AcpThread>>>,
+            cx: &TestAppContext,
+        ) -> (acp::NewSessionRequest, acp::RequestId) {
+            match bounded(
+                futures::future::select(self.new_requests.recv().boxed_local(), creation),
+                cx,
+            )
+            .await
+            {
+                futures::future::Either::Left((request, _)) => request.expect("creation request"),
+                futures::future::Either::Right((result, _)) => {
+                    panic!("Creation ended before its request was observed: {result:?}")
+                }
+            }
         }
     }
 
@@ -1046,7 +1069,7 @@ mod tests {
                     .ordered_paths()
                     .cloned()
                     .collect::<Vec<_>>(),
-                vec![std::path::PathBuf::from("/a")]
+                vec![session_path("a")]
             );
             assert_eq!(
                 thread.available_commands(),
@@ -1513,7 +1536,7 @@ done
             vec![
             ("stdio".to_string(), Arc::new(ContextServerConfiguration::Custom {
                 command: serde_json::from_value(json!({
-                    "command": "/bin/mcp", "args": ["serve", ""], "env": {"EXAMPLE": "value"}
+                    "command": session_path("bin/mcp"), "args": ["serve", ""], "env": {"EXAMPLE": "value"}
                 })).expect("stdio configuration"), remote: false, launcher: None,
             })),
             ("http".to_string(), Arc::new(ContextServerConfiguration::Http {
@@ -1522,7 +1545,7 @@ done
                 timeout: None, oauth: None,
             })),
         ];
-        let directories = PathList::new(&[std::path::Path::new("/a"), std::path::Path::new("/b")]);
+        let directories = PathList::new(&[session_path("a"), session_path("b")]);
         for (stdio, http, additional_roots) in [
             (false, false, false),
             (true, false, true),
@@ -1557,7 +1580,7 @@ done
                     path_style.is_absolute(path)
                 })
                 .expect("build request");
-            assert_eq!(request.cwd.0, std::path::PathBuf::from("/a"));
+            assert_eq!(request.cwd.0, session_path("a"));
             assert_eq!(
                 request.additional_directories.len(),
                 usize::from(additional_roots)
@@ -1570,7 +1593,7 @@ done
                 match server {
                     acp::McpServer::Stdio(server) => {
                         assert!(stdio);
-                        assert_eq!(server.command.0, std::path::PathBuf::from("/bin/mcp"));
+                        assert_eq!(server.command.0, session_path("bin/mcp"));
                         assert_eq!(server.args, ["serve", ""]);
                         assert_eq!(server.env, [acp::EnvVariable::new("EXAMPLE", "value")]);
                     }
@@ -1609,7 +1632,7 @@ done
                     .expect("wire creation");
                 assert_eq!(
                     wire.additional_directories,
-                    vec![acp::AbsolutePath::new(std::path::PathBuf::from("/b"))]
+                    vec![acp::AbsolutePath::new(session_path("b"))]
                 );
                 harness
                     .new_responses
@@ -1633,7 +1656,7 @@ done
         futures::pin_mut!(future, timeout);
         match futures::future::select(future, timeout).await {
             futures::future::Either::Left((result, _)) => result,
-            futures::future::Either::Right(_) => panic!("timed out during v2 auth exchange"),
+            futures::future::Either::Right(_) => panic!("timed out during ACP v2 exchange"),
         }
     }
 
