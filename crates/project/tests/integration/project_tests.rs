@@ -430,6 +430,124 @@ async fn test_load_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_resolve_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let image_bytes = "P3\n1 1\n255\n255 0 0\n";
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".gitignore": "ignored\n",
+            "docs": {"shot.ppm": image_bytes},
+            "ignored": {"shot.ppm": image_bytes},
+            "sub": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(path!("/outside"), json!({"shot.ppm": image_bytes}))
+        .await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project.project_path_for_file_link(Path::new("ignored/shot.ppm"), cx),
+            None
+        );
+    });
+
+    for (path, expected) in [
+        (
+            path!("/project/docs/shot.ppm"),
+            path!("/project/docs/shot.ppm"),
+        ),
+        (
+            path!("/project/sub/../docs/shot.ppm"),
+            path!("/project/docs/shot.ppm"),
+        ),
+        (
+            path!("/project/ignored/shot.ppm"),
+            path!("/project/ignored/shot.ppm"),
+        ),
+        (path!("/outside/shot.ppm"), path!("/outside/shot.ppm")),
+        (
+            path!("/project/../outside/shot.ppm"),
+            path!("/outside/shot.ppm"),
+        ),
+    ] {
+        let location = project
+            .update(cx, |project, cx| {
+                project.resolve_image_at_abs_path(path, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            location,
+            Some(project::image_store::ImageLocation::Local(
+                Path::new(expected).into()
+            )),
+            "{path}"
+        );
+    }
+
+    for path in [path!("/project/docs"), path!("/project/missing.ppm")] {
+        let location = project
+            .update(cx, |project, cx| {
+                project.resolve_image_at_abs_path(path, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(location, None, "{path}");
+    }
+}
+
+#[gpui::test]
+async fn test_abs_paths_for_file_link(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/one"), json!({})).await;
+    fs.insert_tree(path!("/two"), json!({})).await;
+    fs.insert_file(path!("/lone.txt"), Vec::new()).await;
+    let project = Project::test(
+        fs,
+        [
+            path!("/one").as_ref(),
+            path!("/two").as_ref(),
+            path!("/lone.txt").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    project.read_with(cx, |project, cx| {
+        for (path, expected) in [
+            (
+                "src/a.png",
+                vec![path!("/one/src/a.png"), path!("/two/src/a.png")],
+            ),
+            (
+                "two/src/a.png",
+                vec![
+                    path!("/one/two/src/a.png"),
+                    path!("/two/src/a.png"),
+                    path!("/two/two/src/a.png"),
+                ],
+            ),
+            (
+                "../x.png",
+                vec![path!("/one/../x.png"), path!("/two/../x.png")],
+            ),
+            (path!("/abs/x.png"), vec![path!("/abs/x.png")]),
+            ("~/x.png", vec!["~/x.png"]),
+        ] {
+            assert_eq!(
+                project.abs_paths_for_file_link(Path::new(path), cx),
+                expected.into_iter().map(PathBuf::from).collect::<Vec<_>>(),
+                "{path}"
+            );
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

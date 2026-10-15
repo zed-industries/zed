@@ -82,7 +82,7 @@ use futures::{
     future::try_join_all,
 };
 pub use image_store::{ImageItem, ImageStore};
-use image_store::{ImageItemEvent, ImageStoreEvent};
+use image_store::{ImageItemEvent, ImageLocation, ImageStoreEvent};
 
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
@@ -5053,6 +5053,31 @@ impl Project {
         }
     }
 
+    pub fn abs_paths_for_file_link(&self, path: &Path, cx: &App) -> Vec<PathBuf> {
+        let path_style = self.path_style(cx);
+        if path_style.has_root(path) || path.starts_with("~") {
+            return vec![path.to_path_buf()];
+        }
+        self.visible_worktrees(cx)
+            .filter(|worktree| !worktree.read(cx).is_single_file())
+            .flat_map(|worktree| {
+                let worktree = worktree.read(cx);
+                [
+                    path.strip_prefix(worktree.root_name().as_std_path()).ok(),
+                    Some(path),
+                ]
+                .into_iter()
+                .flatten()
+                .filter_map(|path| {
+                    path_style
+                        .join_path_preserving_components(worktree.abs_path(), path)
+                        .ok()
+                })
+                .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     pub fn resolve_abs_file_link(
         &self,
         path: &str,
@@ -5146,6 +5171,41 @@ impl Project {
                     Ok(Some(image_store::create_gpui_image(bytes)?))
                 }
             }
+        })
+    }
+
+    pub fn resolve_image_at_abs_path(
+        &self,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<ImageLocation>>> {
+        let resolve = self.resolve_abs_file_link(path, cx);
+        cx.spawn(async move |project, cx| {
+            let Some(resolved_path) = resolve.await? else {
+                return Ok(None);
+            };
+            project.read_with(cx, |project, cx| match resolved_path {
+                ResolvedPath::ProjectPath { project_path, .. } => {
+                    let worktree = project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .context("worktree was closed")?;
+                    if worktree.read(cx).is_local() {
+                        let abs_path = project
+                            .absolute_path(&project_path, cx)
+                            .context("absolutizing image path")?;
+                        Ok(Some(ImageLocation::Local(abs_path.into())))
+                    } else {
+                        Ok(Some(ImageLocation::Project(project_path)))
+                    }
+                }
+                ResolvedPath::AbsPath { path, .. } => {
+                    anyhow::ensure!(
+                        project.is_local(),
+                        "cannot load an image outside the project's worktrees over a remote connection: {path}"
+                    );
+                    Ok(Some(ImageLocation::Local(Path::new(&path).into())))
+                }
+            })?
         })
     }
 

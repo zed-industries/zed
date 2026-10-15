@@ -6,17 +6,20 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, hash_map};
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    App, Asset, AssetLogger, AsyncApp, Context, Entity, EventEmitter, ImageCacheError, ImageSource,
-    Img, RenderImage, Subscription, Task, WeakEntity, prelude::*,
+    App, Asset, AssetLogger, AsyncApp, BackgroundExecutor, Context, Entity, EntityId, EventEmitter,
+    ImageCacheError, ImageSource, Img, RenderImage, Subscription, Task, WeakEntity, Window,
+    prelude::*,
 };
 pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
+use parking_lot::Mutex;
 use rpc::{AnyProtoClient, ErrorExt as _, TypedEnvelope, proto};
 use std::future::Future;
 use std::num::NonZeroU64;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use util::{ResultExt, rel_path::RelPath};
 use worktree::{LoadedBinaryFile, PathChange, Worktree, WorktreeId};
 
@@ -189,6 +192,129 @@ pub fn abs_path_image_source(project: WeakEntity<Project>, paths: Vec<String>) -
     ImageSource::from(move |window: &mut gpui::Window, cx: &mut App| {
         window.use_asset::<AssetLogger<AbsPathImageAsset>>(&source, cx)
     })
+}
+
+pub const MISSING_IMAGE_RETRY_DELAY: Duration = Duration::from_secs(2);
+const MAX_MISSING_IMAGE_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ImageLocation {
+    Local(Arc<Path>),
+    Project(ProjectPath),
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct ImagePathSource {
+    project: WeakEntity<Project>,
+    paths: Vec<String>,
+}
+
+impl ImagePathSource {
+    async fn resolve(&self, error_level: log::Level, cx: &mut AsyncApp) -> Option<ImageLocation> {
+        for path in &self.paths {
+            let resolve = self
+                .project
+                .update(cx, |project, cx| {
+                    project.resolve_image_at_abs_path(path, cx)
+                })
+                .ok()?;
+            match resolve.await {
+                Ok(Some(location)) => return Some(location),
+                Ok(None) => {}
+                Err(error) => log::log!(error_level, "Failed to resolve image {path:?}: {error:#}"),
+            }
+        }
+        None
+    }
+}
+
+#[derive(Clone)]
+enum ImagePathResolution {
+    Found(ImageLocation),
+    /// `retry_due` holds the elapsed retry delay once the next check is due.
+    Missing {
+        retry_due: Arc<Mutex<Option<Duration>>>,
+    },
+}
+
+enum ImagePathResolver {}
+
+impl Asset for ImagePathResolver {
+    type Source = ImagePathSource;
+    type Output = ImagePathResolution;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let executor = cx.background_executor().clone();
+        let resolve = cx.spawn(async move |cx| source.resolve(log::Level::Warn, cx).await);
+        async move {
+            if let Some(location) = resolve.await {
+                return ImagePathResolution::Found(location);
+            }
+            let retry_due = Arc::new(Mutex::new(None));
+            schedule_retry(&executor, retry_due.clone(), MISSING_IMAGE_RETRY_DELAY);
+            ImagePathResolution::Missing { retry_due }
+        }
+    }
+}
+
+fn schedule_retry(
+    executor: &BackgroundExecutor,
+    retry_due: Arc<Mutex<Option<Duration>>>,
+    delay: Duration,
+) {
+    let timer = executor.timer(delay);
+    executor
+        .spawn(async move {
+            timer.await;
+            *retry_due.lock() = Some(delay);
+        })
+        .detach();
+}
+
+// A hit evicts the cached miss so the next render loads the image; a miss only re-arms
+// the timer, so a visible missing image costs one check per delay and never redraws itself.
+fn retry_missing_image(
+    source: ImagePathSource,
+    retry_due: Arc<Mutex<Option<Duration>>>,
+    delay: Duration,
+    view: EntityId,
+    cx: &mut App,
+) {
+    let executor = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        if source.resolve(log::Level::Debug, cx).await.is_some() {
+            cx.update(|cx| {
+                cx.remove_asset::<ImagePathResolver>(&source);
+                cx.notify(view);
+            });
+        } else {
+            let next_delay = (delay * 2).min(MAX_MISSING_IMAGE_RETRY_DELAY);
+            schedule_retry(&executor, retry_due, next_delay);
+        }
+    })
+    .detach();
+}
+
+pub fn use_image_location(
+    project: WeakEntity<Project>,
+    paths: Vec<String>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<ImageLocation> {
+    let source = ImagePathSource { project, paths };
+    match window.use_asset::<ImagePathResolver>(&source, cx)? {
+        ImagePathResolution::Found(location) => Some(location),
+        ImagePathResolution::Missing { retry_due } => {
+            let elapsed_delay = retry_due.lock().take();
+            if let Some(delay) = elapsed_delay {
+                retry_missing_image(source, retry_due, delay, window.current_view(), cx);
+            }
+            None
+        }
+    }
 }
 
 impl ImageItem {
