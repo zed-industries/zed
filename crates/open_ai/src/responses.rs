@@ -643,8 +643,29 @@ pub struct ResponseSummary {
     pub usage: Option<ResponseUsage>,
     #[serde(default)]
     pub output: Vec<ResponseOutputItem>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_service_tier_leniently")]
     pub service_tier: Option<crate::ServiceTier>,
+}
+
+/// OpenAI-compatible providers sometimes echo their own tier names rather than
+/// one of OpenAI's. The field is informational, so an unknown value must not
+/// fail the whole event.
+fn deserialize_service_tier_leniently<'de, D>(
+    deserializer: D,
+) -> Result<Option<ServiceTier>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(value) = Option::<Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    match serde_json::from_value(value.clone()) {
+        Ok(service_tier) => Ok(Some(service_tier)),
+        Err(_) => {
+            log::debug!("Ignoring unrecognized service_tier in response: {value}");
+            Ok(None)
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -1371,6 +1392,30 @@ mod tests {
             let usage = response.usage.expect("completion includes usage");
             assert_eq!(usage.input_tokens, Some(21));
             assert_eq!(usage.output_tokens, Some(13));
+            assert_eq!(usage.total_tokens, Some(34));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn completion_event_ignores_unrecognized_service_tier() -> anyhow::Result<()> {
+        for service_tier in [json!("custom-tier"), json!(null), json!(42)] {
+            let event: StreamEvent = serde_json::from_value(json!({
+                "type": "response.completed",
+                "response": {
+                    "service_tier": service_tier,
+                    "usage": {
+                        "input_tokens": 21,
+                        "output_tokens": 13,
+                        "total_tokens": 34
+                    }
+                }
+            }))?;
+            let StreamEvent::Completed { response } = event else {
+                panic!("expected completion event for {service_tier}");
+            };
+            assert_eq!(response.service_tier, None);
+            let usage = response.usage.expect("completion includes usage");
             assert_eq!(usage.total_tokens, Some(34));
         }
         Ok(())
