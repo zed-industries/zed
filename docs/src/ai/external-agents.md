@@ -46,7 +46,7 @@ To choose your billing method, open a Claude Agent thread, run `/login`, and aut
 
 ### Continue a Thread from Your Phone or Browser {#claude-remote-control}
 
-Run `/remote-control` in a Claude Agent thread to continue it from [claude.ai/code](https://claude.ai/code) or the Claude mobile app. Claude Agent replies with a session link; messages sent from the web or phone run on your machine in the same thread. Add a name to label the session, for example `/remote-control my-laptop`. `/rc` is a shorthand.
+Run `/remote-control` in a Claude Agent thread to continue it from [claude.ai/code](https://claude.ai/code) or the Claude mobile app. Claude Agent replies with a session link; messages sent from the web or phone run on your machine in the same thread. Add a name to label the session, for example `/remote-control my-laptop`. Running the command again reconnects and returns the link. Run `/remote-control off` to disconnect. The command isn't available while Claude is working on a turn.
 
 Remote Control requires a Claude subscription that includes it, and it can be disabled by your organization's Claude Code policy.
 
