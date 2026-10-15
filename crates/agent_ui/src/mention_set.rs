@@ -1050,6 +1050,10 @@ pub(crate) fn paste_images_as_context(
         return None;
     }
 
+    // When this handles the paste, the caller stops the editor's own text paste, so fall
+    // back to pasting the clipboard's text (e.g. non-image file paths) if no images load.
+    let fallback_text = clipboard.text();
+
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let default_name: SharedString = "Image".into();
@@ -1078,6 +1082,10 @@ pub(crate) fn paste_images_as_context(
 
         if !images.is_empty() {
             insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        } else if let Some(text) = fallback_text {
+            editor
+                .update_in(cx, |editor, window, cx| editor.insert(&text, window, cx))
+                .ok();
         }
     }))
 }
