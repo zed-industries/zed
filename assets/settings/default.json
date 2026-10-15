@@ -2125,6 +2125,8 @@
     // instead, and hyperlinks can still be opened with shift-cmd-click
     // (shift-ctrl-click).
     "open_links_in_mouse_mode": true,
+    // Whether to ask before closing a terminal that still has a process running in it
+    "confirm_on_kill": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's

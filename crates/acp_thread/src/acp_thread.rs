@@ -10290,7 +10290,7 @@ mod tests {
                     None,
                     vec![],
                     Duration::ZERO,
-                    false,
+                    ::terminal::TerminalOrigin::Local,
                     0,
                     cx,
                     vec![],

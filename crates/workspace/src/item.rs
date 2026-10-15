@@ -287,8 +287,11 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// confirms with a save prompt. Items whose in-memory state has no
     /// unsaved-edits representation override this method so that closing them
     /// asks for confirmation first.
-    fn has_running_work(&self, _: &App) -> bool {
-        false
+    ///
+    /// This is asynchronous because a terminal in a remote project has to ask
+    /// the SSH host, where its shell runs.
+    fn has_running_work(&self, _: &App) -> Task<bool> {
+        Task::ready(false)
     }
 
     fn capability(&self, _: &App) -> Capability {
@@ -538,7 +541,7 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
-    fn has_running_work(&self, cx: &App) -> bool;
+    fn has_running_work(&self, cx: &App) -> Task<bool>;
     fn capability(&self, cx: &App) -> Capability;
     fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
@@ -1052,7 +1055,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).is_dirty(cx)
     }
 
-    fn has_running_work(&self, cx: &App) -> bool {
+    fn has_running_work(&self, cx: &App) -> Task<bool> {
         self.read(cx).has_running_work(cx)
     }
 
@@ -1797,8 +1800,8 @@ pub mod test {
             self.is_dirty
         }
 
-        fn has_running_work(&self, _: &App) -> bool {
-            self.running_work
+        fn has_running_work(&self, _: &App) -> Task<bool> {
+            Task::ready(self.running_work)
         }
 
         fn has_conflict(&self, _: &App) -> bool {
