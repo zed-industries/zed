@@ -28,14 +28,39 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use futures::{Future, channel::mpsc};
 use gpui::{App, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
-use project::AgentId;
 use project::agent_server_store::{AgentServerCommand, AgentServerStore};
-use std::{cell::RefCell, process::ExitStatus, rc::Rc};
+use project::context_server_store::ContextServerConfiguration;
+use project::{AgentId, Project};
+use std::{cell::RefCell, process::ExitStatus, rc::Rc, sync::Arc};
 use task::SpawnInTerminal;
 use thiserror::Error;
 use util::ResultExt as _;
 
 const EXIT_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
+fn mcp_configurations_for_project(
+    project: &Entity<Project>,
+    cx: &App,
+) -> Vec<(String, Arc<ContextServerConfiguration>)> {
+    let store = project.read(cx).context_server_store().read(cx);
+    let is_local = project.read(cx).is_local();
+    store
+        .configured_server_ids()
+        .iter()
+        .filter_map(|id| {
+            let configuration = store.configuration_for_server(id)?;
+            match &*configuration {
+                ContextServerConfiguration::Custom { remote, .. }
+                | ContextServerConfiguration::Extension { remote, .. }
+                    if !is_local && !remote =>
+                {
+                    None
+                }
+                _ => Some((id.0.to_string(), configuration)),
+            }
+        })
+        .collect()
+}
 
 async fn exited_load_error_after_drain(
     status: ExitStatus,
