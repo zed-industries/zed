@@ -2209,12 +2209,16 @@ impl ThreadView {
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
         cx.spawn_in(window, async move |this, cx| {
-            cancelled.await;
+            if let Err(error) = cancelled.await {
+                this.update(cx, |this, cx| this.handle_thread_error(error, cx))
+                    .log_err();
+                return;
+            }
 
             this.update_in(cx, |this, window, cx| {
                 this.send_impl(message_editor, window, cx);
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -2342,9 +2346,19 @@ impl ThreadView {
         self.thread_retry_status.take();
         self.thread_error.take();
         self.message_queue.pause();
-        self._cancel_task = Some(self.thread.update(cx, |thread, cx| thread.cancel(cx)));
+        self._cancel_task = Some(self.cancel_thread(&self.thread, cx));
         self.sync_generating_indicator(cx);
         cx.notify();
+    }
+
+    fn cancel_thread(&self, thread: &Entity<AcpThread>, cx: &mut Context<Self>) -> Task<()> {
+        let cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = cancellation.await {
+                this.update(cx, |this, cx| this.handle_thread_error(error, cx))
+                    .log_err();
+            }
+        })
     }
 
     pub fn retry_generation(&mut self, cx: &mut Context<Self>) {
@@ -2712,14 +2726,12 @@ impl ThreadView {
 
         self.message_editor.focus_handle(cx).focus(window, cx);
 
-        let content = entry.content;
-        let tracked_buffers = entry.tracked_buffers;
-
         // A queued message can itself be a built-in command (e.g. the user typed
         // `/compact` while a turn was generating). Detect that so we run it as a
         // command turn without echoing it as a user message, matching the
         // non-queued path.
-        let is_native_command = content
+        let is_native_command = entry
+            .content
             .first()
             .and_then(|block| match block {
                 acp_v2::ContentBlock::Text(text) => Some(text.text.as_str()),
@@ -2735,8 +2747,16 @@ impl ThreadView {
         let workspace = self.workspace.clone();
 
         let should_be_following = self.should_be_following;
-        let contents_task = cx.spawn_in(window, async move |_this, cx| {
-            cancelled.await;
+        let contents_task = cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = cancelled.await {
+                this.update(cx, |this, cx| {
+                    this.message_queue.restore_after_failed_send(entry);
+                    this.sync_queue_flag_to_native_thread(cx);
+                    cx.notify();
+                })
+                .log_err();
+                return Err(error);
+            }
             if should_be_following {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
@@ -2745,7 +2765,7 @@ impl ThreadView {
                     .ok();
             }
 
-            Ok(Some((content, tracked_buffers)))
+            Ok(Some((entry.content, entry.tracked_buffers)))
         });
 
         self.send_content(contents_task, is_native_command, window, cx);
@@ -4928,11 +4948,9 @@ impl ThreadView {
                                             .icon_size(IconSize::Small)
                                             .icon_color(Color::Error)
                                             .tooltip(Tooltip::text("Stop Subagent"))
-                                            .on_click(move |_, _, cx| {
-                                                thread.update(cx, |thread, cx| {
-                                                    thread.cancel(cx).detach();
-                                                });
-                                            }),
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.cancel_thread(&thread, cx).detach();
+                                            })),
                                     )
                                 })
                                 .child(
@@ -11636,11 +11654,9 @@ impl ThreadView {
                                         .map(|view| view.read(cx).thread.clone()),
                                     |this, thread| {
                                         this.on_click(cx.listener(
-                                            move |_this, _event, _window, cx| {
+                                            move |this, _event, _window, cx| {
                                                 telemetry::event!("Subagent Stopped");
-                                                thread.update(cx, |thread, cx| {
-                                                    thread.cancel(cx).detach();
-                                                });
+                                                this.cancel_thread(&thread, cx).detach();
                                             },
                                         ))
                                     },

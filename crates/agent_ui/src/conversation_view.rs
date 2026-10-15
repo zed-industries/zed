@@ -5172,7 +5172,7 @@ pub(crate) mod tests {
         editor.update_in(cx, |editor, window, cx| {
             editor.set_text("keep my draft", window, cx);
         });
-        thread.update(cx, |thread, cx| thread.disconnect_submissions(cx));
+        thread.update(cx, |thread, cx| thread.handle_connection_lost(cx));
         cx.run_until_parked();
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
@@ -5226,6 +5226,77 @@ pub(crate) mod tests {
                 editor::EditorMode::AutoHeight { .. }
             ));
         });
+    }
+
+    #[gpui::test]
+    async fn test_cancel_failure_preserves_draft_and_queued_messages(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(language_model::init);
+        for action in ["stop", "interrupt", "queued"] {
+            let connection = StubAgentConnection::new().with_receipt_submissions(true);
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            add_to_workspace(conversation_view.clone(), cx);
+            let thread_view = active_thread(&conversation_view, cx);
+            let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+            thread.update(cx, |thread, cx| {
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                        cx,
+                    )
+                    .expect("reported running");
+            });
+            let editor = message_editor(&conversation_view, cx);
+            editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("keep my draft", window, cx)
+            });
+            let queued = thread_view.update_in(cx, |view, window, cx| {
+                view.add_to_queue(vec!["first queued".into()], vec![], window, cx);
+                view.add_to_queue(vec!["second queued".into()], vec![], window, cx);
+                view.message_queue
+                    .iter()
+                    .map(|entry| (entry.id, entry.content.clone()))
+                    .collect::<Vec<_>>()
+            });
+            connection.set_next_cancel_error(anyhow!("cancel send failed"));
+            thread_view.update_in(cx, |view, window, cx| match action {
+                "stop" => view.cancel_generation(cx),
+                "interrupt" => view.interrupt_and_send(window, cx),
+                "queued" => {
+                    let id = view.message_queue.last_id().expect("queued message");
+                    view.send_queued_message_now(id, window, cx);
+                }
+                _ => unreachable!(),
+            });
+            cx.run_until_parked();
+            assert!(
+                connection.take_receipt_prompt().is_none(),
+                "failed stop must not send"
+            );
+            assert_eq!(
+                editor.read_with(cx, |editor, cx| editor.text(cx)),
+                "keep my draft"
+            );
+            assert_eq!(
+                thread.read_with(cx, |thread, _| thread.foreground_activity()),
+                acp_thread::ForegroundActivity::Running
+            );
+            thread_view.update_in(cx, |view, window, cx| {
+                assert!(view.thread_error.is_some());
+                assert_eq!(
+                    view.message_queue
+                        .iter()
+                        .map(|entry| (entry.id, entry.content.clone()))
+                        .collect::<Vec<_>>(),
+                    queued
+                );
+                assert!(
+                    !view.send_queued_message_after_generation_stopped(false, window, cx),
+                    "failed stop leaves queue paused"
+                );
+            });
+        }
     }
 
     #[gpui::test]
@@ -6286,7 +6357,9 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8666,7 +8739,9 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8797,7 +8872,9 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8909,7 +8986,9 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -8981,7 +9060,9 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -9155,7 +9236,7 @@ pub(crate) mod tests {
             unimplemented!()
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
             unimplemented!()
         }
 
@@ -9224,7 +9305,7 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Refusal)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
             unimplemented!()
         }
 
@@ -9339,7 +9420,9 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -18475,7 +18558,9 @@ pub(crate) mod tests {
             Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self

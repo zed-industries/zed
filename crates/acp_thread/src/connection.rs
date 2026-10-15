@@ -232,7 +232,8 @@ pub trait AgentConnection {
         None
     }
 
-    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App);
+    /// Requests cancellation; success does not establish that execution stopped.
+    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()>;
 
     /// Request-scoped elicitations are connection-level because they can arrive before a session
     /// thread exists. Session-scoped elicitations stay in the thread timeline, but use
@@ -930,6 +931,7 @@ mod test_support {
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
         set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
         cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
+        next_cancel_error: Arc<Mutex<Option<anyhow::Error>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
@@ -968,6 +970,7 @@ mod test_support {
                 next_truncate: Default::default(),
                 set_title_calls: Default::default(),
                 cancel_calls: Default::default(),
+                next_cancel_error: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_receipt_submissions: false,
@@ -1034,6 +1037,10 @@ mod test_support {
 
         pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
             std::mem::take(&mut *self.cancel_calls.lock())
+        }
+
+        pub fn set_next_cancel_error(&self, error: anyhow::Error) {
+            assert!(self.next_cancel_error.lock().replace(error).is_none());
         }
 
         pub fn defer_next_truncate(&self) -> oneshot::Sender<()> {
@@ -1331,18 +1338,24 @@ mod test_support {
                 .then(|| Rc::new(StubAgentSessionRetry) as Rc<dyn AgentSessionRetry>)
         }
 
-        fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
+        fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) -> Result<()> {
             self.cancel_calls.lock().push(session_id.clone());
+            if let Some(error) = self.next_cancel_error.lock().take() {
+                return Err(error);
+            }
             if let Some(end_turn_tx) = self
                 .sessions
                 .lock()
                 .get_mut(session_id)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?
                 .response_tx
                 .take()
             {
-                end_turn_tx.send(acp_v1::StopReason::Cancelled).unwrap();
+                end_turn_tx
+                    .send(acp_v1::StopReason::Cancelled)
+                    .map_err(|_| anyhow::anyhow!("Prompt observer was released"))?;
             }
+            Ok(())
         }
 
         fn set_title(
