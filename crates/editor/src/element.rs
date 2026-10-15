@@ -4634,9 +4634,9 @@ impl EditorElement {
             })
         };
 
-        let can_place_below = || {
+        let can_place_below = |popovers: &[MeasuredHoverPopover]| {
             let mut current_y = hovered_point.y + line_height;
-            measured_hover_popovers.iter().all(|popover| {
+            popovers.iter().all(|popover| {
                 let size = popover.size;
                 let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
                 let bounds = Bounds::new(popover_origin, size);
@@ -4645,13 +4645,12 @@ impl EditorElement {
             })
         };
 
-        if is_single_debugger_hover && measured_hover_popovers.len() == 1 {
-            let fits_below = can_place_below();
-            let Some(popover) = measured_hover_popovers.pop() else {
-                return;
-            };
+        if is_single_debugger_hover
+            && measured_hover_popovers.len() == 1
+            && let Some(popover) = measured_hover_popovers.pop()
+        {
             let mut popover_origin = stable_debugger_hover_origin.unwrap_or_else(|| {
-                if fits_below {
+                if can_place_below(std::slice::from_ref(&popover)) {
                     point(
                         hovered_point.x + popover.horizontal_offset,
                         hovered_point.y + line_height,
@@ -4684,7 +4683,7 @@ impl EditorElement {
         if can_place_above {
             // try placing above hovered point
             place_popovers_above(hovered_point, measured_hover_popovers, window, cx);
-        } else if can_place_below() {
+        } else if can_place_below(&measured_hover_popovers) {
             // try placing below hovered point
             place_popovers_below(
                 hovered_point,

@@ -4724,10 +4724,9 @@ impl Project {
         let Some((session, active_stack_frame)) = self.active_debug_session(cx) else {
             return Task::ready(None);
         };
-        let Some(buffer_path) = BreakpointStore::abs_path_from_buffer(buffer, cx) else {
-            return Task::ready(None);
-        };
-        if buffer_path.as_ref() != active_stack_frame.path.as_ref() {
+        // The frame's source has already been resolved to a buffer. Its reported path
+        // may differ from the local path, for example when debugging a relocated build.
+        if buffer.read(cx).remote_id() != active_stack_frame.position.buffer_id {
             return Task::ready(None);
         }
 

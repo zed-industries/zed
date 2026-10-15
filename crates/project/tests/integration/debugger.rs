@@ -310,7 +310,7 @@ mod hover {
     };
     use fs::FakeFs;
     use futures::StreamExt as _;
-    use gpui::{BackgroundExecutor, Entity, TestAppContext};
+    use gpui::{AppContext as _, BackgroundExecutor, Entity, TestAppContext};
     use language::{Buffer, FakeLspAdapter, ToPointUtf16, rust_lang};
     use parking_lot::Mutex;
     use project::{
@@ -719,6 +719,101 @@ mod hover {
                 .is_none(),
             "comment text is not an evaluatable identifier"
         );
+    }
+
+    #[gpui::test]
+    async fn test_hover_uses_resolved_stack_frame_buffer(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let project = init_project(executor, cx).await;
+        let evaluation_count = Arc::new(AtomicUsize::new(0));
+        let session = boot_session(
+            &project,
+            {
+                let evaluation_count = evaluation_count.clone();
+                move |client| {
+                    let evaluation_count = evaluation_count.clone();
+                    client.on_request::<Evaluate, _>(move |_, args| {
+                        assert_eq!(args.expression, "a");
+                        assert_eq!(args.frame_id, Some(1));
+                        assert_eq!(args.context, Some(EvaluateArgumentsContext::Hover));
+                        evaluation_count.fetch_add(1, Ordering::SeqCst);
+                        Ok(dap::EvaluateResponse {
+                            result: "7".into(),
+                            type_: Some("i32".into()),
+                            presentation_hint: None,
+                            variables_reference: 0,
+                            named_variables: None,
+                            indexed_variables: None,
+                            memory_reference: None,
+                            value_location_reference: None,
+                        })
+                    });
+                }
+            },
+            cx,
+        )
+        .await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+        let offset = SOURCE.find("c = a;").unwrap() + 4;
+        let position = buffer.read_with(cx, |buffer, _| offset.to_point_utf16(buffer));
+
+        assert!(
+            project
+                .update(cx, |project, cx| project
+                    .debugger_hover(&buffer, position, cx))
+                .await
+                .is_none(),
+            "hover must not evaluate without an active stack frame"
+        );
+        set_active_stack_frame(&project, &session, &buffer, cx);
+        project.update(cx, |project, cx| {
+            project.breakpoint_store().update(cx, |store, cx| {
+                let mut frame = store.active_position().unwrap().clone();
+                frame.path = Path::new(path!("/build/workspace/main.rs")).into();
+                store.set_active_position(frame, cx);
+            });
+        });
+
+        let hover = project
+            .update(cx, |project, cx| {
+                project.debugger_hover(&buffer, position, cx)
+            })
+            .await
+            .expect("the resolved source buffer must work even when the frame path differs");
+        assert_eq!(hover.data.root.name, "a");
+        assert_eq!(hover.data.root.value, "7");
+        assert_eq!(
+            hover.range.start.buffer_id,
+            buffer.read_with(cx, |buffer, _| buffer.remote_id())
+        );
+        assert_eq!(evaluation_count.load(Ordering::SeqCst), 1);
+
+        let other_buffer = cx.new(|cx| Buffer::local(SOURCE, cx));
+        project.update(cx, |project, cx| {
+            project.breakpoint_store().update(cx, |store, cx| {
+                let mut frame = store.active_position().unwrap().clone();
+                frame.path = Path::new(path!("/project/main.rs")).into();
+                frame.position = other_buffer.read(cx).snapshot().anchor_before(0);
+                store.set_active_position(frame, cx);
+            });
+        });
+        assert!(
+            project
+                .update(cx, |project, cx| project
+                    .debugger_hover(&buffer, position, cx))
+                .await
+                .is_none(),
+            "a matching path must not evaluate identifiers from another source buffer"
+        );
+        assert_eq!(evaluation_count.load(Ordering::SeqCst), 1);
     }
 }
 
