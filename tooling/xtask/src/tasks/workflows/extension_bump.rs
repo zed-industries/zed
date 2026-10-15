@@ -222,6 +222,7 @@ fn bump_extension_version(
             .for_repository(RepositoryTarget::current())
             .with_permissions([
                 (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::Issues, Level::Write),
                 (TokenPermissions::PullRequests, Level::Write),
             ])
             .into();

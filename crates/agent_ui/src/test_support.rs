@@ -1,5 +1,5 @@
 use acp_thread::{AgentConnection, StubAgentConnection};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
@@ -67,9 +67,12 @@ where
 impl StubAgentServer<StubAgentConnection> {
     pub fn default_response() -> Self {
         let conn = StubAgentConnection::new();
-        conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk::new("Default response".into()),
-        )]);
+        conn.set_next_prompt_action(|thread, cx| {
+            thread.upsert_assistant_message(
+                acp::AgentMessage::new("default-response").content(vec!["Default response".into()]),
+                cx,
+            )
+        });
         Self::new(conn)
     }
 }
@@ -146,7 +149,12 @@ pub async fn record_zed_created_worktree(
 ) {
     let created_at = fake_worktree_created_at(fs, worktree_path).await;
     cx.update(|cx| {
-        git_ui::created_worktrees::record_created_worktree(worktree_path, remote, created_at, cx)
+        git_ui_core::created_worktrees::record_created_worktree(
+            worktree_path,
+            remote,
+            created_at,
+            cx,
+        )
     })
     .await
     .unwrap();

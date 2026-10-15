@@ -158,13 +158,18 @@ impl PickerDelegate for FontPickerDelegate {
         _cx: &mut Context<FontPicker>,
     ) -> Option<Self::ListItem> {
         let font_match = self.filtered_fonts.get(ix)?;
+        let font_name: SharedString = font_match.string.clone().into();
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(Label::new(font_match.string.clone()))
+                .child(
+                    div()
+                        .font_family(font_name.clone())
+                        .child(Label::new(font_name)),
+                )
                 .into_any_element(),
         )
     }
@@ -180,7 +185,7 @@ pub fn font_picker(
 
     Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
-        .initial_width(rems_from_px(210.))
+        .initial_width(rems_from_px(210_f32))
         .max_height(rems(18.))
         .popover()
 }

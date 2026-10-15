@@ -279,7 +279,7 @@ impl Render for SecurityModal {
                                     &ToggleWorktreeSecurity,
                                     cx,
                                 )
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
                                 security_modal.trusted = Some(false);
@@ -293,7 +293,7 @@ impl Render for SecurityModal {
                             .layer(ui::ElevationIndex::ModalSurface)
                             .key_binding(
                                 KeyBinding::for_action(&menu::Confirm, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
                                 security_modal.trust_and_dismiss(cx);
@@ -518,7 +518,7 @@ fn validate_trust_scope(
         ),
         _ => PathBuf::from(trimmed),
     };
-    if !util::paths::is_absolute(&expanded.to_string_lossy(), path_style) {
+    if !path_style.is_absolute(&expanded) {
         return Err("Enter an absolute folder path".into());
     }
     if !project.starts_with(&expanded) {

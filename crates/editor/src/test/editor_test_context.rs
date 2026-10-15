@@ -374,7 +374,7 @@ impl EditorTestContext {
                 .cloned();
         })
         .unwrap();
-        assert_eq!(expected, found.as_deref());
+        assert_eq!(expected.map(str::as_bytes), found.as_deref());
     }
 
     /// Change the editor's text and selections using a string containing

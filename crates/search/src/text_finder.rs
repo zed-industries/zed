@@ -5,9 +5,10 @@ use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
 };
+use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Modifiers, Subscription, Task, WeakEntity, actions,
+    Modifiers, Subscription, Task, TaskExt as _, WeakEntity, actions,
 };
 use language::Buffer;
 use picker::Picker;
@@ -23,7 +24,10 @@ mod render;
 use delegate::{Delegate, matches_to_multibuffer};
 use util::ResultExt as _;
 
-use crate::{ProjectSearchView, SearchOptions, text_finder::delegate::PopulateProjectSearch};
+use crate::{
+    ProjectSearchView, SearchOptions, project_search::QuerySeed,
+    text_finder::delegate::PopulateProjectSearch,
+};
 
 actions!(text_finder, [ToProjectSearch, Fold, Unfold, ToggleFoldAll]);
 
@@ -80,7 +84,7 @@ impl TextFinderDb {
 /// `None` only the first time the finder is used in a workspace, leaving the filters at their
 /// setting-derived defaults.
 pub(crate) struct SearchSeed {
-    query: String,
+    query: QuerySeed,
     options: Option<SearchOptions>,
 }
 
@@ -110,7 +114,7 @@ fn load_last_search(workspace_id: Option<WorkspaceId>, cx: &App) -> Option<Searc
         return None;
     }
     Some(SearchSeed {
-        query,
+        query: QuerySeed::Query(query),
         options: Some(SearchOptions::from_bits_truncate(search_options as u8)),
     })
 }
@@ -339,7 +343,7 @@ impl TextFinder {
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Option<String> {
+    ) -> Option<QuerySeed> {
         let focused_item = workspace.focused_pane(window, cx).read(cx).active_item();
         let active_item = workspace
             .active_item(cx)
@@ -365,23 +369,23 @@ impl TextFinder {
         item: &dyn ItemHandle,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Option<String> {
+    ) -> Option<QuerySeed> {
         if let Some(project_search) = item.downcast::<ProjectSearchView>() {
             let query = project_search.read(cx).search_query_text(cx);
             if !query.is_empty() {
-                return Some(query);
+                return Some(QuerySeed::Query(query));
             }
         }
 
         if let Some(query) = crate::project_search::buffer_search_query(workspace, item, cx) {
-            return Some(query);
+            return Some(QuerySeed::Query(query));
         }
 
         if let Some(searchable_item) = item.to_searchable_item_handle(cx) {
             let query =
                 searchable_item.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
             if !query.is_empty() {
-                return Some(query);
+                return Some(QuerySeed::Text(query));
             }
         }
 
@@ -420,22 +424,54 @@ impl TextFinder {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = delegate.project(cx).clone();
+        let languages = project.read(cx).languages().clone();
         let preview = picker_preview::editor_preview(project, window, cx);
-        let picker = cx.new(|cx| Picker::list_with_preview(delegate, preview, window, cx));
+        let query_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let erased_query_editor = query_editor.update(cx, |editor, cx| editor.erased(cx));
+        let picker = cx.new(|cx| {
+            Picker::list_with_preview_and_query_editor(
+                delegate,
+                preview,
+                erased_query_editor,
+                window,
+                cx,
+            )
+        });
         let picker_weak = picker.downgrade();
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            picker.delegate.query_editor = Some(query_editor);
             picker.delegate.hook_up_any_ongoing_search(picker_weak, cx);
             if let Some(seed_query) = seed_query {
                 // Restore filters before seeding the query so the initial search runs with them.
                 if let Some(options) = seed_query.options {
                     picker.delegate.search_options = options;
                 }
-                picker.set_query(&seed_query.query, window, cx);
+                let query = seed_query.query.into_query(picker.delegate.search_options);
+                picker.set_query(&query, window, cx);
                 picker.select_query(window, cx);
             }
         });
+        cx.spawn({
+            let picker = picker.downgrade();
+            async move |_, cx| {
+                use anyhow::Context as _;
+
+                let regex_language = languages
+                    .language_for_name("regex")
+                    .await
+                    .context("loading regex language")?;
+                picker
+                    .update(cx, |picker, cx| {
+                        picker.delegate.regex_language = Some(regex_language);
+                        picker.delegate.adjust_query_regex_language(cx);
+                    })
+                    .ok();
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
         let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
         });
@@ -500,6 +536,8 @@ pub struct SearchMatch {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use gpui::{TestAppContext, VisualTestContext};
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -507,6 +545,7 @@ mod tests {
     use util::path;
     use workspace::MultiWorkspace;
 
+    use super::delegate::toggle_search_option;
     use super::*;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -543,7 +582,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
         let seed_query = SearchSeed {
-            query: "ONE".to_string(),
+            query: QuerySeed::Query("ONE".to_string()),
             options: None,
         };
         workspace
@@ -589,7 +628,7 @@ mod tests {
 
         let initial_query = "unique_search_query";
         let seed_query = SearchSeed {
-            query: initial_query.to_string(),
+            query: QuerySeed::Query(initial_query.to_string()),
             options: None,
         };
         workspace
@@ -605,10 +644,10 @@ mod tests {
         let seed_query = workspace.update_in(cx, |workspace, window, cx| {
             TextFinder::seed_query(workspace, window, cx)
         });
-        assert_eq!(
-            seed_query.as_ref().map(|seed| seed.query.as_str()),
-            Some(initial_query)
-        );
+        assert!(matches!(
+            seed_query.as_ref().map(|seed| &seed.query),
+            Some(QuerySeed::Query(query)) if query == initial_query
+        ));
         workspace
             .update_in(cx, |_, window, cx| TextFinder::open(seed_query, window, cx))
             .await;
@@ -633,5 +672,89 @@ mod tests {
             TextFinder::seed_query(workspace, window, cx)
         });
         assert!(seed_query.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_selection_seed_escaped_and_highlighted_in_regex_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/dir"), json!({"one.rs": "const ONE: usize = 1;"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "regex".into(),
+                ..Default::default()
+            },
+            None,
+        )));
+
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        let seed_query = workspace.update_in(cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::multi_line(window, cx);
+                editor.set_text("O.E(", window, cx);
+                editor.select_all(&editor::actions::SelectAll, window, cx);
+                editor
+            });
+            workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+            let mut seed_query = TextFinder::seed_query(workspace, window, cx).unwrap();
+            seed_query.options = Some(SearchOptions::REGEX);
+            seed_query
+        });
+        workspace
+            .update_in(cx, |_, window, cx| {
+                TextFinder::open(Some(seed_query), window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+
+        let picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TextFinder>(cx)
+                .expect("text finder should be open")
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.query(cx), "O\\.E\\(");
+            assert_eq!(
+                query_language_name(&picker.delegate, cx).as_deref(),
+                Some("regex"),
+                "query should be highlighted as a regex while the regex filter is on"
+            );
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            toggle_search_option(picker, SearchOptions::REGEX, window, cx);
+        });
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(
+                query_language_name(&picker.delegate, cx),
+                None,
+                "highlighting should be dropped once the regex filter is off"
+            );
+        });
+    }
+
+    fn query_language_name(delegate: &Delegate, cx: &App) -> Option<String> {
+        let query_buffer = delegate
+            .query_editor
+            .as_ref()?
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()?;
+        Some(query_buffer.read(cx).language()?.name().to_string())
     }
 }

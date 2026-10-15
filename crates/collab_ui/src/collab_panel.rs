@@ -56,7 +56,7 @@ const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 const TOAST_DURATION: Duration = Duration::from_secs(5);
 
 fn panel_row_height() -> Rems {
-    rems_from_px(26.)
+    rems_from_px(26_f32)
 }
 
 actions!(
@@ -2732,14 +2732,15 @@ impl CollabPanel {
 
         v_flex()
             .p_4()
-            .gap_4()
+            .gap_1()
             .size_full()
             .text_center()
             .justify_center()
-            .child(Label::new(collab_blurb))
+            .items_center()
+            .child(Label::new(collab_blurb).color(Color::Muted))
             .child(
                 Button::new(button_id, button_label)
-                    .full_width()
+                    .label_size(LabelSize::Small)
                     .start_icon(Icon::new(button_icon).color(Color::Muted))
                     .style(ButtonStyle::Outlined)
                     .disabled(is_busy)
@@ -3219,15 +3220,15 @@ impl CollabPanel {
             .when(open_context_menu.is_none(), |this| {
                 this.tooltip(move |_, cx| {
                     let text = if !online {
-                        format!(" {} is Offline", &username)
+                        format!(" {username} is Offline")
                     } else if busy {
-                        format!(" {} is on a Call", &username)
+                        format!(" {username} is on a Call")
                     } else {
                         let room = ActiveCall::global(cx).read(cx).room();
                         if room.is_some() {
-                            format!("Invite {} to Join Call", &username)
+                            format!("Invite {username} to Join Call")
                         } else {
-                            format!("Call {}", &username)
+                            format!("Call {username}")
                         }
                     };
                     Tooltip::simple(text, cx)
