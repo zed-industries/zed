@@ -11878,7 +11878,10 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_paste_after_closing_documentation_comment(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(true);
+    });
     cx.write_to_clipboard(ClipboardItem::new_string(
         "func find() {\n\treturn 1\n}\n".into(),
     ));
@@ -11896,7 +11899,7 @@ async fn test_paste_after_closing_documentation_comment(cx: &mut TestAppContext)
     cx.assert_editor_state("package test\n\n/**\n * test\n */\nfunc find() {\n\treturn 1\n}\nˇ");
 
     cx.write_to_clipboard(ClipboardItem::new_string(
-        " func find() {\n \treturn 1\n }".into(),
+        "\tfunc find() {\n\t\treturn 1\n\t}".into(),
     ));
     cx.set_state("package test\n\n/**\n * test\n */ˇ");
     cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
@@ -11905,8 +11908,11 @@ async fn test_paste_after_closing_documentation_comment(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-async fn test_paste_shifts_block_by_first_line_delta(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+async fn test_paste_shifts_block_by_first_line_delta_with_hard_tabs(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(true);
+    });
 
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| {
@@ -11917,12 +11923,28 @@ async fn test_paste_shifts_block_by_first_line_delta(cx: &mut TestAppContext) {
     });
 
     cx.write_to_clipboard(ClipboardItem::new_string(
-        " func find() {\n \treturn 1\n }".into(),
+        "\tfunc find() {\n\t\treturn 1\n\t}".into(),
     ));
     cx.set_state("package test\n\nˇ");
     cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
     cx.run_until_parked();
     cx.assert_editor_state("package test\n\nfunc find() {\n\treturn 1\n}ˇ");
+}
+
+#[gpui::test]
+async fn test_paste_shifts_block_by_first_line_delta_with_spaces(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
 
     // The block moves by however far its first line moved, so a first line that
     // is indented deeper than the lines below it stays deeper.
@@ -42708,6 +42730,42 @@ async fn test_insert_snippet(cx: &mut TestAppContext) {
     cx.assert_editor_state(
         r#"First cursor at an Unspecified Locationˇ after and second cursor at an Unspecified Locationˇ after"#,
     );
+}
+
+#[gpui::test]
+async fn test_insert_snippet_autoindent_spaces(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(2);
+        settings.defaults.hard_tabs = Some(false);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language(
+                "rust",
+                tree_sitter_rust::LANGUAGE.into(),
+            )),
+            cx,
+        )
+    });
+
+    cx.set_state("fn test() {\n  ˇ\n}");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some("if ${1:condition} {\n  ${2:action()};\n}".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    cx.assert_editor_state("fn test() {\n  if «conditionˇ» {\n    action();\n  }\n}");
 }
 
 #[gpui::test]
