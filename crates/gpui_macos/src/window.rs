@@ -1,8 +1,8 @@
 use crate::{
-    BoolExt, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
-    kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
-    ns_string, renderer,
+    BoolExt, FrameDemand, MacDisplay, MetalFrameSource, NSRange, NSStringExt,
+    TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty, WindowFrameSource,
+    events::platform_input_from_native, kTISPropertyInputSourceIsASCIICapable,
+    kTISPropertyInputSourceType, kTISTypeKeyboardInputMode, ns_string, renderer,
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
@@ -655,6 +655,12 @@ unsafe fn apply_simple_fullscreen_plan(
     }
 }
 
+/// What paces a window's frames; see [`MetalFrameSource`].
+enum FrameSource {
+    Metal(MetalFrameSource),
+    DisplayLink(WindowFrameSource),
+}
+
 struct MacWindowState {
     handle: AnyWindowHandle,
     foreground_executor: ForegroundExecutor,
@@ -665,7 +671,8 @@ struct MacWindowState {
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
     cursor_visible: Arc<AtomicBool>,
-    frame_source: Option<WindowFrameSource>,
+    frame_source: Option<FrameSource>,
+    frame_demand: FrameDemand,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
@@ -844,20 +851,59 @@ impl MacWindowState {
                 return;
             }
         }
+        let data = self.native_view.as_ptr() as *mut c_void;
+        let layer = self.renderer.layer_ptr();
+        if !layer.is_null() && MetalFrameSource::is_available() {
+            let screen: id = unsafe { self.native_window.screen() };
+            let frames_per_second: NSInteger = if screen.is_null() {
+                0
+            } else {
+                unsafe { msg_send![screen, maximumFramesPerSecond] }
+            };
+            // metal-rs and objc2 bind the same CAMetalLayer object.
+            let layer = unsafe { &*layer.cast::<objc2_quartz_core::CAMetalLayer>() };
+            let source = MetalFrameSource::new(layer, data, metal_frame);
+            // Without a screen to ask, assume the common 60 Hz.
+            source.start(if frames_per_second > 0 {
+                frames_per_second as f32
+            } else {
+                60.
+            });
+            self.frame_source = Some(FrameSource::Metal(source));
+            self.frame_demand = FrameDemand::default();
+            self.renderer.set_display_link_attached(true);
+            return;
+        }
         let Some(display_id) = display_id_for_screen(unsafe { self.native_window.screen() }) else {
             // AppKit can temporarily report no screen while displays are being reconfigured.
             return;
         };
-        let data = self.native_view.as_ptr() as *mut c_void;
-        self.frame_source
-            .get_or_insert_with(|| WindowFrameSource::new(data, step))
-            .start(display_id)
-            .log_err();
+        if let FrameSource::DisplayLink(source) = self
+            .frame_source
+            .get_or_insert_with(|| FrameSource::DisplayLink(WindowFrameSource::new(data, step)))
+        {
+            source.start(display_id).log_err();
+        }
+    }
+
+    /// GPUI wants a frame: wake a display link paused for idleness.
+    fn resume_frames(&mut self) {
+        self.frame_demand.demand();
+        if let Some(FrameSource::Metal(source)) = self.frame_source.as_ref() {
+            source.resume();
+        }
     }
 
     fn stop_display_link(&mut self) {
-        if let Some(frame_source) = self.frame_source.as_mut() {
-            frame_source.stop();
+        match self.frame_source.as_mut() {
+            Some(FrameSource::Metal(_)) => {
+                // Detach the link rather than pause it, so that a synchronous
+                // draw can use the layer's `nextDrawable`.
+                self.frame_source = None;
+                self.renderer.set_display_link_attached(false);
+            }
+            Some(FrameSource::DisplayLink(source)) => source.stop(),
+            None => {}
         }
     }
 
@@ -1101,6 +1147,7 @@ impl MacWindow {
                 cursor_style: CursorStyle::Arrow,
                 cursor_visible,
                 frame_source: None,
+                frame_demand: FrameDemand::default(),
                 renderer: renderer::new_renderer(
                     renderer_context,
                     native_window as *mut _,
@@ -2126,6 +2173,19 @@ impl PlatformWindow for MacWindow {
     fn draw(&self, scene: &gpui::Scene) {
         let mut this = self.0.lock();
         this.renderer.draw(scene);
+    }
+
+    fn schedule_frame(&self) {
+        wake_frames(&self.0);
+    }
+
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        let state = Arc::downgrade(&self.0);
+        Some(Rc::new(move || {
+            if let Some(state) = state.upgrade() {
+                wake_frames(&state);
+            }
+        }))
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -3347,14 +3407,14 @@ extern "C" fn step(view: *mut c_void) {
     let mut lock = window_state.lock();
 
     if let Some(mut callback) = lock.request_frame_callback.take() {
-        let (signal_at, signal_source) = lock
-            .frame_source
-            .as_ref()
-            .and_then(WindowFrameSource::take_signal)
-            .map_or(
-                (None, FrameRequestSource::NativeCallback),
-                |(at, source)| (Some(at), source),
-            );
+        let (signal_at, signal_source) = match lock.frame_source.as_ref() {
+            Some(FrameSource::DisplayLink(source)) => source.take_signal(),
+            _ => None,
+        }
+        .map_or(
+            (None, FrameRequestSource::NativeCallback),
+            |(at, source)| (Some(at), source),
+        );
         drop(lock);
         callback(RequestFrameOptions {
             signal_at,
@@ -3362,6 +3422,46 @@ extern "C" fn step(view: *mut c_void) {
             ..Default::default()
         });
         window_state.lock().request_frame_callback = Some(callback);
+    }
+}
+
+/// Resume a window's frames. Platform code doesn't call into GPUI while it
+/// holds a window's lock, so the lock should be free here; if this thread did
+/// hold it, blocking would deadlock, so resume once it is released instead.
+fn wake_frames(state: &Arc<Mutex<MacWindowState>>) {
+    if let Some(mut lock) = state.try_lock() {
+        lock.resume_frames();
+        return;
+    }
+    let state = state.clone();
+    DispatchQueue::main().exec_async(move || state.lock().resume_frames());
+}
+
+extern "C" fn metal_frame(view: *mut c_void, update: &objc2_quartz_core::CAMetalDisplayLinkUpdate) {
+    let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
+    let view = view as id;
+    let window_state = unsafe { get_window_state(&*view) };
+    let mut lock = window_state.lock();
+    let Some(mut callback) = lock.request_frame_callback.take() else {
+        return;
+    };
+    lock.frame_demand.begin_frame();
+    lock.renderer.set_frame_drawable(Some(update.drawable()));
+    drop(lock);
+    callback(RequestFrameOptions {
+        signal_at,
+        signal_source: FrameRequestSource::NativeCallback,
+        ..Default::default()
+    });
+    let mut lock = window_state.lock();
+    lock.request_frame_callback = Some(callback);
+    // A frame with nothing to draw leaves its drawable unused; releasing it
+    // lets the link hand it out again.
+    lock.renderer.set_frame_drawable(None);
+    if lock.frame_demand.end_frame(scheduler::Instant::now())
+        && let Some(FrameSource::Metal(source)) = lock.frame_source.as_ref()
+    {
+        source.pause();
     }
 }
 
