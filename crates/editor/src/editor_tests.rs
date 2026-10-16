@@ -46112,7 +46112,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         1. item
           2. sub item
-          1. ˇ
+          3. ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.wait_for_autoindent_applied().await;
@@ -46121,7 +46121,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         1. item
           2. sub item
-        1. ˇ
+        2. ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.wait_for_autoindent_applied().await;
@@ -46154,6 +46154,180 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_ordered_list_renumber_on_newline(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+    let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown), cx));
+
+    for (before, after) in [
+        (
+            "1. firstˇ\n2. second\n3. third",
+            "1. first\n2. ˇ\n3. second\n4. third",
+        ),
+        (
+            "8. eighthˇ\n9. ninth\n10. tenth",
+            "8. eighth\n9. ˇ\n10. ninth\n11. tenth",
+        ),
+        ("1. fiˇrst\n2. second", "1. fi\n2. ˇrst\n3. second"),
+        (
+            "1. firstˇ\n2. second\n\n# Another list\n\n7. other\n9. untouched",
+            "1. first\n2. ˇ\n3. second\n\n# Another list\n\n7. other\n9. untouched",
+        ),
+        (
+            "1. first\n2. second\n\nParagraphˇ\n\n7. other\n9. untouched",
+            "1. first\n2. second\n\nParagraph\nˇ\n\n7. other\n9. untouched",
+        ),
+        (
+            "1. firstˇ\n\n2. second\n\n3. third",
+            "1. first\n2. ˇ\n\n3. second\n\n4. third",
+        ),
+        (
+            "1. parent\n   1. childˇ\n   2. sibling\n2. other parent\n   5. other child\n   9. untouched",
+            "1. parent\n   1. child\n   2. ˇ\n   3. sibling\n2. other parent\n   5. other child\n   9. untouched",
+        ),
+        (
+            "1. parentˇ\n   1. child\n   4. untouched\n2. other parent",
+            "1. parent\n2. ˇ\n   1. child\n   4. untouched\n3. other parent",
+        ),
+        (
+            "1. firstˇ\n2. secondˇ\n3. third",
+            "1. first\n2. ˇ\n3. second\n4. ˇ\n5. third",
+        ),
+        (
+            "1. firstˇ\n\nParagraph\n\n1. otherˇ\n2. sibling",
+            "1. first\n2. ˇ\n\nParagraph\n\n1. other\n2. ˇ\n3. sibling",
+        ),
+        (
+            "- parent\n  1. childˇ\n  2. sibling\n- other parent\n  5. other child\n  9. untouched",
+            "- parent\n  1. child\n  2. ˇ\n  3. sibling\n- other parent\n  5. other child\n  9. untouched",
+        ),
+    ] {
+        cx.set_state(before);
+        cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
+        cx.assert_editor_state(after);
+    }
+}
+
+#[gpui::test]
+async fn test_ordered_list_renumber_on_delete(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown), cx));
+
+    for (before, after) in [
+        (
+            "1. first\n«2. second\nˇ»3. third\n4. fourth",
+            "1. first\nˇ2. third\n3. fourth",
+        ),
+        ("«1. first\nˇ»2. second\n3. third", "ˇ1. second\n2. third"),
+        ("«8. first\nˇ»9. second\n10. third", "ˇ8. second\n9. third"),
+        (
+            "1. first\n«2. second\n3. third\nˇ»4. fourth",
+            "1. first\nˇ2. fourth",
+        ),
+        (
+            "1. first\n«2. ˇ»second\n3. third",
+            "1. first\nˇsecond\n2. third",
+        ),
+        (
+            "1. first\n«2ˇ». second\n3. third",
+            "1. first\nˇ. second\n2. third",
+        ),
+        (
+            "1. first\n2. se«condˇ»\n3. third\n\nParagraph\n\n5. other\n9. untouched",
+            "1. first\n2. seˇ\n3. third\n\nParagraph\n\n5. other\n9. untouched",
+        ),
+        (
+            "1. parent\n   1. child\n«   2. sibling\nˇ»   3. last child\n2. other parent",
+            "1. parent\n   1. child\nˇ   2. last child\n2. other parent",
+        ),
+        (
+            "1. parent\n«2. other parent\nˇ»   5. child\n   9. untouched\n3. last parent",
+            "1. parent\nˇ   5. child\n   9. untouched\n2. last parent",
+        ),
+        (
+            "1. first\n«2. second\nˇ»\nParagraph\n\n5. other\n9. untouched",
+            "1. first\nˇ\nParagraph\n\n5. other\n9. untouched",
+        ),
+        (
+            "1. first\n«2. second\nˇ»3. third\n«4. fourth\nˇ»5. fifth",
+            "1. first\nˇ2. third\nˇ3. fifth",
+        ),
+        (
+            "1. first«\nˇ»2. second\n3. third",
+            "1. firstˇ2. second\n2. third",
+        ),
+    ] {
+        cx.set_state(before);
+        cx.update_editor(|editor, window, cx| editor.backspace(&Backspace, window, cx));
+        cx.wait_for_autoindent_applied().await;
+        cx.assert_editor_state(after);
+    }
+
+    cx.set_state("1. first\n2. seˇcond\n3. third");
+    cx.update_editor(|editor, window, cx| editor.delete_line(&DeleteLine, window, cx));
+    cx.assert_editor_state("1. first\n2. thˇird");
+
+    cx.set_state("1. firstˇ\n2. second\n3. third");
+    cx.update_editor(|editor, window, cx| editor.delete(&Delete, window, cx));
+    cx.assert_editor_state("1. firstˇ2. second\n2. third");
+}
+
+#[gpui::test]
+async fn test_ordered_list_renumber_undo_and_setting(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown), cx));
+    cx.update_editor(|editor, _, _| {
+        editor.set_mode(EditorMode::AutoHeight {
+            min_lines: 1,
+            max_lines: None,
+        });
+    });
+
+    cx.set_state("1. firstˇ\n2. second\n3. third");
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .buffer()
+            .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
+        editor.newline(&Newline, window, cx);
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state("1. first\n2. ˇ\n3. second\n4. third");
+    cx.update_editor(|editor, window, cx| editor.undo(&Undo, window, cx));
+    cx.assert_editor_state("1. firstˇ\n2. second\n3. third");
+    cx.update_editor(|editor, window, cx| editor.redo(&Redo, window, cx));
+    cx.assert_editor_state("1. first\n2. ˇ\n3. second\n4. third");
+
+    cx.set_state("1. first\n«2ˇ». second\n3. third");
+    cx.simulate_input("5");
+    cx.assert_editor_state("1. first\n5ˇ. second\n6. third");
+
+    update_test_language_settings(&mut cx, &|settings| {
+        settings
+            .languages
+            .0
+            .entry("Markdown".into())
+            .or_default()
+            .extend_list_on_newline = Some(false);
+    });
+    cx.set_state("1. firstˇ\n2. second\n3. third");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state("1. first\nˇ\n2. second\n3. third");
+
+    cx.set_state("1. first\n«2. second\nˇ»3. third");
+    cx.update_editor(|editor, window, cx| editor.backspace(&Backspace, window, cx));
+    cx.assert_editor_state("1. first\nˇ3. third");
+}
+
+#[gpui::test]
 async fn test_newline_should_not_autoindent_ordered_list(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = Some(2.try_into().unwrap());
@@ -46176,7 +46350,7 @@ async fn test_newline_should_not_autoindent_ordered_list(cx: &mut TestAppContext
         1. first item
           1. sub first item
           2. sub second item
-        1. ˇ
+        2. ˇ
     "});
 }
 
