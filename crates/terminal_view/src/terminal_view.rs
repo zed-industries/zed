@@ -1580,6 +1580,18 @@ impl Render for TerminalView {
     }
 }
 
+/// The logo of a coding agent CLI, by the command it was started with.
+fn agent_icon(command: &str) -> Option<IconName> {
+    match command {
+        "claude" => Some(IconName::AiClaude),
+        "codex" => Some(IconName::AiOpenAi),
+        "copilot" => Some(IconName::Copilot),
+        "gemini" => Some(IconName::AiGemini),
+        "opencode" => Some(IconName::AiOpenCode),
+        _ => None,
+    }
+}
+
 impl Item for TerminalView {
     type Event = ItemEvent;
 
@@ -1635,7 +1647,14 @@ impl Item for TerminalView {
                     }
                 }
             },
-            None => (IconName::Terminal, Color::Muted, None),
+            None => (
+                terminal
+                    .foreground_process_command_name()
+                    .and_then(|command| agent_icon(&command))
+                    .unwrap_or(IconName::Terminal),
+                Color::Muted,
+                None,
+            ),
         };
 
         let self_handle = self.self_handle.clone();
@@ -2358,6 +2377,15 @@ mod tests {
         let written =
             String::from_utf8(input_log.remove(0)).expect("terminal write should be valid UTF-8");
         assert_eq!(written, expected_text);
+    }
+
+    #[test]
+    fn agent_icon_matches_agent_commands_only() {
+        assert_eq!(agent_icon("claude"), Some(IconName::AiClaude));
+        assert_eq!(agent_icon("codex"), Some(IconName::AiOpenAi));
+        assert_eq!(agent_icon("gemini"), Some(IconName::AiGemini));
+        assert_eq!(agent_icon("zsh"), None);
+        assert_eq!(agent_icon("vim"), None);
     }
 
     // DEC private mode 1049: a program writes this to enter the alternate screen buffer.
