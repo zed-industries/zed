@@ -700,7 +700,7 @@ pub struct Session {
     child_session_ids: HashSet<SessionId>,
     parent_session: Option<Entity<Session>>,
     output_token: OutputToken,
-    output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
+    output: VecDeque<dap::OutputEvent>,
     watchers: HashMap<SharedString, Watcher>,
     is_session_terminated: bool,
     requests: TypeIdHashMap<HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
@@ -874,7 +874,7 @@ impl Session {
                 capabilities: Capabilities::default(),
                 watchers: HashMap::default(),
                 output_token: OutputToken(0),
-                output: circular_buffer::CircularBuffer::boxed(),
+                output: VecDeque::with_capacity(MAX_TRACKED_OUTPUT_EVENTS),
                 requests: Default::default(),
                 background_tasks: Vec::default(),
                 restart_task: None,
@@ -1786,6 +1786,9 @@ impl Session {
     }
 
     fn push_output(&mut self, event: OutputEvent) {
+        if self.output.len() == MAX_TRACKED_OUTPUT_EVENTS {
+            self.output.pop_front();
+        }
         self.output.push_back(event);
         self.output_token.0 += 1;
     }

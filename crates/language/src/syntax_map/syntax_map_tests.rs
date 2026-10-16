@@ -15,6 +15,87 @@ use unindent::Unindent as _;
 use util::test::marked_text_ranges;
 
 #[test]
+fn test_parse_text_inside_multibyte_character() -> anyhow::Result<()> {
+    let language = rust_lang();
+    let grammar = language.grammar().expect("Rust grammar");
+    for prefix in ["", "prefix "] {
+        for character in ["и", "中", "🧘"] {
+            let source = format!("// {character}\nfn main() {{}}");
+            let text = Rope::from(format!("{prefix}{source}").as_str());
+            for character_offset in 1..character.len() {
+                let range = tree_sitter::Range {
+                    start_byte: 3 + character_offset,
+                    start_point: tree_sitter::Point {
+                        row: 0,
+                        column: 3 + character_offset,
+                    },
+                    end_byte: source.len(),
+                    end_point: text.max_point().to_ts_point(),
+                };
+                let tree = parse_text(grammar, &text, prefix.len(), &[range], None, &mut None)?;
+
+                let mut parser = tree_sitter::Parser::new();
+                parser.set_language(&grammar.ts_language)?;
+                parser.set_included_ranges(&[range])?;
+                let expected_tree = parser
+                    .parse(source.as_bytes(), None)
+                    .expect("parse contiguous bytes");
+                assert_eq!(
+                    tree.root_node().to_sexp(),
+                    expected_tree.root_node().to_sexp()
+                );
+                assert_eq!(
+                    tree.root_node().byte_range(),
+                    expected_tree.root_node().byte_range()
+                );
+                assert_eq!(tree.root_node().end_byte(), source.len());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_query_text_inside_multibyte_character() -> anyhow::Result<()> {
+    let language = rust_lang();
+    let grammar = language.grammar().expect("Rust grammar");
+    let query = Query::new(
+        &grammar.ts_language,
+        "((ERROR) @error (#match? @error \".*\"))",
+    )?;
+    for character in ["и", "中", "🧘"] {
+        let source = format!("// {character}\nfn main() {{}}");
+        let text = Rope::from(source.as_str());
+        for character_offset in 1..character.len() {
+            let range = tree_sitter::Range {
+                start_byte: 3 + character_offset,
+                start_point: tree_sitter::Point {
+                    row: 0,
+                    column: 3 + character_offset,
+                },
+                end_byte: text.len(),
+                end_point: text.max_point().to_ts_point(),
+            };
+            let tree = parse_text(grammar, &text, 0, &[range], None, &mut None)?;
+            let mut cursor = QueryCursor::new();
+            let mut matches = cursor.matches(&query, tree.root_node(), TextProvider(&text));
+            let query_match = matches.next().expect("predicate matches the error node");
+            let node = query_match.captures.first().expect("error capture").node;
+            assert_eq!(node.start_byte(), range.start_byte);
+            assert!(!source.is_char_boundary(node.start_byte()));
+            assert_eq!(
+                tree_sitter::TextProvider::text(&mut TextProvider(&text), node)
+                    .flatten()
+                    .copied()
+                    .collect::<Vec<_>>(),
+                &source.as_bytes()[node.byte_range()],
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn test_splice_included_ranges() {
     let ranges = vec![ts_range(20..30), ts_range(50..60), ts_range(80..90)];
 
@@ -398,6 +479,110 @@ fn test_rust_json_macro_empty_string_highlighting(cx: &mut App) {
             })
         "#,
     );
+}
+
+#[gpui::test]
+fn test_rust_sql_macro_injection_without_registered_sql(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let language = rust_lang();
+    registry.add(language.clone());
+
+    for source in [
+        r#"fn main() { sql!("SELECT * FROM carts"); }"#,
+        r##"fn main() { sql!(r#"SELECT * FROM carts WHERE status = 'open'"#); }"##,
+        r####"fn main() { sql!(r###"SELECT * FROM carts WHERE note LIKE '%"##%'"###); }"####,
+        "fn main() { sql!(SELECT * FROM carts); }",
+    ] {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), source);
+        let mut syntax_map = SyntaxMap::new(&buffer);
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(language.clone(), &buffer);
+
+        assert!(
+            syntax_map.contains_unknown_injections(),
+            "expected sql! to trigger an unknown SQL injection in {source:?}"
+        );
+    }
+
+    for source in [
+        r#"fn main() { not_sql!("SELECT * FROM carts"); }"#,
+        r##"fn main() { other_macro!(r#"SELECT * FROM carts"#); }"##,
+        r#"fn main() { plain_function("SELECT * FROM carts"); }"#,
+    ] {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), source);
+        let mut syntax_map = SyntaxMap::new(&buffer);
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(language.clone(), &buffer);
+
+        assert!(
+            !syntax_map.contains_unknown_injections(),
+            "expected non-sql! code not to trigger an unknown SQL injection in {source:?}"
+        );
+    }
+}
+
+#[gpui::test]
+fn test_rust_sql_macro_injection_ranges(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let language = rust_lang();
+    registry.add(language.clone());
+    registry.add(Arc::new(sql_lang()));
+
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r####"
+            fn main() {
+                sql!("SELECT normal FROM carts");
+                sql!("SELECT trailing FROM carts",);
+                sql!(r#"SELECT raw FROM carts"#);
+                sql!(r###"SELECT raw_hashes FROM carts WHERE note LIKE '%"##%'"###);
+                sql!(
+                    r#"
+                    SELECT multiline
+                    FROM carts
+                    "#
+                );
+                sql!(SELECT unquoted FROM carts);
+                not_sql!(r#"SELECT not_sql FROM carts"#);
+            }
+        "####
+            .unindent(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(language, &buffer);
+
+    for text in [
+        "normal",
+        "trailing",
+        "raw",
+        "raw_hashes",
+        "multiline",
+        "unquoted",
+    ] {
+        assert_language_range_count_at_text(&syntax_map, &buffer, "SQL", text, 1);
+    }
+
+    for text in [
+        r#""SELECT normal"#,
+        r#""SELECT trailing"#,
+        r##"r#"SELECT raw"##,
+        r####"r###"SELECT raw_hashes"####,
+        r#"not_sql"#,
+    ] {
+        assert_language_range_count_at_text(&syntax_map, &buffer, "SQL", text, 0);
+    }
+
+    for (text, offset) in [
+        (r#"carts");"#, "carts".len()),
+        (r#"carts",);"#, "carts".len()),
+        (r##"carts"#);"##, "carts".len()),
+        (r####"%'"###);"####, "%'".len()),
+    ] {
+        assert_language_range_count_at_text_offset(&syntax_map, &buffer, "SQL", text, offset, 0);
+    }
 }
 
 #[gpui::test]
@@ -950,7 +1135,7 @@ fn test_combined_injection_with_leading_content_layer_ordering(cx: &mut App) {
             LanguageConfig {
                 name: LanguageName::new_static("Elixir"),
                 matcher: Arc::new(LanguageMatcher {
-                    path_suffixes: vec![String::from("ex")],
+                    path_suffixes: vec!["ex".into()],
                     ..Default::default()
                 }),
                 ..LanguageConfig::default()
@@ -993,6 +1178,63 @@ fn test_combined_injection_with_leading_content_layer_ordering(cx: &mut App) {
     // In debug builds, `reparse` runs `check_invariants`, which panics with
     // "layers out of order" if the produced layers are not correctly sorted.
     syntax_map.reparse(heex, &buffer);
+}
+
+#[gpui::test]
+fn test_markdown_injections_with_same_start_and_different_ends(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let markdown = markdown_lang();
+    let markdown_inline = Arc::new(
+        markdown_inline_lang()
+            .with_injection_query(include_str!(
+                "../../../grammars/src/markdown-inline/injections.scm"
+            ))
+            .unwrap(),
+    );
+    let html = Arc::new(html_lang());
+    registry.add(markdown.clone());
+    registry.add(markdown_inline.clone());
+    registry.add(html.clone());
+
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "a\n\n$x$ <b>\n".to_string(),
+    );
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(markdown.clone(), &buffer);
+    assert!(syntax_map.contains_unknown_injections());
+
+    for (range, replacement, document_end, inline_end, latex_end) in
+        [(4..5, "中", 13, 12, 8), (4..7, "x", 11, 10, 6)]
+    {
+        buffer.edit([(range, replacement)]);
+        syntax_map.interpolate(&buffer);
+        syntax_map.reparse(markdown.clone(), &buffer);
+
+        assert_eq!(
+            syntax_map
+                .snapshot
+                .layers
+                .iter()
+                .map(|layer| (
+                    layer.depth,
+                    layer.range.to_offset(&buffer),
+                    layer.content.language_id(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, 0..document_end, Some(markdown.id)),
+                (1, 0..1, Some(markdown_inline.id)),
+                (1, 3..inline_end, Some(markdown_inline.id)),
+                (2, 0..1, Some(html.id)),
+                (2, 3..inline_end, Some(html.id)),
+                (2, 3..latex_end, None),
+            ],
+        );
+        assert!(syntax_map.contains_unknown_injections());
+    }
 }
 
 #[gpui::test]
@@ -1625,7 +1867,7 @@ fn html_lang() -> Language {
         LanguageConfig {
             name: "HTML".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["html".to_string()],
+                path_suffixes: vec!["html".into()],
                 ..Default::default()
             })
             .into(),
@@ -1648,7 +1890,7 @@ fn ruby_lang() -> Language {
         LanguageConfig {
             name: "Ruby".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rb".to_string()],
+                path_suffixes: vec!["rb".into()],
                 ..Default::default()
             })
             .into(),
@@ -1671,7 +1913,7 @@ fn erb_lang() -> Language {
         LanguageConfig {
             name: "ERB".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["erb".to_string()],
+                path_suffixes: vec!["erb".into()],
                 ..Default::default()
             })
             .into(),
@@ -1762,7 +2004,7 @@ fn python_lang() -> Language {
         LanguageConfig {
             name: "Python".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["py".to_string()],
+                path_suffixes: vec!["py".into()],
                 ..Default::default()
             })
             .into(),
@@ -1792,12 +2034,16 @@ fn comment_lang() -> Language {
     )
 }
 
-/// Stands in for the real SQL language, which this crate doesn't depend on. The grammar
-/// is irrelevant here; only the layers Python's injection query produces are asserted on.
+/// Stands in for the real SQL language, which this crate does not depend on.
+/// The grammar is irrelevant because these tests assert injected language ranges.
 fn sql_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "SQL".into(),
+            matcher: Arc::new(LanguageMatcher {
+                path_suffixes: vec!["sql".into()],
+                ..Default::default()
+            }),
             ..Default::default()
         },
         Some(tree_sitter_json::LANGUAGE.into()),
@@ -1824,6 +2070,65 @@ fn flattened(
 fn range_for_text(buffer: &Buffer, text: &str) -> Range<usize> {
     let start = buffer.as_rope().to_string().find(text).unwrap();
     start..start + text.len()
+}
+
+#[track_caller]
+fn assert_language_range_count_at_text(
+    syntax_map: &SyntaxMap,
+    buffer: &Buffer,
+    language_name: &str,
+    text: &str,
+    expected_count: usize,
+) {
+    assert_language_range_count_at_text_offset(
+        syntax_map,
+        buffer,
+        language_name,
+        text,
+        0,
+        expected_count,
+    );
+}
+
+#[track_caller]
+fn assert_language_range_count_at_text_offset(
+    syntax_map: &SyntaxMap,
+    buffer: &Buffer,
+    language_name: &str,
+    text: &str,
+    offset_in_text: usize,
+    expected_count: usize,
+) {
+    let offset = range_for_text(buffer, text).start;
+    let offset = offset + offset_in_text;
+    let actual_count = language_ranges(syntax_map, buffer, language_name)
+        .into_iter()
+        .filter(|range| range.start <= offset && offset < range.end)
+        .count();
+
+    assert_eq!(
+        actual_count, expected_count,
+        "wrong number of {language_name} ranges at {text:?}"
+    );
+}
+
+fn language_ranges(
+    syntax_map: &SyntaxMap,
+    buffer: &Buffer,
+    language_name: &str,
+) -> Vec<Range<usize>> {
+    syntax_map
+        .layers_for_range(0..buffer.len(), buffer, true)
+        .filter(|layer| layer.language.name().as_ref() == language_name)
+        .flat_map(|layer| {
+            let layer_offset = layer.offset.0;
+            layer
+                .tree
+                .included_ranges()
+                .into_iter()
+                .map(move |range| layer_offset + range.start_byte..layer_offset + range.end_byte)
+        })
+        .collect()
 }
 
 #[track_caller]
