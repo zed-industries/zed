@@ -2351,6 +2351,65 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn preview_tabs_disambiguate_file_paths(cx: &mut TestAppContext) {
+        let (project, workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({
+                "first": { "docs": { "README.md": "# First" } },
+                "second": { "docs": { "README.md": "# Second" } },
+                "examples": { "README.md": "# Examples" },
+                "guide.md": "# Guide"
+            }),
+            false,
+        )
+        .await;
+
+        for (path, expected_titles) in [
+            ("first/docs/README.md", vec!["Preview README.md"]),
+            (
+                "examples/README.md",
+                vec!["Preview docs/README.md", "Preview examples/README.md"],
+            ),
+            (
+                "second/docs/README.md",
+                vec![
+                    "Preview examples/README.md",
+                    "Preview first/docs/README.md",
+                    "Preview second/docs/README.md",
+                ],
+            ),
+            (
+                "guide.md",
+                vec![
+                    "Preview examples/README.md",
+                    "Preview first/docs/README.md",
+                    "Preview guide.md",
+                    "Preview second/docs/README.md",
+                ],
+            ),
+        ] {
+            open_project_file(cx, &project, &multi_workspace, path, None, true).await;
+            open_preview_for_active_editor(cx, &multi_workspace);
+
+            multi_workspace
+                .update(cx, |_, window, cx| {
+                    let pane = workspace.read(cx).active_pane().read(cx);
+                    let items = pane.items().cloned().collect::<Vec<_>>();
+                    let details = workspace::pane::tab_details(&items, window, cx);
+                    let mut titles = items
+                        .iter()
+                        .zip(details)
+                        .filter(|(item, _)| item.downcast::<MarkdownPreviewView>().is_some())
+                        .map(|(item, detail)| item.tab_content_text(detail, cx).replace('\\', "/"))
+                        .collect::<Vec<_>>();
+                    titles.sort();
+                    assert_eq!(titles, expected_titles, "after opening {path}");
+                })
+                .expect("workspace window should remain open");
+        }
+    }
+
+    #[gpui::test]
     async fn preview_tab_tooltip_matches_source_file_path(cx: &mut TestAppContext) {
         let (project, _, multi_workspace) = markdown_workspace(
             cx,
