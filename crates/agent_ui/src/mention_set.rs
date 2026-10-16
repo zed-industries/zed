@@ -1050,6 +1050,10 @@ pub(crate) fn paste_images_as_context(
         return None;
     }
 
+    // When this handles the paste, the caller stops the editor's own text paste, so fall
+    // back to pasting the clipboard's text (e.g. non-image file paths) if no images load.
+    let fallback_text = clipboard.text();
+
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let default_name: SharedString = "Image".into();
@@ -1062,21 +1066,26 @@ pub(crate) fn paste_images_as_context(
             })
             .partition_map::<Vec<_>, Vec<_>, _, _, _>(std::convert::identity);
 
-        if !paths.is_empty() {
-            images.extend(
-                cx.background_spawn(async move {
+        // A bitmap and image files in the clipboard are usually the same image (e.g. a
+        // screenshot saved to a temporary file), so only load files when there's no bitmap.
+        if images.is_empty() && !paths.is_empty() {
+            images = cx
+                .background_spawn(async move {
                     paths
                         .into_iter()
                         .flat_map(|paths| paths.paths().to_owned())
                         .filter_map(|path| load_external_image_from_path(&path, &default_name))
                         .collect::<Vec<_>>()
                 })
-                .await,
-            );
+                .await;
         }
 
         if !images.is_empty() {
             insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        } else if let Some(text) = fallback_text {
+            editor
+                .update_in(cx, |editor, window, cx| editor.insert(&text, window, cx))
+                .ok();
         }
     }))
 }
