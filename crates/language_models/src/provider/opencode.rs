@@ -871,7 +871,7 @@ impl LanguageModelClient for OpenCodeLanguageModelProvider {
                     request.max_output_tokens =
                         request.effective_max_output_tokens(config.model.max_output_tokens());
                 }
-                let mode = if config.supports_thinking && request.thinking_allowed {
+                let mode = if config.supports_thinking {
                     google_ai::GoogleModelMode::Thinking {
                         budget_tokens: None,
                     }
@@ -979,6 +979,7 @@ fn language_model(model: &DiscoveredModel, subscription: OpenCodeSubscription) -
                         name: name.into(),
                         value: value.into(),
                         is_default: i == default_index,
+                        supports_disabling_thinking: None,
                     }
                 })
                 .collect()

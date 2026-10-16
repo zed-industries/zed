@@ -4,7 +4,7 @@ use std::{
 };
 
 use agent::{ThreadStore, ZED_AGENT_ID};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
@@ -1825,7 +1825,7 @@ mod tests {
     use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::DbThread;
-    use agent_client_protocol::schema::{v1 as acp, v2 as acp_v2};
+    use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp};
     use gpui::{TestAppContext, VisualTestContext};
     use project::FakeFs;
     use project::Project;
@@ -1945,6 +1945,52 @@ mod tests {
         metadata.title_override = None;
         assert_eq!(metadata.title().as_deref(), Some("Agent Generated Title"));
         assert_eq!(metadata.display_title().as_ref(), "Agent Generated Title");
+    }
+
+    #[gpui::test]
+    async fn test_database_preserves_legacy_session_ids(_cx: &mut TestAppContext) {
+        let legacy_session_id = acp_v1::SessionId::new("legacy/session:opaque-☃");
+        let thread_id = ThreadId::new();
+        let db = ThreadMetadataDb(gpui::block_on(db::open_test_db::<ThreadMetadataDb>(
+            "THREAD_METADATA_DB_LEGACY_SESSION_IDS",
+        )));
+
+        db.write({
+            let session_id = legacy_session_id.0.clone();
+            move |connection| {
+                connection.exec_bound::<(ThreadId, Arc<str>)>(
+                    "INSERT INTO sidebar_threads \
+                     (thread_id, session_id, title, updated_at, archived) \
+                     VALUES (?1, ?2, 'Legacy thread', '2025-01-15T10:00:00Z', 0)",
+                )?((thread_id, session_id))
+            }
+        })
+        .await
+        .expect("legacy session should be stored as plain text");
+
+        let mut metadata = db
+            .list()
+            .expect("legacy metadata should load")
+            .pop()
+            .expect("legacy thread should exist");
+        assert_eq!(
+            metadata.session_id,
+            Some(acp::SessionId::new(legacy_session_id.0.clone()))
+        );
+        assert_eq!(metadata.thread_id, thread_id);
+
+        metadata.title_override = Some("Renamed legacy thread".into());
+        db.save(metadata)
+            .await
+            .expect("v2 session metadata should save");
+        let stored_session_id = db
+            .select_row_bound::<ThreadId, Arc<str>>(
+                "SELECT session_id FROM sidebar_threads WHERE thread_id = ?1",
+            )
+            .expect("session ID query should prepare")(thread_id)
+        .expect("session ID query should succeed")
+        .expect("stored session ID should exist");
+        assert_eq!(acp_v1::SessionId::new(stored_session_id), legacy_session_id);
     }
 
     #[gpui::test]
@@ -2859,7 +2905,7 @@ mod tests {
                     project.clone(),
                     action_log,
                     subagent_session_id.clone(),
-                    watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
+                    watch::Receiver::constant(acp::PromptCapabilities::new()),
                     cx,
                 )
             })

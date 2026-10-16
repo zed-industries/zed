@@ -240,6 +240,8 @@
   //  3. Use grayscale text rendering:
   //         "text_rendering_mode": "grayscale"
   "text_rendering_mode": "platform_default",
+  // Whether to render windows using the Display P3 color space (macOS only).
+  "use_display_p3": false,
   // Whether to show padding for zoomed panels.
   // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
   // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
@@ -1474,6 +1476,13 @@
     // When enabled, pinned tabs appear in a top row and unpinned tabs in a bottom row.
     // When disabled, all tabs appear in a single row (default behavior).
     "show_pinned_tabs_in_separate_row": false,
+  },
+  // Settings related to the tab switcher (Ctrl-Tab).
+  "tab_switcher": {
+    // When false, files are not shown while cycling through the tab switcher.
+    // Only the confirmed file (when the modifier key is released) is shown and
+    // recorded in the MRU history.
+    "show_file_preview": true,
   },
   // Settings related to the editor's tabs
   "tabs": {

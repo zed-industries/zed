@@ -11,6 +11,7 @@ homepage = "https://gpui.rs"
 readme = "README.md"
 keywords = ["desktop", "gui", "immediate"]
 categories = ["gui"]
+autobenches = false
 
 
 [lints]
@@ -42,8 +43,6 @@ x11 = [
 ]
 screen-capture = [
     "scap",
-    "dep:objc2-core-foundation",
-    "dep:objc2-core-video",
 ]
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram"]
@@ -134,11 +133,10 @@ uuid = { workspace = true, features = ["js"] }
 
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-core-video.workspace = true
+objc2-core-foundation.workspace = true
+objc2-core-video = { workspace = true, features = ["CVPixelBuffer"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-foundation = { workspace = true, optional = true }
-objc2-core-video = { workspace = true, optional = true }
 log.workspace = true
 objc2 = { workspace = true, optional = true }
 objc2-metal = { version = "0.3", optional = true }
@@ -192,7 +190,7 @@ ignored = [
     "objc2",
     "objc2-metal",
 ]
-ignored-paths = ["src/_ownership_and_data_flow.rs"]
+ignored-paths = ["src/_ownership_and_data_flow.rs", "benches/focus_cleanup.rs"]
 
 [[example]]
 name = "hello_world"
