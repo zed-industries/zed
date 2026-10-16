@@ -4386,9 +4386,7 @@ impl GitPanel {
                             Ok(Ok(commit)) => Some(commit.message.to_string()),
                             Ok(Err(error)) => {
                                 if index == 0 {
-                                    log::debug!(
-                                        "failed to load recent commit messages: {error:?}"
-                                    );
+                                    log::debug!("failed to load recent commit messages: {error:?}");
                                 }
                                 None
                             }
