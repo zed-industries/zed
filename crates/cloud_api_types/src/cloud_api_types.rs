@@ -56,6 +56,14 @@ pub struct Organization {
     pub id: OrganizationId,
     pub name: Arc<str>,
     pub is_personal: bool,
+    #[serde(default)]
+    pub ui_permissions: OrganizationUiPermissions,
+}
+
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct OrganizationUiPermissions {
+    #[serde(default)]
+    pub can_install_github_app: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]

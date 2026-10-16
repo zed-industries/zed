@@ -311,7 +311,7 @@ impl PathStyle {
         })
     }
 
-    pub fn starts_with<P: AsRef<Path>>(&self, path: P, prefix: P) -> bool {
+    pub fn starts_with(&self, path: impl AsRef<Path>, prefix: impl AsRef<Path>) -> bool {
         iter_after(
             self.components(path.as_ref()),
             self.components(prefix.as_ref()),
