@@ -1419,6 +1419,17 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .child(
                         IconButton::new("remove_open_project", IconName::Close)
                             .icon_size(IconSize::Small)
+                            .tooltip({
+                                let focus_handle = self.focus_handle.clone();
+                                move |_, cx| {
+                                    Tooltip::for_action_in(
+                                        "Remove Project from Window",
+                                        &RemoveSelected,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
                             .on_click({
                                 cx.listener(move |picker, _, window, cx| {
                                     cx.stop_propagation();
